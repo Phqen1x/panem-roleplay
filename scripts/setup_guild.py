@@ -344,20 +344,30 @@ async def run(settings: Settings) -> None:
     client = discord.Client(intents=intents)
 
     done = asyncio.Event()
+    failure: list[Exception] = []
 
     @client.event
     async def on_ready() -> None:
         try:
             guild = client.get_guild(settings.discord_guild_id)
             if guild is None:
-                raise SystemExit(
+                raise RuntimeError(
                     f"Bot is not in guild {settings.discord_guild_id}, or DISCORD_GUILD_ID is unset."
                 )
 
+            # Each district commits in its own transaction: a failure partway
+            # through (Discord rate limit, a bad permission, ...) must not roll
+            # back the DB rows for districts already finished, since the Discord
+            # side effects (channels/roles/webhooks) are not transactional and
+            # stay created either way -- losing their DB rows would leave the
+            # bot unable to route to channels that visibly exist (Spec §2.3).
             async with session_factory() as session, session.begin():
                 staff_role = await ensure_role(guild, "Panem Staff")
                 await setup_staff_channels(session, guild, staff_role)
-                for district in sorted(content.districts.values(), key=lambda d: d.id):
+            logger.info("staff_channels_committed")
+
+            for district in sorted(content.districts.values(), key=lambda d: d.id):
+                async with session_factory() as session, session.begin():
                     await setup_district(
                         session,
                         guild,
@@ -365,13 +375,22 @@ async def run(settings: Settings) -> None:
                         staff_role=staff_role,
                         auto_archive_minutes=settings.scene_auto_archive_minutes,
                     )
+                logger.info(
+                    "district_committed", district_id=district.id, district_name=district.name
+                )
+
             logger.info("setup_complete", guild_id=guild.id)
+        except Exception as exc:  # re-raised below, after client cleanup
+            failure.append(exc)
         finally:
             done.set()
             await client.close()
 
     await client.start(settings.discord_token)
     await done.wait()
+
+    if failure:
+        raise failure[0]
 
 
 def main() -> None:
