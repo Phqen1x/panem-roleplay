@@ -523,10 +523,33 @@ class CharacterCog(commands.Cog):
 
     @group.command(name="avatar", description="Set a character's avatar image")
     @app_commands.describe(
-        character="Character name", url="Image URL (https, .png/.jpg/.jpeg/.webp/.gif)"
+        character="Character name",
+        url="Image URL (https, .png/.jpg/.jpeg/.webp/.gif) -- omit if uploading a file",
+        image="Upload an image file -- expires in ~24h, prefer a URL for something permanent",
     )
     @app_commands.autocomplete(character=autocomplete.own_any)
-    async def avatar(self, interaction: discord.Interaction, character: str, url: str) -> None:
+    async def avatar(
+        self,
+        interaction: discord.Interaction,
+        character: str,
+        url: str | None = None,
+        image: discord.Attachment | None = None,
+    ) -> None:
+        if (url is None) == (image is None):
+            await interaction.response.send_message(
+                "Provide either a URL or an uploaded image, not both.", ephemeral=True
+            )
+            return
+        if image is not None:
+            if image.content_type is None or not image.content_type.startswith("image/"):
+                await interaction.response.send_message(t("invalid_avatar_url"), ephemeral=True)
+                return
+            # Discord's CDN signs attachment URLs with a ~24h expiry regardless
+            # of which message holds them (there's no way to host a permanent
+            # link through Discord itself), so this will need re-uploading
+            # periodically -- warned about in the command description below.
+            url = image.url
+        assert url is not None
         try:
             characters_svc.validate_avatar_url(url)
         except ValidationFailed as exc:
@@ -545,7 +568,13 @@ class CharacterCog(commands.Cog):
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
             row.avatar_url = url
-        await interaction.response.send_message("Avatar updated.", ephemeral=True)
+        note = (
+            " (uploaded images expire in ~24h -- re-run this command with a fresh "
+            "upload, or switch to a permanent URL, if it stops showing up)"
+            if image is not None
+            else ""
+        )
+        await interaction.response.send_message(f"Avatar updated.{note}", ephemeral=True)
 
     @group.command(
         name="tag", description="Set a character's proxy tag (e.g. `md:` messages post as them)"
