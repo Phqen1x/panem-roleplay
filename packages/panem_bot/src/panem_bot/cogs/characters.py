@@ -9,6 +9,7 @@ from discord import app_commands
 from discord.ext import commands
 from sqlalchemy import func, select
 
+from panem_bot import autocomplete
 from panem_bot.errors import ServiceError, ValidationFailed
 from panem_bot.services import characters as characters_svc
 from panem_bot.services import jobs as jobs_svc
@@ -333,6 +334,7 @@ class CharacterCog(commands.Cog):
 
     @group.command(name="edit", description="Edit a pending character and resubmit for approval")
     @app_commands.describe(character="Character name")
+    @app_commands.autocomplete(character=autocomplete.own_pending)
     async def edit(self, interaction: discord.Interaction, character: str) -> None:
         async with self.bot.db() as session:
             user = await characters_svc.get_or_create_user(session, interaction.user.id)
@@ -424,6 +426,7 @@ class CharacterCog(commands.Cog):
 
     @group.command(name="retire", description="Retire an approved character")
     @app_commands.describe(character="Character name")
+    @app_commands.autocomplete(character=autocomplete.own_approved)
     async def retire(self, interaction: discord.Interaction, character: str) -> None:
         async with self.bot.db() as session:
             user = await characters_svc.get_or_create_user(session, interaction.user.id)
@@ -460,6 +463,7 @@ class CharacterCog(commands.Cog):
 
     @group.command(name="status", description="Show a character's status")
     @app_commands.describe(character="Character name")
+    @app_commands.autocomplete(character=autocomplete.own_any)
     async def status(self, interaction: discord.Interaction, character: str) -> None:
         async with self.bot.db() as session:
             user = await characters_svc.get_or_create_user(session, interaction.user.id)
@@ -489,6 +493,7 @@ class CharacterCog(commands.Cog):
     @app_commands.describe(
         character="Character name", url="Image URL (https, .png/.jpg/.jpeg/.webp/.gif)"
     )
+    @app_commands.autocomplete(character=autocomplete.own_any)
     async def avatar(self, interaction: discord.Interaction, character: str, url: str) -> None:
         try:
             characters_svc.validate_avatar_url(url)
@@ -516,6 +521,7 @@ class CharacterCog(commands.Cog):
     @app_commands.describe(
         character="Character name", prefix="1-12 chars, can't start with / or (("
     )
+    @app_commands.autocomplete(character=autocomplete.own_any)
     async def tag(self, interaction: discord.Interaction, character: str, prefix: str) -> None:
         try:
             characters_svc.validate_proxy_tag(prefix)

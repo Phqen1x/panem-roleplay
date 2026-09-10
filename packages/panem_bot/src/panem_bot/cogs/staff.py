@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import re
 
@@ -10,7 +11,7 @@ from discord import app_commands
 from discord.ext import commands
 from sqlalchemy import select
 
-from panem_bot import redis_keys
+from panem_bot import autocomplete, redis_keys
 from panem_bot.errors import ServiceError
 from panem_bot.services import jobs as jobs_svc
 from panem_bot.services.staff import log_staff_action
@@ -87,6 +88,7 @@ class StaffCog(commands.Cog):
 
     @group.command(name="kill", description="Kill a character")
     @app_commands.describe(character="Character name")
+    @app_commands.autocomplete(character=autocomplete.any_character)
     @app_commands.check(_is_staff)
     async def kill(self, interaction: discord.Interaction, character: str) -> None:
         async with self.bot.db() as session:
@@ -104,6 +106,7 @@ class StaffCog(commands.Cog):
 
     @group.command(name="note", description="Attach a staff note to a character")
     @app_commands.describe(character="Character name", text="Note text")
+    @app_commands.autocomplete(character=autocomplete.any_character)
     @app_commands.check(_is_staff)
     async def note(self, interaction: discord.Interaction, character: str, text: str) -> None:
         async with self.bot.db() as session:
@@ -121,6 +124,55 @@ class StaffCog(commands.Cog):
                 payload={"text": text},
             )
         await interaction.response.send_message("Note logged.", ephemeral=True)
+
+    @group.command(name="delete_pending", description="Delete a pending character application")
+    @app_commands.describe(
+        character="Character name (pending only)",
+        reason="Optional reason, sent to the applicant",
+    )
+    @app_commands.autocomplete(character=autocomplete.any_pending)
+    @app_commands.check(_is_staff)
+    async def delete_pending(
+        self, interaction: discord.Interaction, character: str, reason: str | None = None
+    ) -> None:
+        async with self.bot.db() as session:
+            row = (
+                await session.execute(select(Character).where(Character.name == character))
+            ).scalar_one_or_none()
+            if row is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            if row.status != CharacterStatus.PENDING.value:
+                await interaction.response.send_message(t("not_pending"), ephemeral=True)
+                return
+            char_id = row.id
+            char_name = row.name
+            user_row = await session.get(User, row.user_id)
+            applicant_discord_id = user_row.discord_id if user_row else None
+            await session.delete(row)
+            await log_staff_action(
+                session,
+                staff_discord_id=interaction.user.id,
+                action="delete_pending",
+                target=str(char_id),
+                payload={"name": char_name, "reason": reason},
+            )
+        await interaction.response.send_message(
+            f"Deleted pending application **{char_name}**.", ephemeral=True
+        )
+
+        member = (
+            interaction.guild.get_member(applicant_discord_id)
+            if interaction.guild and applicant_discord_id
+            else None
+        )
+        if member:
+            note = f" Reason: {reason}" if reason else ""
+            with contextlib.suppress(discord.Forbidden):
+                await member.send(
+                    f"Your pending character application for **{char_name}** was deleted by "
+                    f"staff.{note}"
+                )
 
     @scene_group.command(name="lock", description="Lock this scene")
     @app_commands.check(_is_staff)
@@ -191,6 +243,7 @@ class StaffCog(commands.Cog):
             '{"label": "Cut corners", "output_mult": 0.8, "risk": 0.1, "rep_delta": -1, "wage_mult": 1.1}]}'
         ),
     )
+    @app_commands.autocomplete(job_id=autocomplete.job_ids, district=autocomplete.districts)
     @app_commands.check(_is_staff)
     async def job_set(
         self, interaction: discord.Interaction, job_id: str, district: int, json_body: str
@@ -225,6 +278,7 @@ class StaffCog(commands.Cog):
         name="remove", description="Remove a job (from jobs.yaml or a prior override)"
     )
     @app_commands.describe(job_id="Job id to remove")
+    @app_commands.autocomplete(job_id=autocomplete.job_ids)
     @app_commands.check(_is_staff)
     async def job_remove(self, interaction: discord.Interaction, job_id: str) -> None:
         async with self.bot.db() as session:
@@ -240,6 +294,7 @@ class StaffCog(commands.Cog):
 
     @job_group.command(name="show", description="Show a job's current definition as JSON")
     @app_commands.describe(job_id="Job id")
+    @app_commands.autocomplete(job_id=autocomplete.job_ids)
     @app_commands.check(_is_staff)
     async def job_show(self, interaction: discord.Interaction, job_id: str) -> None:
         async with self.bot.db() as session:
@@ -252,6 +307,7 @@ class StaffCog(commands.Cog):
 
     @job_group.command(name="list", description="List jobs currently available in a district")
     @app_commands.describe(district="District number (0 = Capitol)")
+    @app_commands.autocomplete(district=autocomplete.districts)
     @app_commands.check(_is_staff)
     async def job_list(self, interaction: discord.Interaction, district: int) -> None:
         async with self.bot.db() as session:

@@ -11,7 +11,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from sqlalchemy import func, select
 
-from panem_bot import redis_keys
+from panem_bot import autocomplete, redis_keys
 from panem_bot.services import characters as characters_svc
 from panem_bot.services import scenes as scenes_svc
 from panem_bot.strings import t
@@ -200,6 +200,44 @@ class SceneCog(commands.Cog):
         )
         await interaction.followup.send(f"Scene created: {thread.mention}", ephemeral=True)
 
+    @start.autocomplete("location")
+    async def start_location_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        async with self.bot.db() as session:
+            district_id = await self._district_for_channel(session, interaction.channel_id)
+        if district_id is None:
+            return []
+        district = self.bot.content.district(district_id)
+        current_lower = current.lower()
+        matches = [
+            loc
+            for loc in district.locations
+            if current_lower in loc.name.lower() or current_lower in loc.id.lower()
+        ]
+        return [
+            app_commands.Choice(name=f"{loc.name} ({loc.id})", value=loc.id) for loc in matches[:25]
+        ]
+
+    @start.autocomplete("character")
+    async def start_character_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        async with self.bot.db() as session:
+            district_id = await self._district_for_channel(session, interaction.channel_id)
+            if district_id is None:
+                return []
+            user = await characters_svc.get_or_create_user(session, interaction.user.id)
+            stmt = select(Character.name).where(
+                Character.user_id == user.id,
+                Character.district_id == district_id,
+                Character.status == CharacterStatus.APPROVED.value,
+            )
+            if current:
+                stmt = stmt.where(Character.name.ilike(f"%{current}%"))
+            names = (await session.execute(stmt.limit(25))).scalars().all()
+        return [app_commands.Choice(name=name, value=name) for name in names]
+
     @group.command(name="close", description="Close this scene")
     async def close(self, interaction: discord.Interaction) -> None:
         thread = interaction.channel
@@ -276,8 +314,33 @@ class SceneCog(commands.Cog):
             await thread.edit(applied_tags=new_tags)
         await interaction.response.send_message(t("scene_moved", location=loc.name), ephemeral=True)
 
+    @move.autocomplete("location")
+    async def move_location_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        thread = interaction.channel
+        if not isinstance(thread, discord.Thread):
+            return []
+        async with self.bot.db() as session:
+            scene = (
+                await session.execute(select(Scene).where(Scene.thread_id == thread.id))
+            ).scalar_one_or_none()
+            if scene is None:
+                return []
+            district = self.bot.content.district(scene.district_id)
+        current_lower = current.lower()
+        matches = [
+            loc
+            for loc in district.locations
+            if current_lower in loc.name.lower() or current_lower in loc.id.lower()
+        ]
+        return [
+            app_commands.Choice(name=f"{loc.name} ({loc.id})", value=loc.id) for loc in matches[:25]
+        ]
+
     @group.command(name="invite", description="Invite a character or NPC into this scene")
     @app_commands.describe(character="Character to invite (mentions their player)")
+    @app_commands.autocomplete(character=autocomplete.any_approved)
     async def invite(self, interaction: discord.Interaction, character: str) -> None:
         thread = interaction.channel
         if not isinstance(thread, discord.Thread):
