@@ -495,16 +495,27 @@ class CharacterCog(commands.Cog):
                     )
                 )
             ).scalar_one_or_none()
-        if row is None:
-            await interaction.response.send_message(t("character_not_found"), ephemeral=True)
-            return
+            if row is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            job_name = "Unemployed"
+            if row.job_id:
+                job = await jobs_svc.get_job(session, self.bot.content, row.job_id)
+                job_name = job.title if job else row.job_id
+            location_name = "-"
+            if row.location_id:
+                district = self.bot.content.district(row.current_district_id)
+                location = next(
+                    (loc for loc in district.locations if loc.id == row.location_id), None
+                )
+                location_name = location.name if location else row.location_id
         embed = discord.Embed(title=row.name)
         embed.add_field(name="Status", value=row.status)
         embed.add_field(name="Money", value=str(row.money))
         embed.add_field(name="Hunger", value=str(row.hunger))
         embed.add_field(name="Health", value=str(row.health))
-        embed.add_field(name="Job", value=row.job_id or "Unemployed")
-        embed.add_field(name="Location", value=row.location_id or "-")
+        embed.add_field(name="Job", value=job_name)
+        embed.add_field(name="Location", value=location_name)
         embed.add_field(name="Reputation", value=f"{row.reputation:.1f}")
         embed.add_field(name="Jailed", value="Yes" if row.jailed_until_tick else "No")
         embed.add_field(name="Tesserae", value=str(row.tesserae_count))
