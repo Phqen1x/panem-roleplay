@@ -107,3 +107,14 @@ runs inside a rolled-back savepoint.
   merged view. Changes take effect immediately, no restart needed — every
   job lookup in the bot goes through `panem_bot.services.jobs`, which
   layers `job_overrides` (Postgres) on top of `jobs.yaml` at read time.
+- **Autocomplete** replaces free typing everywhere a command takes a
+  character name, job id, or district: `/character edit|retire|status|
+  avatar|tag`, `/staff kill|note|job set|job remove|job show|job list`, and
+  `/scene start|move|invite` all suggest matching options as you type,
+  scoped to what's relevant (e.g. `/character edit` only offers your own
+  pending submissions). See `panem_bot/autocomplete.py` for the
+  shared callbacks; district/scene-scoped ones live next to their commands
+  in `cogs/scenes.py`.
+- `/staff delete_pending <character> [reason]` removes a pending
+  application outright (optionally DMing the applicant why), for
+  submissions staff want gone rather than rejected-and-kept.
