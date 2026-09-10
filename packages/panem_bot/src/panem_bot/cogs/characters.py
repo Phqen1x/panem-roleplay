@@ -331,6 +331,97 @@ class CharacterCog(commands.Cog):
         lines = [f"**{c.name}** — District {c.district_id} — {c.status}" for c in rows]
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
+    @group.command(name="edit", description="Edit a pending character and resubmit for approval")
+    @app_commands.describe(character="Character name")
+    async def edit(self, interaction: discord.Interaction, character: str) -> None:
+        async with self.bot.db() as session:
+            user = await characters_svc.get_or_create_user(session, interaction.user.id)
+            row = (
+                await session.execute(
+                    select(Character).where(
+                        Character.user_id == user.id, Character.name == character
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            if row.status != CharacterStatus.PENDING.value:
+                await interaction.response.send_message(t("not_pending"), ephemeral=True)
+                return
+            character_id = row.id
+            district_id = row.district_id
+            prefill = {
+                "name": row.name,
+                "age": str(row.age),
+                "appearance": row.appearance,
+                "backstory": row.backstory,
+            }
+
+        from panem_bot.modals import CharacterDetailsModal
+
+        async def on_submit(
+            modal_interaction: discord.Interaction,
+            name: str,
+            age_str: str,
+            appearance: str,
+            backstory: str,
+        ) -> None:
+            await self._handle_edit_submit(
+                modal_interaction, character_id, district_id, name, age_str, appearance, backstory
+            )
+
+        max_age = characters_svc.max_age_for_district(district_id)
+        placeholder = f"{constants.CHARACTER_AGE_MIN}-{max_age}"
+        await interaction.response.send_modal(
+            CharacterDetailsModal(on_submit=on_submit, age_placeholder=placeholder, prefill=prefill)
+        )
+
+    async def _handle_edit_submit(
+        self,
+        interaction: discord.Interaction,
+        character_id: int,
+        district_id: int,
+        name: str,
+        age_str: str,
+        appearance: str,
+        backstory: str,
+    ) -> None:
+        try:
+            age = int(age_str)
+        except ValueError:
+            max_age = characters_svc.max_age_for_district(district_id)
+            await interaction.response.send_message(
+                t("invalid_age", min=constants.CHARACTER_AGE_MIN, max=max_age), ephemeral=True
+            )
+            return
+        try:
+            characters_svc.validate_character_fields(
+                district_id=district_id,
+                name=name,
+                age=age,
+                appearance=appearance,
+                backstory=backstory,
+            )
+        except ValidationFailed as exc:
+            await interaction.response.send_message(t(exc.reason_key, **exc.fmt), ephemeral=True)
+            return
+
+        async with self.bot.db() as session:
+            row = await characters_svc.get_character(session, character_id)
+            if row.status != CharacterStatus.PENDING.value:
+                await interaction.response.send_message(t("not_pending"), ephemeral=True)
+                return
+            row.name = name
+            row.age = age
+            row.appearance = appearance
+            row.backstory = backstory
+
+        await interaction.response.send_message(
+            f"**{name}** updated and resubmitted for approval.", ephemeral=True
+        )
+        await self._post_approval_embed(interaction, character_id)
+
     @group.command(name="retire", description="Retire an approved character")
     @app_commands.describe(character="Character name")
     async def retire(self, interaction: discord.Interaction, character: str) -> None:
