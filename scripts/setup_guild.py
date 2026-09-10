@@ -229,10 +229,8 @@ async def ensure_ambient_posts(
         if existing_scene is not None:
             thread = guild.get_channel_or_thread(existing_scene.thread_id)
             if thread is not None:
-                if isinstance(thread, discord.Thread):
-                    await thread.join()
-                    if thread.archived:
-                        await thread.edit(archived=False)
+                if isinstance(thread, discord.Thread) and thread.archived:
+                    await thread.edit(archived=False)
                 continue
             # DB row survived but the thread is gone -- fall through and recreate.
 
@@ -245,7 +243,11 @@ async def ensure_ambient_posts(
             applied_tags=applied,
         )
         thread = thread_with_message.thread
-        await thread.join()
+        # No explicit thread.join(): the bot is auto-added as a member by
+        # creating the thread, and forum threads are always public, so
+        # message events reach the bot regardless of membership either way.
+        # ~100 ambient threads across 13 districts made that PUT (thread
+        # membership) endpoint's rate limit the dominant cost of a run.
         try:
             await thread_with_message.message.pin(reason="Ambient post")
         except discord.HTTPException:
