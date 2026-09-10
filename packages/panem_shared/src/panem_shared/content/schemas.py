@@ -81,6 +81,16 @@ class District(BaseModel):
         if dupes:
             raise ValueError(f"district {self.id} has duplicate location ids: {sorted(dupes)}")
 
+        # Discord forum tags are keyed by name, not id (FR-SCN-1: "tag name =
+        # location name"), and Discord rejects duplicate tag names outright --
+        # two locations with different ids but the same name still collide.
+        names = [loc.name for loc in self.locations]
+        name_dupes = {n for n in names if names.count(n) > 1}
+        if name_dupes:
+            raise ValueError(
+                f"district {self.id} has duplicate location names: {sorted(name_dupes)}"
+            )
+
         missing_coords = [i for i in ids if i not in self.map.location_coords]
         if missing_coords:
             raise ValueError(
