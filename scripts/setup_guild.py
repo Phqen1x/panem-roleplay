@@ -129,15 +129,17 @@ async def ensure_forum(
             overwrites=overwrites,
         )
         return existing
+    # `Guild.create_forum()` has no `require_tag` parameter (only
+    # `ForumChannel.edit()` does), so it's set in a follow-up edit.
     forum = await guild.create_forum(
         name,
         category=category,
         available_tags=tags,
-        require_tag=True,
         default_auto_archive_duration=auto_archive_minutes,
         overwrites=overwrites,
         reason="Panem setup",
     )
+    await forum.edit(require_tag=True)
     logger.info("forum_created", name=name)
     return forum
 
