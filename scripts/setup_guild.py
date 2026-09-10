@@ -4,14 +4,17 @@
 Creates one shared "Roleplay" category containing:
   - a single `#ooc` text channel (open to everyone, pinned to the top) for
     all out-of-character chat guild-wide
-  - a Forum channel per district (`#dNN-rp`, 0 = Capitol, 1-12) with one tag
-    per location plus `Open`/`Closed`, `require_tag=True`, default
-    auto-archive = `SCENE_AUTO_ARCHIVE_MINUTES`, one webhook each, and a
-    pinned, never-archived ambient post per location
+  - a Forum channel per district (`district-N-roleplay`, or
+    `capitol-roleplay` for district 0) with one tag per location plus
+    `Open`/`Closed`, `require_tag=True`, default auto-archive =
+    `SCENE_AUTO_ARCHIVE_MINUTES`, one webhook each, and a pinned,
+    never-archived ambient post per location
 
 Plus, per district, a role (view/post that district's forum; everyone else
 can view only) -- and guild-wide staff role, approval channel, and log
-channel in their own "Panem Staff" category.
+channel in their own "Panem Staff" category. A district's role is normally
+found/created by name, but `.env`'s `CAPITOL_ROLE_ID` / `DISTRICT_N_ROLE_ID`
+(see `.env.example`) can point it at an existing role instead.
 
 Per-district OOC/board text channels and per-district categories from the
 Plan's original layout are intentionally not created: nothing in the bot
@@ -59,7 +62,9 @@ logger = get_logger(component="setup_guild")
 
 
 def forum_name(district: District) -> str:
-    return f"d{district.id}-rp"
+    if district.id == 0:
+        return "capitol-roleplay"
+    return f"district-{district.id}-roleplay"
 
 
 def _with_bot_access(
@@ -91,6 +96,23 @@ async def ensure_role(guild: discord.Guild, name: str) -> discord.Role:
     role = await guild.create_role(name=name, reason="Panem setup")
     logger.info("role_created", name=name)
     return role
+
+
+async def ensure_district_role(
+    guild: discord.Guild, settings: Settings, district: District
+) -> discord.Role:
+    """Uses the `.env` override (`CAPITOL_ROLE_ID` / `DISTRICT_N_ROLE_ID`) if
+    set, otherwise finds/creates a role named after the district."""
+    override_id = settings.role_id_override_for_district(district.id)
+    if override_id:
+        role = guild.get_role(override_id)
+        if role is None:
+            raise RuntimeError(
+                f"District {district.id} role override is set to {override_id}, "
+                f"but no role with that id exists in this guild."
+            )
+        return role
+    return await ensure_role(guild, district.name)
 
 
 async def ensure_category(guild: discord.Guild, name: str) -> discord.CategoryChannel:
@@ -282,8 +304,9 @@ async def setup_district(
     category: discord.CategoryChannel,
     staff_role: discord.Role,
     auto_archive_minutes: int,
+    settings: Settings,
 ) -> None:
-    role = await ensure_role(guild, district.name)
+    role = await ensure_district_role(guild, settings, district)
 
     forum_overwrites = _with_bot_access(
         guild,
@@ -419,6 +442,7 @@ async def run(settings: Settings) -> None:
                         category=rp_category,
                         staff_role=staff_role,
                         auto_archive_minutes=settings.scene_auto_archive_minutes,
+                        settings=settings,
                     )
                 logger.info(
                     "district_committed", district_id=district.id, district_name=district.name
