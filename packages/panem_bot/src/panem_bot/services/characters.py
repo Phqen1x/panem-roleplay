@@ -67,6 +67,32 @@ async def get_or_create_user(session: AsyncSession, discord_id: int) -> User:
     return user
 
 
+async def ensure_name_available(
+    session: AsyncSession, name: str, *, exclude_character_id: int | None = None
+) -> None:
+    """FR-CHR-2: names must be unique (case-insensitively) across every
+    character that is or was real. Every by-name lookup in the bot
+    (proxying, `/character edit`, `/staff kill`, ...) assumes at most one
+    match, so this must hold for pending/approved/retired/dead alike;
+    rejected applications never became real characters, so their names are
+    free to reuse. This mirrors the partial unique index on `characters`
+    and exists to give a friendly `ValidationFailed` instead of a raw
+    `IntegrityError` on the (rare) simultaneous-submission race.
+    """
+    stmt = (
+        select(func.count())
+        .select_from(Character)
+        .where(
+            func.lower(Character.name) == name.lower(),
+            Character.status != CharacterStatus.REJECTED.value,
+        )
+    )
+    if exclude_character_id is not None:
+        stmt = stmt.where(Character.id != exclude_character_id)
+    if int((await session.execute(stmt)).scalar_one()) > 0:
+        raise ValidationFailed("name_taken", name=name)
+
+
 async def _active_character_count(session: AsyncSession, user_id: int) -> int:
     result = await session.execute(
         select(func.count())
@@ -97,6 +123,7 @@ async def create_character(
     validate_character_fields(
         district_id=district_id, name=name, age=age, appearance=appearance, backstory=backstory
     )
+    await ensure_name_available(session, name)
 
     if await _active_character_count(session, user.id) >= max_characters:
         raise LimitReached("too_many_characters", limit=max_characters)

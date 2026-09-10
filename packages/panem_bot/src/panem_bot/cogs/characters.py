@@ -142,6 +142,13 @@ class CharacterCog(commands.Cog):
             return
 
         async with self.bot.db() as session:
+            try:
+                await characters_svc.ensure_name_available(session, name)
+            except ValidationFailed as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
             open_jobs = await self._open_legal_jobs(session, district_id)
 
         async def on_job_chosen(job_interaction: discord.Interaction, job_id: str | None) -> None:
@@ -413,6 +420,15 @@ class CharacterCog(commands.Cog):
             row = await characters_svc.get_character(session, character_id)
             if row.status != CharacterStatus.PENDING.value:
                 await interaction.response.send_message(t("not_pending"), ephemeral=True)
+                return
+            try:
+                await characters_svc.ensure_name_available(
+                    session, name, exclude_character_id=character_id
+                )
+            except ValidationFailed as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
                 return
             row.name = name
             row.age = age

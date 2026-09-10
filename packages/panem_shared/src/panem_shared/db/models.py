@@ -24,10 +24,12 @@ from sqlalchemy import (
     Boolean,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -99,7 +101,19 @@ class Character(TimestampMixin, Base):
 
     user: Mapped[User] = relationship(back_populates="characters")
 
-    __table_args__ = (UniqueConstraint("user_id", "proxy_tag", name="uq_character_user_proxy_tag"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "proxy_tag", name="uq_character_user_proxy_tag"),
+        # Case-insensitive, since every by-name lookup in the bot (proxying,
+        # `/character edit`, `/staff kill`, ...) assumes at most one match.
+        # Rejected applications never became real characters, so excluded --
+        # their names are free to reuse.
+        Index(
+            "uq_characters_name_ci",
+            text("lower(name)"),
+            unique=True,
+            postgresql_where=text("status <> 'rejected'"),
+        ),
+    )
 
 
 class Npc(TimestampMixin, Base):

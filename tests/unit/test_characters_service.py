@@ -217,6 +217,135 @@ class TestCreateCharacter:
             )
 
 
+class TestNameUniqueness:
+    async def test_duplicate_name_same_user_refused(self, db_session):
+        user = await make_user(db_session)
+        await characters_svc.create_character(
+            db_session,
+            user=user,
+            district_id=12,
+            name="Katniss",
+            age=16,
+            appearance="",
+            backstory="",
+            desired_job_id=None,
+            max_characters=3,
+        )
+        with pytest.raises(ValidationFailed):
+            await characters_svc.create_character(
+                db_session,
+                user=user,
+                district_id=12,
+                name="Katniss",
+                age=16,
+                appearance="",
+                backstory="",
+                desired_job_id=None,
+                max_characters=3,
+            )
+
+    async def test_duplicate_name_different_user_refused(self, db_session):
+        first_user = await make_user(db_session, discord_id=111)
+        second_user = await make_user(db_session, discord_id=222)
+        await characters_svc.create_character(
+            db_session,
+            user=first_user,
+            district_id=12,
+            name="Katniss",
+            age=16,
+            appearance="",
+            backstory="",
+            desired_job_id=None,
+            max_characters=3,
+        )
+        with pytest.raises(ValidationFailed):
+            await characters_svc.create_character(
+                db_session,
+                user=second_user,
+                district_id=12,
+                name="Katniss",
+                age=16,
+                appearance="",
+                backstory="",
+                desired_job_id=None,
+                max_characters=3,
+            )
+
+    async def test_duplicate_name_case_insensitive(self, db_session):
+        user = await make_user(db_session)
+        await characters_svc.create_character(
+            db_session,
+            user=user,
+            district_id=12,
+            name="Katniss",
+            age=16,
+            appearance="",
+            backstory="",
+            desired_job_id=None,
+            max_characters=3,
+        )
+        with pytest.raises(ValidationFailed):
+            await characters_svc.create_character(
+                db_session,
+                user=user,
+                district_id=12,
+                name="KATNISS",
+                age=16,
+                appearance="",
+                backstory="",
+                desired_job_id=None,
+                max_characters=3,
+            )
+
+    async def test_rejected_characters_name_is_reusable(self, db_session):
+        first_user = await make_user(db_session, discord_id=111)
+        second_user = await make_user(db_session, discord_id=222)
+        rejected = await characters_svc.create_character(
+            db_session,
+            user=first_user,
+            district_id=12,
+            name="Katniss",
+            age=16,
+            appearance="",
+            backstory="",
+            desired_job_id=None,
+            max_characters=3,
+        )
+        characters_svc.reject_character(rejected)
+        await db_session.flush()
+
+        character = await characters_svc.create_character(
+            db_session,
+            user=second_user,
+            district_id=12,
+            name="Katniss",
+            age=16,
+            appearance="",
+            backstory="",
+            desired_job_id=None,
+            max_characters=3,
+        )
+        assert character.name == "Katniss"
+
+    async def test_ensure_name_available_excludes_given_character(self, db_session):
+        user = await make_user(db_session)
+        character = await characters_svc.create_character(
+            db_session,
+            user=user,
+            district_id=12,
+            name="Katniss",
+            age=16,
+            appearance="",
+            backstory="",
+            desired_job_id=None,
+            max_characters=3,
+        )
+        # Renaming a character to its own current name must not self-conflict.
+        await characters_svc.ensure_name_available(
+            db_session, "Katniss", exclude_character_id=character.id
+        )
+
+
 class TestApproveCharacter:
     async def test_assigns_job_when_slot_free(self, db_session):
         user = await make_user(db_session)

@@ -10,6 +10,7 @@ STRINGS: dict[str, str] = {
     "banned": "You're not able to use this bot.",
     "too_many_characters": "You already have {limit} characters pending or approved.",
     "invalid_name": "Name must be 1-32 characters (letters, spaces, hyphens, apostrophes).",
+    "name_taken": "A character named **{name}** already exists. Please choose a different name.",
     "invalid_age": "Age must be between {min} and {max}.",
     "invalid_appearance": "Appearance must be {max} characters or fewer.",
     "invalid_backstory": "Backstory must be {max} characters or fewer.",
