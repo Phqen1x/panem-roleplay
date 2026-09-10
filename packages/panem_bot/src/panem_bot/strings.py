@@ -26,7 +26,7 @@ STRINGS: dict[str, str] = {
     "invalid_proxy_tag": "Tag must be 1-12 characters and can't start with `/` or `((`.",
     "proxy_tag_taken": "You're already using that tag for another character.",
     "character_created": "Character **{name}** submitted for approval.",
-    "character_approved_dm": "Your character **{name}** was approved! Welcome to District {district}.",
+    "character_approved_dm": "Your character **{name}** was approved! Welcome to {district}.",
     "character_rejected_dm": "Your character **{name}** was rejected: {note}",
     "character_changes_dm": "Staff requested changes to **{name}**: {note}\nUse `/character edit` to resubmit.",
     "character_retired": "**{name}** has been retired.",

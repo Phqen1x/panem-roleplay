@@ -85,7 +85,7 @@ locations:
   access_items:
   - capitol_pass
 map:
-  image: maps/d0.png
+  image: maps/capitol.png
   width: 1600
   height: 1000
   location_coords:

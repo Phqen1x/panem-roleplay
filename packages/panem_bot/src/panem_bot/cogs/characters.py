@@ -272,7 +272,9 @@ class CharacterCog(commands.Cog):
             await member.add_roles(role, reason="Character approved")
         if member:
             with contextlib.suppress(discord.Forbidden):
-                await member.send(t("character_approved_dm", name=char_name, district=district.id))
+                await member.send(
+                    t("character_approved_dm", name=char_name, district=district.name)
+                )
 
     async def _handle_changes(
         self, interaction: discord.Interaction, character_id: int, note: str
@@ -336,7 +338,10 @@ class CharacterCog(commands.Cog):
         if not rows:
             await interaction.response.send_message("You have no characters yet.", ephemeral=True)
             return
-        lines = [f"**{c.name}** — District {c.district_id} — {c.status}" for c in rows]
+        lines = [
+            f"**{c.name}** — {self.bot.content.district(c.district_id).name} — {c.status}"
+            for c in rows
+        ]
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
     @group.command(name="edit", description="Edit a pending character and resubmit for approval")

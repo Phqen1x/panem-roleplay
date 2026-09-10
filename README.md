@@ -97,7 +97,7 @@ runs inside a rolled-back savepoint.
   for now, since inventories don't exist until Phase 2 — only
   `access_jobs` and `is_victor` grant access in Phase 0.
 - **Character age**: reaping-eligible districts (1-12) are capped at age 18;
-  only the Capitol (district 0) may create adult characters, up to 80.
+  only The Capitol may create adult characters, up to 80.
 - **Jobs are editable in Discord**, not just in `data/jobs.yaml`: `/staff
   job set <job_id> <district> <json>` adds or overrides a job (same schema
   as `jobs.yaml`, validated the same way, including that its `workplace`

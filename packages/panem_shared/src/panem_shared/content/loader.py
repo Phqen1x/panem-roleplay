@@ -42,8 +42,9 @@ def _validate_list[T: BaseModel](path: Path, model: type[T], raw: object) -> lis
         raise ContentValidationError(str(path), exc.errors().__repr__()) from exc
 
 
-def load_districts(data_dir: Path) -> dict[int, District]:
+def load_districts(data_dir: Path) -> tuple[dict[int, District], dict[int, Path]]:
     districts: dict[int, District] = {}
+    paths: dict[int, Path] = {}
     districts_dir = data_dir / "districts"
     for path in sorted(districts_dir.glob("*.yaml")):
         raw = _read_yaml(path)
@@ -53,7 +54,8 @@ def load_districts(data_dir: Path) -> dict[int, District]:
                 str(path), f"duplicate district id {district.id} (already loaded from another file)"
             )
         districts[district.id] = district
-    return districts
+        paths[district.id] = path
+    return districts, paths
 
 
 def load_goods(data_dir: Path) -> dict[str, Good]:
@@ -107,7 +109,7 @@ class ContentBundle:
         return [job for job in self.jobs.values() if job.district == district_id]
 
 
-def _cross_validate(bundle: ContentBundle, data_dir: Path) -> None:
+def _cross_validate(bundle: ContentBundle, data_dir: Path, district_paths: dict[int, Path]) -> None:
     """Checks that span more than one file (job workplaces, route endpoints, ...)."""
     for job in bundle.jobs.values():
         district = bundle.districts.get(job.district)
@@ -130,18 +132,19 @@ def _cross_validate(bundle: ContentBundle, data_dir: Path) -> None:
             )
 
     for district in bundle.districts.values():
+        district_path = district_paths[district.id].as_posix()
         for loc in district.locations:
             for job_id in loc.job_ids:
                 if job_id not in bundle.jobs:
                     raise ContentValidationError(
-                        (data_dir / "districts" / f"d{district.id}.yaml").as_posix(),
+                        district_path,
                         f"location {loc.id!r} references job_id {job_id!r}, which is not "
                         "defined in jobs.yaml",
                     )
             for job_id in loc.access_jobs:
                 if job_id not in bundle.jobs:
                     raise ContentValidationError(
-                        (data_dir / "districts" / f"d{district.id}.yaml").as_posix(),
+                        district_path,
                         f"location {loc.id!r} access_jobs references undefined job_id {job_id!r}",
                     )
 
@@ -166,11 +169,12 @@ def load_content(data_dir: Path) -> ContentBundle:
     that need "keep the previous content on failure" semantics (NFR-12)
     should catch this around the whole call.
     """
+    districts, district_paths = load_districts(data_dir)
     bundle = ContentBundle(
-        districts=load_districts(data_dir),
+        districts=districts,
         goods=load_goods(data_dir),
         jobs=load_jobs(data_dir),
         routes=load_routes(data_dir),
     )
-    _cross_validate(bundle, data_dir)
+    _cross_validate(bundle, data_dir, district_paths)
     return bundle

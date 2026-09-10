@@ -5,7 +5,7 @@ Creates one shared "Roleplay" category containing:
   - a single `#ooc` text channel (open to everyone, pinned to the top) for
     all out-of-character chat guild-wide
   - a Forum channel per district (`district-N-roleplay`, or
-    `capitol-roleplay` for district 0) with one tag per location plus
+    `capitol-roleplay` for The Capitol) with one tag per location plus
     `Open`/`Closed`, `require_tag=True`, default auto-archive =
     `SCENE_AUTO_ARCHIVE_MINUTES`, one webhook each, and a pinned,
     never-archived ambient post per location
@@ -56,7 +56,9 @@ OOC_CHANNEL_NAME = "ooc"
 STAFF_CATEGORY_NAME = "Panem Staff"
 APPROVAL_CHANNEL_NAME = "character-approvals"
 LOG_CHANNEL_NAME = "panem-log"
-GLOBAL_DISTRICT_SENTINEL = 0  # approval/log/ooc channels are guild-wide, filed under district 0
+GLOBAL_DISTRICT_SENTINEL = (
+    0  # approval/log/ooc channels are guild-wide, filed under the Capitol's id
+)
 
 logger = get_logger(component="setup_guild")
 
