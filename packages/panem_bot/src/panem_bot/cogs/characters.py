@@ -252,7 +252,7 @@ class CharacterCog(commands.Cog):
                     session, self.bot.content, district.id
                 )
                 job_slots = {j.id: j.slots for j in district_jobs}
-                characters_svc.approve_character(
+                await characters_svc.approve_character(
                     session, character, district=district, job_slots=job_slots
                 )
             except ServiceError:

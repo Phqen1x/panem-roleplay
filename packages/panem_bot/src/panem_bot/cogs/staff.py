@@ -233,7 +233,7 @@ class StaffCog(commands.Cog):
     )
     @app_commands.describe(
         job_id="Job id (reuses an existing id to edit it, e.g. 'miner'; a new id adds a job)",
-        district="District number (0 = Capitol)",
+        district="District number (0 = The Capitol)",
         json_body=(
             "Job fields as JSON, e.g. "
             '{"title": "Baker", "workplace": "merchant_row", "wage": 13, '
@@ -306,7 +306,7 @@ class StaffCog(commands.Cog):
         await interaction.response.send_message(f"```json\n{body}\n```", ephemeral=True)
 
     @job_group.command(name="list", description="List jobs currently available in a district")
-    @app_commands.describe(district="District number (0 = Capitol)")
+    @app_commands.describe(district="District number (0 = The Capitol)")
     @app_commands.autocomplete(district=autocomplete.districts)
     @app_commands.check(_is_staff)
     async def job_list(self, interaction: discord.Interaction, district: int) -> None:
