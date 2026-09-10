@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
 """Idempotent one-time (and re-runnable) guild setup (Plan §3.1 deliverable 2).
 
-For every district (0 = Capitol, 1-12) creates:
-  - a category
-  - a Forum channel (`#dNN-rp`) with one tag per location plus `Open`/`Closed`,
-    `require_tag=True`, default auto-archive = `SCENE_AUTO_ARCHIVE_MINUTES`
-  - `#dNN-ooc` and `#dNN-board` text channels
-  - a district role (view/post the forum; everyone else can view only)
-  - one webhook on the forum channel
-  - a pinned, never-archived ambient post per location
+Creates one shared "Roleplay" category containing:
+  - a single `#ooc` text channel (open to everyone, pinned to the top) for
+    all out-of-character chat guild-wide
+  - a Forum channel per district (`#dNN-rp`, 0 = Capitol, 1-12) with one tag
+    per location plus `Open`/`Closed`, `require_tag=True`, default
+    auto-archive = `SCENE_AUTO_ARCHIVE_MINUTES`, one webhook each, and a
+    pinned, never-archived ambient post per location
 
-Plus guild-wide staff role, approval channel, and log channel.
+Plus, per district, a role (view/post that district's forum; everyone else
+can view only) -- and guild-wide staff role, approval channel, and log
+channel in their own "Panem Staff" category.
+
+Per-district OOC/board text channels and per-district categories from the
+Plan's original layout are intentionally not created: nothing in the bot
+writes to a bulletin board yet (that's Phase 2 economy content), and a
+single guild-wide OOC channel with player-made threads covers OOC chat
+without 13 near-empty channels.
 
 Every Discord object created is recorded in `discord_channels` /
 `scenes` (kind=ambient) so re-running this script is a no-op for anything
@@ -41,28 +48,18 @@ DATA_DIR = REPO_ROOT / "data"
 
 OPEN_TAG = "Open"
 CLOSED_TAG = "Closed"
+RP_CATEGORY_NAME = "Roleplay"
+OOC_CHANNEL_NAME = "ooc"
 STAFF_CATEGORY_NAME = "Panem Staff"
 APPROVAL_CHANNEL_NAME = "character-approvals"
 LOG_CHANNEL_NAME = "panem-log"
-GLOBAL_DISTRICT_SENTINEL = 0  # approval/log channels are guild-wide, filed under district 0
+GLOBAL_DISTRICT_SENTINEL = 0  # approval/log/ooc channels are guild-wide, filed under district 0
 
 logger = get_logger(component="setup_guild")
 
 
-def district_category_name(district: District) -> str:
-    return district.name
-
-
 def forum_name(district: District) -> str:
     return f"d{district.id}-rp"
-
-
-def ooc_name(district: District) -> str:
-    return f"d{district.id}-ooc"
-
-
-def board_name(district: District) -> str:
-    return f"d{district.id}-board"
 
 
 def _with_bot_access(
@@ -110,15 +107,28 @@ async def ensure_text_channel(
     category: discord.CategoryChannel,
     name: str,
     *,
-    overwrites: dict[discord.Role | discord.Member, discord.PermissionOverwrite],
+    overwrites: dict[discord.Role | discord.Member, discord.PermissionOverwrite] | None = None,
+    position: int | None = None,
 ) -> discord.TextChannel:
+    """`overwrites=None` leaves the channel open (inherits the category's/
+    guild's default permissions) -- used for the single guild-wide `#ooc`
+    channel, which is deliberately unrestricted."""
     existing = discord.utils.get(category.text_channels, name=name)
     if existing is not None:
-        await existing.edit(overwrites=overwrites)
+        edit_kwargs: dict[str, object] = {}
+        if overwrites is not None:
+            edit_kwargs["overwrites"] = overwrites
+        if position is not None:
+            edit_kwargs["position"] = position
+        if edit_kwargs:
+            await existing.edit(**edit_kwargs)
         return existing
-    channel = await guild.create_text_channel(
-        name, category=category, overwrites=overwrites, reason="Panem setup"
-    )
+    create_kwargs: dict[str, object] = {"category": category, "reason": "Panem setup"}
+    if overwrites is not None:
+        create_kwargs["overwrites"] = overwrites
+    if position is not None:
+        create_kwargs["position"] = position
+    channel = await guild.create_text_channel(name, **create_kwargs)
     logger.info("text_channel_created", name=name)
     return channel
 
@@ -267,11 +277,11 @@ async def setup_district(
     guild: discord.Guild,
     district: District,
     *,
+    category: discord.CategoryChannel,
     staff_role: discord.Role,
     auto_archive_minutes: int,
 ) -> None:
     role = await ensure_role(guild, district.name)
-    category = await ensure_category(guild, district_category_name(district))
 
     forum_overwrites = _with_bot_access(
         guild,
@@ -304,26 +314,6 @@ async def setup_district(
         kind=ChannelKind.FORUM,
         channel_id=forum.id,
         webhook=webhook,
-    )
-
-    text_overwrites = _with_bot_access(
-        guild,
-        {
-            guild.default_role: discord.PermissionOverwrite(view_channel=True, send_messages=False),
-            role: discord.PermissionOverwrite(view_channel=True, send_messages=True),
-            staff_role: discord.PermissionOverwrite(view_channel=True, send_messages=True),
-        },
-    )
-    ooc = await ensure_text_channel(guild, category, ooc_name(district), overwrites=text_overwrites)
-    await upsert_discord_channel(
-        session, district_id=district.id, kind=ChannelKind.OOC, channel_id=ooc.id, webhook=None
-    )
-
-    board = await ensure_text_channel(
-        guild, category, board_name(district), overwrites=text_overwrites
-    )
-    await upsert_discord_channel(
-        session, district_id=district.id, kind=ChannelKind.BOARD, channel_id=board.id, webhook=None
     )
 
     await ensure_ambient_posts(session, guild, forum, district)
@@ -364,6 +354,23 @@ async def setup_staff_channels(session, guild: discord.Guild, staff_role: discor
     )
 
 
+async def setup_roleplay_category(session, guild: discord.Guild) -> discord.CategoryChannel:
+    """The shared category holding `#ooc` (pinned to the top) and every
+    district's forum. `#ooc` is deliberately open -- no overwrites -- so
+    the whole guild can use it for OOC chat, with player-made threads as
+    needed."""
+    category = await ensure_category(guild, RP_CATEGORY_NAME)
+    ooc = await ensure_text_channel(guild, category, OOC_CHANNEL_NAME, position=0)
+    await upsert_discord_channel(
+        session,
+        district_id=GLOBAL_DISTRICT_SENTINEL,
+        kind=ChannelKind.OOC,
+        channel_id=ooc.id,
+        webhook=None,
+    )
+    return category
+
+
 async def run(settings: Settings) -> None:
     content = load_content(DATA_DIR)
     engine = make_engine(settings)
@@ -397,12 +404,17 @@ async def run(settings: Settings) -> None:
                 await setup_staff_channels(session, guild, staff_role)
             logger.info("staff_channels_committed")
 
+            async with session_factory() as session, session.begin():
+                rp_category = await setup_roleplay_category(session, guild)
+            logger.info("roleplay_category_committed")
+
             for district in sorted(content.districts.values(), key=lambda d: d.id):
                 async with session_factory() as session, session.begin():
                     await setup_district(
                         session,
                         guild,
                         district,
+                        category=rp_category,
                         staff_role=staff_role,
                         auto_archive_minutes=settings.scene_auto_archive_minutes,
                     )
