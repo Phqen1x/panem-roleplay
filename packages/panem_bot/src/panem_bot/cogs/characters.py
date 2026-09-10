@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 
 from panem_bot.errors import ServiceError, ValidationFailed
 from panem_bot.services import characters as characters_svc
+from panem_bot.services import jobs as jobs_svc
 from panem_bot.strings import t
 from panem_bot.views import (
     CHAR_ID_FOOTER_PREFIX,
@@ -18,6 +19,7 @@ from panem_bot.views import (
     DistrictSelectView,
     JobSelectView,
 )
+from panem_shared import constants
 from panem_shared.db.models import Character, User
 from panem_shared.enums import CharacterStatus
 
@@ -31,14 +33,16 @@ class CharacterCog(commands.Cog):
         self.bot = bot
 
     async def cog_load(self) -> None:
-        self.bot.add_view(
-            ApprovalView(
-                is_staff=self._interaction_is_staff,
-                on_approve=self._handle_approve,
-                on_changes=self._handle_changes,
-                on_reject=self._handle_reject,
-            )
+        # `add_view` alone only makes the bot route interactions for these
+        # static custom_ids; a message still needs `view=self.approval_view`
+        # passed explicitly when sent, or it has no components at all.
+        self.approval_view = ApprovalView(
+            is_staff=self._interaction_is_staff,
+            on_approve=self._handle_approve,
+            on_changes=self._handle_changes,
+            on_reject=self._handle_reject,
         )
+        self.bot.add_view(self.approval_view)
 
     async def _interaction_is_staff(self, interaction: discord.Interaction) -> bool:
         if not isinstance(interaction.user, discord.Member):
@@ -101,7 +105,11 @@ class CharacterCog(commands.Cog):
                 modal_interaction, district_id, name, age_str, appearance, backstory
             )
 
-        await interaction.response.send_modal(CharacterDetailsModal(on_submit=on_submit))
+        max_age = characters_svc.max_age_for_district(district_id)
+        placeholder = f"{constants.CHARACTER_AGE_MIN}-{max_age}"
+        await interaction.response.send_modal(
+            CharacterDetailsModal(on_submit=on_submit, age_placeholder=placeholder)
+        )
 
     async def _prompt_job(
         self,
@@ -115,13 +123,18 @@ class CharacterCog(commands.Cog):
         try:
             age = int(age_str)
         except ValueError:
+            max_age = characters_svc.max_age_for_district(district_id)
             await interaction.response.send_message(
-                t("invalid_age", min=12, max=80), ephemeral=True
+                t("invalid_age", min=constants.CHARACTER_AGE_MIN, max=max_age), ephemeral=True
             )
             return
         try:
             characters_svc.validate_character_fields(
-                name=name, age=age, appearance=appearance, backstory=backstory
+                district_id=district_id,
+                name=name,
+                age=age,
+                appearance=appearance,
+                backstory=backstory,
             )
         except ValidationFailed as exc:
             await interaction.response.send_message(t(exc.reason_key, **exc.fmt), ephemeral=True)
@@ -142,7 +155,8 @@ class CharacterCog(commands.Cog):
         )
 
     async def _open_legal_jobs(self, session, district_id: int) -> list[tuple[str, str]]:
-        jobs = [j for j in self.bot.content.jobs_for_district(district_id) if j.legal]
+        all_district_jobs = await jobs_svc.jobs_for_district(session, self.bot.content, district_id)
+        jobs = [j for j in all_district_jobs if j.legal]
         if not jobs:
             return []
         counts = await session.execute(
@@ -199,7 +213,11 @@ class CharacterCog(commands.Cog):
         async with self.bot.db() as session:
             character = await characters_svc.get_character(session, character_id)
             district = self.bot.content.district(character.district_id)
-            job = self.bot.content.jobs.get(character.job_id) if character.job_id else None
+            job = (
+                await jobs_svc.get_job(session, self.bot.content, character.job_id)
+                if character.job_id
+                else None
+            )
             embed = discord.Embed(
                 title=f"Character Application: {character.name}", color=discord.Color.blurple()
             )
@@ -213,7 +231,7 @@ class CharacterCog(commands.Cog):
             embed.add_field(name="Backstory", value=character.backstory or "-", inline=False)
             embed.set_footer(text=f"{CHAR_ID_FOOTER_PREFIX}{character.id}")
 
-        await channel.send(embed=embed)
+        await channel.send(embed=embed, view=self.approval_view)
 
     # --------------------------------------------------------- approval flow
 
@@ -222,7 +240,10 @@ class CharacterCog(commands.Cog):
             try:
                 character = await characters_svc.get_character(session, character_id)
                 district = self.bot.content.district(character.district_id)
-                job_slots = {j.id: j.slots for j in self.bot.content.jobs_for_district(district.id)}
+                district_jobs = await jobs_svc.jobs_for_district(
+                    session, self.bot.content, district.id
+                )
+                job_slots = {j.id: j.slots for j in district_jobs}
                 characters_svc.approve_character(
                     session, character, district=district, job_slots=job_slots
                 )

@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 
 import discord
 
-CHAR_ID_FOOTER_PREFIX = "char_id:"
+CHAR_ID_FOOTER_PREFIX = "Character Number: "
 
 
 def character_id_from_message(message: discord.Message) -> int | None:

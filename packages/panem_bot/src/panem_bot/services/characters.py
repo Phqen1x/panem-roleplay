@@ -16,14 +16,23 @@ from panem_shared.enums import CharacterStatus, ShiftResult
 _NAME_RE = re.compile(r"^[A-Za-z][A-Za-z '\-]{0,31}$")
 
 
-def validate_character_fields(*, name: str, age: int, appearance: str, backstory: str) -> None:
+def max_age_for_district(district_id: int) -> int:
+    """Only the Capitol is exempt from the reaping age range -- every other
+    district's characters must be reaping-eligible age (12-18)."""
+    if district_id == constants.CAPITOL_DISTRICT_ID:
+        return constants.CHARACTER_AGE_MAX
+    return constants.NON_CAPITOL_AGE_MAX
+
+
+def validate_character_fields(
+    *, district_id: int, name: str, age: int, appearance: str, backstory: str
+) -> None:
     """Raise `ValidationFailed` on the first FR-CHR-2 violation."""
     if not _NAME_RE.match(name) or len(name) > constants.CHARACTER_NAME_MAX_LEN:
         raise ValidationFailed("invalid_name")
-    if not (constants.CHARACTER_AGE_MIN <= age <= constants.CHARACTER_AGE_MAX):
-        raise ValidationFailed(
-            "invalid_age", min=constants.CHARACTER_AGE_MIN, max=constants.CHARACTER_AGE_MAX
-        )
+    max_age = max_age_for_district(district_id)
+    if not (constants.CHARACTER_AGE_MIN <= age <= max_age):
+        raise ValidationFailed("invalid_age", min=constants.CHARACTER_AGE_MIN, max=max_age)
     if len(appearance) > constants.CHARACTER_APPEARANCE_MAX_LEN:
         raise ValidationFailed("invalid_appearance", max=constants.CHARACTER_APPEARANCE_MAX_LEN)
     if len(backstory) > constants.CHARACTER_BACKSTORY_MAX_LEN:
@@ -85,7 +94,9 @@ async def create_character(
     if user.banned_at is not None:
         raise NotAllowed("banned")
 
-    validate_character_fields(name=name, age=age, appearance=appearance, backstory=backstory)
+    validate_character_fields(
+        district_id=district_id, name=name, age=age, appearance=appearance, backstory=backstory
+    )
 
     if await _active_character_count(session, user.id) >= max_characters:
         raise LimitReached("too_many_characters", limit=max_characters)

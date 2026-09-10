@@ -11,6 +11,8 @@ from discord.ext import commands
 from sqlalchemy import select
 
 from panem_bot import redis_keys
+from panem_bot.errors import ServiceError
+from panem_bot.services import jobs as jobs_svc
 from panem_bot.services.staff import log_staff_action
 from panem_bot.strings import t
 from panem_shared.db.models import Character, Scene, User
@@ -36,6 +38,9 @@ class StaffCog(commands.Cog):
     group = app_commands.Group(name="staff", description="Staff tools", default_permissions=None)
     scene_group = app_commands.Group(
         name="scene", description="Staff scene management", parent=group
+    )
+    job_group = app_commands.Group(
+        name="job", description="Edit jobs per district without touching code", parent=group
     )
 
     @group.command(name="whois", description="Look up who a proxied message belongs to")
@@ -170,6 +175,94 @@ class StaffCog(commands.Cog):
             await interaction.response.send_message("Scene cog not loaded.", ephemeral=True)
             return
         await scenes_cog.move.callback(scenes_cog, interaction, location)  # type: ignore[attr-defined]
+
+    @job_group.command(
+        name="set", description="Add or edit a job for a district (no redeploy needed)"
+    )
+    @app_commands.describe(
+        job_id="Job id (reuses an existing id to edit it, e.g. 'miner'; a new id adds a job)",
+        district="District number (0 = Capitol)",
+        json_body=(
+            "Job fields as JSON, e.g. "
+            '{"title": "Baker", "workplace": "merchant_row", "wage": 13, '
+            '"shift_phase": "morning", "slots": 6, "legal": true, "options": ['
+            '{"label": "Bake extra", "output_mult": 1.2, "risk": 0.05, "rep_delta": 1, "wage_mult": 1.0}, '
+            '{"label": "Standard batch", "output_mult": 1.0, "risk": 0.0, "rep_delta": 0, "wage_mult": 1.0}, '
+            '{"label": "Cut corners", "output_mult": 0.8, "risk": 0.1, "rep_delta": -1, "wage_mult": 1.1}]}'
+        ),
+    )
+    @app_commands.check(_is_staff)
+    async def job_set(
+        self, interaction: discord.Interaction, job_id: str, district: int, json_body: str
+    ) -> None:
+        async with self.bot.db() as session:
+            try:
+                job = await jobs_svc.set_job(
+                    session,
+                    content=self.bot.content,
+                    job_id=job_id,
+                    district_id=district,
+                    raw_json=json_body,
+                    staff_discord_id=interaction.user.id,
+                )
+            except ServiceError as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+            await log_staff_action(
+                session,
+                staff_discord_id=interaction.user.id,
+                action="job_set",
+                target=job_id,
+                payload={"district": district},
+            )
+        await interaction.response.send_message(
+            t("job_set_ok", job_id=job.id, district_id=job.district), ephemeral=True
+        )
+
+    @job_group.command(
+        name="remove", description="Remove a job (from jobs.yaml or a prior override)"
+    )
+    @app_commands.describe(job_id="Job id to remove")
+    @app_commands.check(_is_staff)
+    async def job_remove(self, interaction: discord.Interaction, job_id: str) -> None:
+        async with self.bot.db() as session:
+            existing = await jobs_svc.get_job(session, self.bot.content, job_id)
+            if existing is None:
+                await interaction.response.send_message(t("job_not_found"), ephemeral=True)
+                return
+            await jobs_svc.remove_job(session, job_id=job_id, staff_discord_id=interaction.user.id)
+            await log_staff_action(
+                session, staff_discord_id=interaction.user.id, action="job_remove", target=job_id
+            )
+        await interaction.response.send_message(t("job_removed_ok", job_id=job_id), ephemeral=True)
+
+    @job_group.command(name="show", description="Show a job's current definition as JSON")
+    @app_commands.describe(job_id="Job id")
+    @app_commands.check(_is_staff)
+    async def job_show(self, interaction: discord.Interaction, job_id: str) -> None:
+        async with self.bot.db() as session:
+            job = await jobs_svc.get_job(session, self.bot.content, job_id)
+        if job is None:
+            await interaction.response.send_message(t("job_not_found"), ephemeral=True)
+            return
+        body = job.model_dump_json(indent=2, by_alias=True)
+        await interaction.response.send_message(f"```json\n{body}\n```", ephemeral=True)
+
+    @job_group.command(name="list", description="List jobs currently available in a district")
+    @app_commands.describe(district="District number (0 = Capitol)")
+    @app_commands.check(_is_staff)
+    async def job_list(self, interaction: discord.Interaction, district: int) -> None:
+        async with self.bot.db() as session:
+            jobs = await jobs_svc.jobs_for_district(session, self.bot.content, district)
+        if not jobs:
+            await interaction.response.send_message(
+                f"No jobs in district {district}.", ephemeral=True
+            )
+            return
+        lines = [f"**{j.id}** - {j.title} @ {j.workplace} ({j.slots} slots)" for j in jobs]
+        await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
 
 async def setup(bot: commands.Bot) -> None:

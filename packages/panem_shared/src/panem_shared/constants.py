@@ -62,6 +62,10 @@ CHARACTER_APPEARANCE_MAX_LEN = 400
 CHARACTER_BACKSTORY_MAX_LEN = 1500
 CHARACTER_AGE_MIN = 12
 CHARACTER_AGE_MAX = 80
+# Reaping-eligible districts (all but the Capitol) may only create
+# characters in the reaping age range; adult characters are Capitol-only.
+NON_CAPITOL_AGE_MAX = 18
+CAPITOL_DISTRICT_ID = 0
 PROXY_TAG_MIN_LEN = 1
 PROXY_TAG_MAX_LEN = 12
 AVATAR_URL_MAX_LEN = 512

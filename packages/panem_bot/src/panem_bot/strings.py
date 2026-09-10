@@ -46,6 +46,14 @@ STRINGS: dict[str, str] = {
     "npc_not_here": "{name} isn't at this location right now.",
     # Travel/locations (FR-LOC, partial in Phase 0)
     "location_restricted": "You don't have access to that location.",
+    # Staff job editing (/staff job ...)
+    "job_bad_json": "Not valid JSON: {detail}",
+    "job_schema_invalid": "Doesn't match the job schema: {detail}",
+    "job_bad_district": "{detail}",
+    "job_bad_workplace": "{detail}",
+    "job_not_found": "No job with that id (checked jobs.yaml and staff overrides).",
+    "job_set_ok": "Job **{job_id}** saved for district {district_id}.",
+    "job_removed_ok": "Job **{job_id}** removed.",
     # Generic
     "world_paused": "The world is paused.",
     "unexpected_error": "Something went wrong (ref `{ref}`).",

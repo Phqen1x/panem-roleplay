@@ -259,6 +259,25 @@ class JobHistory(Base):
     reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
 
+class JobOverride(TimestampMixin, Base):
+    """Staff-edited job definitions layered on top of `jobs.yaml` (no code
+    change / redeploy needed to add, edit, or remove a job per district).
+
+    `id` reuses the same job-id namespace as the content file: a row whose
+    id matches a YAML job overrides it; a new id adds a job that doesn't
+    exist in YAML at all. `disabled=True` removes the job from the merged
+    view regardless of whether it originated in YAML or here.
+    """
+
+    __tablename__ = "job_overrides"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    district_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    disabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    updated_by_discord_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+
 class WorldEvent(TimestampMixin, Base):
     __tablename__ = "world_events"
 

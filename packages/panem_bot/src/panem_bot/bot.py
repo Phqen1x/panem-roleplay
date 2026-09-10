@@ -12,7 +12,9 @@ from discord.ext import commands
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from panem_bot.outbound import OutboundQueue
+from panem_bot.services import jobs as jobs_svc
 from panem_shared.content.loader import ContentBundle, load_content
+from panem_shared.content.schemas import Job
 from panem_shared.db.session import make_engine, make_session_factory
 from panem_shared.logging import get_logger
 from panem_shared.settings import Settings
@@ -77,3 +79,14 @@ class PanemBot(commands.Bot):
 
     async def is_staff(self, member: discord.Member) -> bool:
         return any(role.id == self.settings.staff_role_id for role in member.roles)
+
+    async def all_jobs(self) -> dict[str, Job]:
+        """`jobs.yaml` with staff-edited `job_overrides` layered on top
+        (`/staff job set|remove`) -- always the source of truth for job
+        lookups, never `self.content.jobs` directly."""
+        async with self.db() as session:
+            return await jobs_svc.get_all_jobs(session, self.content)
+
+    async def jobs_for_district(self, district_id: int) -> list[Job]:
+        jobs = await self.all_jobs()
+        return [job for job in jobs.values() if job.district == district_id]

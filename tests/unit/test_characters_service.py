@@ -45,39 +45,62 @@ async def make_user(session, discord_id: int = 111):
 class TestValidateCharacterFields:
     def test_valid(self):
         characters_svc.validate_character_fields(
-            name="Katniss", age=16, appearance="Braid", backstory="Hunts."
+            district_id=12, name="Katniss", age=16, appearance="Braid", backstory="Hunts."
         )
 
     def test_bad_name_numbers(self):
         with pytest.raises(ValidationFailed):
             characters_svc.validate_character_fields(
-                name="1234", age=16, appearance="", backstory=""
+                district_id=12, name="1234", age=16, appearance="", backstory=""
             )
 
     def test_bad_name_too_long(self):
         with pytest.raises(ValidationFailed):
             characters_svc.validate_character_fields(
-                name="A" * 33, age=16, appearance="", backstory=""
+                district_id=12, name="A" * 33, age=16, appearance="", backstory=""
             )
 
     @pytest.mark.parametrize("age", [11, 81, 0, -1])
     def test_bad_age(self, age):
         with pytest.raises(ValidationFailed):
             characters_svc.validate_character_fields(
-                name="Ok", age=age, appearance="", backstory=""
+                district_id=0, name="Ok", age=age, appearance="", backstory=""
             )
 
     def test_appearance_too_long(self):
         with pytest.raises(ValidationFailed):
             characters_svc.validate_character_fields(
-                name="Ok", age=16, appearance="x" * 401, backstory=""
+                district_id=12, name="Ok", age=16, appearance="x" * 401, backstory=""
             )
 
     def test_backstory_too_long(self):
         with pytest.raises(ValidationFailed):
             characters_svc.validate_character_fields(
-                name="Ok", age=16, appearance="", backstory="x" * 1501
+                district_id=12, name="Ok", age=16, appearance="", backstory="x" * 1501
             )
+
+
+class TestCapitolOnlyAdults:
+    def test_capitol_allows_adult(self):
+        characters_svc.validate_character_fields(
+            district_id=0, name="Plutarch", age=45, appearance="", backstory=""
+        )
+
+    def test_non_capitol_rejects_adult(self):
+        with pytest.raises(ValidationFailed):
+            characters_svc.validate_character_fields(
+                district_id=12, name="Haymitch", age=45, appearance="", backstory=""
+            )
+
+    def test_non_capitol_allows_reaping_age(self):
+        characters_svc.validate_character_fields(
+            district_id=12, name="Katniss", age=18, appearance="", backstory=""
+        )
+
+    def test_max_age_for_district(self):
+        assert characters_svc.max_age_for_district(0) == 80
+        assert characters_svc.max_age_for_district(1) == 18
+        assert characters_svc.max_age_for_district(12) == 18
 
 
 class TestValidateAvatarUrl:

@@ -89,8 +89,21 @@ runs inside a rolled-back savepoint.
   `LOG_CHANNEL_ID`), matching the Plan's `.env` schema; `setup_guild.py`
   creates them and prints the ids to copy in.
 - **District roles** are looked up by exact name match (the district's
-  `name` field in its YAML) rather than a stored role id, so the district
-  YAMLs and `setup_guild.py` must stay in agreement on naming.
+  `name` field in its YAML) rather than a stored role id, unless a
+  `CAPITOL_ROLE_ID` / `DISTRICT_N_ROLE_ID` override is set in `.env` (see
+  `.env.example`), in which case `setup_guild.py` uses that existing role
+  instead of finding/creating one by name.
 - Item-gated `restricted` locations (`access_items`) always deny access
   for now, since inventories don't exist until Phase 2 — only
   `access_jobs` and `is_victor` grant access in Phase 0.
+- **Character age**: reaping-eligible districts (1-12) are capped at age 18;
+  only the Capitol (district 0) may create adult characters, up to 80.
+- **Jobs are editable in Discord**, not just in `data/jobs.yaml`: `/staff
+  job set <job_id> <district> <json>` adds or overrides a job (same schema
+  as `jobs.yaml`, validated the same way, including that its `workplace`
+  is a real location in that district), `/staff job remove <job_id>` takes
+  one out (whether it came from YAML or a prior override), `/staff job
+  list <district>` and `/staff job show <job_id>` inspect the current
+  merged view. Changes take effect immediately, no restart needed — every
+  job lookup in the bot goes through `panem_bot.services.jobs`, which
+  layers `job_overrides` (Postgres) on top of `jobs.yaml` at read time.
