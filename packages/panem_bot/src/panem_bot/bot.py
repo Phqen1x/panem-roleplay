@@ -33,6 +33,7 @@ COGS = (
     "panem_bot.cogs.scenes",
     "panem_bot.cogs.proxy",
     "panem_bot.cogs.staff",
+    "panem_bot.cogs.help",
 )
 
 

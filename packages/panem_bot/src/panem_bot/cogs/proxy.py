@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 from panem_bot import redis_keys
 from panem_bot.outbound import OutboundMessage, SendPriority
+from panem_bot.services import characters as characters_svc
 from panem_bot.services import proxy as proxy_svc
 from panem_bot.strings import t
 from panem_shared.db.models import Character, DiscordChannel, Scene, User
@@ -62,12 +63,59 @@ class ProxyCog(commands.Cog):
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
 
+            scene = (
+                await session.execute(
+                    select(Scene).where(Scene.thread_id == interaction.channel.id)
+                )
+            ).scalar_one_or_none()
+            district = self.bot.content.district(forum_registered.district_id)
+            refusal = proxy_svc.check_can_proxy(
+                character=row,
+                district=district,
+                location_id=scene.location_id if scene else None,
+                current_tick=0,
+            )
+            if refusal is not None:
+                await interaction.response.send_message(
+                    t("proxy_no_access", name=row.name, reason=t(refusal.reason_key)),
+                    ephemeral=True,
+                )
+                return
+
         await self.bot.redis.set(
             redis_keys.session_key(interaction.user.id, interaction.channel.id),
             str(row.id),
             ex=redis_keys.SESSION_TTL_S,
         )
         await interaction.response.send_message(t("rp_session_set", name=row.name), ephemeral=True)
+
+    @rp.autocomplete("character")
+    async def rp_character_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        if not isinstance(interaction.channel, discord.Thread):
+            return []
+        async with self.bot.db() as session:
+            forum_registered = (
+                await session.execute(
+                    select(DiscordChannel).where(
+                        DiscordChannel.channel_id == interaction.channel.parent_id,
+                        DiscordChannel.kind == ChannelKind.FORUM.value,
+                    )
+                )
+            ).scalar_one_or_none()
+            if forum_registered is None:
+                return []
+            user = await characters_svc.get_or_create_user(session, interaction.user.id)
+            stmt = select(Character.name).where(
+                Character.user_id == user.id,
+                Character.district_id == forum_registered.district_id,
+                Character.status == CharacterStatus.APPROVED.value,
+            )
+            if current:
+                stmt = stmt.where(Character.name.ilike(f"%{current}%"))
+            names = (await session.execute(stmt.limit(25))).scalars().all()
+        return [app_commands.Choice(name=name, value=name) for name in names]
 
     @app_commands.command(name="ooc", description="Clear your active character for this scene")
     async def ooc(self, interaction: discord.Interaction) -> None:
@@ -130,6 +178,16 @@ class ProxyCog(commands.Cog):
                 user_tags=user_tags,
             )
             if target is None:
+                # Never delete a forum post's own starter message -- doing so
+                # deletes the whole thread, and `/rp` can't be run before the
+                # thread (and this message) already exist.
+                if not proxy_svc.is_ooc(message.content) and message.id != thread.id:
+                    with contextlib.suppress(discord.HTTPException):
+                        await message.delete()
+                    notice = await thread.send(
+                        f"{message.author.mention} {t('rp_character_required')}"
+                    )
+                    await notice.delete(delay=8)
                 return
 
             character = await session.get(Character, target.character_id)

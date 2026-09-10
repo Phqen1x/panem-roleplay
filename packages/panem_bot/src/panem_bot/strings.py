@@ -33,6 +33,7 @@ STRINGS: dict[str, str] = {
     # Sessions / proxying (FR-PRX)
     "rp_needs_thread": "Use this inside a scene.",
     "rp_session_set": "You're now playing **{name}** in this scene.",
+    "rp_character_required": "You need to set a character with `/rp` before speaking in this scene.",
     "ooc_cleared": "OOC — session cleared for this scene.",
     "proxy_no_access": "**{name}** can't be here: {reason}.",
     "proxy_character_dead": "dead",
@@ -40,6 +41,7 @@ STRINGS: dict[str, str] = {
     "proxy_location_restricted": "no access to this location",
     # Scenes (FR-SCN)
     "scene_at_cap": "District is at its scene limit.",
+    "scene_already_open": "You already have an open scene — close it with `/scene close` before starting another.",
     "scene_needs_tag": "This post needs exactly one location tag. It will be archived in 60s if not fixed.",
     "scene_closed": "Scene closed.",
     "scene_moved": "Scene moved to {location}.",

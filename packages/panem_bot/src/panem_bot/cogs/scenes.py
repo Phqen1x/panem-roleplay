@@ -69,6 +69,17 @@ class SceneCog(commands.Cog):
         )
         return int(result.scalar_one())
 
+    async def _user_has_open_scene(self, session, discord_user_id: int) -> bool:
+        """One open self-created scene per person at a time, across all districts."""
+        user = await characters_svc.get_or_create_user(session, discord_user_id)
+        result = await session.execute(
+            select(func.count())
+            .select_from(Scene)
+            .join(Character, Character.id == Scene.created_by_character_id)
+            .where(Character.user_id == user.id, Scene.status == SceneStatus.OPEN.value)
+        )
+        return int(result.scalar_one()) > 0
+
     async def _actor_can_manage(
         self, session, *, discord_user_id: int, scene: Scene, is_staff: bool
     ) -> bool:
@@ -125,6 +136,10 @@ class SceneCog(commands.Cog):
                 await interaction.response.send_message(
                     "Use this in a district channel.", ephemeral=True
                 )
+                return
+
+            if await self._user_has_open_scene(session, interaction.user.id):
+                await interaction.response.send_message(t("scene_already_open"), ephemeral=True)
                 return
 
             district = self.bot.content.district(district_id)
