@@ -65,6 +65,28 @@ def board_name(district: District) -> str:
     return f"d{district.id}-board"
 
 
+def _with_bot_access(
+    guild: discord.Guild, overwrites: dict[discord.Role, discord.PermissionOverwrite]
+) -> dict[discord.Role | discord.Member, discord.PermissionOverwrite]:
+    """Every set of overwrites below denies `@everyone` view access by
+    default, which denies the bot too unless it's explicitly granted
+    access here -- a bot with only the specific permissions listed in the
+    OAuth2 invite (not guild-wide Administrator) can otherwise lock itself
+    out of a channel it just created."""
+    merged: dict[discord.Role | discord.Member, discord.PermissionOverwrite] = dict(overwrites)
+    assert guild.me is not None
+    merged[guild.me] = discord.PermissionOverwrite(
+        view_channel=True,
+        send_messages=True,
+        send_messages_in_threads=True,
+        manage_channels=True,
+        manage_threads=True,
+        manage_webhooks=True,
+        manage_messages=True,
+    )
+    return merged
+
+
 async def ensure_role(guild: discord.Guild, name: str) -> discord.Role:
     role = discord.utils.get(guild.roles, name=name)
     if role is not None:
@@ -88,7 +110,7 @@ async def ensure_text_channel(
     category: discord.CategoryChannel,
     name: str,
     *,
-    overwrites: dict[discord.Role, discord.PermissionOverwrite],
+    overwrites: dict[discord.Role | discord.Member, discord.PermissionOverwrite],
 ) -> discord.TextChannel:
     existing = discord.utils.get(category.text_channels, name=name)
     if existing is not None:
@@ -113,7 +135,7 @@ async def ensure_forum(
     category: discord.CategoryChannel,
     district: District,
     *,
-    overwrites: dict[discord.Role, discord.PermissionOverwrite],
+    overwrites: dict[discord.Role | discord.Member, discord.PermissionOverwrite],
     auto_archive_minutes: int,
 ) -> discord.ForumChannel:
     name = forum_name(district)
@@ -251,20 +273,23 @@ async def setup_district(
     role = await ensure_role(guild, district.name)
     category = await ensure_category(guild, district_category_name(district))
 
-    forum_overwrites = {
-        guild.default_role: discord.PermissionOverwrite(
-            view_channel=True, send_messages=False, send_messages_in_threads=False
-        ),
-        role: discord.PermissionOverwrite(
-            view_channel=True, send_messages=True, send_messages_in_threads=True
-        ),
-        staff_role: discord.PermissionOverwrite(
-            view_channel=True,
-            send_messages=True,
-            send_messages_in_threads=True,
-            manage_threads=True,
-        ),
-    }
+    forum_overwrites = _with_bot_access(
+        guild,
+        {
+            guild.default_role: discord.PermissionOverwrite(
+                view_channel=True, send_messages=False, send_messages_in_threads=False
+            ),
+            role: discord.PermissionOverwrite(
+                view_channel=True, send_messages=True, send_messages_in_threads=True
+            ),
+            staff_role: discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                send_messages_in_threads=True,
+                manage_threads=True,
+            ),
+        },
+    )
     forum = await ensure_forum(
         guild,
         category,
@@ -281,11 +306,14 @@ async def setup_district(
         webhook=webhook,
     )
 
-    text_overwrites = {
-        guild.default_role: discord.PermissionOverwrite(view_channel=True, send_messages=False),
-        role: discord.PermissionOverwrite(view_channel=True, send_messages=True),
-        staff_role: discord.PermissionOverwrite(view_channel=True, send_messages=True),
-    }
+    text_overwrites = _with_bot_access(
+        guild,
+        {
+            guild.default_role: discord.PermissionOverwrite(view_channel=True, send_messages=False),
+            role: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+            staff_role: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+        },
+    )
     ooc = await ensure_text_channel(guild, category, ooc_name(district), overwrites=text_overwrites)
     await upsert_discord_channel(
         session, district_id=district.id, kind=ChannelKind.OOC, channel_id=ooc.id, webhook=None
@@ -303,10 +331,13 @@ async def setup_district(
 
 async def setup_staff_channels(session, guild: discord.Guild, staff_role: discord.Role) -> None:
     category = await ensure_category(guild, STAFF_CATEGORY_NAME)
-    overwrites = {
-        guild.default_role: discord.PermissionOverwrite(view_channel=False),
-        staff_role: discord.PermissionOverwrite(view_channel=True, send_messages=True),
-    }
+    overwrites = _with_bot_access(
+        guild,
+        {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            staff_role: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+        },
+    )
     approval = await ensure_text_channel(
         guild, category, APPROVAL_CHANNEL_NAME, overwrites=overwrites
     )
