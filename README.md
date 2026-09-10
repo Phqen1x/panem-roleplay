@@ -118,3 +118,39 @@ runs inside a rolled-back savepoint.
 - `/staff delete_pending <character> [reason]` removes a pending
   application outright (optionally DMing the applicant why), for
   submissions staff want gone rather than rejected-and-kept.
+- **Character names must be unique** (case-insensitively), enforced both
+  in the bot and by a DB-level unique index — see "Upgrading past
+  duplicate character names" below if you're updating an existing guild.
+
+## Upgrading past duplicate character names
+
+The migration that adds the name-uniqueness index (`7116c3213f6e`) will
+fail to apply if your database already has two non-rejected characters
+sharing a name (case-insensitively) — this can only happen from before
+this change existed. Find and resolve them *before* running `alembic
+upgrade head`:
+
+```sql
+-- List every name collision, oldest id first, excluding rejected:
+SELECT lower(name) AS name_ci,
+       array_agg(id ORDER BY id)     AS ids,
+       array_agg(status ORDER BY id) AS statuses
+FROM characters
+WHERE status <> 'rejected'
+GROUP BY lower(name)
+HAVING count(*) > 1;
+```
+
+For each group, keep one and resolve the rest:
+- **Pending duplicates**: use `/staff delete_pending <character>` in
+  Discord. If two pending rows have the *exact* same name (so the
+  autocomplete can't tell them apart), delete the newer one directly
+  instead: `DELETE FROM characters WHERE id = <id>;`.
+- **Approved/retired/dead duplicates**: there's no in-bot rename for
+  these, so rename the one you're keeping second directly:
+  `UPDATE characters SET name = '<new unique name>' WHERE id = <id>;`
+  (tell the player, since it changes how they proxy).
+
+Then run `uv run alembic upgrade head` as usual. Going forward the bot
+refuses same-name submissions and renames itself, so this is a one-time
+cleanup.
