@@ -6,6 +6,11 @@ services:
       POSTGRES_USER: panem
       POSTGRES_PASSWORD: panem
       POSTGRES_DB: panem
+    ports:
+      # Published to the host so `uv run alembic`/`uv run python -m
+      # panem_bot.main` can be run directly on the host (not in a
+      # container) against `DATABASE_URL=...@localhost:5432/panem`.
+      - "5432:5432"
     volumes:
       - panem_pg_data:/var/lib/postgresql/data
     healthcheck:
@@ -17,6 +22,8 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    ports:
+      - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
