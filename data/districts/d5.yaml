@@ -1,0 +1,91 @@
+id: 5
+name: District Five
+industry: power
+produces:
+- power
+imports:
+- electronics
+- fish
+- grain
+- medicine
+- produce
+- textiles
+population_base: 6500
+culture:
+  tone:
+  - clinical
+  - watchful
+  - tired
+  idioms:
+  - the dam
+  - the grid
+  taboos:
+  - a_blackout
+  peacekeeper_pressure: 0.3
+  capitol_loyalty: 0.3
+locations:
+- id: square
+  name: The Square
+  kind: public
+  capacity: 200
+- id: market
+  name: The Market
+  kind: market
+  capacity: 80
+  illicit: false
+- id: station
+  name: Rail Station
+  kind: station
+  capacity: 60
+- id: justice
+  name: Justice Building
+  kind: government
+  capacity: 60
+- id: dam
+  name: The Dam
+  kind: workplace
+  capacity: 100
+  job_ids:
+  - d5_technician
+  - d5_engineer
+- id: residential
+  name: Residential Row
+  kind: residential
+  capacity: 300
+- id: outskirts
+  name: The Outskirts
+  kind: outskirts
+  capacity: 100
+  restricted: true
+  access_jobs:
+  - d5_technician
+  - d5_engineer
+map:
+  image: maps/d5.png
+  width: 1600
+  height: 1000
+  location_coords:
+    square:
+    - 800
+    - 500
+    market:
+    - 300
+    - 700
+    station:
+    - 1400
+    - 200
+    justice:
+    - 800
+    - 150
+    dam:
+    - 300
+    - 300
+    residential:
+    - 600
+    - 800
+    outskirts:
+    - 1400
+    - 800
+quota:
+  good: power
+  amount: 1500

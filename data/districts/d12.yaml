@@ -1,0 +1,102 @@
+id: 12
+name: District Twelve
+industry: coal
+produces:
+- coal
+imports:
+- fish
+- grain
+- lumber
+- medicine
+- power
+- produce
+- textiles
+quota:
+  good: coal
+  amount: 1200
+population_base: 8000
+culture:
+  tone:
+  - weary
+  - dry
+  - guarded
+  - mutually_loyal
+  idioms:
+  - hob
+  - seam
+  - the Meadow
+  - tesserae day
+  taboos:
+  - praising_the_capitol_openly
+  peacekeeper_pressure: 0.35
+  capitol_loyalty: 0.15
+locations:
+- id: square
+  name: The Square
+  kind: public
+  capacity: 200
+- id: hob
+  name: The Hob
+  kind: market
+  capacity: 80
+  illicit: true
+- id: mine
+  name: Mine Entrance
+  kind: workplace
+  capacity: 100
+  job_ids:
+  - miner
+  - shift_boss
+- id: justice
+  name: Justice Building
+  kind: government
+  capacity: 60
+- id: station
+  name: Rail Station
+  kind: station
+  capacity: 60
+- id: seam
+  name: The Seam
+  kind: residential
+  capacity: 300
+- id: merchant_row
+  name: Merchant Row
+  kind: residential
+  capacity: 150
+- id: meadow
+  name: The Meadow
+  kind: outskirts
+  capacity: 100
+  restricted: true
+  access_jobs:
+  - miner
+  - shift_boss
+map:
+  image: maps/d12.png
+  width: 1600
+  height: 1000
+  location_coords:
+    square:
+    - 800
+    - 500
+    hob:
+    - 300
+    - 700
+    mine:
+    - 300
+    - 300
+    justice:
+    - 800
+    - 150
+    station:
+    - 1400
+    - 200
+    seam:
+    - 300
+    - 850
+    merchant_row:
+    - 900
+    - 750
+    meadow:
+    - 1400
+    - 850

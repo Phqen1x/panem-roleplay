@@ -1,0 +1,91 @@
+id: 10
+name: District Ten
+industry: livestock
+produces:
+- livestock
+imports:
+- fish
+- grain
+- medicine
+- power
+- produce
+- textiles
+population_base: 7500
+culture:
+  tone:
+  - plainspoken
+  - hard-worked
+  - weathered
+  idioms:
+  - the pens
+  - the drive
+  taboos:
+  - mistreating_stock
+  peacekeeper_pressure: 0.3
+  capitol_loyalty: 0.3
+locations:
+- id: square
+  name: The Square
+  kind: public
+  capacity: 200
+- id: market
+  name: The Market
+  kind: market
+  capacity: 80
+  illicit: false
+- id: station
+  name: Rail Station
+  kind: station
+  capacity: 60
+- id: justice
+  name: Justice Building
+  kind: government
+  capacity: 60
+- id: pens
+  name: The Stockyards
+  kind: workplace
+  capacity: 100
+  job_ids:
+  - d10_herder
+  - d10_butcher
+- id: residential
+  name: Residential Row
+  kind: residential
+  capacity: 300
+- id: outskirts
+  name: The Outskirts
+  kind: outskirts
+  capacity: 100
+  restricted: true
+  access_jobs:
+  - d10_herder
+  - d10_butcher
+map:
+  image: maps/d10.png
+  width: 1600
+  height: 1000
+  location_coords:
+    square:
+    - 800
+    - 500
+    market:
+    - 300
+    - 700
+    station:
+    - 1400
+    - 200
+    justice:
+    - 800
+    - 150
+    pens:
+    - 300
+    - 300
+    residential:
+    - 600
+    - 800
+    outskirts:
+    - 1400
+    - 800
+quota:
+  good: livestock
+  amount: 800

@@ -1,0 +1,102 @@
+id: 8
+name: District Eight
+industry: textiles
+produces:
+- textiles
+imports:
+- coal
+- fish
+- grain
+- lumber
+- medicine
+- power
+- produce
+population_base: 8500
+culture:
+  tone:
+  - exhausted
+  - crowded
+  - quietly_defiant
+  idioms:
+  - the looms
+  - the factory floor
+  taboos:
+  - slowing_the_line
+  peacekeeper_pressure: 0.45
+  capitol_loyalty: 0.2
+locations:
+- id: square
+  name: The Square
+  kind: public
+  capacity: 200
+- id: market
+  name: The Loading Dock
+  kind: market
+  capacity: 80
+  illicit: true
+- id: station
+  name: Rail Station
+  kind: station
+  capacity: 60
+- id: justice
+  name: Justice Building
+  kind: government
+  capacity: 60
+- id: factory
+  name: The Weaving Floor
+  kind: workplace
+  capacity: 100
+  job_ids:
+  - d8_weaver
+  - d8_dyer
+- id: residential
+  name: Residential Row
+  kind: residential
+  capacity: 300
+- id: outskirts
+  name: The Outskirts
+  kind: outskirts
+  capacity: 100
+  restricted: true
+  access_jobs:
+  - d8_weaver
+  - d8_dyer
+- id: loading_dock
+  name: The Loading Dock
+  kind: market
+  capacity: 30
+  illicit: true
+  job_ids:
+  - d8_smuggler
+map:
+  image: maps/d8.png
+  width: 1600
+  height: 1000
+  location_coords:
+    square:
+    - 800
+    - 500
+    market:
+    - 300
+    - 700
+    station:
+    - 1400
+    - 200
+    justice:
+    - 800
+    - 150
+    factory:
+    - 300
+    - 300
+    residential:
+    - 600
+    - 800
+    outskirts:
+    - 1400
+    - 800
+    loading_dock:
+    - 1100
+    - 900
+quota:
+  good: textiles
+  amount: 1100

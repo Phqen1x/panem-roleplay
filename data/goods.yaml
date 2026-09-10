@@ -1,0 +1,154 @@
+- id: coal
+  name: Coal
+  base_price: 4.0
+  perishable: false
+  category: fuel
+- id: luxury_goods
+  name: Luxury Goods
+  base_price: 40.0
+  perishable: false
+  category: luxury
+- id: masonry
+  name: Masonry
+  base_price: 6.0
+  perishable: false
+  category: materials
+- id: weapons
+  name: Weapons
+  base_price: 25.0
+  perishable: false
+  category: materials
+- id: electronics
+  name: Electronics
+  base_price: 18.0
+  perishable: false
+  category: industrial
+- id: fish
+  name: Fish
+  base_price: 5.0
+  perishable: true
+  category: food
+- id: power
+  name: Power
+  base_price: 3.0
+  perishable: true
+  category: utility
+- id: transport
+  name: Transport Capacity
+  base_price: 10.0
+  perishable: true
+  category: utility
+- id: lumber
+  name: Lumber
+  base_price: 5.0
+  perishable: false
+  category: materials
+- id: textiles
+  name: Textiles
+  base_price: 6.0
+  perishable: false
+  category: goods
+- id: grain
+  name: Grain
+  base_price: 2.0
+  perishable: true
+  category: food
+- id: oil
+  name: Cooking Oil
+  base_price: 4.0
+  perishable: false
+  category: food
+- id: livestock
+  name: Livestock
+  base_price: 12.0
+  perishable: true
+  category: food
+- id: produce
+  name: Produce
+  base_price: 3.0
+  perishable: true
+  category: food
+- id: medicine
+  name: Medicine
+  base_price: 15.0
+  perishable: false
+  category: medical
+  rationed: true
+- id: train_ticket_d0
+  name: Train Ticket - The Capitol
+  base_price: 20.0
+  perishable: false
+  category: ticket
+  kind: ticket
+- id: train_ticket_d1
+  name: Train Ticket - District One
+  base_price: 20.0
+  perishable: false
+  category: ticket
+  kind: ticket
+- id: train_ticket_d2
+  name: Train Ticket - District Two
+  base_price: 20.0
+  perishable: false
+  category: ticket
+  kind: ticket
+- id: train_ticket_d3
+  name: Train Ticket - District Three
+  base_price: 20.0
+  perishable: false
+  category: ticket
+  kind: ticket
+- id: train_ticket_d4
+  name: Train Ticket - District Four
+  base_price: 20.0
+  perishable: false
+  category: ticket
+  kind: ticket
+- id: train_ticket_d5
+  name: Train Ticket - District Five
+  base_price: 20.0
+  perishable: false
+  category: ticket
+  kind: ticket
+- id: train_ticket_d6
+  name: Train Ticket - District Six
+  base_price: 20.0
+  perishable: false
+  category: ticket
+  kind: ticket
+- id: train_ticket_d7
+  name: Train Ticket - District Seven
+  base_price: 20.0
+  perishable: false
+  category: ticket
+  kind: ticket
+- id: train_ticket_d8
+  name: Train Ticket - District Eight
+  base_price: 20.0
+  perishable: false
+  category: ticket
+  kind: ticket
+- id: train_ticket_d9
+  name: Train Ticket - District Nine
+  base_price: 20.0
+  perishable: false
+  category: ticket
+  kind: ticket
+- id: train_ticket_d10
+  name: Train Ticket - District Ten
+  base_price: 20.0
+  perishable: false
+  category: ticket
+  kind: ticket
+- id: train_ticket_d11
+  name: Train Ticket - District Eleven
+  base_price: 20.0
+  perishable: false
+  category: ticket
+  kind: ticket
+- id: train_ticket_d12
+  name: Train Ticket - District Twelve
+  base_price: 20.0
+  perishable: false
+  category: ticket
+  kind: ticket

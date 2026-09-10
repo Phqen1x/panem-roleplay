@@ -1,0 +1,91 @@
+id: 11
+name: District Eleven
+industry: produce
+produces:
+- produce
+- oil
+imports:
+- fish
+- grain
+- medicine
+- power
+- textiles
+population_base: 9500
+culture:
+  tone:
+  - watched
+  - weary
+  - communal
+  idioms:
+  - the orchards
+  - the whip
+  taboos:
+  - eating_the_crop
+  peacekeeper_pressure: 0.5
+  capitol_loyalty: 0.15
+locations:
+- id: square
+  name: The Square
+  kind: public
+  capacity: 200
+- id: market
+  name: The Market
+  kind: market
+  capacity: 80
+  illicit: true
+- id: station
+  name: Rail Station
+  kind: station
+  capacity: 60
+- id: justice
+  name: Justice Building
+  kind: government
+  capacity: 60
+- id: orchards
+  name: The Orchards
+  kind: workplace
+  capacity: 100
+  job_ids:
+  - d11_picker
+  - d11_presser
+- id: residential
+  name: Residential Row
+  kind: residential
+  capacity: 300
+- id: outskirts
+  name: The Outskirts
+  kind: outskirts
+  capacity: 100
+  restricted: true
+  access_jobs:
+  - d11_picker
+  - d11_presser
+map:
+  image: maps/d11.png
+  width: 1600
+  height: 1000
+  location_coords:
+    square:
+    - 800
+    - 500
+    market:
+    - 300
+    - 700
+    station:
+    - 1400
+    - 200
+    justice:
+    - 800
+    - 150
+    orchards:
+    - 300
+    - 300
+    residential:
+    - 600
+    - 800
+    outskirts:
+    - 1400
+    - 800
+quota:
+  good: produce
+  amount: 1300
