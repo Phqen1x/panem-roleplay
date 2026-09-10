@@ -1,0 +1,104 @@
+id: 6
+name: District Six
+industry: transport
+produces:
+- transport
+imports:
+- coal
+- electronics
+- fish
+- grain
+- medicine
+- power
+- produce
+- textiles
+population_base: 6000
+culture:
+  tone:
+  - jittery
+  - addled
+  - fast-talking
+  idioms:
+  - the yards
+  - morphling
+  taboos:
+  - missing_a_train
+  peacekeeper_pressure: 0.35
+  capitol_loyalty: 0.25
+locations:
+- id: square
+  name: The Square
+  kind: public
+  capacity: 200
+- id: market
+  name: The Underpass Market
+  kind: market
+  capacity: 80
+  illicit: true
+- id: station
+  name: Rail Station
+  kind: station
+  capacity: 60
+- id: justice
+  name: Justice Building
+  kind: government
+  capacity: 60
+- id: yards
+  name: The Rail Yards
+  kind: workplace
+  capacity: 100
+  job_ids:
+  - d6_dispatcher
+  - d6_mechanic
+- id: residential
+  name: Residential Row
+  kind: residential
+  capacity: 300
+- id: outskirts
+  name: The Outskirts
+  kind: outskirts
+  capacity: 100
+  restricted: true
+  access_jobs:
+  - d6_dispatcher
+  - d6_mechanic
+- id: underpass
+  name: The Underpass
+  kind: market
+  capacity: 30
+  illicit: true
+  job_ids:
+  - d6_hustler
+  - d6_black_marketeer
+map:
+  image: maps/d6.png
+  width: 1600
+  height: 1000
+  location_coords:
+    square:
+    - 800
+    - 500
+    market:
+    - 300
+    - 700
+    station:
+    - 1400
+    - 200
+    justice:
+    - 800
+    - 150
+    yards:
+    - 300
+    - 300
+    residential:
+    - 600
+    - 800
+    outskirts:
+    - 1400
+    - 800
+    underpass:
+    - 1100
+    - 900
+quota:
+  good: transport
+  amount: 600

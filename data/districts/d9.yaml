@@ -1,0 +1,91 @@
+id: 9
+name: District Nine
+industry: grain
+produces:
+- grain
+imports:
+- coal
+- fish
+- medicine
+- power
+- produce
+- textiles
+population_base: 8500
+culture:
+  tone:
+  - dusty
+  - hungry
+  - practical
+  idioms:
+  - the granary
+  - the threshing floor
+  taboos:
+  - spoiling_the_grain
+  peacekeeper_pressure: 0.35
+  capitol_loyalty: 0.25
+locations:
+- id: square
+  name: The Square
+  kind: public
+  capacity: 200
+- id: market
+  name: The Market
+  kind: market
+  capacity: 80
+  illicit: false
+- id: station
+  name: Rail Station
+  kind: station
+  capacity: 60
+- id: justice
+  name: Justice Building
+  kind: government
+  capacity: 60
+- id: granary
+  name: The Granary
+  kind: workplace
+  capacity: 100
+  job_ids:
+  - d9_thresher
+  - d9_miller
+- id: residential
+  name: Residential Row
+  kind: residential
+  capacity: 300
+- id: outskirts
+  name: The Outskirts
+  kind: outskirts
+  capacity: 100
+  restricted: true
+  access_jobs:
+  - d9_thresher
+  - d9_miller
+map:
+  image: maps/d9.png
+  width: 1600
+  height: 1000
+  location_coords:
+    square:
+    - 800
+    - 500
+    market:
+    - 300
+    - 700
+    station:
+    - 1400
+    - 200
+    justice:
+    - 800
+    - 150
+    granary:
+    - 300
+    - 300
+    residential:
+    - 600
+    - 800
+    outskirts:
+    - 1400
+    - 800
+quota:
+  good: grain
+  amount: 1400

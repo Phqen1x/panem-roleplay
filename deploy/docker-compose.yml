@@ -1,0 +1,63 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: panem
+      POSTGRES_PASSWORD: panem
+      POSTGRES_DB: panem
+    volumes:
+      - panem_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U panem"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["uv", "run", "alembic", "upgrade", "head"]
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://panem:panem@postgres:5432/panem
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  bot:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["uv", "run", "python", "-m", "panem_bot.main"]
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://panem:panem@postgres:5432/panem
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ../data:/app/data:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # panem_sim (Plan §4, Phase 1) and panem_api + caddy (Plan §8, Phase 5)
+  # are not implemented yet -- their service blocks land in later phases,
+  # sharing this same postgres/redis and the `deploy/Dockerfile` image.
+
+volumes:
+  panem_pg_data:

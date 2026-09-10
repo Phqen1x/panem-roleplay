@@ -1,0 +1,91 @@
+id: 7
+name: District Seven
+industry: lumber
+produces:
+- lumber
+imports:
+- fish
+- grain
+- medicine
+- power
+- produce
+- textiles
+population_base: 7000
+culture:
+  tone:
+  - rough
+  - outdoorsy
+  - blunt
+  idioms:
+  - the timber line
+  - the mill
+  taboos:
+  - felling_a_marked_tree
+  peacekeeper_pressure: 0.3
+  capitol_loyalty: 0.3
+locations:
+- id: square
+  name: The Square
+  kind: public
+  capacity: 200
+- id: market
+  name: The Market
+  kind: market
+  capacity: 80
+  illicit: false
+- id: station
+  name: Rail Station
+  kind: station
+  capacity: 60
+- id: justice
+  name: Justice Building
+  kind: government
+  capacity: 60
+- id: mill
+  name: The Sawmill
+  kind: workplace
+  capacity: 100
+  job_ids:
+  - d7_lumberjack
+  - d7_sawyer
+- id: residential
+  name: Residential Row
+  kind: residential
+  capacity: 300
+- id: outskirts
+  name: The Outskirts
+  kind: outskirts
+  capacity: 100
+  restricted: true
+  access_jobs:
+  - d7_lumberjack
+  - d7_sawyer
+map:
+  image: maps/d7.png
+  width: 1600
+  height: 1000
+  location_coords:
+    square:
+    - 800
+    - 500
+    market:
+    - 300
+    - 700
+    station:
+    - 1400
+    - 200
+    justice:
+    - 800
+    - 150
+    mill:
+    - 300
+    - 300
+    residential:
+    - 600
+    - 800
+    outskirts:
+    - 1400
+    - 800
+quota:
+  good: lumber
+  amount: 900

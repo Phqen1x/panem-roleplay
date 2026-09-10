@@ -1,0 +1,90 @@
+id: 4
+name: District Four
+industry: fish
+produces:
+- fish
+imports:
+- grain
+- medicine
+- power
+- produce
+- textiles
+population_base: 7500
+culture:
+  tone:
+  - sun-worn
+  - independent
+  - salty
+  idioms:
+  - the nets
+  - the tide
+  taboos:
+  - fouling_the_water
+  peacekeeper_pressure: 0.25
+  capitol_loyalty: 0.35
+locations:
+- id: square
+  name: The Square
+  kind: public
+  capacity: 200
+- id: market
+  name: The Market
+  kind: market
+  capacity: 80
+  illicit: false
+- id: station
+  name: Rail Station
+  kind: station
+  capacity: 60
+- id: justice
+  name: Justice Building
+  kind: government
+  capacity: 60
+- id: docks
+  name: The Docks
+  kind: workplace
+  capacity: 100
+  job_ids:
+  - d4_netcaster
+  - d4_smoker
+- id: residential
+  name: Residential Row
+  kind: residential
+  capacity: 300
+- id: outskirts
+  name: The Outskirts
+  kind: outskirts
+  capacity: 100
+  restricted: true
+  access_jobs:
+  - d4_netcaster
+  - d4_smoker
+map:
+  image: maps/d4.png
+  width: 1600
+  height: 1000
+  location_coords:
+    square:
+    - 800
+    - 500
+    market:
+    - 300
+    - 700
+    station:
+    - 1400
+    - 200
+    justice:
+    - 800
+    - 150
+    docks:
+    - 300
+    - 300
+    residential:
+    - 600
+    - 800
+    outskirts:
+    - 1400
+    - 800
+quota:
+  good: fish
+  amount: 1000

@@ -1,0 +1,101 @@
+id: 1
+name: District One
+industry: luxury_goods
+produces:
+- luxury_goods
+imports:
+- fish
+- grain
+- livestock
+- medicine
+- power
+- produce
+- textiles
+population_base: 6000
+culture:
+  tone:
+  - polished
+  - proud
+  - competitive
+  idioms:
+  - the workshop
+  - career track
+  taboos:
+  - volunteering_doubt
+  peacekeeper_pressure: 0.1
+  capitol_loyalty: 0.75
+locations:
+- id: square
+  name: The Square
+  kind: public
+  capacity: 200
+- id: market
+  name: The Exchange
+  kind: market
+  capacity: 80
+  illicit: false
+- id: station
+  name: Rail Station
+  kind: station
+  capacity: 60
+- id: justice
+  name: Justice Building
+  kind: government
+  capacity: 60
+- id: workshop
+  name: The Jewelers' Workshop
+  kind: workplace
+  capacity: 100
+  job_ids:
+  - d1_jeweler
+  - d1_polisher
+- id: residential
+  name: Residential Row
+  kind: residential
+  capacity: 300
+- id: outskirts
+  name: The Outskirts
+  kind: outskirts
+  capacity: 100
+  restricted: true
+  access_jobs:
+  - d1_jeweler
+  - d1_polisher
+- id: academy
+  name: The Academy
+  kind: workplace
+  capacity: 60
+  job_ids:
+  - d1_academy_trainer
+map:
+  image: maps/d1.png
+  width: 1600
+  height: 1000
+  location_coords:
+    square:
+    - 800
+    - 500
+    market:
+    - 300
+    - 700
+    station:
+    - 1400
+    - 200
+    justice:
+    - 800
+    - 150
+    workshop:
+    - 300
+    - 300
+    residential:
+    - 600
+    - 800
+    outskirts:
+    - 1400
+    - 800
+    academy:
+    - 1000
+    - 300
+quota:
+  good: luxury_goods
+  amount: 400

@@ -1,0 +1,16 @@
+[Unit]
+Description=Panem: The Long Year - Discord bot
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=panem
+WorkingDirectory=/opt/panem
+EnvironmentFile=/opt/panem/.env
+ExecStart=/root/.local/bin/uv run python -m panem_bot.main
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

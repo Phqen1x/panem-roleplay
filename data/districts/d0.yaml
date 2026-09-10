@@ -1,0 +1,118 @@
+id: 0
+name: The Capitol
+industry: governance
+produces:
+- medicine
+imports:
+- coal
+- fish
+- grain
+- livestock
+- luxury_goods
+- masonry
+- power
+- produce
+- textiles
+- weapons
+population_base: 150000
+culture:
+  tone:
+  - opulent
+  - theatrical
+  - detached
+  idioms:
+  - the Games
+  - prep team
+  - sponsor gift
+  taboos:
+  - questioning_the_games
+  peacekeeper_pressure: 0.05
+  capitol_loyalty: 0.95
+locations:
+- id: avenue_of_tributes
+  name: Avenue of the Tributes
+  kind: public
+  capacity: 400
+- id: remake_center
+  name: The Remake Center
+  kind: workplace
+  capacity: 60
+  job_ids:
+  - stylist_assistant
+- id: gamemaker_labs
+  name: Gamemaker Laboratories
+  kind: workplace
+  capacity: 30
+  job_ids:
+  - gamemaker_aide
+  restricted: true
+  access_jobs:
+  - gamemaker_aide
+- id: mansions
+  name: The Mansions
+  kind: residential
+  capacity: 200
+  job_ids:
+  - avox_handler
+- id: press_hall
+  name: The Press Hall
+  kind: workplace
+  capacity: 40
+  job_ids:
+  - journalist
+- id: training_center
+  name: Tribute Training Center
+  kind: government
+  capacity: 100
+  job_ids:
+  - peacekeeper_capitol
+  restricted: true
+  access_jobs:
+  - peacekeeper_capitol
+- id: market
+  name: The Capitol Market
+  kind: market
+  capacity: 100
+- id: station
+  name: Central Transfer Station
+  kind: station
+  capacity: 120
+- id: justice
+  name: President's Justice Hall
+  kind: government
+  capacity: 60
+  restricted: true
+  access_items:
+  - capitol_pass
+map:
+  image: maps/d0.png
+  width: 1600
+  height: 1000
+  location_coords:
+    avenue_of_tributes:
+    - 800
+    - 500
+    remake_center:
+    - 300
+    - 300
+    gamemaker_labs:
+    - 1000
+    - 200
+    mansions:
+    - 1200
+    - 700
+    press_hall:
+    - 600
+    - 200
+    training_center:
+    - 800
+    - 850
+    market:
+    - 300
+    - 700
+    station:
+    - 1400
+    - 200
+    justice:
+    - 800
+    - 150

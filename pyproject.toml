@@ -1,0 +1,63 @@
+[project]
+name = "panem"
+version = "0.1.0"
+description = "Panem: The Long Year - persistent NPC-driven Discord roleplay world"
+requires-python = ">=3.14"
+dependencies = [
+    "panem-shared",
+    "panem-sim",
+    "panem-bot",
+    "panem-api",
+]
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+panem-shared = { workspace = true }
+panem-sim = { workspace = true }
+panem-bot = { workspace = true }
+panem-api = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "hypothesis>=6.115",
+    "types-pyyaml>=6.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["packages/*/src", "scripts", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+namespace_packages = true
+explicit_package_bases = true
+mypy_path = "packages/panem_shared/src:packages/panem_sim/src:packages/panem_bot/src:packages/panem_api/src"
+
+[[tool.mypy.overrides]]
+module = ["discord.*", "redis.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
+pythonpath = [
+    "packages/panem_shared/src",
+    "packages/panem_sim/src",
+    "packages/panem_bot/src",
+    "packages/panem_api/src",
+]

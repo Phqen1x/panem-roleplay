@@ -1,0 +1,111 @@
+id: 2
+name: District Two
+industry: masonry
+produces:
+- masonry
+- weapons
+imports:
+- fish
+- grain
+- lumber
+- medicine
+- power
+- produce
+- textiles
+population_base: 9000
+culture:
+  tone:
+  - disciplined
+  - martial
+  - loyal
+  idioms:
+  - the Nut
+  - the academy
+  taboos:
+  - cowardice
+  peacekeeper_pressure: 0.15
+  capitol_loyalty: 0.8
+locations:
+- id: square
+  name: The Square
+  kind: public
+  capacity: 200
+- id: market
+  name: The Market
+  kind: market
+  capacity: 80
+  illicit: false
+- id: station
+  name: Rail Station
+  kind: station
+  capacity: 60
+- id: justice
+  name: Justice Building
+  kind: government
+  capacity: 60
+- id: quarry
+  name: The Quarry
+  kind: workplace
+  capacity: 100
+  job_ids:
+  - d2_quarrier
+  - d2_armorer
+- id: residential
+  name: Residential Row
+  kind: residential
+  capacity: 300
+- id: outskirts
+  name: The Outskirts
+  kind: outskirts
+  capacity: 100
+  restricted: true
+  access_jobs:
+  - d2_quarrier
+  - d2_armorer
+- id: academy
+  name: The Academy
+  kind: workplace
+  capacity: 60
+  job_ids:
+  - d2_academy_trainer
+- id: garrison
+  name: The Garrison
+  kind: government
+  capacity: 40
+  job_ids:
+  - d2_peacekeeper_aux
+map:
+  image: maps/d2.png
+  width: 1600
+  height: 1000
+  location_coords:
+    square:
+    - 800
+    - 500
+    market:
+    - 300
+    - 700
+    station:
+    - 1400
+    - 200
+    justice:
+    - 800
+    - 150
+    quarry:
+    - 300
+    - 300
+    residential:
+    - 600
+    - 800
+    outskirts:
+    - 1400
+    - 800
+    academy:
+    - 1000
+    - 300
+    garrison:
+    - 1100
+    - 150
+quota:
+  good: weapons
+  amount: 900
