@@ -17,16 +17,21 @@ from panem_bot.strings import t
 from panem_bot.views import (
     CHAR_ID_FOOTER_PREFIX,
     ApprovalView,
-    DistrictSelectView,
     JobSelectView,
 )
 from panem_shared import constants
 from panem_shared.db.models import Character, User
 from panem_shared.enums import CharacterStatus
 
+EMBED_FIELD_VALUE_LIMIT = 1024
 
-def _district_role(guild: discord.Guild, district_name: str) -> discord.Role | None:
-    return discord.utils.get(guild.roles, name=district_name)
+
+def _field_value(text: str) -> str:
+    """Backstory allows more characters than a Discord embed field value
+    does (1024) -- truncate rather than let `channel.send` raise."""
+    if len(text) <= EMBED_FIELD_VALUE_LIMIT:
+        return text
+    return text[: EMBED_FIELD_VALUE_LIMIT - 1] + "…"
 
 
 class CharacterCog(commands.Cog):
@@ -57,11 +62,21 @@ class CharacterCog(commands.Cog):
     @group.command(name="create", description="Create a new character")
     async def create(self, interaction: discord.Interaction) -> None:
         assert interaction.guild is not None
+        assert isinstance(interaction.user, discord.Member)
+
+        matches = self.bot.districts_for_member(interaction.user)
+        if len(matches) != 1:
+            key = "no_district_role" if not matches else "ambiguous_district_role"
+            await interaction.response.send_message(t(key), ephemeral=True)
+            return
+        district_id = matches[0]
+
         async with self.bot.db() as session:
             user = await characters_svc.get_or_create_user(session, interaction.user.id)
             if user.banned_at is not None:
                 await interaction.response.send_message(t("banned"), ephemeral=True)
                 return
+            max_characters = characters_svc.effective_max_characters(user, self.bot.settings)
             count = await session.execute(
                 select(func.count())
                 .select_from(Character)
@@ -72,25 +87,13 @@ class CharacterCog(commands.Cog):
                     ),
                 )
             )
-            if int(count.scalar_one()) >= self.bot.settings.max_characters_per_user:
+            if int(count.scalar_one()) >= max_characters:
                 await interaction.response.send_message(
-                    t("too_many_characters", limit=self.bot.settings.max_characters_per_user),
-                    ephemeral=True,
+                    t("too_many_characters", limit=max_characters), ephemeral=True
                 )
                 return
 
-        districts = [(d.id, d.name) for d in self.bot.content.districts.values()]
-
-        async def on_district_chosen(
-            select_interaction: discord.Interaction, district_id: int
-        ) -> None:
-            await self._prompt_details(select_interaction, district_id)
-
-        await interaction.response.send_message(
-            "Which district is this character from?",
-            view=DistrictSelectView(districts, on_district_chosen),
-            ephemeral=True,
-        )
+        await self._prompt_details(interaction, district_id)
 
     async def _prompt_details(self, interaction: discord.Interaction, district_id: int) -> None:
         from panem_bot.modals import CharacterDetailsModal
@@ -200,7 +203,7 @@ class CharacterCog(commands.Cog):
                     appearance=appearance,
                     backstory=backstory,
                     desired_job_id=job_id,
-                    max_characters=self.bot.settings.max_characters_per_user,
+                    max_characters=characters_svc.effective_max_characters(user, self.bot.settings),
                 )
             except ServiceError as exc:
                 await interaction.response.send_message(
@@ -236,7 +239,9 @@ class CharacterCog(commands.Cog):
                 name="Desired Job", value=job.title if job else "Unemployed", inline=True
             )
             embed.add_field(name="Appearance", value=character.appearance or "-", inline=False)
-            embed.add_field(name="Backstory", value=character.backstory or "-", inline=False)
+            embed.add_field(
+                name="Backstory", value=_field_value(character.backstory or "-"), inline=False
+            )
             embed.set_footer(text=f"{CHAR_ID_FOOTER_PREFIX}{character.id}")
 
         await channel.send(embed=embed, view=self.approval_view)
@@ -266,10 +271,7 @@ class CharacterCog(commands.Cog):
 
         guild = interaction.guild
         assert guild is not None
-        role = _district_role(guild, district.name)
         member = guild.get_member(discord_id)
-        if member and role:
-            await member.add_roles(role, reason="Character approved")
         if member:
             with contextlib.suppress(discord.Forbidden):
                 await member.send(
@@ -303,10 +305,33 @@ class CharacterCog(commands.Cog):
         async with self.bot.db() as session:
             character = await characters_svc.get_character(session, character_id)
             characters_svc.reject_character(character)
-            char_name, discord_id = (
-                character.name,
-                (await session.get(User, character.user_id)).discord_id,
+            district = self.bot.content.district(character.district_id)
+            discord_id = (await session.get(User, character.user_id)).discord_id
+            char_name = character.name
+
+            log_embed = discord.Embed(
+                title=f"Character Rejected: {char_name}", color=discord.Color.red()
             )
+            log_embed.add_field(name="Applicant", value=f"<@{discord_id}>", inline=True)
+            log_embed.add_field(name="District", value=district.name, inline=True)
+            log_embed.add_field(name="Age", value=str(character.age), inline=True)
+            log_embed.add_field(
+                name="Appearance", value=_field_value(character.appearance or "-"), inline=False
+            )
+            log_embed.add_field(
+                name="Backstory", value=_field_value(character.backstory or "-"), inline=False
+            )
+            log_embed.add_field(name="Rejected by", value=interaction.user.mention, inline=True)
+            log_embed.add_field(name="Reason", value=_field_value(reason or "-"), inline=True)
+
+            # Rejected applications never became real characters -- log the
+            # details to #panem-log for the record, then drop the row rather
+            # than keeping a `rejected` character around forever.
+            await session.delete(character)
+
+        log_channel = interaction.client.get_channel(self.bot.settings.log_channel_id)
+        if isinstance(log_channel, discord.TextChannel):
+            await log_channel.send(embed=log_embed)
 
         await self._disable_approval_message(interaction, f"Rejected by {interaction.user.mention}")
         await interaction.response.send_message("Rejected.", ephemeral=True)
@@ -468,19 +493,9 @@ class CharacterCog(commands.Cog):
                     t(exc.reason_key, **exc.fmt), ephemeral=True
                 )
                 return
-            keep_role = await characters_svc.other_approved_characters_in_district(
-                session, user_id=user.id, district_id=row.district_id, exclude_character_id=row.id
-            )
-            district = self.bot.content.district(row.district_id)
             name = row.name
 
         await interaction.response.send_message(t("character_retired", name=name), ephemeral=True)
-        if not keep_role and interaction.guild and isinstance(interaction.user, discord.Member):
-            role = _district_role(interaction.guild, district.name)
-            if role and role in interaction.user.roles:
-                await interaction.user.remove_roles(
-                    role, reason="No remaining approved characters here"
-                )
 
     @group.command(name="status", description="Show a character's status")
     @app_commands.describe(character="Character name")

@@ -53,6 +53,8 @@ class User(TimestampMixin, Base):
         DateTime(timezone=True), nullable=True
     )
     banned_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    max_characters_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """`/staff character_limit`; NULL means the guild default applies."""
 
     characters: Mapped[list[Character]] = relationship(back_populates="user")
 

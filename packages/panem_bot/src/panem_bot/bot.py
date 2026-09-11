@@ -81,6 +81,25 @@ class PanemBot(commands.Bot):
     async def is_staff(self, member: discord.Member) -> bool:
         return any(role.id == self.settings.staff_role_id for role in member.roles)
 
+    def districts_for_member(self, member: discord.Member) -> list[int]:
+        """Every district (or Capitol) role this member holds, resolved the
+        same way `setup_guild.py` resolves a district's role: an `.env`
+        `CAPITOL_ROLE_ID` / `DISTRICT_N_ROLE_ID` override by id if set,
+        otherwise a role named after the district. Members pick their
+        district role during onboarding, so this -- not a menu at character
+        creation -- is what a character's district is allowed to be."""
+        member_role_ids = {role.id for role in member.roles}
+        matches: list[int] = []
+        for district in self.content.districts.values():
+            override_id = self.settings.role_id_override_for_district(district.id)
+            if override_id:
+                if override_id in member_role_ids:
+                    matches.append(district.id)
+                continue
+            if discord.utils.get(member.roles, name=district.name) is not None:
+                matches.append(district.id)
+        return matches
+
     async def all_jobs(self) -> dict[str, Job]:
         """`jobs.yaml` with staff-edited `job_overrides` layered on top
         (`/staff job set|remove`) -- always the source of truth for job

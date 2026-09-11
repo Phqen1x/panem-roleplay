@@ -12,6 +12,7 @@ from panem_shared import constants
 from panem_shared.content.schemas import District
 from panem_shared.db.models import Character, Shift, User
 from panem_shared.enums import CharacterStatus, ShiftResult
+from panem_shared.settings import Settings
 
 _NAME_RE = re.compile(r"^[A-Za-z][A-Za-z '\-]{0,31}$")
 
@@ -65,6 +66,17 @@ async def get_or_create_user(session: AsyncSession, discord_id: int) -> User:
     session.add(user)
     await session.flush()
     return user
+
+
+def effective_max_characters(user: User, settings: Settings) -> int:
+    """Everyone gets `settings.max_characters_per_user` active (pending +
+    approved) characters at a time unless staff set a per-user override
+    with `/staff character_limit` (Spec FR-CHR-1)."""
+    return (
+        user.max_characters_override
+        if user.max_characters_override is not None
+        else settings.max_characters_per_user
+    )
 
 
 async def ensure_name_available(
@@ -189,9 +201,11 @@ async def approve_character(
 
 
 def reject_character(character: Character) -> Character:
+    """Validates the character can be rejected; the caller (cog) logs it to
+    Discord and deletes the row -- a rejected application never became a
+    real character, so nothing about it is kept in `characters`."""
     if character.status != CharacterStatus.PENDING.value:
         raise NotAllowed("not_pending")
-    character.status = CharacterStatus.REJECTED.value
     return character
 
 
@@ -216,23 +230,6 @@ async def retire_character(session: AsyncSession, character: Character) -> Chara
     character.job_id = None
     await session.flush()
     return character
-
-
-async def other_approved_characters_in_district(
-    session: AsyncSession, *, user_id: int, district_id: int, exclude_character_id: int
-) -> bool:
-    """Whether the user should keep the district role after this character leaves it."""
-    result = await session.execute(
-        select(func.count())
-        .select_from(Character)
-        .where(
-            Character.user_id == user_id,
-            Character.district_id == district_id,
-            Character.status == CharacterStatus.APPROVED.value,
-            Character.id != exclude_character_id,
-        )
-    )
-    return int(result.scalar_one()) > 0
 
 
 def is_frozen(character: Character) -> bool:

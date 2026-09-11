@@ -93,6 +93,22 @@ runs inside a rolled-back savepoint.
   `CAPITOL_ROLE_ID` / `DISTRICT_N_ROLE_ID` override is set in `.env` (see
   `.env.example`), in which case `setup_guild.py` uses that existing role
   instead of finding/creating one by name.
+- **A member's district role picks their character's district, not a
+  dropdown.** Members are expected to already hold exactly one district
+  role (via Discord's own onboarding flow) before running `/character
+  create`; the bot skips straight to the creation modal for that district.
+  Someone with no district role, or with more than one, is refused with a
+  message telling them why. The bot no longer grants or removes a
+  district role itself on approval/retirement — onboarding is the only
+  source of truth for who's in which district now. Add the district roles
+  `setup_guild.py` creates (or your own, if using the `_ROLE_ID`
+  overrides) as choosable options in Discord's own Server Settings →
+  Onboarding, ideally in a single-select group so members land in exactly
+  one.
+- **One active character per user by default.** `MAX_CHARACTERS_PER_USER`
+  in `.env` sets the guild-wide default (1); staff can raise or lower it
+  for one specific person with `/staff character_limit <user> [limit]`
+  (omit `limit` to reset them back to the default).
 - Item-gated `restricted` locations (`access_items`) always deny access
   for now, since inventories don't exist until Phase 2 — only
   `access_jobs` and `is_victor` grant access in Phase 0.
@@ -121,6 +137,12 @@ runs inside a rolled-back savepoint.
 - **Character names must be unique** (case-insensitively), enforced both
   in the bot and by a DB-level unique index — see "Upgrading past
   duplicate character names" below if you're updating an existing guild.
+- **Rejected applications aren't kept.** Clicking Reject posts the full
+  application (name, district, age, appearance, backstory, who rejected
+  it, and why) to `#panem-log`, DMs the applicant the reason, then deletes
+  the character row entirely — a rejected application never became a real
+  character, so nothing about it stays in `characters` (and its name is
+  immediately reusable).
 
 ## Upgrading past duplicate character names
 

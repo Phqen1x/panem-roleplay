@@ -13,6 +13,7 @@ from sqlalchemy import select
 
 from panem_bot import autocomplete, redis_keys
 from panem_bot.errors import ServiceError
+from panem_bot.services import characters as characters_svc
 from panem_bot.services import jobs as jobs_svc
 from panem_bot.services.staff import log_staff_action
 from panem_bot.strings import t
@@ -85,6 +86,42 @@ class StaffCog(commands.Cog):
                 session, staff_discord_id=interaction.user.id, action="ban", target=str(user.id)
             )
         await interaction.response.send_message(f"Banned {user.mention}.", ephemeral=True)
+
+    @group.command(
+        name="character_limit",
+        description="Override how many active characters a user may have at once",
+    )
+    @app_commands.describe(
+        user="User to override",
+        limit="Max active characters (omit to reset to the guild default)",
+    )
+    @app_commands.check(_is_staff)
+    async def character_limit(
+        self, interaction: discord.Interaction, user: discord.Member, limit: int | None = None
+    ) -> None:
+        if limit is not None and limit < 0:
+            await interaction.response.send_message("Limit must be 0 or more.", ephemeral=True)
+            return
+        async with self.bot.db() as session:
+            row = await characters_svc.get_or_create_user(session, user.id)
+            row.max_characters_override = limit
+            await log_staff_action(
+                session,
+                staff_discord_id=interaction.user.id,
+                action="character_limit",
+                target=str(user.id),
+                payload={"limit": limit},
+            )
+        if limit is None:
+            await interaction.response.send_message(
+                f"Reset {user.mention}'s character limit to the default "
+                f"({self.bot.settings.max_characters_per_user}).",
+                ephemeral=True,
+            )
+        else:
+            await interaction.response.send_message(
+                f"Set {user.mention}'s character limit to {limit}.", ephemeral=True
+            )
 
     @group.command(name="kill", description="Kill a character")
     @app_commands.describe(character="Character name")

@@ -70,7 +70,7 @@ class Settings(BaseSettings):
 
     scene_auto_archive_minutes: int = 1440
     max_active_scenes_per_district: int = 60
-    max_characters_per_user: int = 3
+    max_characters_per_user: int = 1
 
     world_seed: str = Field(default="panem-long-year")
 

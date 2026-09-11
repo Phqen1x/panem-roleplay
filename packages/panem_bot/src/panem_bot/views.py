@@ -23,32 +23,6 @@ def character_id_from_message(message: discord.Message) -> int | None:
         return None
 
 
-class DistrictSelect(discord.ui.Select):
-    def __init__(
-        self,
-        districts: list[tuple[int, str]],
-        on_choose: Callable[[discord.Interaction, int], Awaitable[None]],
-    ) -> None:
-        options = [
-            discord.SelectOption(label=name, value=str(did)) for did, name in sorted(districts)
-        ]
-        super().__init__(placeholder="Choose a district...", options=options)
-        self._on_choose = on_choose
-
-    async def callback(self, interaction: discord.Interaction) -> None:
-        await self._on_choose(interaction, int(self.values[0]))
-
-
-class DistrictSelectView(discord.ui.View):
-    def __init__(
-        self,
-        districts: list[tuple[int, str]],
-        on_choose: Callable[[discord.Interaction, int], Awaitable[None]],
-    ) -> None:
-        super().__init__(timeout=300)
-        self.add_item(DistrictSelect(districts, on_choose))
-
-
 class JobSelect(discord.ui.Select):
     def __init__(
         self,

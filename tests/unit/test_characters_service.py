@@ -13,8 +13,9 @@ from panem_shared.content.schemas import (
     DistrictQuota,
     Location,
 )
-from panem_shared.db.models import Character
+from panem_shared.db.models import Character, User
 from panem_shared.enums import CharacterStatus
+from panem_shared.settings import Settings
 
 
 def make_district(*, id_: int = 12, extra_locations: list[Location] | None = None) -> District:
@@ -139,6 +140,23 @@ class TestValidateProxyTag:
     def test_invalid(self, tag):
         with pytest.raises(ValidationFailed):
             characters_svc.validate_proxy_tag(tag)
+
+
+class TestEffectiveMaxCharacters:
+    def test_no_override_uses_settings_default(self):
+        settings = Settings(max_characters_per_user=1)
+        user = User(discord_id=1, max_characters_override=None)
+        assert characters_svc.effective_max_characters(user, settings) == 1
+
+    def test_override_takes_precedence(self):
+        settings = Settings(max_characters_per_user=1)
+        user = User(discord_id=1, max_characters_override=5)
+        assert characters_svc.effective_max_characters(user, settings) == 5
+
+    def test_override_of_zero_is_respected(self):
+        settings = Settings(max_characters_per_user=3)
+        user = User(discord_id=1, max_characters_override=0)
+        assert characters_svc.effective_max_characters(user, settings) == 0
 
 
 class TestCreateCharacter:
@@ -312,6 +330,10 @@ class TestNameUniqueness:
             max_characters=3,
         )
         characters_svc.reject_character(rejected)
+        # The real /character reject flow logs the application to Discord and
+        # deletes the row -- a rejected application never became a real
+        # character, so nothing about it stays in `characters`.
+        await db_session.delete(rejected)
         await db_session.flush()
 
         character = await characters_svc.create_character(
@@ -489,5 +511,5 @@ class TestRejectAndRequestChanges:
 
     def test_reject_pending(self):
         character = Character(status=CharacterStatus.PENDING.value)
-        characters_svc.reject_character(character)
-        assert character.status == CharacterStatus.REJECTED.value
+        result = characters_svc.reject_character(character)
+        assert result is character
