@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from panem_bot.errors import ValidationFailed
@@ -48,111 +46,225 @@ def make_content() -> ContentBundle:
     return ContentBundle(districts={12: district}, goods={}, jobs={"miner": miner}, routes=[])
 
 
-VALID_JOB_JSON = json.dumps(
-    {
-        "title": "Baker",
-        "workplace": "square",
-        "wage": 13,
-        "shift_phase": "morning",
-        "slots": 6,
-        "legal": True,
-        "options": [
-            {"label": "a", "output_mult": 1.0, "risk": 0.0, "rep_delta": 0, "wage_mult": 1.0},
-            {"label": "b", "output_mult": 1.0, "risk": 0.0, "rep_delta": 0, "wage_mult": 1.0},
-            {"label": "c", "output_mult": 1.0, "risk": 0.0, "rep_delta": 0, "wage_mult": 1.0},
-        ],
-    }
-)
+NEW_JOB_KWARGS = {
+    "title": "Baker",
+    "workplace": "square",
+    "wage": 13,
+    "shift_phase": "morning",
+    "slots": 6,
+}
 
 
-class TestSetJob:
+class TestSetJobFields:
     async def test_adds_new_job(self, db_session):
         content = make_content()
-        job = await jobs_svc.set_job(
+        job = await jobs_svc.set_job_fields(
             db_session,
             content=content,
             job_id="baker",
             district_id=12,
-            raw_json=VALID_JOB_JSON,
             staff_discord_id=1,
+            **NEW_JOB_KWARGS,
         )
         assert job.id == "baker"
         assert job.district == 12
         assert job.title == "Baker"
+        assert job.legal is True
+        assert len(job.options) == 3
+        assert job.options[0].label == "Option 1"
 
-    async def test_overrides_existing_yaml_job(self, db_session):
+    async def test_new_job_requires_core_fields(self, db_session):
         content = make_content()
-        job = await jobs_svc.set_job(
+        with pytest.raises(ValidationFailed):
+            await jobs_svc.set_job_fields(
+                db_session,
+                content=content,
+                job_id="baker",
+                district_id=12,
+                staff_discord_id=1,
+                title="Baker",
+            )
+
+    async def test_edits_existing_job_keep_unset_fields(self, db_session):
+        content = make_content()
+        job = await jobs_svc.set_job_fields(
             db_session,
             content=content,
             job_id="miner",
             district_id=12,
-            raw_json=VALID_JOB_JSON,
             staff_discord_id=1,
+            title="Head Miner",
         )
-        assert job.title == "Baker"  # miner's title replaced
+        assert job.title == "Head Miner"
+        assert job.wage == 14  # unset field kept from the YAML baseline
+        assert job.workplace == "mine"
+        assert job.options[0].label == "a"  # options untouched by job set
 
         merged = await jobs_svc.get_all_jobs(db_session, content)
-        assert merged["miner"].title == "Baker"
+        assert merged["miner"].title == "Head Miner"
+
+    async def test_clears_optional_text_field(self, db_session):
+        content = make_content()
+        await jobs_svc.set_job_fields(
+            db_session,
+            content=content,
+            job_id="miner",
+            district_id=12,
+            staff_discord_id=1,
+            foreman_npc_id="foreman_bob",
+        )
+        job = await jobs_svc.set_job_fields(
+            db_session,
+            content=content,
+            job_id="miner",
+            district_id=12,
+            staff_discord_id=1,
+            foreman_npc_id="none",
+        )
+        assert job.foreman_npc_id is None
+
+    async def test_clears_optional_numeric_field(self, db_session):
+        content = make_content()
+        await jobs_svc.set_job_fields(
+            db_session,
+            content=content,
+            job_id="miner",
+            district_id=12,
+            staff_discord_id=1,
+            min_reputation=10,
+        )
+        job = await jobs_svc.set_job_fields(
+            db_session,
+            content=content,
+            job_id="miner",
+            district_id=12,
+            staff_discord_id=1,
+            min_reputation=-1,
+        )
+        assert job.min_reputation is None
+
+    async def test_produces_json_round_trips(self, db_session):
+        content = make_content()
+        job = await jobs_svc.set_job_fields(
+            db_session,
+            content=content,
+            job_id="miner",
+            district_id=12,
+            staff_discord_id=1,
+            produces_json='{"coal": 8}',
+        )
+        assert job.produces == {"coal": 8}
 
     async def test_rejects_bad_json(self, db_session):
         content = make_content()
         with pytest.raises(ValidationFailed):
-            await jobs_svc.set_job(
+            await jobs_svc.set_job_fields(
                 db_session,
                 content=content,
-                job_id="baker",
+                job_id="miner",
                 district_id=12,
-                raw_json="not json",
                 staff_discord_id=1,
-            )
-
-    async def test_rejects_wrong_option_count(self, db_session):
-        content = make_content()
-        bad = json.dumps(
-            {
-                "title": "Baker",
-                "workplace": "square",
-                "wage": 13,
-                "shift_phase": "morning",
-                "slots": 6,
-                "options": [{"label": "only one"}],
-            }
-        )
-        with pytest.raises(ValidationFailed):
-            await jobs_svc.set_job(
-                db_session,
-                content=content,
-                job_id="baker",
-                district_id=12,
-                raw_json=bad,
-                staff_discord_id=1,
+                produces_json="not json",
             )
 
     async def test_rejects_unknown_district(self, db_session):
         content = make_content()
         with pytest.raises(ValidationFailed):
-            await jobs_svc.set_job(
+            await jobs_svc.set_job_fields(
                 db_session,
                 content=content,
                 job_id="baker",
                 district_id=99,
-                raw_json=VALID_JOB_JSON,
                 staff_discord_id=1,
+                **NEW_JOB_KWARGS,
             )
 
     async def test_rejects_workplace_not_in_district(self, db_session):
         content = make_content()
-        bad_workplace = json.dumps({**json.loads(VALID_JOB_JSON), "workplace": "nonexistent"})
         with pytest.raises(ValidationFailed):
-            await jobs_svc.set_job(
+            await jobs_svc.set_job_fields(
                 db_session,
                 content=content,
                 job_id="baker",
                 district_id=12,
-                raw_json=bad_workplace,
                 staff_discord_id=1,
+                **{**NEW_JOB_KWARGS, "workplace": "nonexistent"},
             )
+
+
+class TestSetJobOption:
+    async def test_rejects_unknown_job(self, db_session):
+        content = make_content()
+        with pytest.raises(ValidationFailed):
+            await jobs_svc.set_job_option(
+                db_session,
+                content=content,
+                job_id="nonexistent",
+                slot=1,
+                staff_discord_id=1,
+                label="x",
+            )
+
+    async def test_patches_single_slot_leaving_others_untouched(self, db_session):
+        content = make_content()
+        job = await jobs_svc.set_job_option(
+            db_session,
+            content=content,
+            job_id="miner",
+            slot=2,
+            staff_discord_id=1,
+            label="Work carefully",
+            risk=0.1,
+        )
+        assert job.options[1].label == "Work carefully"
+        assert job.options[1].risk == 0.1
+        assert job.options[0].label == "a"  # slot 1 untouched
+        assert job.options[2].label == "a"  # slot 3 untouched
+
+    async def test_fills_in_placeholder_option_on_new_job(self, db_session):
+        content = make_content()
+        await jobs_svc.set_job_fields(
+            db_session,
+            content=content,
+            job_id="baker",
+            district_id=12,
+            staff_discord_id=1,
+            **NEW_JOB_KWARGS,
+        )
+        job = await jobs_svc.set_job_option(
+            db_session,
+            content=content,
+            job_id="baker",
+            slot=1,
+            staff_discord_id=1,
+            label="Bake extra",
+            output_mult=1.2,
+            risk=0.05,
+            rep_delta=1,
+            wage_mult=1.0,
+        )
+        assert job.options[0].label == "Bake extra"
+        assert job.options[1].label == "Option 2"
+
+    async def test_clears_risk_effect(self, db_session):
+        content = make_content()
+        await jobs_svc.set_job_option(
+            db_session,
+            content=content,
+            job_id="miner",
+            slot=1,
+            staff_discord_id=1,
+            risk_effect_json='{"health": -5}',
+        )
+        job = await jobs_svc.set_job_option(
+            db_session,
+            content=content,
+            job_id="miner",
+            slot=1,
+            staff_discord_id=1,
+            risk_effect_json="none",
+        )
+        assert job.options[0].risk_effect is None
 
 
 class TestRemoveJob:
@@ -164,13 +276,13 @@ class TestRemoveJob:
 
     async def test_removes_staff_added_job(self, db_session):
         content = make_content()
-        await jobs_svc.set_job(
+        await jobs_svc.set_job_fields(
             db_session,
             content=content,
             job_id="baker",
             district_id=12,
-            raw_json=VALID_JOB_JSON,
             staff_discord_id=1,
+            **NEW_JOB_KWARGS,
         )
         await jobs_svc.remove_job(db_session, job_id="baker", staff_discord_id=1)
         assert "baker" not in (await jobs_svc.get_all_jobs(db_session, content))
@@ -178,13 +290,13 @@ class TestRemoveJob:
     async def test_re_adding_after_removal_works(self, db_session):
         content = make_content()
         await jobs_svc.remove_job(db_session, job_id="miner", staff_discord_id=1)
-        await jobs_svc.set_job(
+        await jobs_svc.set_job_fields(
             db_session,
             content=content,
             job_id="miner",
             district_id=12,
-            raw_json=VALID_JOB_JSON,
             staff_discord_id=1,
+            **NEW_JOB_KWARGS,
         )
         merged = await jobs_svc.get_all_jobs(db_session, content)
         assert merged["miner"].title == "Baker"
@@ -193,13 +305,13 @@ class TestRemoveJob:
 class TestJobsForDistrict:
     async def test_filters_by_district(self, db_session):
         content = make_content()
-        await jobs_svc.set_job(
+        await jobs_svc.set_job_fields(
             db_session,
             content=content,
             job_id="baker",
             district_id=12,
-            raw_json=VALID_JOB_JSON,
             staff_discord_id=1,
+            **NEW_JOB_KWARGS,
         )
         jobs = await jobs_svc.jobs_for_district(db_session, content, 12)
         assert {j.id for j in jobs} == {"miner", "baker"}

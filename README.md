@@ -115,20 +115,33 @@ runs inside a rolled-back savepoint.
 - **Character age**: reaping-eligible districts (1-12) are capped at age 18;
   only The Capitol may create adult characters, up to 80.
 - **Jobs are editable in Discord**, not just in `data/jobs.yaml`: `/staff
-  job set <job_id> <district> <json>` adds or overrides a job (same schema
-  as `jobs.yaml`, validated the same way, including that its `workplace`
-  is a real location in that district), `/staff job remove <job_id>` takes
-  one out (whether it came from YAML or a prior override), `/staff job
-  list <district>` and `/staff job show <job_id>` inspect the current
-  merged view. Changes take effect immediately, no restart needed — every
-  job lookup in the bot goes through `panem_bot.services.jobs`, which
-  layers `job_overrides` (Postgres) on top of `jobs.yaml` at read time.
+  job set <job_id> <district> [fields...]` adds or patches a job's base
+  fields (title, workplace, wage, shift_phase, slots, legal, and the rarer
+  optional fields), and `/staff job option <job_id> <slot> [fields...]`
+  patches one of its 3 options at a time -- both take named arguments
+  instead of a JSON blob, validated the same way `jobs.yaml` is (including
+  that `workplace` is a real location in that district). Either command
+  uses patch semantics: any argument left unset keeps the job's current
+  value, so staff only pass what's actually changing; a brand-new job id
+  requires title/workplace/wage/shift_phase/slots up front and starts with
+  3 placeholder options for `job option` to fill in (`Job` always needs
+  exactly 3). A few fields that are inherently open-ended maps (`produces`,
+  `ladder_requirement`, an option's `risk_effect`) still take a small JSON
+  object rather than one argument per possible key; pass `none` (or `-1`
+  for the two numeric fields, `min_reputation`/`peacekeeper_attention`) to
+  clear an optional field back out. `/staff job remove <job_id>` takes a
+  job out entirely (whether it came from YAML or a prior override), and
+  `/staff job list <district>` / `/staff job show <job_id>` inspect the
+  current merged view. Changes take effect immediately, no restart needed
+  — every job lookup in the bot goes through `panem_bot.services.jobs`,
+  which layers `job_overrides` (Postgres) on top of `jobs.yaml` at read
+  time.
 - **Autocomplete** replaces free typing everywhere a command takes a
   character name, job id, or district: `/character edit|retire|status|
-  avatar|tag`, `/staff kill|note|job set|job remove|job show|job list`, and
-  `/scene start|move|invite` all suggest matching options as you type,
-  scoped to what's relevant (e.g. `/character edit` only offers your own
-  pending submissions). See `panem_bot/autocomplete.py` for the
+  avatar|tag`, `/staff kill|note|job set|job option|job remove|job show|
+  job list`, and `/scene start|move|invite` all suggest matching options as
+  you type, scoped to what's relevant (e.g. `/character edit` only offers
+  your own pending submissions). See `panem_bot/autocomplete.py` for the
   shared callbacks; district/scene-scoped ones live next to their commands
   in `cogs/scenes.py`.
 - `/staff delete_pending <character> [reason]` removes a pending

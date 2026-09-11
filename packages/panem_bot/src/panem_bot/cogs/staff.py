@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import re
+from typing import Literal
 
 import discord
 from discord import app_commands
@@ -18,7 +19,7 @@ from panem_bot.services import jobs as jobs_svc
 from panem_bot.services.staff import log_staff_action
 from panem_bot.strings import t
 from panem_shared.db.models import Character, Scene, User
-from panem_shared.enums import CharacterStatus, SceneStatus
+from panem_shared.enums import CharacterStatus, DayPhase, SceneStatus
 
 MESSAGE_LINK_RE = re.compile(r"/channels/(\d+)/(\d+)/(\d+)$")
 
@@ -282,34 +283,69 @@ class StaffCog(commands.Cog):
         return await scenes_cog.move_location_autocomplete(interaction, current)  # type: ignore[attr-defined]
 
     @job_group.command(
-        name="set", description="Add or edit a job for a district (no redeploy needed)"
+        name="set",
+        description="Add or edit a job's base fields for a district (use /staff job option "
+        "for its 3 options)",
     )
     @app_commands.describe(
         job_id="Job id (reuses an existing id to edit it, e.g. 'miner'; a new id adds a job)",
         district="District number (0 = The Capitol)",
-        json_body=(
-            "Job fields as JSON, e.g. "
-            '{"title": "Baker", "workplace": "merchant_row", "wage": 13, '
-            '"shift_phase": "morning", "slots": 6, "legal": true, "options": ['
-            '{"label": "Bake extra", "output_mult": 1.2, "risk": 0.05, "rep_delta": 1, "wage_mult": 1.0}, '
-            '{"label": "Standard batch", "output_mult": 1.0, "risk": 0.0, "rep_delta": 0, "wage_mult": 1.0}, '
-            '{"label": "Cut corners", "output_mult": 0.8, "risk": 0.1, "rep_delta": -1, "wage_mult": 1.1}]}'
+        title="Job title (required when adding a new job)",
+        workplace="Location id within the district (required when adding a new job)",
+        wage="Wage per shift (required when adding a new job)",
+        shift_phase="Shift phase (required when adding a new job)",
+        slots="Number of slots (required when adding a new job)",
+        legal="Whether working this job is legal (default true for a new job)",
+        min_reputation="Minimum reputation required to take this job; pass -1 to clear",
+        ladder_next="Job id this promotes to; pass 'none' to clear",
+        ladder_requirement_json=(
+            "JSON object of promotion requirements, e.g. "
+            "'{\"shifts_completed\": 40, \"reputation\": 20}'; pass 'none' to clear"
         ),
+        peacekeeper_attention="Peacekeeper attention this job draws, 0.0-1.0; pass -1 to clear",
+        foreman_npc_id="NPC id who runs this job; pass 'none' to clear",
+        produces_json=("JSON object of goods produced, e.g. '{\"coal\": 8}'; pass 'none' to clear"),
     )
     @app_commands.autocomplete(job_id=autocomplete.job_ids, district=autocomplete.districts)
     @app_commands.check(_is_staff)
     async def job_set(
-        self, interaction: discord.Interaction, job_id: str, district: int, json_body: str
+        self,
+        interaction: discord.Interaction,
+        job_id: str,
+        district: int,
+        title: str | None = None,
+        workplace: str | None = None,
+        wage: app_commands.Range[float, 0.0, None] | None = None,
+        shift_phase: DayPhase | None = None,
+        slots: app_commands.Range[int, 1, None] | None = None,
+        legal: bool | None = None,
+        min_reputation: float | None = None,
+        ladder_next: str | None = None,
+        ladder_requirement_json: str | None = None,
+        peacekeeper_attention: float | None = None,
+        foreman_npc_id: str | None = None,
+        produces_json: str | None = None,
     ) -> None:
         async with self.bot.db() as session:
             try:
-                job = await jobs_svc.set_job(
+                job = await jobs_svc.set_job_fields(
                     session,
                     content=self.bot.content,
                     job_id=job_id,
                     district_id=district,
-                    raw_json=json_body,
                     staff_discord_id=interaction.user.id,
+                    title=title,
+                    workplace=workplace,
+                    wage=wage,
+                    shift_phase=shift_phase.value if shift_phase is not None else None,
+                    slots=slots,
+                    legal=legal,
+                    min_reputation=min_reputation,
+                    ladder_next=ladder_next,
+                    ladder_requirement_json=ladder_requirement_json,
+                    peacekeeper_attention=peacekeeper_attention,
+                    foreman_npc_id=foreman_npc_id,
+                    produces_json=produces_json,
                 )
             except ServiceError as exc:
                 await interaction.response.send_message(
@@ -325,6 +361,67 @@ class StaffCog(commands.Cog):
             )
         await interaction.response.send_message(
             t("job_set_ok", job_id=job.id, district_id=job.district), ephemeral=True
+        )
+
+    @job_group.command(
+        name="option",
+        description="Edit one of a job's 3 options (add the job first with /staff job set)",
+    )
+    @app_commands.describe(
+        job_id="Job id",
+        slot="Which of the 3 options to edit",
+        label="Option label shown to players",
+        output_mult="Output multiplier for this option",
+        risk="Risk of this option, 0.0-1.0",
+        risk_effect_json=(
+            "JSON object of side effects, e.g. '{\"health\": -5}'; pass 'none' to clear"
+        ),
+        rep_delta="Reputation change from this option",
+        wage_mult="Wage multiplier for this option",
+    )
+    @app_commands.autocomplete(job_id=autocomplete.job_ids)
+    @app_commands.check(_is_staff)
+    async def job_option(
+        self,
+        interaction: discord.Interaction,
+        job_id: str,
+        slot: Literal[1, 2, 3],
+        label: str | None = None,
+        output_mult: float | None = None,
+        risk: app_commands.Range[float, 0.0, 1.0] | None = None,
+        risk_effect_json: str | None = None,
+        rep_delta: int | None = None,
+        wage_mult: float | None = None,
+    ) -> None:
+        async with self.bot.db() as session:
+            try:
+                job = await jobs_svc.set_job_option(
+                    session,
+                    content=self.bot.content,
+                    job_id=job_id,
+                    slot=slot,
+                    staff_discord_id=interaction.user.id,
+                    label=label,
+                    output_mult=output_mult,
+                    risk=risk,
+                    risk_effect_json=risk_effect_json,
+                    rep_delta=rep_delta,
+                    wage_mult=wage_mult,
+                )
+            except ServiceError as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+            await log_staff_action(
+                session,
+                staff_discord_id=interaction.user.id,
+                action="job_option",
+                target=job_id,
+                payload={"slot": slot},
+            )
+        await interaction.response.send_message(
+            t("job_option_ok", job_id=job.id, slot=slot), ephemeral=True
         )
 
     @job_group.command(

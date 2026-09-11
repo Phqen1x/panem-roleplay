@@ -59,7 +59,9 @@ STRINGS: dict[str, str] = {
     "job_bad_district": "{detail}",
     "job_bad_workplace": "{detail}",
     "job_not_found": "No job with that id (checked jobs.yaml and staff overrides).",
+    "job_missing_fields": "{detail}",
     "job_set_ok": "Job **{job_id}** saved for district {district_id}.",
+    "job_option_ok": "Job **{job_id}** option {slot} saved.",
     "job_removed_ok": "Job **{job_id}** removed.",
     # Generic
     "world_paused": "The world is paused.",
