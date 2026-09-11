@@ -47,6 +47,16 @@ class SceneCog(commands.Cog):
         ).scalar_one_or_none()
         return row.district_id if row else None
 
+    @staticmethod
+    def _forum_channel_id(channel: discord.abc.GuildChannel | discord.Thread | None) -> int | None:
+        """Only the forum channel itself is registered in `discord_channels`, not
+        each thread inside it -- resolve to the parent forum's id so `/scene
+        start` and its autocomplete work whether run from the forum channel's
+        own compose bar or from inside one of its threads."""
+        if isinstance(channel, discord.Thread):
+            return channel.parent_id
+        return channel.id if channel is not None else None
+
     async def _forum_for_district(self, session, district_id: int) -> DiscordChannel | None:
         return (
             await session.execute(
@@ -130,8 +140,13 @@ class SceneCog(commands.Cog):
         character: str | None = None,
     ) -> None:
         assert interaction.guild is not None
+        forum_channel_id = self._forum_channel_id(interaction.channel)
         async with self.bot.db() as session:
-            district_id = await self._district_for_channel(session, interaction.channel_id)
+            district_id = (
+                await self._district_for_channel(session, forum_channel_id)
+                if forum_channel_id is not None
+                else None
+            )
             if district_id is None:
                 await interaction.response.send_message(
                     "Use this in a district channel.", ephemeral=True
@@ -219,8 +234,11 @@ class SceneCog(commands.Cog):
     async def start_location_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
+        forum_channel_id = self._forum_channel_id(interaction.channel)
+        if forum_channel_id is None:
+            return []
         async with self.bot.db() as session:
-            district_id = await self._district_for_channel(session, interaction.channel_id)
+            district_id = await self._district_for_channel(session, forum_channel_id)
         if district_id is None:
             return []
         district = self.bot.content.district(district_id)
@@ -238,8 +256,11 @@ class SceneCog(commands.Cog):
     async def start_character_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
+        forum_channel_id = self._forum_channel_id(interaction.channel)
+        if forum_channel_id is None:
+            return []
         async with self.bot.db() as session:
-            district_id = await self._district_for_channel(session, interaction.channel_id)
+            district_id = await self._district_for_channel(session, forum_channel_id)
             if district_id is None:
                 return []
             user = await characters_svc.get_or_create_user(session, interaction.user.id)
