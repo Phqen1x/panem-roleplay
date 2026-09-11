@@ -230,8 +230,8 @@ class StaffCog(commands.Cog):
                 action="scene_lock",
                 target=str(thread.id),
             )
-        await thread.edit(locked=True, reason=f"Locked by {interaction.user}")
         await interaction.response.send_message("Scene locked.", ephemeral=True)
+        await thread.edit(locked=True, reason=f"Locked by {interaction.user}")
 
     @scene_group.command(name="archive", description="Archive this scene")
     @app_commands.check(_is_staff)
@@ -252,8 +252,10 @@ class StaffCog(commands.Cog):
                 action="scene_archive",
                 target=str(thread.id),
             )
-        await thread.edit(archived=True, reason=f"Archived by {interaction.user}")
+        # Reply before archiving: an interaction response into an
+        # already-archived thread is refused with 403 "Thread is archived".
         await interaction.response.send_message("Scene archived.", ephemeral=True)
+        await thread.edit(archived=True, reason=f"Archived by {interaction.user}")
 
     @scene_group.command(name="move", description="Move this scene to another location")
     @app_commands.describe(location="New location id")

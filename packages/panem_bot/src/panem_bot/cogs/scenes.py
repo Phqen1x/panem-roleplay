@@ -314,8 +314,10 @@ class SceneCog(commands.Cog):
         new_tags = [tg for tg in thread.applied_tags if tg.name != OPEN_TAG]
         if closed_tag is not None:
             new_tags.append(closed_tag)
-        await thread.edit(archived=True, applied_tags=new_tags, reason="Scene closed")
+        # Reply before archiving: an interaction response into an
+        # already-archived thread is refused with 403 "Thread is archived".
         await interaction.response.send_message(t("scene_closed"), ephemeral=True)
+        await thread.edit(archived=True, applied_tags=new_tags, reason="Scene closed")
 
     @group.command(name="move", description="Change this scene's location tag")
     @app_commands.describe(location="New location id")
