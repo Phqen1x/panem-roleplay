@@ -40,7 +40,10 @@ async def _characters(
             stmt = stmt.where(Character.name.ilike(f"%{current}%"))
         rows = (await session.execute(stmt.order_by(Character.name).limit(MAX_CHOICES))).all()
     return [
-        app_commands.Choice(name=f"{name} (D{district_id}, {status})", value=name)
+        app_commands.Choice(
+            name=f"{name} ({bot.content.district(district_id).name}, {status})",  # type: ignore[attr-defined]
+            value=name,
+        )
         for name, district_id, status in rows
     ]
 
@@ -98,7 +101,10 @@ async def job_ids(interaction: discord.Interaction, current: str) -> list[app_co
     ]
     matches.sort(key=lambda job: job.id)
     return [
-        app_commands.Choice(name=f"{job.id} - {job.title} (D{job.district})", value=job.id)
+        app_commands.Choice(
+            name=f"{job.id} - {job.title} ({bot.content.district(job.district).name})",  # type: ignore[attr-defined]
+            value=job.id,
+        )
         for job in matches[:MAX_CHOICES]
     ]
 
