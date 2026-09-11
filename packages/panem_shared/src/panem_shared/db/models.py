@@ -22,6 +22,7 @@ from typing import Any
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    DateTime,
     Float,
     ForeignKey,
     Index,
@@ -48,8 +49,10 @@ class User(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     discord_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False, index=True)
-    tos_accepted_at: Mapped[dt.datetime | None] = mapped_column(nullable=True)
-    banned_at: Mapped[dt.datetime | None] = mapped_column(nullable=True)
+    tos_accepted_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    banned_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     characters: Mapped[list[Character]] = relationship(back_populates="user")
 
@@ -335,7 +338,9 @@ class Scene(TimestampMixin, Base):
         String(16), nullable=False, default=SceneStatus.OPEN.value, index=True
     )
     pins_location: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    last_message_at: Mapped[dt.datetime | None] = mapped_column(nullable=True, index=True)
+    last_message_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     participants: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
 
@@ -352,9 +357,9 @@ class SceneMessage(Base):
     author_name: Mapped[str] = mapped_column(String(64), nullable=False)
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    ts: Mapped[dt.datetime] = mapped_column(nullable=False, index=True)
-    edited_at: Mapped[dt.datetime | None] = mapped_column(nullable=True)
-    deleted_at: Mapped[dt.datetime | None] = mapped_column(nullable=True)
+    ts: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    edited_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class DialogueLog(TimestampMixin, Base):
