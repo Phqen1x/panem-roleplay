@@ -5,19 +5,23 @@ Games sessions. Built from `panem-long-year-build-plan-python.md` (the
 Plan) and `panem-long-year-spec.md` (the Spec, which wins on any
 disagreement with the Plan).
 
-This repository currently implements **Phase 0 — Foundation**: character
-creation and staff approval, Discord Forum-based scenes, and character
-proxying. Phases 1-6 (world simulation, economy, NPC minds, crises, the
-Activity, and LLM dialogue) are scaffolded as empty packages and land in
-that order — see the Plan for the full roadmap.
+This repository implements **Phase 0 — Foundation** (character creation and
+staff approval, Discord Forum-based scenes, and character proxying) and
+**Phase 1 — World Simulation** (Plan §4): a deterministic tick loop
+(`panem_sim`), NPC movement, ambient narration back into Discord, and
+intra-district `/travel`/`/where`. Phase 2 (economy, jobs/shifts, markets —
+Plan §5) has its schema and content already in place but no runtime logic
+yet. Phases 3-6 (NPC minds, crises, the Activity, and LLM dialogue) are
+scaffolded as empty packages and land in that order — see the Plan for the
+full roadmap.
 
 ## Layout
 
 ```
 packages/
-  panem_shared/   data model (SQLAlchemy), content YAML schemas/loaders, settings, enums
-  panem_bot/      the discord.py process: commands, proxying, scenes, staff tools (Phase 0)
-  panem_sim/      world tick loop, economy, NPC AI, dialogue (Phase 1+, not yet implemented)
+  panem_shared/   data model (SQLAlchemy), content YAML schemas/loaders, settings, enums, world event types
+  panem_bot/      the discord.py process: commands, proxying, scenes, staff tools, narration, travel
+  panem_sim/      world tick loop, NPC movement (Phase 1); economy/jobs land in Phase 2
   panem_api/      FastAPI REST/WebSocket bridge for the Activity (Phase 5+, not yet implemented)
 data/             districts, goods, jobs, routes (content YAML, validated at boot)
 migrations/       Alembic migrations
@@ -55,6 +59,21 @@ Note the `APPROVAL_CHANNEL_ID` / `LOG_CHANNEL_ID` it prints and add them to
 ```bash
 uv run python -m panem_bot.main
 ```
+
+Run the world simulation alongside it (same `.env`, `WORLD_SEED` sets the
+deterministic RNG seed and `TICK_INTERVAL_SECONDS` the tick length — see
+`.env.example`):
+
+```bash
+uv run python -m panem_sim.main
+```
+
+On first run it seeds a `district_state` row and a synthetic NPC
+population per district (see "Notes on this Phase 1 build" below), then
+ticks on `TICK_INTERVAL_SECONDS`. With the bot running too, NPC movement
+shows up as ambient narration in each location's pinned thread, and
+`/travel`/`/where` let a player move their own character around the
+district.
 
 ## Development
 
@@ -156,6 +175,61 @@ runs inside a rolled-back savepoint.
   the character row entirely — a rejected application never became a real
   character, so nothing about it stays in `characters` (and its name is
   immediately reusable).
+
+## Notes on this Phase 1 build
+
+- **Milestones A + B only** (Plan's own breakdown): the tick loop skeleton,
+  real NPC movement, ambient narration, and intra-district travel are
+  built and Phase 1's acceptance criteria (Plan §4.5) are met. Milestones
+  C/D — needs, jobs/shifts, markets, quotas, cross-district travel (Phase
+  2, Plan §5) — have their schema and `data/jobs.yaml`/`goods.yaml`/
+  `routes.yaml` content already in place but no runtime systems yet;
+  `panem_sim/systems/needs.py`, `jobs.py`, `economy.py`, `social.py`,
+  `memory.py`, `crisis.py`, and `games.py` are no-op stubs in their final
+  spec order (FR-TCK-2), ready to be filled in one at a time without
+  reordering the tick loop.
+- **No real NPC content yet.** `data/npcs/*.yaml` (names, traits, speech
+  style, relationships — Phase 3) doesn't exist. `panem_sim/world.py`
+  seeds `SYNTHETIC_NPCS_PER_DISTRICT` (23) minimal NPCs per district
+  directly into `npcs`/`npc_schedule` on first run instead — no traits or
+  dialogue, just enough of a body (home location, a generic
+  home/public/market schedule) for movement and, later, jobs/shopkeeper
+  mechanics to act on. Phase 3 enriches these same rows in place; nothing
+  here blocks it.
+- **The tick loop is one DB transaction per tick** (FR-TCK-3): each tick
+  loads `WorldState` from `world_clock`/`district_state`/`npcs`/
+  `npc_schedule`, runs every system in `panem_sim.systems.FIXED_ORDER`,
+  and commits together. A tick that raises is retried once; a second
+  failure pauses the loop and publishes to the `sim:alerts` Redis channel
+  rather than crash-looping or silently skipping ahead.
+- **Per-tick randomness is seeded, not global** (FR-TCK-4): every system
+  draws from `panem_sim.rng.tick_rng(world_seed, tick)`, a `random.Random`
+  reseeded from a `sha256` of `(world_seed, tick)` — deterministic across
+  restarts, unlike Python's per-process-randomized `hash()`.
+- **Events are durable before they're announced** (NFR-7): each tick's
+  events are written to `world_events` (`announced=false`) in the same
+  transaction as the state change that produced them, then published to
+  Redis `world:events` and marked `announced=true` only after that commit
+  succeeds. `panem_sim.main` calls `recover_pending_events` on startup to
+  re-publish anything a crash left unannounced, so a process restart never
+  loses or silently drops an event.
+- **Ambient narration posts through the same `OutboundQueue`** player
+  proxy and NPC messages already use (`panem_bot/narrator.py`,
+  `SendPriority.NARRATOR` — already the lowest priority, so it never
+  starves a player mid-scene), via the same forum webhook credentials
+  `/rp` proxying uses. `Bulletin` events (district-wide notices) route to
+  a district's `#board` channel by `ChannelKind.BOARD`, but
+  `scripts/setup_guild.py` doesn't create that channel yet — deliberately
+  deferred there to Phase 2 economy content — and no Phase 1/2-stub system
+  emits a `Bulletin` yet either, so that path is wired and tested but
+  inert until Phase 2 lands.
+- **`/travel` and `/where` take a character name** (`own_approved`
+  autocomplete), matching every other character-scoped command in the
+  bot, rather than resolving an "active" character from `/rp`'s
+  thread-session mechanism — that exists specifically for "who is
+  speaking in this thread," a different concern from "where is my
+  character." Both are intra-district only; cross-district travel
+  (tickets, transit ticks, visitor roles — FR-LOC-7/8/9) is Phase 2 scope.
 
 ## Upgrading past duplicate character names
 
