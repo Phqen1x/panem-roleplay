@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import uuid
 from collections.abc import AsyncIterator
@@ -14,6 +15,7 @@ from discord import app_commands
 from discord.ext import commands
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from panem_bot import narrator
 from panem_bot.outbound import OutboundQueue
 from panem_bot.services import jobs as jobs_svc
 from panem_bot.strings import t
@@ -55,6 +57,7 @@ class PanemBot(commands.Bot):
         self.session_factory: async_sessionmaker[AsyncSession] = make_session_factory(engine)
         self.redis: redis.Redis = redis.from_url(settings.redis_url, decode_responses=True)
         self.outbound = OutboundQueue()
+        self.narrator_task: asyncio.Task[None] | None = None
 
     @asynccontextmanager
     async def db(self) -> AsyncIterator[AsyncSession]:
@@ -80,7 +83,13 @@ class PanemBot(commands.Bot):
         else:
             logger.warning("no_guild_id_configured_skipping_command_sync")
 
+        self.narrator_task = asyncio.create_task(narrator.run(self))
+
     async def close(self) -> None:
+        if self.narrator_task is not None:
+            self.narrator_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self.narrator_task
         await self.redis.aclose()
         await super().close()
 

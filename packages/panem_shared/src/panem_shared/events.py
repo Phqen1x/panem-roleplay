@@ -6,6 +6,11 @@ independently of the sim's internal event shape. Only the event kinds
 Milestone A/B need (`NarrationLine`, `Bulletin`) are defined here; later
 milestones add more kinds to the `WorldEvent` union as their systems need
 them, without touching what's already here.
+
+Lives in `panem_shared`, not `panem_sim`, because this is a cross-process
+wire contract: `panem_sim` produces these, `panem_bot`'s narrator
+consumes them, and neither should have to depend on the other's package
+just to agree on an event's shape.
 """
 
 from __future__ import annotations
@@ -62,3 +67,11 @@ def parse_event(kind: str, payload: dict[str, Any]) -> AnyWorldEvent:
     own indexed column, so callers pass it straight from the row rather
     than digging into `payload` twice."""
     return _event_adapter.validate_python({**payload, "kind": kind})
+
+
+def parse_message(raw: str | bytes) -> AnyWorldEvent:
+    """Decode one `WORLD_EVENTS_CHANNEL` pubsub payload -- the full JSON
+    `publish()` sent, `kind` included -- into its typed event. Used by
+    subscribers (the bot's narrator); unlike `parse_event`, there's no
+    separate `kind` column to pull from here."""
+    return _event_adapter.validate_json(raw)

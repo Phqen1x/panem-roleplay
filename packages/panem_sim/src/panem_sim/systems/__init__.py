@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from panem_sim.events import AnyWorldEvent
+from panem_shared.events import AnyWorldEvent
 from panem_sim.state import TickContext, WorldState
 from panem_sim.systems import crisis, economy, games, jobs, memory, needs, schedule, social, time
 

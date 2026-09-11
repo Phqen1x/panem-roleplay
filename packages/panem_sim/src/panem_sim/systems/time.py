@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from panem_shared import constants
 from panem_shared.enums import DayPhase
-from panem_sim.events import AnyWorldEvent
+from panem_shared.events import AnyWorldEvent
 from panem_sim.state import TickContext, WorldState
 
 _PHASE_ORDER = (DayPhase.NIGHT, DayPhase.MORNING, DayPhase.AFTERNOON, DayPhase.EVENING)

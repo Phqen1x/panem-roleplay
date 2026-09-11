@@ -3,7 +3,7 @@ Stub for Milestone A -- real logic lands in Milestone C (Phase 2)."""
 
 from __future__ import annotations
 
-from panem_sim.events import AnyWorldEvent
+from panem_shared.events import AnyWorldEvent
 from panem_sim.state import TickContext, WorldState
 
 
