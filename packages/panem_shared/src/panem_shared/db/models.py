@@ -250,6 +250,19 @@ class DistrictState(Base):
     treasury: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
 
+class WorldClock(Base):
+    """Single-row global tick counter (Plan §4, FR-TCK). Not in the
+    original Plan §2 schema list -- `district_state.tick`/`world_events.tick`
+    both assume a shared tick numbering scheme, but nothing actually
+    persisted *the* current tick until now; this is that source of truth,
+    read and incremented once per tick by `panem_sim.systems.time`."""
+
+    __tablename__ = "world_clock"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    tick: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
 class Shift(Base):
     __tablename__ = "shifts"
 

@@ -74,3 +74,11 @@ AVATAR_URL_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 PROXY_MESSAGE_MAX_LEN = 2000
 SCENE_IDLE_ARCHIVE_HOURS = 24
 NPC_APPROACH_INVITE_TAG_MATCH_REQUIRED = True
+
+# Phase 1 addition: real, personality-rich NPCs (`data/npcs/*.yaml`) are
+# Phase 3 content (Plan §11); Phase 1/2 seed this many minimal synthetic
+# NPCs per district instead, so movement/needs/jobs/shopkeeper mechanics
+# have bodies to act on. Falls within Plan §6.1's own "20-30 NPCs per
+# district" range, so Phase 3 mostly enriches these rows rather than
+# replacing them.
+SYNTHETIC_NPCS_PER_DISTRICT = 23
