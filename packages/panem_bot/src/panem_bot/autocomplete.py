@@ -12,13 +12,21 @@ from __future__ import annotations
 
 import discord
 from discord import app_commands
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from panem_bot.services import characters as characters_svc
-from panem_shared.db.models import Character
+from panem_shared.content.errors import ContentValidationError
+from panem_shared.db.models import Character, Npc
 from panem_shared.enums import CharacterStatus
 
 MAX_CHOICES = 25
+
+#: Sentinel staff type into a clearable text field to blank it back out
+#: (see `panem_bot.services.jobs`); surfaced here as a suggested choice.
+CLEAR_TEXT = "none"
+
+#: Sentinel staff type into a clearable numeric field to blank it back out.
+CLEAR_NUMBER = -1.0
 
 
 async def _characters(
@@ -113,3 +121,86 @@ async def districts(
     return [
         app_commands.Choice(name=f"{d.id} - {d.name}", value=d.id) for d in matches[:MAX_CHOICES]
     ]
+
+
+def _with_clear_choice(
+    choices: list[app_commands.Choice[str]], current: str
+) -> list[app_commands.Choice[str]]:
+    """Offers the `CLEAR_TEXT` sentinel as a suggestion (never as the only
+    allowed value -- dynamic autocomplete lists don't restrict input)."""
+    if CLEAR_TEXT.startswith(current.strip().lower()):
+        return [
+            app_commands.Choice(name=f"{CLEAR_TEXT} (clear)", value=CLEAR_TEXT),
+            *choices[: MAX_CHOICES - 1],
+        ]
+    return choices[:MAX_CHOICES]
+
+
+async def job_ids_clearable(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    """Like `job_ids`, plus the `CLEAR_TEXT` sentinel -- for fields that
+    reference another job id and can be blanked back out (e.g. ladder_next)."""
+    return _with_clear_choice(await job_ids(interaction, current), current)
+
+
+async def job_workplace(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    """Locations in whichever district the command's `district` argument is
+    currently set to; empty until that argument is filled in."""
+    bot = interaction.client
+    district_id = interaction.namespace.district
+    if district_id is None:
+        return []
+    try:
+        district = bot.content.district(district_id)  # type: ignore[attr-defined]
+    except ContentValidationError:
+        return []
+    current_lower = current.lower()
+    matches = [
+        loc
+        for loc in district.locations
+        if current_lower in loc.id.lower() or current_lower in loc.name.lower()
+    ]
+    return [
+        app_commands.Choice(name=f"{loc.id} - {loc.name}", value=loc.id)
+        for loc in matches[:MAX_CHOICES]
+    ]
+
+
+async def job_foreman(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    """NPCs (scoped to the command's `district` argument, if set) that could
+    run a job, plus the `CLEAR_TEXT` sentinel."""
+    bot = interaction.client
+    district_id = interaction.namespace.district
+    stmt = select(Npc.id, Npc.name)
+    if district_id is not None:
+        stmt = stmt.where(Npc.district_id == district_id)
+    if current:
+        stmt = stmt.where(or_(Npc.name.ilike(f"%{current}%"), Npc.id.ilike(f"%{current}%")))
+    async with bot.db() as session:  # type: ignore[attr-defined]
+        rows = (await session.execute(stmt.order_by(Npc.name).limit(MAX_CHOICES))).all()
+    choices = [
+        app_commands.Choice(name=f"{name} ({npc_id})", value=npc_id) for npc_id, name in rows
+    ]
+    return _with_clear_choice(choices, current)
+
+
+async def clearable_number(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[float]]:
+    """No fixed set of valid values, but surfaces the `CLEAR_NUMBER` sentinel
+    used to blank an optional numeric field back out (min_reputation,
+    peacekeeper_attention) -- doesn't restrict what can actually be typed."""
+    choices = [app_commands.Choice(name=f"{CLEAR_NUMBER:g} (clear)", value=CLEAR_NUMBER)]
+    if current:
+        try:
+            typed = float(current)
+        except ValueError:
+            return choices
+        if typed != CLEAR_NUMBER:
+            choices.insert(0, app_commands.Choice(name=str(typed), value=typed))
+    return choices

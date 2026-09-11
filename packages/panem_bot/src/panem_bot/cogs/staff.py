@@ -306,7 +306,15 @@ class StaffCog(commands.Cog):
         foreman_npc_id="NPC id who runs this job; pass 'none' to clear",
         produces_json=("JSON object of goods produced, e.g. '{\"coal\": 8}'; pass 'none' to clear"),
     )
-    @app_commands.autocomplete(job_id=autocomplete.job_ids, district=autocomplete.districts)
+    @app_commands.autocomplete(
+        job_id=autocomplete.job_ids,
+        district=autocomplete.districts,
+        workplace=autocomplete.job_workplace,
+        ladder_next=autocomplete.job_ids_clearable,
+        min_reputation=autocomplete.clearable_number,
+        peacekeeper_attention=autocomplete.clearable_number,
+        foreman_npc_id=autocomplete.job_foreman,
+    )
     @app_commands.check(_is_staff)
     async def job_set(
         self,
