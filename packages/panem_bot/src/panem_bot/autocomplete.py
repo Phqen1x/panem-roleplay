@@ -64,16 +64,6 @@ async def own_approved(
     )
 
 
-async def own_any(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
-    return await _characters(interaction, current, own_only=True, statuses=None)
-
-
-async def any_character(
-    interaction: discord.Interaction, current: str
-) -> list[app_commands.Choice[str]]:
-    return await _characters(interaction, current, own_only=False, statuses=None)
-
-
 async def any_approved(
     interaction: discord.Interaction, current: str
 ) -> list[app_commands.Choice[str]]:

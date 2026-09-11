@@ -125,7 +125,7 @@ class StaffCog(commands.Cog):
 
     @group.command(name="kill", description="Kill a character")
     @app_commands.describe(character="Character name")
-    @app_commands.autocomplete(character=autocomplete.any_character)
+    @app_commands.autocomplete(character=autocomplete.any_approved)
     @app_commands.check(_is_staff)
     async def kill(self, interaction: discord.Interaction, character: str) -> None:
         async with self.bot.db() as session:
@@ -143,7 +143,7 @@ class StaffCog(commands.Cog):
 
     @group.command(name="note", description="Attach a staff note to a character")
     @app_commands.describe(character="Character name", text="Note text")
-    @app_commands.autocomplete(character=autocomplete.any_character)
+    @app_commands.autocomplete(character=autocomplete.any_approved)
     @app_commands.check(_is_staff)
     async def note(self, interaction: discord.Interaction, character: str, text: str) -> None:
         async with self.bot.db() as session:

@@ -499,7 +499,7 @@ class CharacterCog(commands.Cog):
 
     @group.command(name="status", description="Show a character's status")
     @app_commands.describe(character="Character name")
-    @app_commands.autocomplete(character=autocomplete.own_any)
+    @app_commands.autocomplete(character=autocomplete.own_approved)
     async def status(self, interaction: discord.Interaction, character: str) -> None:
         async with self.bot.db() as session:
             user = await characters_svc.get_or_create_user(session, interaction.user.id)
@@ -542,7 +542,7 @@ class CharacterCog(commands.Cog):
         url="Image URL (https, .png/.jpg/.jpeg/.webp/.gif) -- omit if uploading a file",
         image="Upload an image file -- expires in ~24h, prefer a URL for something permanent",
     )
-    @app_commands.autocomplete(character=autocomplete.own_any)
+    @app_commands.autocomplete(character=autocomplete.own_approved)
     async def avatar(
         self,
         interaction: discord.Interaction,
@@ -597,7 +597,7 @@ class CharacterCog(commands.Cog):
     @app_commands.describe(
         character="Character name", prefix="1-12 chars, can't start with / or (("
     )
-    @app_commands.autocomplete(character=autocomplete.own_any)
+    @app_commands.autocomplete(character=autocomplete.own_approved)
     async def tag(self, interaction: discord.Interaction, character: str, prefix: str) -> None:
         try:
             characters_svc.validate_proxy_tag(prefix)
