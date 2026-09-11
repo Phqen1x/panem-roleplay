@@ -267,6 +267,20 @@ class StaffCog(commands.Cog):
             return
         await scenes_cog.move.callback(scenes_cog, interaction, location)  # type: ignore[attr-defined]
 
+    @scene_move.autocomplete("location")
+    async def scene_move_location_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        # This command's own body just delegates to /scene move's callback,
+        # since it's the same operation with a staff-only check in front --
+        # its autocomplete has to be registered here too, though, since
+        # Discord ties autocomplete to the specific command that owns the
+        # option, not to whatever that command's body happens to call.
+        scenes_cog = self.bot.get_cog("SceneCog")
+        if scenes_cog is None:
+            return []
+        return await scenes_cog.move_location_autocomplete(interaction, current)  # type: ignore[attr-defined]
+
     @job_group.command(
         name="set", description="Add or edit a job for a district (no redeploy needed)"
     )
