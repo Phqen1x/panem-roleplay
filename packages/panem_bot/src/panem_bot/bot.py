@@ -40,6 +40,7 @@ COGS = (
     "panem_bot.cogs.proxy",
     "panem_bot.cogs.staff",
     "panem_bot.cogs.help",
+    "panem_bot.cogs.travel",
 )
 
 

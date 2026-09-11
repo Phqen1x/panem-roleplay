@@ -51,8 +51,12 @@ STRINGS: dict[str, str] = {
     "scene_moved": "Scene moved to {location}.",
     "scene_not_yours": "Only the creator or staff can do that.",
     "npc_not_here": "{name} isn't at this location right now.",
-    # Travel/locations (FR-LOC, partial in Phase 0)
+    # Travel/locations (FR-LOC)
     "location_restricted": "You don't have access to that location.",
+    "location_not_found": "Not a valid location for that district.",
+    "travel_ok": "**{name}** travels to **{location}**.",
+    "no_location_set": "**{name}** hasn't traveled anywhere yet -- use `/travel`.",
+    "where_ok": "**{name}** is at **{location}** ({district}).",
     # Staff job editing (/staff job ...)
     "job_bad_json": "Not valid JSON: {detail}",
     "job_schema_invalid": "Doesn't match the job schema: {detail}",
