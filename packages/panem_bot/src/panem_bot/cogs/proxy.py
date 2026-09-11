@@ -184,10 +184,18 @@ class ProxyCog(commands.Cog):
                 if not proxy_svc.is_ooc(message.content) and message.id != thread.id:
                     with contextlib.suppress(discord.HTTPException):
                         await message.delete()
-                    notice = await thread.send(
-                        f"{message.author.mention} {t('rp_character_required')}"
-                    )
-                    await notice.delete(delay=8)
+                    # A DM keeps this private to the one person who needs to
+                    # see it, rather than flashing a public reminder in front
+                    # of everyone else in the scene (Discord has no
+                    # "ephemeral" outside of interaction responses, so a DM
+                    # is the closest equivalent for a plain message event).
+                    try:
+                        await message.author.send(t("rp_character_required"))
+                    except discord.Forbidden:
+                        notice = await thread.send(
+                            f"{message.author.mention} {t('rp_character_required')}"
+                        )
+                        await notice.delete(delay=8)
                 return
 
             character = await session.get(Character, target.character_id)

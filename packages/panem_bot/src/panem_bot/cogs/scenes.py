@@ -10,6 +10,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from panem_bot import autocomplete, redis_keys
 from panem_bot.services import characters as characters_svc
@@ -210,18 +211,26 @@ class SceneCog(commands.Cog):
         thread = thread_with_message.thread
 
         async with self.bot.db() as session:
-            scene = Scene(
-                district_id=district_id,
-                location_id=location,
-                thread_id=thread.id,
-                forum_channel_id=forum.id,
-                kind=SceneKind.PLAYER.value,
-                title=title,
-                created_by_character_id=char.id,
-                status=SceneStatus.OPEN.value,
-                last_message_at=dt.datetime.now(dt.UTC),
-            )
-            session.add(scene)
+            # forum.create_thread() dispatches a gateway `on_thread_create`
+            # event the moment the thread exists on Discord's side, which can
+            # race this insert and get there first (see below) -- upsert so
+            # this command's data (the real creator, title, and location)
+            # always wins over that listener's best-effort stub, regardless
+            # of which one lands first.
+            values = {
+                "district_id": district_id,
+                "location_id": location,
+                "thread_id": thread.id,
+                "forum_channel_id": forum.id,
+                "kind": SceneKind.PLAYER.value,
+                "title": title,
+                "created_by_character_id": char.id,
+                "status": SceneStatus.OPEN.value,
+                "last_message_at": dt.datetime.now(dt.UTC),
+            }
+            stmt = pg_insert(Scene).values(**values)
+            stmt = stmt.on_conflict_do_update(index_elements=["thread_id"], set_=values)
+            await session.execute(stmt)
 
         await self.bot.redis.set(
             redis_keys.session_key(interaction.user.id, thread.id),
@@ -424,19 +433,23 @@ class SceneCog(commands.Cog):
                 self.bot.loop.create_task(self._archive_if_still_untagged(thread.id, district_id))
                 return
 
-            session.add(
-                Scene(
-                    district_id=district_id,
-                    location_id=resolution.location_id,
-                    thread_id=thread.id,
-                    forum_channel_id=thread.parent_id,
-                    kind=SceneKind.PLAYER.value,
-                    title=thread.name,
-                    created_by_character_id=None,
-                    status=SceneStatus.OPEN.value,
-                    last_message_at=dt.datetime.now(dt.UTC),
-                )
+            # /scene start's own thread creation dispatches this same event,
+            # and can still be mid-flight here -- DO NOTHING on conflict
+            # rather than raising, since /scene start's insert carries the
+            # real creator/title and is the one that should win either way.
+            stmt = pg_insert(Scene).values(
+                district_id=district_id,
+                location_id=resolution.location_id,
+                thread_id=thread.id,
+                forum_channel_id=thread.parent_id,
+                kind=SceneKind.PLAYER.value,
+                title=thread.name,
+                created_by_character_id=None,
+                status=SceneStatus.OPEN.value,
+                last_message_at=dt.datetime.now(dt.UTC),
             )
+            stmt = stmt.on_conflict_do_nothing(index_elements=["thread_id"])
+            await session.execute(stmt)
 
     async def _archive_if_still_untagged(self, thread_id: int, district_id: int) -> None:
         await asyncio.sleep(UNTAGGED_GRACE_SECONDS)
