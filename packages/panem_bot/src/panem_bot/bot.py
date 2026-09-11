@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import contextlib
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import discord
 import redis.asyncio as redis
+from discord import app_commands
 from discord.ext import commands
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from panem_bot.outbound import OutboundQueue
 from panem_bot.services import jobs as jobs_svc
+from panem_bot.strings import t
 from panem_shared.content.loader import ContentBundle, load_content
 from panem_shared.content.schemas import Job
 from panem_shared.db.session import make_engine, make_session_factory
@@ -66,6 +70,8 @@ class PanemBot(commands.Bot):
         for ext in COGS:
             await self.load_extension(ext)
 
+        self.tree.error(self._on_app_command_error)
+
         if self.settings.discord_guild_id:
             guild = discord.Object(id=self.settings.discord_guild_id)
             self.tree.copy_global_to(guild=guild)
@@ -77,6 +83,33 @@ class PanemBot(commands.Bot):
     async def close(self) -> None:
         await self.redis.aclose()
         await super().close()
+
+    async def _on_app_command_error(
+        self, interaction: discord.Interaction, error: app_commands.AppCommandError
+    ) -> None:
+        if isinstance(error, app_commands.CheckFailure):
+            # Every check in this bot (e.g. `_is_staff`) already tells the
+            # user why -- "Staff only.", etc. -- before returning False, so
+            # there's nothing left to do here and it isn't a bug; without
+            # this, discord.py's default handling logs a scary-looking
+            # traceback for every single non-staff member who tries a staff
+            # command.
+            return
+
+        original = error.original if isinstance(error, app_commands.CommandInvokeError) else error
+        ref = uuid.uuid4().hex[:8]
+        logger.error(
+            "app_command_error",
+            ref=ref,
+            command=interaction.command.qualified_name if interaction.command else None,
+            exc_info=(type(original), original, original.__traceback__),
+        )
+        message = t("unexpected_error", ref=ref)
+        with contextlib.suppress(discord.HTTPException):
+            if interaction.response.is_done():
+                await interaction.followup.send(message, ephemeral=True)
+            else:
+                await interaction.response.send_message(message, ephemeral=True)
 
     async def is_staff(self, member: discord.Member) -> bool:
         return any(role.id == self.settings.staff_role_id for role in member.roles)
