@@ -182,6 +182,10 @@ class RelationshipRow(TimestampMixin, Base):
     affinity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     trust: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     last_interaction_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    interaction_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    """Total interactions ever, not just recent ones -- gates the extreme
+    stances (`STANCE_MIN_INTERACTIONS_EXTREME`): a handful of run-ins
+    can dislike someone, but hating/loving them takes a real history."""
 
     stance: Mapped[str] = mapped_column(String(16), nullable=False, default=Stance.NEUTRAL.value)
     stance_updated_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -29,9 +29,9 @@ from __future__ import annotations
 from panem_shared import constants
 from panem_shared.content.schemas import Job
 from panem_shared.db.models import Character, JobHistory, Shift
-from panem_shared.enums import ShiftResult
+from panem_shared.enums import OwnerKind, ShiftResult
 from panem_shared.events import AnyWorldEvent
-from panem_sim.state import TickContext, WorldState
+from panem_sim.state import NotableEvent, TickContext, WorldState
 from panem_sim.systems.time import is_phase_boundary
 
 
@@ -92,6 +92,16 @@ def _fire(state: WorldState, character: Character, job_id: str, ctx: TickContext
     character.job_id = None
     character.job_started_tick = None
     character.consecutive_missed = 0
+    state.notable_events.append(
+        NotableEvent(
+            owner_kind=OwnerKind.CHARACTER.value,
+            owner_id=str(character.id),
+            kind="fired",
+            importance=3,
+            text=f"{character.name} was let go after too many missed shifts.",
+            tags=["job", "fired"],
+        )
+    )
 
 
 def _open_shifts_for_due_characters(state: WorldState, ctx: TickContext) -> None:

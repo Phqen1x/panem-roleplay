@@ -14,9 +14,17 @@ movement, ambient narration, intra-district `/travel`/`/where`), and
 exports, quotas, shopkeeper restocking, `/market prices|buy|sell`/
 `/inventory`, and now cross-district travel by train -- `/travel
 district:<id>`, tickets, transit ticks, and visitor roles -- plus a real
-`scripts/calibrate.py`). Phase 2 is complete. Phases 3-6 (NPC minds,
-crises, the Activity, and LLM dialogue) are scaffolded as empty packages
-and land in that order — see the Plan for the full roadmap.
+`scripts/calibrate.py`). Phase 2 is complete.
+
+**Phase 3 — NPC Minds** (Plan §6) is underway: synthetic NPCs get
+procedural traits/speech tone at seed time, `panem_sim/systems/social.py`
+builds real `RelationshipRow`s from shared-location proximity, `memory.py`
+forms and prunes `Memory` rows from notable events, and `/resident
+profile` surfaces a resident's personality and their stance toward a
+character. Real hand-authored NPC content (`data/npcs/*.yaml`) still
+doesn't exist -- see the Milestone F notes below. Phases 4-6 (crises, the
+Activity, and LLM dialogue) remain scaffolded as empty packages/stubs and
+land in that order — see the Plan for the full roadmap.
 
 ## Layout
 
@@ -445,6 +453,66 @@ Completes Phase 2 (Plan §5.5/5.6, FR-LOC-7/8/9, T-2.1).
   `CALIBRATE_DATABASE_URL`, a scratch database), since a 12-month
   fast-forward is not something to risk running against a live game by
   a typo.
+
+## Notes on this Milestone F (Phase 3: NPC minds) build
+
+Plan §6. No `panem-long-year-spec.md` §6 text was available in this
+session's context, so every numeric interaction/decay/memory-lifetime
+constant below is a placeholder, not a spec-sourced value -- the
+mechanism (proximity builds familiarity, extremes need history, memories
+fade unless important) is the part meant to be right.
+
+- **Traits/speech tone are procedural, not authored.** `data/npcs/*.yaml`
+  (Spec §5.4) still doesn't exist -- see the Phase 1 notes above for why.
+  `panem_shared/content/traits.py` gives each synthetic NPC 2 unique
+  traits from a ~24-word pool at seed time (`panem_sim/world.py`), plus a
+  `speech_style.tone` derived from them (`warm`/`blunt`/`reserved`/
+  `plain`). Real per-trait dialogue/backstory is Phase 6 (LLM dialogue)
+  scope; this only gives that later system, and `/resident profile`
+  today, something to read instead of an empty list/dict.
+- **Relationships form from shared location, nothing else.** Any NPC or
+  character sharing a `(district, location)` on a tick nudges affinity/
+  trust with everyone else there, at most once per pair per tick
+  (`panem_sim/systems/social.py`) -- no notion of *why* they're near each
+  other, no RP content read, no NPC-initiated conversation. A pair needs
+  at least one NPC in it; character-character dynamics are for players to
+  roleplay themselves; the sim doesn't score them.
+- **Found live, not by unit tests: relationships and stance changes form
+  fast.** A 30-tick smoke run produced 3289 relationship rows and just
+  over 3000 stance-change memories -- most districts' NPCs spend a lot of
+  generic-schedule time in one shared public location (`world.py`'s
+  `_generic_schedule`), so the same small population re-encounters itself
+  constantly. `AFFINITY_STEP`/the `STANCE_THRESHOLDS` gap (20 to cross
+  from neutral) is small enough that ~10 shared-location ticks is enough
+  to start liking someone. Not a bug -- `MEMORY_CAP_PER_NPC` bounds it
+  long-term -- but a concrete number worth re-tuning against the real
+  spec rather than trusting the placeholder magnitude.
+- **`RelationshipRow`'s subject/object is canonicalized, not meaningful
+  direction.** `panem_shared/relationships.py::relationship_key` sorts an
+  unordered `(kind, id)` pair the same way regardless of caller, so
+  `panem_sim` (which writes the row) and `panem_bot`'s `/resident
+  profile` (which reads it, and has no dependency on `panem_sim` to
+  reuse its logic) always agree on one row per pair rather than two
+  mirror-image ones. `"character" < "npc"` lexicographically, so a
+  character is always the subject of its own NPC relationships.
+  `interaction_count` (new column, migration `a7c2e8f19d3b`) gates the
+  extreme stances (`STANCE_MIN_INTERACTIONS_EXTREME`) -- enough
+  encounters to dislike someone is not enough to hate them.
+- **Memory formation is event-driven, not a log of everything.** Only a
+  handful of things create a `Memory` row today: a character being fired
+  (`jobs.py`) and a relationship crossing into a new stance
+  (`social.py`), both via a shared `WorldState.notable_events` list
+  (kept as plain data, not full `Memory` rows, so an early system like
+  `jobs.py` doesn't need a DB session or `Memory`'s full column set just
+  to flag "remember this"). `memory.py` turns those into rows, expires
+  ones past `expires_tick` (`importance >= 4` never expires), and trims
+  each owner back to `MEMORY_CAP_PER_NPC` by dropping the least
+  important/oldest first -- every tick, over already-loaded
+  `WorldState.memories`, not just for owners who got something new.
+- **`memory.retrieve()` is exposed but unused today.** It's the pure
+  top-`RETRIEVAL_K` query a future Phase 6 dialogue prompt would call;
+  nothing in the tick loop or bot calls it yet -- `/resident profile`
+  shows current stance directly rather than a memory summary.
 
 ## Upgrading past duplicate character names
 

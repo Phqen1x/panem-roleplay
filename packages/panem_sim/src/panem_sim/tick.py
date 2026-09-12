@@ -21,7 +21,7 @@ import datetime as dt
 import uuid
 
 import redis.asyncio as redis
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from panem_shared import constants
@@ -30,8 +30,10 @@ from panem_shared.db.models import (
     Character,
     DistrictState,
     MarketPrice,
+    Memory,
     Npc,
     NpcSchedule,
+    RelationshipRow,
     Shift,
     WorldClock,
 )
@@ -83,6 +85,11 @@ async def _load_state(session: AsyncSession) -> tuple[WorldState, WorldClock]:
         (row.district_id, row.good_id): row
         for row in (await session.execute(select(MarketPrice))).scalars()
     }
+    relationships = {
+        (row.subject_kind, row.subject_id, row.object_kind, row.object_id): row
+        for row in (await session.execute(select(RelationshipRow))).scalars()
+    }
+    memories = {row.id: row for row in (await session.execute(select(Memory))).scalars()}
 
     state = WorldState(
         districts=districts,
@@ -92,6 +99,8 @@ async def _load_state(session: AsyncSession) -> tuple[WorldState, WorldClock]:
         open_shifts=open_shifts,
         completed_shifts=completed_shifts,
         market_prices=market_prices,
+        relationships=relationships,
+        memories=memories,
     )
     return state, clock
 
@@ -139,6 +148,12 @@ async def _run_tick_once(
             session.add(history_row)
         for price_row in state.new_market_prices:
             session.add(price_row)
+        for relationship_row in state.new_relationships:
+            session.add(relationship_row)
+        for memory_row in state.new_memories:
+            session.add(memory_row)
+        if state.deleted_memory_ids:
+            await session.execute(delete(Memory).where(Memory.id.in_(state.deleted_memory_ids)))
 
     return events
 

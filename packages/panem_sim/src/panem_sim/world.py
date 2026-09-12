@@ -29,6 +29,7 @@ from panem_shared import constants
 from panem_shared.content.loader import ContentBundle, load_content
 from panem_shared.content.names import sample_names
 from panem_shared.content.schemas import District, Job, Location
+from panem_shared.content.traits import sample_traits, speech_tone
 from panem_shared.db.models import DistrictState, Npc, NpcSchedule
 from panem_shared.enums import DayPhase, LocationKind
 from panem_sim.rng import seed_rng
@@ -134,6 +135,7 @@ async def seed_npcs(session: AsyncSession, content: ContentBundle, world_seed: s
             age = rng.randint(18, 65)
             job_id = _assign_job(rng, district_jobs)
             job = next((j for j in district_jobs if j.id == job_id), None)
+            traits = sample_traits(rng)
             npc = Npc(
                 id=npc_id,
                 district_id=district.id,
@@ -147,6 +149,8 @@ async def seed_npcs(session: AsyncSession, content: ContentBundle, world_seed: s
                     if job is not None and is_shopkeeper_job(job, district)
                     else 0.0
                 ),
+                traits=traits,
+                speech_style={"tone": speech_tone(traits)},
             )
             session.add(npc)
 

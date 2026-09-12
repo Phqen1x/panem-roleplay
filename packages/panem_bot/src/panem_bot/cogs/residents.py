@@ -1,7 +1,11 @@
-"""`/resident list|where` -- NPC residents aren't narrated for most of
-their movement anymore (`panem_sim.systems.schedule` only announces a
-work-shift or end-of-night arrival), so this is how a player finds out
-who lives in a district and where one of them actually is right now."""
+"""`/resident list|where|profile` -- NPC residents aren't narrated for
+most of their movement anymore (`panem_sim.systems.schedule` only
+announces a work-shift or end-of-night arrival), so this is how a
+player finds out who lives in a district, where one of them actually is
+right now, and (Phase 3) what they're like and how they feel about a
+character -- `Npc.traits`/`speech_style` (seeded procedurally, see
+`panem_sim.world`) and the `RelationshipRow` `panem_sim.systems.social`
+maintains between them."""
 
 from __future__ import annotations
 
@@ -15,7 +19,9 @@ from panem_bot import autocomplete
 from panem_bot.services import characters as characters_svc
 from panem_bot.services import jobs as jobs_svc
 from panem_bot.strings import t
-from panem_shared.db.models import Character, Npc
+from panem_shared.db.models import Character, Npc, RelationshipRow
+from panem_shared.enums import OwnerKind
+from panem_shared.relationships import relationship_key
 
 EMBED_FIELD_VALUE_LIMIT = 1024
 
@@ -115,6 +121,64 @@ class ResidentCog(commands.Cog):
 
     @resident_where.autocomplete("resident")
     async def resident_where_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        return await self._resident_name_choices(interaction, current)
+
+    @group.command(
+        name="profile",
+        description="See a resident's personality and how they see your character",
+    )
+    @app_commands.describe(character="Character name", resident="Resident's name")
+    @app_commands.autocomplete(character=autocomplete.own_approved)
+    async def resident_profile(
+        self, interaction: discord.Interaction, character: str, resident: str
+    ) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            char = await self._get_character(session, interaction.user.id, character)
+            if char is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+
+            npc = (
+                await session.execute(
+                    select(Npc).where(
+                        Npc.district_id == char.current_district_id, Npc.name == resident
+                    )
+                )
+            ).scalar_one_or_none()
+            if npc is None:
+                await interaction.response.send_message(t("resident_not_found"), ephemeral=True)
+                return
+
+            content = self.bot.content  # type: ignore[attr-defined]
+            job = await jobs_svc.get_job(session, content, npc.job_id) if npc.job_id else None
+            job_name = job.title if job else "Unemployed"
+
+            key = relationship_key(
+                (OwnerKind.CHARACTER.value, str(char.id)), (OwnerKind.NPC.value, npc.id)
+            )
+            relationship = await session.get(RelationshipRow, key)
+            stance = relationship.stance if relationship is not None else "stranger"
+
+            name = npc.name
+            traits = ", ".join(npc.traits) if npc.traits else "unknown"
+            tone = npc.speech_style.get("tone", "unknown") if npc.speech_style else "unknown"
+
+        embed = discord.Embed(title=name)
+        embed.add_field(name="Job", value=job_name)
+        embed.add_field(name="Traits", value=traits.capitalize())
+        embed.add_field(name="Speech", value=tone.capitalize())
+        embed.add_field(name=f"Opinion of {char.name}", value=stance.capitalize())
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @resident_profile.autocomplete("resident")
+    async def resident_profile_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        return await self._resident_name_choices(interaction, current)
+
+    async def _resident_name_choices(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         character_name = getattr(interaction.namespace, "character", None)

@@ -16,6 +16,7 @@ from panem_shared.content.schemas import (
     JobOption,
     Location,
 )
+from panem_shared.content.traits import TRAITS_PER_NPC
 from panem_shared.db.models import DistrictState, Npc, NpcSchedule
 from panem_shared.enums import DayPhase
 from panem_sim import world
@@ -245,6 +246,19 @@ class TestSeedNpcs:
 
         npcs = (await db_session.execute(select(Npc))).scalars().all()
         assert all(npc.float_target == 0.0 for npc in npcs)
+
+    async def test_npcs_get_traits_and_a_derived_speech_tone(self, db_session):
+        content = make_content(make_district(1))
+
+        await world.seed_npcs(db_session, content, "test-seed")
+        await db_session.flush()
+
+        npcs = (await db_session.execute(select(Npc))).scalars().all()
+        assert npcs
+        for npc in npcs:
+            assert len(npc.traits) == TRAITS_PER_NPC
+            assert len(set(npc.traits)) == len(npc.traits)
+            assert npc.speech_style.get("tone") in {"warm", "blunt", "reserved", "plain"}
 
     async def test_employed_npc_schedule_favors_workplace_during_shift_phase(self, db_session):
         job = make_job(id="only_job", district=1, workplace="market", shift_phase="morning")

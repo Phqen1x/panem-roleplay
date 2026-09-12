@@ -192,6 +192,9 @@ class TestMissedShifts:
         assert len(state.new_job_history) == 1
         assert state.new_job_history[0].reason == "fired"
         assert state.new_job_history[0].character_id == 1
+        assert len(state.notable_events) == 1
+        assert state.notable_events[0].owner_id == "1"
+        assert state.notable_events[0].kind == "fired"
 
 
 class TestTravelGraceExcusesMissedShifts:

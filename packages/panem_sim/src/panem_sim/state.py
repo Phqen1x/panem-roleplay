@@ -24,8 +24,10 @@ from panem_shared.db.models import (
     DistrictState,
     JobHistory,
     MarketPrice,
+    Memory,
     Npc,
     NpcSchedule,
+    RelationshipRow,
     Shift,
 )
 from panem_shared.enums import DayPhase
@@ -41,6 +43,25 @@ class TickContext:
     """1-indexed, 1-12."""
     rng: random.Random
     content: ContentBundle
+
+
+@dataclass(slots=True)
+class NotableEvent:
+    """A system's note that something worth remembering happened to
+    `owner_kind`/`owner_id` this tick -- kept as plain data (not a
+    `Memory` row) so a system as early as `jobs.py` can flag one without
+    needing `Memory`'s full column set or a DB session; `memory.py`
+    (last in `FIXED_ORDER` before `crisis.py`/`games.py`) is what
+    actually turns these into persisted rows."""
+
+    owner_kind: str
+    owner_id: str
+    kind: str
+    importance: int
+    text: str
+    subject_kind: str | None = None
+    subject_id: str | None = None
+    tags: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -73,3 +94,23 @@ class WorldState:
     new_market_prices: list[MarketPrice] = field(default_factory=list)
     """`MarketPrice` rows `economy.py` creates this tick for a district/good
     with no prior price row; persisted by `tick.py` like `new_shifts`."""
+    relationships: dict[tuple[str, str, str, str], RelationshipRow] = field(default_factory=dict)
+    """Existing `RelationshipRow`s, keyed by `(subject_kind, subject_id,
+    object_kind, object_id)` -- `social.py`'s canonical pair ordering."""
+    new_relationships: list[RelationshipRow] = field(default_factory=list)
+    """`RelationshipRow`s `social.py` creates this tick for a pair with no
+    prior row; persisted by `tick.py` like `new_market_prices`."""
+    notable_events: list[NotableEvent] = field(default_factory=list)
+    """Appended by any system this tick that wants `memory.py` to persist
+    a `Memory` row for it (a firing, a relationship crossing into a new
+    stance, ...)."""
+    memories: dict[int, Memory] = field(default_factory=dict)
+    """Every persisted `Memory` row, keyed by id -- loaded once per tick
+    so `memory.py` can expire old ones and enforce `MEMORY_CAP_PER_NPC`
+    without a DB session of its own."""
+    new_memories: list[Memory] = field(default_factory=list)
+    """`Memory` rows `memory.py` creates this tick from `notable_events`;
+    persisted by `tick.py` like `new_shifts`."""
+    deleted_memory_ids: list[int] = field(default_factory=list)
+    """`Memory` row ids `memory.py` wants pruned this tick (expired, or
+    over `MEMORY_CAP_PER_NPC` for their owner); deleted by `tick.py`."""
