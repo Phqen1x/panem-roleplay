@@ -20,7 +20,7 @@ from panem_bot.views import (
     JobSelectView,
 )
 from panem_shared import constants
-from panem_shared.db.models import Character, User
+from panem_shared.db.models import Character, Shift, User, WorldClock
 from panem_shared.enums import CharacterStatus
 
 EMBED_FIELD_VALUE_LIMIT = 1024
@@ -524,12 +524,27 @@ class CharacterCog(commands.Cog):
                     (loc for loc in district.locations if loc.id == row.location_id), None
                 )
                 location_name = location.name if location else row.location_id
+
+            shift_value = "-"
+            open_shift = (
+                await session.execute(
+                    select(Shift).where(Shift.character_id == row.id, Shift.result.is_(None))
+                )
+            ).scalar_one_or_none()
+            if open_shift is not None:
+                clock = await session.get(WorldClock, 1)
+                current_tick = clock.tick if clock is not None else 0
+                if current_tick >= open_shift.tick_due:
+                    shift_value = f"Overdue since tick {open_shift.tick_due} -- work it now!"
+                else:
+                    shift_value = f"Open, due by tick {open_shift.tick_due}"
         embed = discord.Embed(title=row.name)
         embed.add_field(name="Status", value=row.status)
         embed.add_field(name="Money", value=str(row.money))
         embed.add_field(name="Hunger", value=str(row.hunger))
         embed.add_field(name="Health", value=str(row.health))
         embed.add_field(name="Job", value=job_name)
+        embed.add_field(name="Shift", value=shift_value)
         embed.add_field(name="Location", value=location_name)
         embed.add_field(name="Reputation", value=f"{row.reputation:.1f}")
         embed.add_field(name="Jailed", value="Yes" if row.jailed_until_tick else "No")
