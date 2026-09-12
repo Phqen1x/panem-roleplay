@@ -13,20 +13,6 @@
     ],
     "size": 3.66
   },
-  "SD-Turbo": {
-    "checkpoint": "stabilityai/sd-turbo:sd_turbo.safetensors",
-    "recipe": "sd-cpp",
-    "labels": [
-      "image"
-    ],
-    "size": 5.21,
-    "image_defaults": {
-      "steps": 4,
-      "cfg_scale": 1.0,
-      "width": 512,
-      "height": 512
-    }
-  },
   "Whisper-Base": {
     "checkpoints": {
       "main": "ggerganov/whisper.cpp:ggml-base.bin",
@@ -66,25 +52,6 @@
       "mtp"
     ],
     "size": 23.8
-  },
-  "Flux-2-Klein-9B-GGUF": {
-    "checkpoints": {
-      "main": "unsloth/FLUX.2-klein-9B-GGUF:flux-2-klein-9b-Q8_0.gguf",
-      "text_encoder": "unsloth/Qwen3-8B-GGUF:Qwen3-8B-Q8_0.gguf",
-      "vae": "Comfy-Org/vae-text-encorder-for-flux-klein-9b:split_files/vae/flux2-vae.safetensors"
-    },
-    "recipe": "sd-cpp",
-    "labels": [
-      "image",
-      "edit"
-    ],
-    "size": 19.0,
-    "image_defaults": {
-      "steps": 4,
-      "cfg_scale": 1,
-      "width": 256,
-      "height": 256
-    }
   },
   "Whisper-Large-v3-Turbo": {
     "checkpoints": {

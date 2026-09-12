@@ -60,7 +60,7 @@ uv run python -m panem_bot.main
 
 ## Local AI (Lemonade OmniModel)
 
-NPC dialogue, narration, portraits, transcription and broadcasts run locally
+NPC dialogue, narration, transcription and broadcasts run locally
 through [Lemonade](https://github.com/lemonade-sdk/lemonade) as a custom omni
 model, `user.Panem-Omni-Lite` / `-Halo`, whose system prompt is generated from
 this repo's `data/` so it always knows the real districts, places and jobs.

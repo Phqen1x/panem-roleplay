@@ -377,8 +377,8 @@ def cmd_smoke(args: argparse.Namespace) -> int:
         f"<- ({elapsed:.1f}s, finish={choice.get('finish_reason')}, {len(content.split())} words)"
     )
     print(content[:4000])
-    if "data:image/" in content or "<audio>" in content:
-        print("[reply embeds generated media as data URIs]")
+    if "<audio>" in content:
+        print("[reply embeds generated audio as a data URI]")
     return 0
 
 

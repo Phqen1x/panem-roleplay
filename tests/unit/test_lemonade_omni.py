@@ -105,7 +105,12 @@ class TestProfiles:
     @pytest.mark.parametrize("key", sorted(omni.PROFILES))
     def test_every_panem_role_is_covered(self, key, catalog):
         covered = omni.roles_covered(omni.PROFILES[key], catalog)
-        assert {"planner", "vision", "image", "transcription", "speech", "embeddings"} <= covered
+        assert {"planner", "vision", "transcription", "speech", "embeddings"} <= covered
+
+    @pytest.mark.parametrize("key", sorted(omni.PROFILES))
+    def test_no_image_generation_component(self, key, catalog):
+        for name in omni.PROFILES[key].components:
+            assert not {"image", "edit"} & set(catalog[name]["labels"]), name
 
     @pytest.mark.parametrize("key", sorted(omni.PROFILES))
     def test_components_exist_in_vendored_catalog_with_sizes(self, key, catalog):

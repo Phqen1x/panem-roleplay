@@ -28,13 +28,15 @@ Source of truth for all of it: `packages/panem_shared/src/panem_shared/lemonade/
 ## Profiles (which models, and why)
 
 lemond picks the **first component labelled `chat`** as the planner, so the LLM
-is always listed first. Roles are matched by label (`image`, `edit`, `tts`,
-`transcription`, `vision`, `embeddings`).
+is always listed first. Roles are matched by label (`tts`, `transcription`,
+`vision`, `embeddings`). Image generation is deliberately left out: no
+component carries the `image`/`edit` label, so the OmniRouter never offers
+`generate_image`/`edit_image` and the prompt tells the planner to ignore them
+if one were ever added.
 
-| Role | Why Panem needs it | Lite (`user.Panem-Omni-Lite`, ~9.5 GB) | Halo (`user.Panem-Omni-Halo`, ~45 GB) |
+| Role | Why Panem needs it | Lite (`user.Panem-Omni-Lite`, ~4.2 GB) | Halo (`user.Panem-Omni-Halo`, ~26 GB) |
 |------|--------------------|------------------------------------------|----------------------------------------|
 | Planner LLM (`chat`, `tool-calling`, `vision`) | NPC dialogue, narration, broadcasts, staff review; reads player-posted images directly (vision) | `Qwen3.5-4B-MTP-GGUF` | `Qwen3.6-35B-A3B-MTP-GGUF` |
-| Image (`image`[, `edit`]) | NPC portraits for proxy avatars, establishing shots for ambient posts, district maps | `SD-Turbo` (4 steps) | `Flux-2-Klein-9B-GGUF` (gen + edit) |
 | Speech-to-text (`transcription`) | Players' Discord voice messages in scenes | `Whisper-Base` | `Whisper-Large-v3-Turbo` |
 | Text-to-speech (`tts`) | Capitol/district broadcasts read aloud (Activity / voice) | `kokoro-v1` | `kokoro-v1` |
 | Embeddings (`embeddings`) | NPC memory retrieval (`MEMORY_CAP_PER_NPC`, `RETRIEVAL_K`) via `/v1/embeddings` | `nomic-embed-text-v1-GGUF` | `Qwen3-Embedding-0.6B-GGUF` |
@@ -78,9 +80,8 @@ never changes when you switch hardware.
    client.chat.completions.create(model="panem-omni", messages=[...])
    ```
 
-   Generated images/audio come back embedded in the assistant content as a markdown image
-   with a `data:image/png;base64,...` URI or an `<audio>data:audio/mpeg;base64,...</audio>`
-   tag; the bot turns those into Discord attachments.
+   Generated speech comes back embedded in the assistant content as an
+   `<audio>data:audio/mpeg;base64,...</audio>` tag; the bot turns it into a Discord attachment.
 
 The Lemonade desktop app (`sudo snap install lemonade` / `apt install lemonade-desktop`)
 shows `Panem-Omni-*` under *Lemonade* in the chat picker and lets you tweak the components
@@ -103,15 +104,14 @@ message (lemond prepends the collection prompt to it), then the conversation tur
 [CONSTRAINTS] max_words=90
 ```
 
-Modes: `dialogue`, `narrate`, `broadcast`, `portrait`, `establishing_shot`, `speak`,
-`describe_image`, `npc_generate`, `review_character`, `staff`. Only the image/speech modes
-may call tools; the prompt tells the model to answer plain dialogue with words only, to never
+Modes: `dialogue`, `narrate`, `broadcast`, `speak`, `describe_image`, `npc_generate`,
+`review_character`, `staff`. Only the speech modes may call tools; the prompt tells the model to answer plain dialogue with words only, to never
 act for a player character, to reply with exactly `[REFUSE]` when a player pushes into
 content it must not write (so the sim can fall back to a template line), and to return raw
 JSON when `[CONSTRAINTS] format=json` is present (`LLM_JSON_MODE`).
 
 `transcribe_audio` and `analyze_image` are client-side tools in Lemonade's OmniRouter (v1
-server-side scope is image generation/editing and TTS): a vision planner reads attached
+server-side scope is TTS and image tools): a vision planner reads attached
 `image_url` parts directly, and voice messages are transcribed by the bot via
 `POST /v1/audio/transcriptions` against the collection's Whisper component before the text
 is sent as a normal turn.

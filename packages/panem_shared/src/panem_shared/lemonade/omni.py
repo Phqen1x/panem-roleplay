@@ -58,8 +58,6 @@ PLANNER_NO_THINKING_ARGS = "--chat-template-kwargs '{\"enable_thinking\": false}
 ROLE_LABELS: dict[str, tuple[str, ...]] = {
     "planner": ("chat",),
     "vision": ("vision",),
-    "image": ("image",),
-    "edit": ("edit",),
     "transcription": ("transcription", "audio"),
     "speech": ("tts", "speech"),
     "embeddings": ("embeddings",),
@@ -85,14 +83,13 @@ PROFILES: dict[str, OmniProfile] = {
         key="lite",
         model_name="user.Panem-Omni-Lite",
         summary=(
-            "~9.5 GB. Fits a 16 GB machine / 8 GB GPU. Qwen3.5-4B (vision + tool "
-            "calling, MTP draft decoding) voices NPCs; SD-Turbo paints portraits and "
-            "location art in a few steps; Whisper-Base transcribes voice messages; "
-            "Kokoro reads Capitol broadcasts aloud; nomic-embed powers NPC memory recall."
+            "~4.2 GB. Fits a 16 GB machine / 8 GB GPU. Qwen3.5-4B (vision + tool "
+            "calling, MTP draft decoding) voices NPCs; Whisper-Base transcribes voice "
+            "messages; Kokoro reads Capitol broadcasts aloud; nomic-embed powers NPC "
+            "memory recall."
         ),
         components=(
             "Qwen3.5-4B-MTP-GGUF",
-            "SD-Turbo",
             "Whisper-Base",
             "kokoro-v1",
             "nomic-embed-text-v1-GGUF",
@@ -103,14 +100,12 @@ PROFILES: dict[str, OmniProfile] = {
         key="halo",
         model_name="user.Panem-Omni-Halo",
         summary=(
-            "~45 GB. For Strix Halo / 32 GB+ GPUs. Qwen3.6-35B-A3B (MoE, vision + tool "
-            "calling, MTP) as the planner; FLUX.2 Klein 9B generates and edits images; "
-            "Whisper-Large-v3-Turbo transcribes; Kokoro speaks; Qwen3-Embedding-0.6B "
-            "powers NPC memory recall."
+            "~26 GB. For Strix Halo / 32 GB+ GPUs. Qwen3.6-35B-A3B (MoE, vision + tool "
+            "calling, MTP) as the planner; Whisper-Large-v3-Turbo transcribes; Kokoro "
+            "speaks; Qwen3-Embedding-0.6B powers NPC memory recall."
         ),
         components=(
             "Qwen3.6-35B-A3B-MTP-GGUF",
-            "Flux-2-Klein-9B-GGUF",
             "Whisper-Large-v3-Turbo",
             "kokoro-v1",
             "Qwen3-Embedding-0.6B-GGUF",
@@ -409,8 +404,6 @@ class RequestMode(enum.StrEnum):
     DIALOGUE = "dialogue"
     NARRATE = "narrate"
     BROADCAST = "broadcast"
-    PORTRAIT = "portrait"
-    ESTABLISHING_SHOT = "establishing_shot"
     SPEAK = "speak"
     DESCRIBE_IMAGE = "describe_image"
     NPC_GENERATE = "npc_generate"

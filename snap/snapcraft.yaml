@@ -23,7 +23,7 @@ summary: Panem, The Long Year - NPC-driven Discord roleplay world with private l
 description: |
   A persistent, NPC-driven Discord roleplay world set in Panem between Hunger
   Games sessions. Ships its own Embeddable Lemonade instance so NPC dialogue,
-  portraits, transcription and broadcasts run on the host's GPU/NPU/CPU with
+  transcription and broadcasts run on the host's GPU/NPU/CPU with
   no cloud dependency.
 grade: devel
 confinement: strict
