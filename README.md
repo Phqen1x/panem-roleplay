@@ -230,11 +230,10 @@ runs inside a rolled-back savepoint.
   `SendPriority.NARRATOR` — already the lowest priority, so it never
   starves a player mid-scene), via the same forum webhook credentials
   `/rp` proxying uses. `Bulletin` events (district-wide notices) route to
-  a district's `#board` channel by `ChannelKind.BOARD`, but
-  `scripts/setup_guild.py` doesn't create that channel yet — deliberately
-  deferred there to Phase 2 economy content — and no Phase 1/2-stub system
-  emits a `Bulletin` yet either, so that path is wired and tested but
-  inert until Phase 2 lands.
+  a district's `#board` channel by `ChannelKind.BOARD` — `scripts/
+  setup_guild.py` creates a read-only board channel per district (see the
+  Milestone D notes below); this path sat wired-but-inert until the
+  economy system started actually emitting `Bulletin`s.
 - **`/travel` and `/where` take a character name** (`own_approved`
   autocomplete), matching every other character-scoped command in the
   bot, rather than resolving an "active" character from `/rp`'s
@@ -359,6 +358,18 @@ runs inside a rolled-back savepoint.
   seed-and-simulate smoke test, not just unit tests -- every NPC's
   `float_target` defaulted to 0 and the nightly treasury top-up in
   `_restock_shopkeepers` never had anything to do.
+- **The daily `Bulletin` (FR-ECO-8) needed a real `#board` channel to post
+  to, which `scripts/setup_guild.py` never created** -- found live, after
+  the economy system started actually emitting `Bulletin`s: every day
+  boundary, `panem_bot/narrator.py` looked up each district's
+  `ChannelKind.BOARD` row and either found none (a guild set up before
+  this milestone) or, if one existed anyway, a channel id Discord no
+  longer recognized, and logged an `Unknown Channel` failure per district
+  instead of posting. `setup_guild.py` now creates a read-only
+  `#district-N-board` (`#capitol-board` for the Capitol) per district
+  alongside its forum, reconciled by name on every run the same way the
+  forum/ambient-thread channels already were -- re-running it against a
+  guild that hit this fixes it, no manual DB cleanup needed.
 - **Illicit markets (`Location.illicit`, e.g. District 12's "hob") apply
   a per-transaction consequence, not district-wide escalation.** A
   `/market buy`/`sell` at an illicit location rolls

@@ -9,6 +9,9 @@ Creates one shared "Roleplay" category containing:
     `Open`/`Closed`, `require_tag=True`, default auto-archive =
     `SCENE_AUTO_ARCHIVE_MINUTES`, one webhook each, and a pinned,
     never-archived ambient post per location
+  - a read-only `#district-N-board` (or `#capitol-board`) text channel per
+    district, where `panem_sim`'s daily economy tick posts its `Bulletin`
+    (FR-ECO-8) via `panem_bot/narrator.py`'s `ChannelKind.BOARD` lookup
 
 Plus, per district, a role (view/post that district's forum; everyone else
 can view only) -- and guild-wide staff role, approval channel, and log
@@ -16,11 +19,16 @@ channel in their own "Panem Staff" category. A district's role is normally
 found/created by name, but `.env`'s `CAPITOL_ROLE_ID` / `DISTRICT_N_ROLE_ID`
 (see `.env.example`) can point it at an existing role instead.
 
-Per-district OOC/board text channels and per-district categories from the
-Plan's original layout are intentionally not created: nothing in the bot
-writes to a bulletin board yet (that's Phase 2 economy content), and a
-single guild-wide OOC channel with player-made threads covers OOC chat
-without 13 near-empty channels.
+Per-district categories from the Plan's original layout are intentionally
+not created: a single guild-wide OOC channel with player-made threads
+covers OOC chat without 13 near-empty channels.
+
+Every channel/thread this script manages is looked up (and, for the
+forum/board channels, reconciled) by name/id each run rather than
+recreated blindly, so it's also the fix for "the bot can't post somewhere
+it used to" -- a deleted ambient thread, a deleted board channel, or a
+`discord_channels` row pointing at a channel id that no longer exists all
+get healed by re-running this script.
 
 Every Discord object created is recorded in `discord_channels` /
 `scenes` (kind=ambient) so re-running this script is a no-op for anything
@@ -67,6 +75,12 @@ def forum_name(district: District) -> str:
     if district.id == 0:
         return "capitol-roleplay"
     return f"district-{district.id}-roleplay"
+
+
+def board_name(district: District) -> str:
+    if district.id == 0:
+        return "capitol-board"
+    return f"district-{district.id}-board"
 
 
 def _with_bot_access(
@@ -344,6 +358,25 @@ async def setup_district(
     )
 
     await ensure_ambient_posts(session, guild, forum, district)
+
+    board_overwrites = _with_bot_access(
+        guild,
+        {
+            guild.default_role: discord.PermissionOverwrite(view_channel=True, send_messages=False),
+            role: discord.PermissionOverwrite(view_channel=True, send_messages=False),
+            staff_role: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+        },
+    )
+    board = await ensure_text_channel(
+        guild, category, board_name(district), overwrites=board_overwrites
+    )
+    await upsert_discord_channel(
+        session,
+        district_id=district.id,
+        kind=ChannelKind.BOARD,
+        channel_id=board.id,
+        webhook=None,
+    )
 
 
 async def setup_staff_channels(session, guild: discord.Guild, staff_role: discord.Role) -> None:

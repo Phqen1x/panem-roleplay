@@ -6,13 +6,13 @@ and turns each event into a Discord post through the existing
 rate-limit rules player and NPC messages already do rather than bypassing
 them. `NarrationLine` posts into the location's pinned ambient thread
 (via that district's forum webhook, matching how player proxy messages
-are posted); `Bulletin` posts into the district's `#board` channel --
-not created by `scripts/setup_guild.py` yet (deferred there to Phase 2
-economy content), so bulletins are a no-op, loudly logged, until that
-exists. Neither event kind is emitted by any system before Milestone C/D,
-so this is dead code path for `Bulletin` until then; it's still correct
-now rather than a stub, since wiring it later would mean touching this
-file again for no reason.
+are posted); `Bulletin` posts into the district's `#board` channel, created
+by `scripts/setup_guild.py` alongside each district's forum. A guild that
+hasn't been re-run through that script since it started creating board
+channels (or a `discord_channels` row left pointing at a deleted channel)
+falls back to a loudly logged no-op / a caught, logged send failure
+rather than crashing the tick loop -- re-running `setup_guild.py` is
+idempotent and fixes both.
 
 Runs as one long-lived background task for the process's lifetime,
 started from `PanemBot.setup_hook`, not a cog -- it owns no commands or
