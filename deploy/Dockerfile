@@ -13,7 +13,7 @@ COPY packages ./packages
 COPY alembic.ini ./
 COPY migrations ./migrations
 
-RUN uv python install 3.14 && uv sync --frozen --no-dev --package panem-bot
+RUN uv python install 3.14 && uv sync --frozen --no-dev --all-packages
 
 COPY data ./data
 

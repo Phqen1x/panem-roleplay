@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 
 import discord
 
-CHAR_ID_FOOTER_PREFIX = "char_id:"
+CHAR_ID_FOOTER_PREFIX = "Character Number: "
 
 
 def character_id_from_message(message: discord.Message) -> int | None:
@@ -21,32 +21,6 @@ def character_id_from_message(message: discord.Message) -> int | None:
         return int(footer.removeprefix(CHAR_ID_FOOTER_PREFIX))
     except ValueError:
         return None
-
-
-class DistrictSelect(discord.ui.Select):
-    def __init__(
-        self,
-        districts: list[tuple[int, str]],
-        on_choose: Callable[[discord.Interaction, int], Awaitable[None]],
-    ) -> None:
-        options = [
-            discord.SelectOption(label=name, value=str(did)) for did, name in sorted(districts)
-        ]
-        super().__init__(placeholder="Choose a district...", options=options)
-        self._on_choose = on_choose
-
-    async def callback(self, interaction: discord.Interaction) -> None:
-        await self._on_choose(interaction, int(self.values[0]))
-
-
-class DistrictSelectView(discord.ui.View):
-    def __init__(
-        self,
-        districts: list[tuple[int, str]],
-        on_choose: Callable[[discord.Interaction, int], Awaitable[None]],
-    ) -> None:
-        super().__init__(timeout=300)
-        self.add_item(DistrictSelect(districts, on_choose))
 
 
 class JobSelect(discord.ui.Select):
@@ -73,6 +47,32 @@ class JobSelectView(discord.ui.View):
     ) -> None:
         super().__init__(timeout=300)
         self.add_item(JobSelect(jobs, on_choose))
+
+
+class WorkOptionSelect(discord.ui.Select):
+    def __init__(
+        self,
+        labels: list[str],
+        on_choose: Callable[[discord.Interaction, int], Awaitable[None]],
+    ) -> None:
+        options = [
+            discord.SelectOption(label=label, value=str(i)) for i, label in enumerate(labels)
+        ]
+        super().__init__(placeholder="Choose how to work this shift...", options=options)
+        self._on_choose = on_choose
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await self._on_choose(interaction, int(self.values[0]))
+
+
+class WorkOptionView(discord.ui.View):
+    def __init__(
+        self,
+        labels: list[str],
+        on_choose: Callable[[discord.Interaction, int], Awaitable[None]],
+    ) -> None:
+        super().__init__(timeout=300)
+        self.add_item(WorkOptionSelect(labels, on_choose))
 
 
 class ChangesNoteModal(discord.ui.Modal, title="Request Changes"):

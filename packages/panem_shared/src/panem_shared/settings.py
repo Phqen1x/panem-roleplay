@@ -31,6 +31,13 @@ class Settings(BaseSettings):
     discord_token: str = ""
     discord_client_id: str = ""
     discord_guild_id: DiscordId = 0
+    # Every command sync is one call to Discord's (tightly rate-limited)
+    # guild command-overwrite endpoint. Restarting the bot repeatedly during
+    # local dev re-syncs every time even though the commands haven't
+    # changed, which can trip that rate limit. Set this to false after your
+    # first successful sync and flip it back only when you've actually
+    # changed a command's signature.
+    discord_sync_commands: bool = True
 
     database_url: str = "postgresql+asyncpg://panem:panem@localhost:5432/panem"
     redis_url: str = "redis://localhost:6379/0"
@@ -51,13 +58,36 @@ class Settings(BaseSettings):
     approval_channel_id: DiscordId = 0
     log_channel_id: DiscordId = 0
 
+    # Optional pre-existing role per district (+ the Capitol) that
+    # scripts/setup_guild.py should use instead of creating/finding a role
+    # by name. Unset (0) means "auto-manage by name", the default behavior.
+    capitol_role_id: DiscordId = 0
+    district_1_role_id: DiscordId = 0
+    district_2_role_id: DiscordId = 0
+    district_3_role_id: DiscordId = 0
+    district_4_role_id: DiscordId = 0
+    district_5_role_id: DiscordId = 0
+    district_6_role_id: DiscordId = 0
+    district_7_role_id: DiscordId = 0
+    district_8_role_id: DiscordId = 0
+    district_9_role_id: DiscordId = 0
+    district_10_role_id: DiscordId = 0
+    district_11_role_id: DiscordId = 0
+    district_12_role_id: DiscordId = 0
+
     scene_auto_archive_minutes: int = 1440
     max_active_scenes_per_district: int = 60
-    max_characters_per_user: int = 3
+    max_characters_per_user: int = 1
 
     world_seed: str = Field(default="panem-long-year")
 
     games_api_key: str = ""
+
+    def role_id_override_for_district(self, district_id: int) -> int:
+        """0 means unset (auto-manage by name); see `*_role_id` fields above."""
+        if district_id == 0:
+            return self.capitol_role_id
+        return int(getattr(self, f"district_{district_id}_role_id", 0))
 
 
 def get_settings() -> Settings:

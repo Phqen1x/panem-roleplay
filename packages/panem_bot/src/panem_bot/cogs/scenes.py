@@ -10,8 +10,9 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from panem_bot import redis_keys
+from panem_bot import autocomplete, redis_keys
 from panem_bot.services import characters as characters_svc
 from panem_bot.services import scenes as scenes_svc
 from panem_bot.strings import t
@@ -47,6 +48,16 @@ class SceneCog(commands.Cog):
         ).scalar_one_or_none()
         return row.district_id if row else None
 
+    @staticmethod
+    def _forum_channel_id(channel: discord.abc.GuildChannel | discord.Thread | None) -> int | None:
+        """Only the forum channel itself is registered in `discord_channels`, not
+        each thread inside it -- resolve to the parent forum's id so `/scene
+        start` and its autocomplete work whether run from the forum channel's
+        own compose bar or from inside one of its threads."""
+        if isinstance(channel, discord.Thread):
+            return channel.parent_id
+        return channel.id if channel is not None else None
+
     async def _forum_for_district(self, session, district_id: int) -> DiscordChannel | None:
         return (
             await session.execute(
@@ -68,6 +79,17 @@ class SceneCog(commands.Cog):
             )
         )
         return int(result.scalar_one())
+
+    async def _user_has_open_scene(self, session, discord_user_id: int) -> bool:
+        """One open self-created scene per person at a time, across all districts."""
+        user = await characters_svc.get_or_create_user(session, discord_user_id)
+        result = await session.execute(
+            select(func.count())
+            .select_from(Scene)
+            .join(Character, Character.id == Scene.created_by_character_id)
+            .where(Character.user_id == user.id, Scene.status == SceneStatus.OPEN.value)
+        )
+        return int(result.scalar_one()) > 0
 
     async def _actor_can_manage(
         self, session, *, discord_user_id: int, scene: Scene, is_staff: bool
@@ -119,12 +141,21 @@ class SceneCog(commands.Cog):
         character: str | None = None,
     ) -> None:
         assert interaction.guild is not None
+        forum_channel_id = self._forum_channel_id(interaction.channel)
         async with self.bot.db() as session:
-            district_id = await self._district_for_channel(session, interaction.channel_id)
+            district_id = (
+                await self._district_for_channel(session, forum_channel_id)
+                if forum_channel_id is not None
+                else None
+            )
             if district_id is None:
                 await interaction.response.send_message(
                     "Use this in a district channel.", ephemeral=True
                 )
+                return
+
+            if await self._user_has_open_scene(session, interaction.user.id):
+                await interaction.response.send_message(t("scene_already_open"), ephemeral=True)
                 return
 
             district = self.bot.content.district(district_id)
@@ -180,18 +211,26 @@ class SceneCog(commands.Cog):
         thread = thread_with_message.thread
 
         async with self.bot.db() as session:
-            scene = Scene(
-                district_id=district_id,
-                location_id=location,
-                thread_id=thread.id,
-                forum_channel_id=forum.id,
-                kind=SceneKind.PLAYER.value,
-                title=title,
-                created_by_character_id=char.id,
-                status=SceneStatus.OPEN.value,
-                last_message_at=dt.datetime.now(dt.UTC),
-            )
-            session.add(scene)
+            # forum.create_thread() dispatches a gateway `on_thread_create`
+            # event the moment the thread exists on Discord's side, which can
+            # race this insert and get there first (see below) -- upsert so
+            # this command's data (the real creator, title, and location)
+            # always wins over that listener's best-effort stub, regardless
+            # of which one lands first.
+            values = {
+                "district_id": district_id,
+                "location_id": location,
+                "thread_id": thread.id,
+                "forum_channel_id": forum.id,
+                "kind": SceneKind.PLAYER.value,
+                "title": title,
+                "created_by_character_id": char.id,
+                "status": SceneStatus.OPEN.value,
+                "last_message_at": dt.datetime.now(dt.UTC),
+            }
+            stmt = pg_insert(Scene).values(**values)
+            stmt = stmt.on_conflict_do_update(index_elements=["thread_id"], set_=values)
+            await session.execute(stmt)
 
         await self.bot.redis.set(
             redis_keys.session_key(interaction.user.id, thread.id),
@@ -199,6 +238,50 @@ class SceneCog(commands.Cog):
             ex=redis_keys.SESSION_TTL_S,
         )
         await interaction.followup.send(f"Scene created: {thread.mention}", ephemeral=True)
+
+    @start.autocomplete("location")
+    async def start_location_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        forum_channel_id = self._forum_channel_id(interaction.channel)
+        if forum_channel_id is None:
+            return []
+        async with self.bot.db() as session:
+            district_id = await self._district_for_channel(session, forum_channel_id)
+        if district_id is None:
+            return []
+        district = self.bot.content.district(district_id)
+        current_lower = current.lower()
+        matches = [
+            loc
+            for loc in district.locations
+            if current_lower in loc.name.lower() or current_lower in loc.id.lower()
+        ]
+        return [
+            app_commands.Choice(name=f"{loc.name} ({loc.id})", value=loc.id) for loc in matches[:25]
+        ]
+
+    @start.autocomplete("character")
+    async def start_character_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        forum_channel_id = self._forum_channel_id(interaction.channel)
+        if forum_channel_id is None:
+            return []
+        async with self.bot.db() as session:
+            district_id = await self._district_for_channel(session, forum_channel_id)
+            if district_id is None:
+                return []
+            user = await characters_svc.get_or_create_user(session, interaction.user.id)
+            stmt = select(Character.name).where(
+                Character.user_id == user.id,
+                Character.district_id == district_id,
+                Character.status == CharacterStatus.APPROVED.value,
+            )
+            if current:
+                stmt = stmt.where(Character.name.ilike(f"%{current}%"))
+            names = (await session.execute(stmt.limit(25))).scalars().all()
+        return [app_commands.Choice(name=name, value=name) for name in names]
 
     @group.command(name="close", description="Close this scene")
     async def close(self, interaction: discord.Interaction) -> None:
@@ -231,8 +314,10 @@ class SceneCog(commands.Cog):
         new_tags = [tg for tg in thread.applied_tags if tg.name != OPEN_TAG]
         if closed_tag is not None:
             new_tags.append(closed_tag)
-        await thread.edit(archived=True, applied_tags=new_tags, reason="Scene closed")
+        # Reply before archiving: an interaction response into an
+        # already-archived thread is refused with 403 "Thread is archived".
         await interaction.response.send_message(t("scene_closed"), ephemeral=True)
+        await thread.edit(archived=True, applied_tags=new_tags, reason="Scene closed")
 
     @group.command(name="move", description="Change this scene's location tag")
     @app_commands.describe(location="New location id")
@@ -276,8 +361,33 @@ class SceneCog(commands.Cog):
             await thread.edit(applied_tags=new_tags)
         await interaction.response.send_message(t("scene_moved", location=loc.name), ephemeral=True)
 
+    @move.autocomplete("location")
+    async def move_location_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        thread = interaction.channel
+        if not isinstance(thread, discord.Thread):
+            return []
+        async with self.bot.db() as session:
+            scene = (
+                await session.execute(select(Scene).where(Scene.thread_id == thread.id))
+            ).scalar_one_or_none()
+            if scene is None:
+                return []
+            district = self.bot.content.district(scene.district_id)
+        current_lower = current.lower()
+        matches = [
+            loc
+            for loc in district.locations
+            if current_lower in loc.name.lower() or current_lower in loc.id.lower()
+        ]
+        return [
+            app_commands.Choice(name=f"{loc.name} ({loc.id})", value=loc.id) for loc in matches[:25]
+        ]
+
     @group.command(name="invite", description="Invite a character or NPC into this scene")
     @app_commands.describe(character="Character to invite (mentions their player)")
+    @app_commands.autocomplete(character=autocomplete.any_approved)
     async def invite(self, interaction: discord.Interaction, character: str) -> None:
         thread = interaction.channel
         if not isinstance(thread, discord.Thread):
@@ -325,19 +435,23 @@ class SceneCog(commands.Cog):
                 self.bot.loop.create_task(self._archive_if_still_untagged(thread.id, district_id))
                 return
 
-            session.add(
-                Scene(
-                    district_id=district_id,
-                    location_id=resolution.location_id,
-                    thread_id=thread.id,
-                    forum_channel_id=thread.parent_id,
-                    kind=SceneKind.PLAYER.value,
-                    title=thread.name,
-                    created_by_character_id=None,
-                    status=SceneStatus.OPEN.value,
-                    last_message_at=dt.datetime.now(dt.UTC),
-                )
+            # /scene start's own thread creation dispatches this same event,
+            # and can still be mid-flight here -- DO NOTHING on conflict
+            # rather than raising, since /scene start's insert carries the
+            # real creator/title and is the one that should win either way.
+            stmt = pg_insert(Scene).values(
+                district_id=district_id,
+                location_id=resolution.location_id,
+                thread_id=thread.id,
+                forum_channel_id=thread.parent_id,
+                kind=SceneKind.PLAYER.value,
+                title=thread.name,
+                created_by_character_id=None,
+                status=SceneStatus.OPEN.value,
+                last_message_at=dt.datetime.now(dt.UTC),
             )
+            stmt = stmt.on_conflict_do_nothing(index_elements=["thread_id"])
+            await session.execute(stmt)
 
     async def _archive_if_still_untagged(self, thread_id: int, district_id: int) -> None:
         await asyncio.sleep(UNTAGGED_GRACE_SECONDS)

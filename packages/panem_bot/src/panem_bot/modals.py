@@ -28,10 +28,12 @@ class CharacterDetailsModal(discord.ui.Modal, title="New Character"):
         self,
         *,
         on_submit: Callable[[discord.Interaction, str, str, str, str], Awaitable[None]],
+        age_placeholder: str = "12-80",
         prefill: dict[str, str] | None = None,
     ) -> None:
         super().__init__()
         self._on_submit = on_submit
+        self.age.placeholder = age_placeholder
         if prefill:
             self.name.default = prefill.get("name")
             self.age.default = prefill.get("age")

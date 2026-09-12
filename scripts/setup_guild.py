@@ -1,16 +1,26 @@
 #!/usr/bin/env python3
 """Idempotent one-time (and re-runnable) guild setup (Plan §3.1 deliverable 2).
 
-For every district (0 = Capitol, 1-12) creates:
-  - a category
-  - a Forum channel (`#dNN-rp`) with one tag per location plus `Open`/`Closed`,
-    `require_tag=True`, default auto-archive = `SCENE_AUTO_ARCHIVE_MINUTES`
-  - `#dNN-ooc` and `#dNN-board` text channels
-  - a district role (view/post the forum; everyone else can view only)
-  - one webhook on the forum channel
-  - a pinned, never-archived ambient post per location
+Creates one shared "Roleplay" category containing:
+  - a single `#ooc` text channel (open to everyone, pinned to the top) for
+    all out-of-character chat guild-wide
+  - a Forum channel per district (`district-N-roleplay`, or
+    `capitol-roleplay` for The Capitol) with one tag per location plus
+    `Open`/`Closed`, `require_tag=True`, default auto-archive =
+    `SCENE_AUTO_ARCHIVE_MINUTES`, one webhook each, and a pinned,
+    never-archived ambient post per location
 
-Plus guild-wide staff role, approval channel, and log channel.
+Plus, per district, a role (view/post that district's forum; everyone else
+can view only) -- and guild-wide staff role, approval channel, and log
+channel in their own "Panem Staff" category. A district's role is normally
+found/created by name, but `.env`'s `CAPITOL_ROLE_ID` / `DISTRICT_N_ROLE_ID`
+(see `.env.example`) can point it at an existing role instead.
+
+Per-district OOC/board text channels and per-district categories from the
+Plan's original layout are intentionally not created: nothing in the bot
+writes to a bulletin board yet (that's Phase 2 economy content), and a
+single guild-wide OOC channel with player-made threads covers OOC chat
+without 13 near-empty channels.
 
 Every Discord object created is recorded in `discord_channels` /
 `scenes` (kind=ambient) so re-running this script is a no-op for anything
@@ -41,28 +51,44 @@ DATA_DIR = REPO_ROOT / "data"
 
 OPEN_TAG = "Open"
 CLOSED_TAG = "Closed"
+RP_CATEGORY_NAME = "Roleplay"
+OOC_CHANNEL_NAME = "ooc"
 STAFF_CATEGORY_NAME = "Panem Staff"
 APPROVAL_CHANNEL_NAME = "character-approvals"
 LOG_CHANNEL_NAME = "panem-log"
-GLOBAL_DISTRICT_SENTINEL = 0  # approval/log channels are guild-wide, filed under district 0
+GLOBAL_DISTRICT_SENTINEL = (
+    0  # approval/log/ooc channels are guild-wide, filed under the Capitol's id
+)
 
 logger = get_logger(component="setup_guild")
 
 
-def district_category_name(district: District) -> str:
-    return district.name
-
-
 def forum_name(district: District) -> str:
-    return f"d{district.id}-rp"
+    if district.id == 0:
+        return "capitol-roleplay"
+    return f"district-{district.id}-roleplay"
 
 
-def ooc_name(district: District) -> str:
-    return f"d{district.id}-ooc"
-
-
-def board_name(district: District) -> str:
-    return f"d{district.id}-board"
+def _with_bot_access(
+    guild: discord.Guild, overwrites: dict[discord.Role, discord.PermissionOverwrite]
+) -> dict[discord.Role | discord.Member, discord.PermissionOverwrite]:
+    """Every set of overwrites below denies `@everyone` view access by
+    default, which denies the bot too unless it's explicitly granted
+    access here -- a bot with only the specific permissions listed in the
+    OAuth2 invite (not guild-wide Administrator) can otherwise lock itself
+    out of a channel it just created."""
+    merged: dict[discord.Role | discord.Member, discord.PermissionOverwrite] = dict(overwrites)
+    assert guild.me is not None
+    merged[guild.me] = discord.PermissionOverwrite(
+        view_channel=True,
+        send_messages=True,
+        send_messages_in_threads=True,
+        manage_channels=True,
+        manage_threads=True,
+        manage_webhooks=True,
+        manage_messages=True,
+    )
+    return merged
 
 
 async def ensure_role(guild: discord.Guild, name: str) -> discord.Role:
@@ -72,6 +98,23 @@ async def ensure_role(guild: discord.Guild, name: str) -> discord.Role:
     role = await guild.create_role(name=name, reason="Panem setup")
     logger.info("role_created", name=name)
     return role
+
+
+async def ensure_district_role(
+    guild: discord.Guild, settings: Settings, district: District
+) -> discord.Role:
+    """Uses the `.env` override (`CAPITOL_ROLE_ID` / `DISTRICT_N_ROLE_ID`) if
+    set, otherwise finds/creates a role named after the district."""
+    override_id = settings.role_id_override_for_district(district.id)
+    if override_id:
+        role = guild.get_role(override_id)
+        if role is None:
+            raise RuntimeError(
+                f"District {district.id} role override is set to {override_id}, "
+                f"but no role with that id exists in this guild."
+            )
+        return role
+    return await ensure_role(guild, district.name)
 
 
 async def ensure_category(guild: discord.Guild, name: str) -> discord.CategoryChannel:
@@ -88,15 +131,28 @@ async def ensure_text_channel(
     category: discord.CategoryChannel,
     name: str,
     *,
-    overwrites: dict[discord.Role, discord.PermissionOverwrite],
+    overwrites: dict[discord.Role | discord.Member, discord.PermissionOverwrite] | None = None,
+    position: int | None = None,
 ) -> discord.TextChannel:
+    """`overwrites=None` leaves the channel open (inherits the category's/
+    guild's default permissions) -- used for the single guild-wide `#ooc`
+    channel, which is deliberately unrestricted."""
     existing = discord.utils.get(category.text_channels, name=name)
     if existing is not None:
-        await existing.edit(overwrites=overwrites)
+        edit_kwargs: dict[str, object] = {}
+        if overwrites is not None:
+            edit_kwargs["overwrites"] = overwrites
+        if position is not None:
+            edit_kwargs["position"] = position
+        if edit_kwargs:
+            await existing.edit(**edit_kwargs)
         return existing
-    channel = await guild.create_text_channel(
-        name, category=category, overwrites=overwrites, reason="Panem setup"
-    )
+    create_kwargs: dict[str, object] = {"category": category, "reason": "Panem setup"}
+    if overwrites is not None:
+        create_kwargs["overwrites"] = overwrites
+    if position is not None:
+        create_kwargs["position"] = position
+    channel = await guild.create_text_channel(name, **create_kwargs)
     logger.info("text_channel_created", name=name)
     return channel
 
@@ -113,7 +169,7 @@ async def ensure_forum(
     category: discord.CategoryChannel,
     district: District,
     *,
-    overwrites: dict[discord.Role, discord.PermissionOverwrite],
+    overwrites: dict[discord.Role | discord.Member, discord.PermissionOverwrite],
     auto_archive_minutes: int,
 ) -> discord.ForumChannel:
     name = forum_name(district)
@@ -129,15 +185,17 @@ async def ensure_forum(
             overwrites=overwrites,
         )
         return existing
+    # `Guild.create_forum()` has no `require_tag` parameter (only
+    # `ForumChannel.edit()` does), so it's set in a follow-up edit.
     forum = await guild.create_forum(
         name,
         category=category,
         available_tags=tags,
-        require_tag=True,
         default_auto_archive_duration=auto_archive_minutes,
         overwrites=overwrites,
         reason="Panem setup",
     )
+    await forum.edit(require_tag=True)
     logger.info("forum_created", name=name)
     return forum
 
@@ -195,10 +253,8 @@ async def ensure_ambient_posts(
         if existing_scene is not None:
             thread = guild.get_channel_or_thread(existing_scene.thread_id)
             if thread is not None:
-                if isinstance(thread, discord.Thread):
-                    await thread.join()
-                    if thread.archived:
-                        await thread.edit(archived=False)
+                if isinstance(thread, discord.Thread) and thread.archived:
+                    await thread.edit(archived=False)
                 continue
             # DB row survived but the thread is gone -- fall through and recreate.
 
@@ -211,7 +267,11 @@ async def ensure_ambient_posts(
             applied_tags=applied,
         )
         thread = thread_with_message.thread
-        await thread.join()
+        # No explicit thread.join(): the bot is auto-added as a member by
+        # creating the thread, and forum threads are always public, so
+        # message events reach the bot regardless of membership either way.
+        # ~100 ambient threads across 13 districts made that PUT (thread
+        # membership) endpoint's rate limit the dominant cost of a run.
         try:
             await thread_with_message.message.pin(reason="Ambient post")
         except discord.HTTPException:
@@ -243,26 +303,30 @@ async def setup_district(
     guild: discord.Guild,
     district: District,
     *,
+    category: discord.CategoryChannel,
     staff_role: discord.Role,
     auto_archive_minutes: int,
+    settings: Settings,
 ) -> None:
-    role = await ensure_role(guild, district.name)
-    category = await ensure_category(guild, district_category_name(district))
+    role = await ensure_district_role(guild, settings, district)
 
-    forum_overwrites = {
-        guild.default_role: discord.PermissionOverwrite(
-            view_channel=True, send_messages=False, send_messages_in_threads=False
-        ),
-        role: discord.PermissionOverwrite(
-            view_channel=True, send_messages=True, send_messages_in_threads=True
-        ),
-        staff_role: discord.PermissionOverwrite(
-            view_channel=True,
-            send_messages=True,
-            send_messages_in_threads=True,
-            manage_threads=True,
-        ),
-    }
+    forum_overwrites = _with_bot_access(
+        guild,
+        {
+            guild.default_role: discord.PermissionOverwrite(
+                view_channel=True, send_messages=False, send_messages_in_threads=False
+            ),
+            role: discord.PermissionOverwrite(
+                view_channel=True, send_messages=True, send_messages_in_threads=True
+            ),
+            staff_role: discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                send_messages_in_threads=True,
+                manage_threads=True,
+            ),
+        },
+    )
     forum = await ensure_forum(
         guild,
         category,
@@ -279,32 +343,18 @@ async def setup_district(
         webhook=webhook,
     )
 
-    text_overwrites = {
-        guild.default_role: discord.PermissionOverwrite(view_channel=True, send_messages=False),
-        role: discord.PermissionOverwrite(view_channel=True, send_messages=True),
-        staff_role: discord.PermissionOverwrite(view_channel=True, send_messages=True),
-    }
-    ooc = await ensure_text_channel(guild, category, ooc_name(district), overwrites=text_overwrites)
-    await upsert_discord_channel(
-        session, district_id=district.id, kind=ChannelKind.OOC, channel_id=ooc.id, webhook=None
-    )
-
-    board = await ensure_text_channel(
-        guild, category, board_name(district), overwrites=text_overwrites
-    )
-    await upsert_discord_channel(
-        session, district_id=district.id, kind=ChannelKind.BOARD, channel_id=board.id, webhook=None
-    )
-
     await ensure_ambient_posts(session, guild, forum, district)
 
 
 async def setup_staff_channels(session, guild: discord.Guild, staff_role: discord.Role) -> None:
     category = await ensure_category(guild, STAFF_CATEGORY_NAME)
-    overwrites = {
-        guild.default_role: discord.PermissionOverwrite(view_channel=False),
-        staff_role: discord.PermissionOverwrite(view_channel=True, send_messages=True),
-    }
+    overwrites = _with_bot_access(
+        guild,
+        {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            staff_role: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+        },
+    )
     approval = await ensure_text_channel(
         guild, category, APPROVAL_CHANNEL_NAME, overwrites=overwrites
     )
@@ -331,6 +381,23 @@ async def setup_staff_channels(session, guild: discord.Guild, staff_role: discor
     )
 
 
+async def setup_roleplay_category(session, guild: discord.Guild) -> discord.CategoryChannel:
+    """The shared category holding `#ooc` (pinned to the top) and every
+    district's forum. `#ooc` is deliberately open -- no overwrites -- so
+    the whole guild can use it for OOC chat, with player-made threads as
+    needed."""
+    category = await ensure_category(guild, RP_CATEGORY_NAME)
+    ooc = await ensure_text_channel(guild, category, OOC_CHANNEL_NAME, position=0)
+    await upsert_discord_channel(
+        session,
+        district_id=GLOBAL_DISTRICT_SENTINEL,
+        kind=ChannelKind.OOC,
+        channel_id=ooc.id,
+        webhook=None,
+    )
+    return category
+
+
 async def run(settings: Settings) -> None:
     content = load_content(DATA_DIR)
     engine = make_engine(settings)
@@ -342,34 +409,59 @@ async def run(settings: Settings) -> None:
     client = discord.Client(intents=intents)
 
     done = asyncio.Event()
+    failure: list[Exception] = []
 
     @client.event
     async def on_ready() -> None:
         try:
             guild = client.get_guild(settings.discord_guild_id)
             if guild is None:
-                raise SystemExit(
+                raise RuntimeError(
                     f"Bot is not in guild {settings.discord_guild_id}, or DISCORD_GUILD_ID is unset."
                 )
 
+            # Each district commits in its own transaction: a failure partway
+            # through (Discord rate limit, a bad permission, ...) must not roll
+            # back the DB rows for districts already finished, since the Discord
+            # side effects (channels/roles/webhooks) are not transactional and
+            # stay created either way -- losing their DB rows would leave the
+            # bot unable to route to channels that visibly exist (Spec §2.3).
             async with session_factory() as session, session.begin():
                 staff_role = await ensure_role(guild, "Panem Staff")
                 await setup_staff_channels(session, guild, staff_role)
-                for district in sorted(content.districts.values(), key=lambda d: d.id):
+            logger.info("staff_channels_committed")
+
+            async with session_factory() as session, session.begin():
+                rp_category = await setup_roleplay_category(session, guild)
+            logger.info("roleplay_category_committed")
+
+            for district in sorted(content.districts.values(), key=lambda d: d.id):
+                async with session_factory() as session, session.begin():
                     await setup_district(
                         session,
                         guild,
                         district,
+                        category=rp_category,
                         staff_role=staff_role,
                         auto_archive_minutes=settings.scene_auto_archive_minutes,
+                        settings=settings,
                     )
+                logger.info(
+                    "district_committed", district_id=district.id, district_name=district.name
+                )
+
             logger.info("setup_complete", guild_id=guild.id)
+        except Exception as exc:  # re-raised below, after client cleanup
+            failure.append(exc)
         finally:
             done.set()
             await client.close()
 
     await client.start(settings.discord_token)
     await done.wait()
+
+    if failure:
+        raise failure[0]
 
 
 def main() -> None:

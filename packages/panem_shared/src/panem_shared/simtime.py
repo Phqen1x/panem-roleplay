@@ -1,0 +1,89 @@
+"""Tick/phase/day/month math (Spec §1.3, FR-TCK-2).
+
+Lives in `panem_shared`, not `panem_sim`, because both the sim (to advance
+the clock each tick) and the bot (to display the current in-world time and
+`is_phase_boundary` shift-window math to players) need it -- the same
+reason `events.py` lives here rather than in `panem_sim`.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+
+from panem_shared import constants
+from panem_shared.enums import DayPhase
+
+_PHASE_ORDER = (DayPhase.NIGHT, DayPhase.MORNING, DayPhase.AFTERNOON, DayPhase.EVENING)
+_TICKS_PER_PHASE = constants.TICKS_PER_DAY // len(_PHASE_ORDER)
+
+
+def advance(previous_tick: int) -> tuple[int, DayPhase, int, int]:
+    """Given the previously-persisted tick, return the next
+    `(tick, phase, day, month)`. `day` is 1-indexed within the month,
+    `month` is 1-indexed within a 12-month year (Spec §1.1: 30-day months)."""
+    tick = previous_tick + 1
+    hour_of_day = tick % constants.TICKS_PER_DAY
+    phase = _PHASE_ORDER[hour_of_day // _TICKS_PER_PHASE]
+    day_index = tick // constants.TICKS_PER_DAY
+    day = (day_index % constants.DAYS_PER_MONTH) + 1
+    month = (day_index // constants.DAYS_PER_MONTH) % 12 + 1
+    return tick, phase, day, month
+
+
+def current(persisted_tick: int) -> tuple[int, DayPhase, int, int]:
+    """`(tick, phase, day, month)` for the tick already persisted in
+    `WorldClock.tick` -- i.e. the state as of the last completed tick,
+    matching exactly what that tick's systems saw (`advance` itself
+    describes the *next* tick from a previous one, so this is `advance`
+    one step back)."""
+    return advance(persisted_tick - 1)
+
+
+def is_phase_boundary(tick: int) -> bool:
+    """True on the exact tick a day phase begins (Spec §1.3's 4 phases
+    divide `TICKS_PER_DAY` evenly, so this is phase-agnostic: every
+    `_TICKS_PER_PHASE`-th tick starts *some* phase). Used by `jobs.py` to
+    open a shift/run NPC job completion once per phase window, not once
+    per tick within it."""
+    return tick % _TICKS_PER_PHASE == 0
+
+
+def ticks_until_next_phase(tick: int) -> int:
+    """How many more ticks until the phase after `tick`'s begins -- 0 if
+    `tick` itself is a boundary."""
+    return (-tick) % _TICKS_PER_PHASE
+
+
+def clock_string(tick: int) -> str:
+    """A 12-hour wall-clock string (e.g. `"12:00 PM"`) for `tick`'s
+    position within its in-world day. Scales by `TICKS_PER_DAY` rather
+    than assuming a tick is exactly an hour, so a `tuning.yaml` override
+    of that constant still produces a sensible (if coarser/finer) time."""
+    hour_of_day = tick % constants.TICKS_PER_DAY
+    total_minutes = hour_of_day * (24 * 60) // constants.TICKS_PER_DAY
+    hour24, minute = divmod(total_minutes, 60)
+    period = "AM" if hour24 < 12 else "PM"
+    hour12 = hour24 % 12 or 12
+    return f"{hour12}:{minute:02d} {period}"
+
+
+def phase_time_range(phase: DayPhase) -> str:
+    """The wall-clock range `phase` covers, e.g. `"6:00 AM - 12:00 PM"` for
+    `DayPhase.MORNING` -- used wherever a player needs to know *when* a
+    phase-gated thing (like a job's shift) happens, not just its name."""
+    index = _PHASE_ORDER.index(phase)
+    start_tick = index * _TICKS_PER_PHASE
+    end_tick = (start_tick + _TICKS_PER_PHASE) % constants.TICKS_PER_DAY
+    return f"{clock_string(start_tick)} - {clock_string(end_tick)}"
+
+
+def seconds_until_next_tick(
+    updated_at: dt.datetime, tick_interval_seconds: int, *, now: dt.datetime | None = None
+) -> float:
+    """Real-world seconds remaining until the next tick commits, given
+    when the current tick was persisted (`WorldClock.updated_at`) and the
+    sim's configured `tick_interval_seconds`. Clamped to zero -- the sim
+    may be running behind (a slow tick, or simply not running)."""
+    now = now if now is not None else dt.datetime.now(dt.UTC)
+    elapsed = (now - updated_at).total_seconds()
+    return max(0.0, tick_interval_seconds - elapsed)

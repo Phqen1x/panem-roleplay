@@ -22,12 +22,15 @@ from typing import Any
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -46,8 +49,12 @@ class User(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     discord_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False, index=True)
-    tos_accepted_at: Mapped[dt.datetime | None] = mapped_column(nullable=True)
-    banned_at: Mapped[dt.datetime | None] = mapped_column(nullable=True)
+    tos_accepted_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    banned_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    max_characters_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """`/staff character_limit`; NULL means the guild default applies."""
 
     characters: Mapped[list[Character]] = relationship(back_populates="user")
 
@@ -99,7 +106,19 @@ class Character(TimestampMixin, Base):
 
     user: Mapped[User] = relationship(back_populates="characters")
 
-    __table_args__ = (UniqueConstraint("user_id", "proxy_tag", name="uq_character_user_proxy_tag"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "proxy_tag", name="uq_character_user_proxy_tag"),
+        # Case-insensitive, since every by-name lookup in the bot (proxying,
+        # `/character edit`, `/staff kill`, ...) assumes at most one match.
+        # Rejected applications never became real characters, so excluded --
+        # their names are free to reuse.
+        Index(
+            "uq_characters_name_ci",
+            text("lower(name)"),
+            unique=True,
+            postgresql_where=text("status <> 'rejected'"),
+        ),
+    )
 
 
 class Npc(TimestampMixin, Base):
@@ -231,6 +250,26 @@ class DistrictState(Base):
     treasury: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
 
+class WorldClock(Base):
+    """Single-row global tick counter (Plan §4, FR-TCK). Not in the
+    original Plan §2 schema list -- `district_state.tick`/`world_events.tick`
+    both assume a shared tick numbering scheme, but nothing actually
+    persisted *the* current tick until now; this is that source of truth,
+    read and incremented once per tick by `panem_sim.systems.time`."""
+
+    __tablename__ = "world_clock"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    tick: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: dt.datetime.now(dt.UTC)
+    )
+    """Wall-clock time this row's `tick` was committed; lets a display
+    (e.g. `/time`) compute real seconds remaining until the next tick from
+    `tick_interval_seconds`, without the bot needing to talk to the sim
+    process directly."""
+
+
 class Shift(Base):
     __tablename__ = "shifts"
 
@@ -257,6 +296,25 @@ class JobHistory(Base):
     started_tick: Mapped[int] = mapped_column(Integer, nullable=False)
     ended_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
     reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+
+class JobOverride(TimestampMixin, Base):
+    """Staff-edited job definitions layered on top of `jobs.yaml` (no code
+    change / redeploy needed to add, edit, or remove a job per district).
+
+    `id` reuses the same job-id namespace as the content file: a row whose
+    id matches a YAML job overrides it; a new id adds a job that doesn't
+    exist in YAML at all. `disabled=True` removes the job from the merged
+    view regardless of whether it originated in YAML or here.
+    """
+
+    __tablename__ = "job_overrides"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    district_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    disabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    updated_by_discord_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
 
 class WorldEvent(TimestampMixin, Base):
@@ -302,7 +360,9 @@ class Scene(TimestampMixin, Base):
         String(16), nullable=False, default=SceneStatus.OPEN.value, index=True
     )
     pins_location: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    last_message_at: Mapped[dt.datetime | None] = mapped_column(nullable=True, index=True)
+    last_message_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     participants: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
 
@@ -319,9 +379,9 @@ class SceneMessage(Base):
     author_name: Mapped[str] = mapped_column(String(64), nullable=False)
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    ts: Mapped[dt.datetime] = mapped_column(nullable=False, index=True)
-    edited_at: Mapped[dt.datetime | None] = mapped_column(nullable=True)
-    deleted_at: Mapped[dt.datetime | None] = mapped_column(nullable=True)
+    ts: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    edited_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class DialogueLog(TimestampMixin, Base):

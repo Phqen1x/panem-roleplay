@@ -105,6 +105,39 @@ map:
         with pytest.raises(ContentValidationError, match="station"):
             load_content(tmp_path)
 
+    def test_duplicate_location_names_rejected(self, tmp_path):
+        """Discord forum tags are keyed by name, not id, and reject
+        duplicates outright -- two locations with different ids but the
+        same name must fail content validation before they ever reach
+        Discord (this is what data/districts/d8.yaml actually shipped
+        with once: `market` and `loading_dock` both named "The Loading
+        Dock")."""
+        districts_dir = tmp_path / "districts"
+        districts_dir.mkdir()
+        (districts_dir / "d1.yaml").write_text(
+            """
+id: 1
+name: Test District
+industry: testing
+population_base: 100
+culture: {}
+locations:
+  - {id: square, name: Square, kind: public}
+  - {id: station, name: Station, kind: station}
+  - {id: dock, name: The Dock, kind: market}
+  - {id: pier, name: The Dock, kind: market}
+map:
+  image: x.png
+  width: 10
+  height: 10
+  location_coords: {square: [0, 0], station: [1, 1], dock: [2, 2], pier: [3, 3]}
+"""
+        )
+        (tmp_path / "goods.yaml").write_text("[]")
+        (tmp_path / "jobs.yaml").write_text("[]")
+        with pytest.raises(ContentValidationError, match="duplicate location names"):
+            load_content(tmp_path)
+
     def test_job_with_wrong_option_count_rejected(self, tmp_path):
         districts_dir = tmp_path / "districts"
         districts_dir.mkdir()

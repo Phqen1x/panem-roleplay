@@ -6,6 +6,9 @@ from __future__ import annotations
 SESSION_TTL_S = 6 * 60 * 60
 PROXY_TTL_S = 7 * 24 * 60 * 60
 PRESENCE_TTL_S = 30 * 60
+TESSERAE_TTL_S = 24 * 60 * 60
+"""One claim per real day, not per game day -- tesserae is a player action,
+not tied to the sim's tick clock."""
 
 
 def session_key(user_id: int, thread_id: int) -> str:
@@ -26,3 +29,7 @@ def talk_window_key(thread_id: int, npc_id: str) -> str:
 
 def positions_key(district_id: int) -> str:
     return f"pos:{district_id}"
+
+
+def tesserae_key(character_id: int) -> str:
+    return f"tesserae:{character_id}"

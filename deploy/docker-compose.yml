@@ -62,9 +62,29 @@ services:
       migrate:
         condition: service_completed_successfully
 
-  # panem_sim (Plan §4, Phase 1) and panem_api + caddy (Plan §8, Phase 5)
-  # are not implemented yet -- their service blocks land in later phases,
-  # sharing this same postgres/redis and the `deploy/Dockerfile` image.
+  sim:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["uv", "run", "python", "-m", "panem_sim.main"]
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://panem:panem@postgres:5432/panem
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ../data:/app/data:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # panem_api + caddy (Plan §8, Phase 5) are not implemented yet -- their
+  # service blocks land in a later phase, sharing this same postgres/redis
+  # and the `deploy/Dockerfile` image.
 
 volumes:
   panem_pg_data:

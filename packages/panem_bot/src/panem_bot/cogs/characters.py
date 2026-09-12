@@ -9,21 +9,30 @@ from discord import app_commands
 from discord.ext import commands
 from sqlalchemy import func, select
 
+from panem_bot import autocomplete
 from panem_bot.errors import ServiceError, ValidationFailed
 from panem_bot.services import characters as characters_svc
+from panem_bot.services import jobs as jobs_svc
 from panem_bot.strings import t
 from panem_bot.views import (
     CHAR_ID_FOOTER_PREFIX,
     ApprovalView,
-    DistrictSelectView,
     JobSelectView,
 )
-from panem_shared.db.models import Character, User
+from panem_shared import constants
+from panem_shared.db.models import Character, Shift, User, WorldClock
 from panem_shared.enums import CharacterStatus
+from panem_shared.simtime import clock_string, phase_time_range
+
+EMBED_FIELD_VALUE_LIMIT = 1024
 
 
-def _district_role(guild: discord.Guild, district_name: str) -> discord.Role | None:
-    return discord.utils.get(guild.roles, name=district_name)
+def _field_value(text: str) -> str:
+    """Backstory allows more characters than a Discord embed field value
+    does (1024) -- truncate rather than let `channel.send` raise."""
+    if len(text) <= EMBED_FIELD_VALUE_LIMIT:
+        return text
+    return text[: EMBED_FIELD_VALUE_LIMIT - 1] + "…"
 
 
 class CharacterCog(commands.Cog):
@@ -31,14 +40,16 @@ class CharacterCog(commands.Cog):
         self.bot = bot
 
     async def cog_load(self) -> None:
-        self.bot.add_view(
-            ApprovalView(
-                is_staff=self._interaction_is_staff,
-                on_approve=self._handle_approve,
-                on_changes=self._handle_changes,
-                on_reject=self._handle_reject,
-            )
+        # `add_view` alone only makes the bot route interactions for these
+        # static custom_ids; a message still needs `view=self.approval_view`
+        # passed explicitly when sent, or it has no components at all.
+        self.approval_view = ApprovalView(
+            is_staff=self._interaction_is_staff,
+            on_approve=self._handle_approve,
+            on_changes=self._handle_changes,
+            on_reject=self._handle_reject,
         )
+        self.bot.add_view(self.approval_view)
 
     async def _interaction_is_staff(self, interaction: discord.Interaction) -> bool:
         if not isinstance(interaction.user, discord.Member):
@@ -52,11 +63,21 @@ class CharacterCog(commands.Cog):
     @group.command(name="create", description="Create a new character")
     async def create(self, interaction: discord.Interaction) -> None:
         assert interaction.guild is not None
+        assert isinstance(interaction.user, discord.Member)
+
+        matches = self.bot.districts_for_member(interaction.user)
+        if len(matches) != 1:
+            key = "no_district_role" if not matches else "ambiguous_district_role"
+            await interaction.response.send_message(t(key), ephemeral=True)
+            return
+        district_id = matches[0]
+
         async with self.bot.db() as session:
             user = await characters_svc.get_or_create_user(session, interaction.user.id)
             if user.banned_at is not None:
                 await interaction.response.send_message(t("banned"), ephemeral=True)
                 return
+            max_characters = characters_svc.effective_max_characters(user, self.bot.settings)
             count = await session.execute(
                 select(func.count())
                 .select_from(Character)
@@ -67,25 +88,13 @@ class CharacterCog(commands.Cog):
                     ),
                 )
             )
-            if int(count.scalar_one()) >= self.bot.settings.max_characters_per_user:
+            if int(count.scalar_one()) >= max_characters:
                 await interaction.response.send_message(
-                    t("too_many_characters", limit=self.bot.settings.max_characters_per_user),
-                    ephemeral=True,
+                    t("too_many_characters", limit=max_characters), ephemeral=True
                 )
                 return
 
-        districts = [(d.id, d.name) for d in self.bot.content.districts.values()]
-
-        async def on_district_chosen(
-            select_interaction: discord.Interaction, district_id: int
-        ) -> None:
-            await self._prompt_details(select_interaction, district_id)
-
-        await interaction.response.send_message(
-            "Which district is this character from?",
-            view=DistrictSelectView(districts, on_district_chosen),
-            ephemeral=True,
-        )
+        await self._prompt_details(interaction, district_id)
 
     async def _prompt_details(self, interaction: discord.Interaction, district_id: int) -> None:
         from panem_bot.modals import CharacterDetailsModal
@@ -101,7 +110,11 @@ class CharacterCog(commands.Cog):
                 modal_interaction, district_id, name, age_str, appearance, backstory
             )
 
-        await interaction.response.send_modal(CharacterDetailsModal(on_submit=on_submit))
+        max_age = characters_svc.max_age_for_district(district_id)
+        placeholder = f"{constants.CHARACTER_AGE_MIN}-{max_age}"
+        await interaction.response.send_modal(
+            CharacterDetailsModal(on_submit=on_submit, age_placeholder=placeholder)
+        )
 
     async def _prompt_job(
         self,
@@ -115,19 +128,31 @@ class CharacterCog(commands.Cog):
         try:
             age = int(age_str)
         except ValueError:
+            max_age = characters_svc.max_age_for_district(district_id)
             await interaction.response.send_message(
-                t("invalid_age", min=12, max=80), ephemeral=True
+                t("invalid_age", min=constants.CHARACTER_AGE_MIN, max=max_age), ephemeral=True
             )
             return
         try:
             characters_svc.validate_character_fields(
-                name=name, age=age, appearance=appearance, backstory=backstory
+                district_id=district_id,
+                name=name,
+                age=age,
+                appearance=appearance,
+                backstory=backstory,
             )
         except ValidationFailed as exc:
             await interaction.response.send_message(t(exc.reason_key, **exc.fmt), ephemeral=True)
             return
 
         async with self.bot.db() as session:
+            try:
+                await characters_svc.ensure_name_available(session, name)
+            except ValidationFailed as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
             open_jobs = await self._open_legal_jobs(session, district_id)
 
         async def on_job_chosen(job_interaction: discord.Interaction, job_id: str | None) -> None:
@@ -142,7 +167,8 @@ class CharacterCog(commands.Cog):
         )
 
     async def _open_legal_jobs(self, session, district_id: int) -> list[tuple[str, str]]:
-        jobs = [j for j in self.bot.content.jobs_for_district(district_id) if j.legal]
+        all_district_jobs = await jobs_svc.jobs_for_district(session, self.bot.content, district_id)
+        jobs = [j for j in all_district_jobs if j.legal]
         if not jobs:
             return []
         counts = await session.execute(
@@ -178,7 +204,7 @@ class CharacterCog(commands.Cog):
                     appearance=appearance,
                     backstory=backstory,
                     desired_job_id=job_id,
-                    max_characters=self.bot.settings.max_characters_per_user,
+                    max_characters=characters_svc.effective_max_characters(user, self.bot.settings),
                 )
             except ServiceError as exc:
                 await interaction.response.send_message(
@@ -199,7 +225,11 @@ class CharacterCog(commands.Cog):
         async with self.bot.db() as session:
             character = await characters_svc.get_character(session, character_id)
             district = self.bot.content.district(character.district_id)
-            job = self.bot.content.jobs.get(character.job_id) if character.job_id else None
+            job = (
+                await jobs_svc.get_job(session, self.bot.content, character.job_id)
+                if character.job_id
+                else None
+            )
             embed = discord.Embed(
                 title=f"Character Application: {character.name}", color=discord.Color.blurple()
             )
@@ -210,10 +240,12 @@ class CharacterCog(commands.Cog):
                 name="Desired Job", value=job.title if job else "Unemployed", inline=True
             )
             embed.add_field(name="Appearance", value=character.appearance or "-", inline=False)
-            embed.add_field(name="Backstory", value=character.backstory or "-", inline=False)
+            embed.add_field(
+                name="Backstory", value=_field_value(character.backstory or "-"), inline=False
+            )
             embed.set_footer(text=f"{CHAR_ID_FOOTER_PREFIX}{character.id}")
 
-        await channel.send(embed=embed)
+        await channel.send(embed=embed, view=self.approval_view)
 
     # --------------------------------------------------------- approval flow
 
@@ -222,8 +254,11 @@ class CharacterCog(commands.Cog):
             try:
                 character = await characters_svc.get_character(session, character_id)
                 district = self.bot.content.district(character.district_id)
-                job_slots = {j.id: j.slots for j in self.bot.content.jobs_for_district(district.id)}
-                characters_svc.approve_character(
+                district_jobs = await jobs_svc.jobs_for_district(
+                    session, self.bot.content, district.id
+                )
+                job_slots = {j.id: j.slots for j in district_jobs}
+                await characters_svc.approve_character(
                     session, character, district=district, job_slots=job_slots
                 )
             except ServiceError:
@@ -237,13 +272,12 @@ class CharacterCog(commands.Cog):
 
         guild = interaction.guild
         assert guild is not None
-        role = _district_role(guild, district.name)
         member = guild.get_member(discord_id)
-        if member and role:
-            await member.add_roles(role, reason="Character approved")
         if member:
             with contextlib.suppress(discord.Forbidden):
-                await member.send(t("character_approved_dm", name=char_name, district=district.id))
+                await member.send(
+                    t("character_approved_dm", name=char_name, district=district.name)
+                )
 
     async def _handle_changes(
         self, interaction: discord.Interaction, character_id: int, note: str
@@ -272,10 +306,33 @@ class CharacterCog(commands.Cog):
         async with self.bot.db() as session:
             character = await characters_svc.get_character(session, character_id)
             characters_svc.reject_character(character)
-            char_name, discord_id = (
-                character.name,
-                (await session.get(User, character.user_id)).discord_id,
+            district = self.bot.content.district(character.district_id)
+            discord_id = (await session.get(User, character.user_id)).discord_id
+            char_name = character.name
+
+            log_embed = discord.Embed(
+                title=f"Character Rejected: {char_name}", color=discord.Color.red()
             )
+            log_embed.add_field(name="Applicant", value=f"<@{discord_id}>", inline=True)
+            log_embed.add_field(name="District", value=district.name, inline=True)
+            log_embed.add_field(name="Age", value=str(character.age), inline=True)
+            log_embed.add_field(
+                name="Appearance", value=_field_value(character.appearance or "-"), inline=False
+            )
+            log_embed.add_field(
+                name="Backstory", value=_field_value(character.backstory or "-"), inline=False
+            )
+            log_embed.add_field(name="Rejected by", value=interaction.user.mention, inline=True)
+            log_embed.add_field(name="Reason", value=_field_value(reason or "-"), inline=True)
+
+            # Rejected applications never became real characters -- log the
+            # details to #panem-log for the record, then drop the row rather
+            # than keeping a `rejected` character around forever.
+            await session.delete(character)
+
+        log_channel = interaction.client.get_channel(self.bot.settings.log_channel_id)
+        if isinstance(log_channel, discord.TextChannel):
+            await log_channel.send(embed=log_embed)
 
         await self._disable_approval_message(interaction, f"Rejected by {interaction.user.mention}")
         await interaction.response.send_message("Rejected.", ephemeral=True)
@@ -307,11 +364,116 @@ class CharacterCog(commands.Cog):
         if not rows:
             await interaction.response.send_message("You have no characters yet.", ephemeral=True)
             return
-        lines = [f"**{c.name}** — District {c.district_id} — {c.status}" for c in rows]
+        lines = [
+            f"**{c.name}** — {self.bot.content.district(c.district_id).name} — {c.status}"
+            for c in rows
+        ]
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+    @group.command(name="edit", description="Edit a pending character and resubmit for approval")
+    @app_commands.describe(character="Character name")
+    @app_commands.autocomplete(character=autocomplete.own_pending)
+    async def edit(self, interaction: discord.Interaction, character: str) -> None:
+        async with self.bot.db() as session:
+            user = await characters_svc.get_or_create_user(session, interaction.user.id)
+            row = (
+                await session.execute(
+                    select(Character).where(
+                        Character.user_id == user.id, Character.name == character
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            if row.status != CharacterStatus.PENDING.value:
+                await interaction.response.send_message(t("not_pending"), ephemeral=True)
+                return
+            character_id = row.id
+            district_id = row.district_id
+            prefill = {
+                "name": row.name,
+                "age": str(row.age),
+                "appearance": row.appearance,
+                "backstory": row.backstory,
+            }
+
+        from panem_bot.modals import CharacterDetailsModal
+
+        async def on_submit(
+            modal_interaction: discord.Interaction,
+            name: str,
+            age_str: str,
+            appearance: str,
+            backstory: str,
+        ) -> None:
+            await self._handle_edit_submit(
+                modal_interaction, character_id, district_id, name, age_str, appearance, backstory
+            )
+
+        max_age = characters_svc.max_age_for_district(district_id)
+        placeholder = f"{constants.CHARACTER_AGE_MIN}-{max_age}"
+        await interaction.response.send_modal(
+            CharacterDetailsModal(on_submit=on_submit, age_placeholder=placeholder, prefill=prefill)
+        )
+
+    async def _handle_edit_submit(
+        self,
+        interaction: discord.Interaction,
+        character_id: int,
+        district_id: int,
+        name: str,
+        age_str: str,
+        appearance: str,
+        backstory: str,
+    ) -> None:
+        try:
+            age = int(age_str)
+        except ValueError:
+            max_age = characters_svc.max_age_for_district(district_id)
+            await interaction.response.send_message(
+                t("invalid_age", min=constants.CHARACTER_AGE_MIN, max=max_age), ephemeral=True
+            )
+            return
+        try:
+            characters_svc.validate_character_fields(
+                district_id=district_id,
+                name=name,
+                age=age,
+                appearance=appearance,
+                backstory=backstory,
+            )
+        except ValidationFailed as exc:
+            await interaction.response.send_message(t(exc.reason_key, **exc.fmt), ephemeral=True)
+            return
+
+        async with self.bot.db() as session:
+            row = await characters_svc.get_character(session, character_id)
+            if row.status != CharacterStatus.PENDING.value:
+                await interaction.response.send_message(t("not_pending"), ephemeral=True)
+                return
+            try:
+                await characters_svc.ensure_name_available(
+                    session, name, exclude_character_id=character_id
+                )
+            except ValidationFailed as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+            row.name = name
+            row.age = age
+            row.appearance = appearance
+            row.backstory = backstory
+
+        await interaction.response.send_message(
+            f"**{name}** updated and resubmitted for approval.", ephemeral=True
+        )
+        await self._post_approval_embed(interaction, character_id)
 
     @group.command(name="retire", description="Retire an approved character")
     @app_commands.describe(character="Character name")
+    @app_commands.autocomplete(character=autocomplete.own_approved)
     async def retire(self, interaction: discord.Interaction, character: str) -> None:
         async with self.bot.db() as session:
             user = await characters_svc.get_or_create_user(session, interaction.user.id)
@@ -332,22 +494,13 @@ class CharacterCog(commands.Cog):
                     t(exc.reason_key, **exc.fmt), ephemeral=True
                 )
                 return
-            keep_role = await characters_svc.other_approved_characters_in_district(
-                session, user_id=user.id, district_id=row.district_id, exclude_character_id=row.id
-            )
-            district = self.bot.content.district(row.district_id)
             name = row.name
 
         await interaction.response.send_message(t("character_retired", name=name), ephemeral=True)
-        if not keep_role and interaction.guild and isinstance(interaction.user, discord.Member):
-            role = _district_role(interaction.guild, district.name)
-            if role and role in interaction.user.roles:
-                await interaction.user.remove_roles(
-                    role, reason="No remaining approved characters here"
-                )
 
     @group.command(name="status", description="Show a character's status")
     @app_commands.describe(character="Character name")
+    @app_commands.autocomplete(character=autocomplete.own_approved)
     async def status(self, interaction: discord.Interaction, character: str) -> None:
         async with self.bot.db() as session:
             user = await characters_svc.get_or_create_user(session, interaction.user.id)
@@ -358,16 +511,47 @@ class CharacterCog(commands.Cog):
                     )
                 )
             ).scalar_one_or_none()
-        if row is None:
-            await interaction.response.send_message(t("character_not_found"), ephemeral=True)
-            return
+            if row is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            job_name = "Unemployed"
+            job = None
+            if row.job_id:
+                job = await jobs_svc.get_job(session, self.bot.content, row.job_id)
+                job_name = job.title if job else row.job_id
+            location_name = "-"
+            if row.location_id:
+                district = self.bot.content.district(row.current_district_id)
+                location = next(
+                    (loc for loc in district.locations if loc.id == row.location_id), None
+                )
+                location_name = location.name if location else row.location_id
+
+            open_shift = (
+                await session.execute(
+                    select(Shift).where(Shift.character_id == row.id, Shift.result.is_(None))
+                )
+            ).scalar_one_or_none()
+            if open_shift is not None:
+                clock = await session.get(WorldClock, 1)
+                current_tick = clock.tick if clock is not None else 0
+                due_time = clock_string(open_shift.tick_due)
+                if current_tick >= open_shift.tick_due:
+                    shift_value = f"Overdue since {due_time} -- work it now!"
+                else:
+                    shift_value = f"Open, due by {due_time}"
+            elif job is not None:
+                shift_value = f"No shift open -- works {phase_time_range(job.shift_phase)}"
+            else:
+                shift_value = "No job"
         embed = discord.Embed(title=row.name)
         embed.add_field(name="Status", value=row.status)
         embed.add_field(name="Money", value=str(row.money))
         embed.add_field(name="Hunger", value=str(row.hunger))
         embed.add_field(name="Health", value=str(row.health))
-        embed.add_field(name="Job", value=row.job_id or "Unemployed")
-        embed.add_field(name="Location", value=row.location_id or "-")
+        embed.add_field(name="Job", value=job_name)
+        embed.add_field(name="Shift", value=shift_value)
+        embed.add_field(name="Location", value=location_name)
         embed.add_field(name="Reputation", value=f"{row.reputation:.1f}")
         embed.add_field(name="Jailed", value="Yes" if row.jailed_until_tick else "No")
         embed.add_field(name="Tesserae", value=str(row.tesserae_count))
@@ -375,9 +559,33 @@ class CharacterCog(commands.Cog):
 
     @group.command(name="avatar", description="Set a character's avatar image")
     @app_commands.describe(
-        character="Character name", url="Image URL (https, .png/.jpg/.jpeg/.webp/.gif)"
+        character="Character name",
+        url="Image URL (https, .png/.jpg/.jpeg/.webp/.gif) -- omit if uploading a file",
+        image="Upload an image file -- expires in ~24h, prefer a URL for something permanent",
     )
-    async def avatar(self, interaction: discord.Interaction, character: str, url: str) -> None:
+    @app_commands.autocomplete(character=autocomplete.own_approved)
+    async def avatar(
+        self,
+        interaction: discord.Interaction,
+        character: str,
+        url: str | None = None,
+        image: discord.Attachment | None = None,
+    ) -> None:
+        if (url is None) == (image is None):
+            await interaction.response.send_message(
+                "Provide either a URL or an uploaded image, not both.", ephemeral=True
+            )
+            return
+        if image is not None:
+            if image.content_type is None or not image.content_type.startswith("image/"):
+                await interaction.response.send_message(t("invalid_avatar_url"), ephemeral=True)
+                return
+            # Discord's CDN signs attachment URLs with a ~24h expiry regardless
+            # of which message holds them (there's no way to host a permanent
+            # link through Discord itself), so this will need re-uploading
+            # periodically -- warned about in the command description below.
+            url = image.url
+        assert url is not None
         try:
             characters_svc.validate_avatar_url(url)
         except ValidationFailed as exc:
@@ -396,7 +604,13 @@ class CharacterCog(commands.Cog):
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
             row.avatar_url = url
-        await interaction.response.send_message("Avatar updated.", ephemeral=True)
+        note = (
+            " (uploaded images expire in ~24h -- re-run this command with a fresh "
+            "upload, or switch to a permanent URL, if it stops showing up)"
+            if image is not None
+            else ""
+        )
+        await interaction.response.send_message(f"Avatar updated.{note}", ephemeral=True)
 
     @group.command(
         name="tag", description="Set a character's proxy tag (e.g. `md:` messages post as them)"
@@ -404,6 +618,7 @@ class CharacterCog(commands.Cog):
     @app_commands.describe(
         character="Character name", prefix="1-12 chars, can't start with / or (("
     )
+    @app_commands.autocomplete(character=autocomplete.own_approved)
     async def tag(self, interaction: discord.Interaction, character: str, prefix: str) -> None:
         try:
             characters_svc.validate_proxy_tag(prefix)

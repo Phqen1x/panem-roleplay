@@ -30,7 +30,7 @@ locations:
   kind: public
   capacity: 200
 - id: market
-  name: The Loading Dock
+  name: The Market
   kind: market
   capacity: 80
   illicit: true
