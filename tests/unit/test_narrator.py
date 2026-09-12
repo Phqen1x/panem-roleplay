@@ -14,15 +14,13 @@ from panem_shared.events import Bulletin, NarrationLine
 
 class FakeBot:
     """Just enough of `PanemBot` for `narrator.py`'s handlers: a `db()`
-    context manager bound to the test's own session factory, plus mocked
-    `outbound`/`get_channel`/`fetch_channel`."""
+    context manager bound to the test's own session factory, plus a
+    mocked `outbound`."""
 
     def __init__(self, session_factory) -> None:
         self._session_factory = session_factory
         self.outbound = MagicMock()
         self.outbound.enqueue = AsyncMock()
-        self.get_channel = MagicMock(return_value=None)
-        self.fetch_channel = AsyncMock()
 
     @asynccontextmanager
     async def db(self):
@@ -112,26 +110,56 @@ class TestHandleNarration:
 
 
 class TestHandleBulletin:
-    async def test_enqueues_channel_send_for_board_channel(self, db_session, bot: FakeBot):
-        db_session.add(DiscordChannel(district_id=1, kind=ChannelKind.BOARD.value, channel_id=444))
+    async def test_enqueues_webhook_send_with_correct_targets(
+        self, db_session, bot: FakeBot, monkeypatch: pytest.MonkeyPatch
+    ):
+        db_session.add(DiscordChannel(district_id=1, kind=ChannelKind.BOARD.value, channel_id=555))
+        db_session.add(
+            DiscordChannel(
+                district_id=1,
+                kind=ChannelKind.FORUM.value,
+                channel_id=222,
+                webhook_id=333,
+                webhook_token="tok",
+            )
+        )
         await db_session.flush()
 
-        fetched_channel = AsyncMock(spec=discord.TextChannel)
-        bot.fetch_channel = AsyncMock(return_value=fetched_channel)
+        sent: dict[str, object] = {}
+
+        async def fake_send(text, **kwargs):
+            sent["text"] = text
+            sent.update(kwargs)
+            return MagicMock()
+
+        monkeypatch.setattr(
+            discord.Webhook, "partial", MagicMock(return_value=MagicMock(send=fake_send))
+        )
 
         event = Bulletin(tick=1, district_id=1, text="The Capitol announces a decree.")
         await narrator._handle_bulletin(bot, event)
 
         assert bot.outbound.enqueue.await_count == 1
         message = bot.outbound.enqueue.await_args.args[0]
-        assert message.thread_id == 444
-        assert message.forum_channel_id == 444
+        assert message.thread_id == 555
+        assert message.forum_channel_id == 222
         assert message.priority == narrator.SendPriority.NARRATOR
 
         await message.send()
-        fetched_channel.send.assert_awaited_once_with("The Capitol announces a decree.")
+        assert sent["text"] == "The Capitol announces a decree."
+        assert sent["username"] == "The Narrator"
+        assert sent["thread"].id == 555
 
     async def test_no_op_when_no_board_channel(self, bot: FakeBot):
+        event = Bulletin(tick=1, district_id=1, text="...")
+        await narrator._handle_bulletin(bot, event)
+        bot.outbound.enqueue.assert_not_called()
+
+    async def test_no_op_when_forum_has_no_webhook_credentials(self, db_session, bot: FakeBot):
+        db_session.add(DiscordChannel(district_id=1, kind=ChannelKind.BOARD.value, channel_id=555))
+        db_session.add(DiscordChannel(district_id=1, kind=ChannelKind.FORUM.value, channel_id=222))
+        await db_session.flush()
+
         event = Bulletin(tick=1, district_id=1, text="...")
         await narrator._handle_bulletin(bot, event)
         bot.outbound.enqueue.assert_not_called()

@@ -6,12 +6,12 @@ Creates one shared "Roleplay" category containing:
     all out-of-character chat guild-wide
   - a Forum channel per district (`district-N-roleplay`, or
     `capitol-roleplay` for The Capitol) with one tag per location plus
-    `Open`/`Closed`, `require_tag=True`, default auto-archive =
-    `SCENE_AUTO_ARCHIVE_MINUTES`, one webhook each, and a pinned,
-    never-archived ambient post per location
-  - a read-only `#district-N-board` (or `#capitol-board`) text channel per
-    district, where `panem_sim`'s daily economy tick posts its `Bulletin`
-    (FR-ECO-8) via `panem_bot/narrator.py`'s `ChannelKind.BOARD` lookup
+    `Open`/`Closed`/`Board`, `require_tag=True`, default auto-archive =
+    `SCENE_AUTO_ARCHIVE_MINUTES`, one webhook each, a pinned, never-
+    archived ambient post per location, and one pinned, never-archived
+    `Board` thread where `panem_sim`'s daily economy tick posts its
+    `Bulletin` (FR-ECO-8) via `panem_bot/narrator.py`'s
+    `ChannelKind.BOARD` lookup
 
 Plus, per district, a role (view/post that district's forum; everyone else
 can view only) -- and guild-wide staff role, approval channel, and log
@@ -21,14 +21,16 @@ found/created by name, but `.env`'s `CAPITOL_ROLE_ID` / `DISTRICT_N_ROLE_ID`
 
 Per-district categories from the Plan's original layout are intentionally
 not created: a single guild-wide OOC channel with player-made threads
-covers OOC chat without 13 near-empty channels.
+covers OOC chat without 13 near-empty channels. The board is a thread
+inside each district's forum rather than its own top-level channel too,
+for the same reason -- one more near-empty channel per district avoided.
 
 Every channel/thread this script manages is looked up (and, for the
-forum/board channels, reconciled) by name/id each run rather than
+forum/ambient/board threads, reconciled) by name/id each run rather than
 recreated blindly, so it's also the fix for "the bot can't post somewhere
-it used to" -- a deleted ambient thread, a deleted board channel, or a
-`discord_channels` row pointing at a channel id that no longer exists all
-get healed by re-running this script.
+it used to" -- a deleted ambient thread, a deleted board thread, or a
+`discord_channels` row pointing at an id that no longer exists all get
+healed by re-running this script.
 
 Every Discord object created is recorded in `discord_channels` /
 `scenes` (kind=ambient) so re-running this script is a no-op for anything
@@ -59,6 +61,8 @@ DATA_DIR = REPO_ROOT / "data"
 
 OPEN_TAG = "Open"
 CLOSED_TAG = "Closed"
+BOARD_TAG = "Board"
+BOARD_THREAD_NAME = "Board"
 RP_CATEGORY_NAME = "Roleplay"
 OOC_CHANNEL_NAME = "ooc"
 STAFF_CATEGORY_NAME = "Panem Staff"
@@ -75,12 +79,6 @@ def forum_name(district: District) -> str:
     if district.id == 0:
         return "capitol-roleplay"
     return f"district-{district.id}-roleplay"
-
-
-def board_name(district: District) -> str:
-    if district.id == 0:
-        return "capitol-board"
-    return f"district-{district.id}-board"
 
 
 def _with_bot_access(
@@ -175,6 +173,7 @@ def _location_tags(district: District) -> list[discord.ForumTag]:
     tags = [discord.ForumTag(name=loc.name) for loc in district.locations]
     tags.append(discord.ForumTag(name=OPEN_TAG))
     tags.append(discord.ForumTag(name=CLOSED_TAG))
+    tags.append(discord.ForumTag(name=BOARD_TAG))
     return tags
 
 
@@ -312,6 +311,54 @@ async def ensure_ambient_posts(
         logger.info("ambient_post_ready", district=district.id, location=loc.id)
 
 
+async def ensure_board_thread(
+    session, guild: discord.Guild, forum: discord.ForumChannel, district: District
+) -> None:
+    """The daily economy `Bulletin` (FR-ECO-8) posts into a single pinned,
+    never-archived `Board` thread inside the district's own forum, the
+    same way `ensure_ambient_posts` gives each location a thread --
+    rather than a separate top-level channel, which `panem_bot/
+    narrator.py`'s `_handle_bulletin` would then need its own webhook/
+    permissions story for. Reuses `discord_channels` (kind=`board`) to
+    track the thread id, the same table the forum/staff channels use."""
+    existing = (
+        await session.execute(
+            select(DiscordChannel).where(
+                DiscordChannel.district_id == district.id,
+                DiscordChannel.kind == ChannelKind.BOARD.value,
+            )
+        )
+    ).scalar_one_or_none()
+
+    if existing is not None:
+        thread = guild.get_channel_or_thread(existing.channel_id)
+        if thread is not None:
+            if isinstance(thread, discord.Thread) and thread.archived:
+                await thread.edit(archived=False)
+            return
+        # DB row survived but the thread is gone -- fall through and recreate.
+
+    board_tag = discord.utils.get(forum.available_tags, name=BOARD_TAG)
+    thread_with_message = await forum.create_thread(
+        name=BOARD_THREAD_NAME,
+        content="*The day's market bulletin will post here.*",
+        applied_tags=[board_tag] if board_tag is not None else [],
+    )
+    try:
+        await thread_with_message.message.pin(reason="District board")
+    except discord.HTTPException:
+        logger.warning("board_pin_failed", district=district.id)
+
+    await upsert_discord_channel(
+        session,
+        district_id=district.id,
+        kind=ChannelKind.BOARD,
+        channel_id=thread_with_message.thread.id,
+        webhook=None,
+    )
+    logger.info("board_thread_ready", district=district.id)
+
+
 async def setup_district(
     session,
     guild: discord.Guild,
@@ -358,25 +405,7 @@ async def setup_district(
     )
 
     await ensure_ambient_posts(session, guild, forum, district)
-
-    board_overwrites = _with_bot_access(
-        guild,
-        {
-            guild.default_role: discord.PermissionOverwrite(view_channel=True, send_messages=False),
-            role: discord.PermissionOverwrite(view_channel=True, send_messages=False),
-            staff_role: discord.PermissionOverwrite(view_channel=True, send_messages=True),
-        },
-    )
-    board = await ensure_text_channel(
-        guild, category, board_name(district), overwrites=board_overwrites
-    )
-    await upsert_discord_channel(
-        session,
-        district_id=district.id,
-        kind=ChannelKind.BOARD,
-        channel_id=board.id,
-        webhook=None,
-    )
+    await ensure_board_thread(session, guild, forum, district)
 
 
 async def setup_staff_channels(session, guild: discord.Guild, staff_role: discord.Role) -> None:
