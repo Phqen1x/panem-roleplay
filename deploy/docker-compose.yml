@@ -82,9 +82,33 @@ services:
       migrate:
         condition: service_completed_successfully
 
-  # panem_api + caddy (Plan §8, Phase 5) are not implemented yet -- their
-  # service blocks land in a later phase, sharing this same postgres/redis
-  # and the `deploy/Dockerfile` image.
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["uv", "run", "python", "-m", "panem_api.main"]
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://panem:panem@postgres:5432/panem
+      REDIS_URL: redis://redis:6379/0
+      API_HOST: 0.0.0.0
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../data:/app/data:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # caddy (a reverse proxy in front of `api` for TLS/routing in a real
+  # deployment) is not implemented yet -- `api` is reachable directly on
+  # :8000 in the meantime, with no auth in front of it (see the README's
+  # Milestone H notes).
 
 volumes:
   panem_pg_data:

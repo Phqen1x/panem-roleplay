@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import json
 import uuid
 
 import redis.asyncio as redis
@@ -42,6 +43,7 @@ from panem_shared.db.session import session_scope
 from panem_shared.enums import ShiftResult
 from panem_shared.events import AnyWorldEvent, parse_event, publish
 from panem_shared.logging import get_logger
+from panem_shared.redis_keys import positions_key
 from panem_sim.rng import tick_rng
 from panem_sim.state import TickContext, WorldState
 from panem_sim.systems import FIXED_ORDER
@@ -121,7 +123,7 @@ async def _run_tick_once(
     session_factory: async_sessionmaker[AsyncSession],
     content: ContentBundle,
     world_seed: str,
-) -> list[AnyWorldEvent]:
+) -> tuple[list[AnyWorldEvent], WorldState]:
     async with session_scope(session_factory) as session:
         state, clock = await _load_state(session)
         tick, phase, day, month = advance(clock.tick)
@@ -155,7 +157,54 @@ async def _run_tick_once(
         if state.deleted_memory_ids:
             await session.execute(delete(Memory).where(Memory.id.in_(state.deleted_memory_ids)))
 
-    return events
+    return events, state
+
+
+def _district_positions(state: WorldState, district_id: int) -> str:
+    return json.dumps(
+        {
+            "npcs": [
+                {
+                    "id": npc.id,
+                    "name": npc.name,
+                    "x": npc.x,
+                    "y": npc.y,
+                    "location_id": npc.location_id,
+                }
+                for npc in state.npcs.values()
+                if npc.district_id == district_id
+            ],
+            "characters": [
+                {
+                    "id": character.id,
+                    "name": character.name,
+                    "x": character.x,
+                    "y": character.y,
+                    "location_id": character.location_id,
+                }
+                for character in state.characters.values()
+                if character.current_district_id == district_id
+            ],
+        }
+    )
+
+
+async def _publish_positions(
+    redis_client: redis.Redis, content: ContentBundle, state: WorldState
+) -> None:
+    """Live NPC/character positions for the Activity's map (Phase 5) --
+    a plain Redis SET per district, not a durable `WorldEvent`: this is
+    "what does the map look like right now", freely overwritten every
+    tick, with no announced/replay contract behind it. Best-effort: a
+    Redis hiccup here shouldn't fail the tick or trigger FR-TCK-3's
+    retry/alert path, which exists for the DB transaction, not this."""
+    for district_id in content.districts:
+        try:
+            await redis_client.set(
+                positions_key(district_id), _district_positions(state, district_id)
+            )
+        except Exception:
+            logger.warning("positions_publish_failed", district_id=district_id)
 
 
 async def _publish_and_mark_announced(
@@ -188,12 +237,13 @@ async def run_tick(
     last_error: Exception | None = None
     for attempt in range(2):
         try:
-            events = await _run_tick_once(session_factory, content, world_seed)
+            events, state = await _run_tick_once(session_factory, content, world_seed)
         except Exception as exc:
             last_error = exc
             logger.error("tick_failed", attempt=attempt, error=str(exc))
             continue
         await _publish_and_mark_announced(session_factory, redis_client, events)
+        await _publish_positions(redis_client, content, state)
         return events
 
     assert last_error is not None

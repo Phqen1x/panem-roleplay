@@ -22,7 +22,3 @@ def scene_presence_key(thread_id: int) -> str:
 
 def talk_window_key(thread_id: int, npc_id: str) -> str:
     return f"talk:{thread_id}:{npc_id}"
-
-
-def positions_key(district_id: int) -> str:
-    return f"pos:{district_id}"

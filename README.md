@@ -30,9 +30,18 @@ chronic hunger and missed quotas) and peacekeeper pressure (fed by
 illicit-market catches), escalating/recovering through `CRISIS_THRESHOLDS`
 and announcing a level change as a `Bulletin`; `/staff district <id>`
 shows the raw numbers. See the Milestone G notes below for what's a
-placeholder pending the real Spec §7 text. Phases 5-6 (the Activity and
-LLM dialogue) remain scaffolded as empty packages/stubs — see the Plan
-for the full roadmap.
+placeholder pending the real Spec §7 text.
+
+**Phase 5 — The Activity** (Plan §8) has a working backend:
+`panem_api` is a FastAPI REST/WebSocket bridge serving each district's
+live NPC/character positions (`GET /districts`, `GET /districts/{id}
+/positions`, `WS /ws/districts/{id}/positions`), fed by `panem_sim`
+writing a JSON snapshot to Redis every tick. No frontend exists (an
+actual Discord Activity iframe/embedded app is a separate, substantial
+piece of work outside this repo's scope so far), and no auth is
+enforced -- see the Milestone H notes below for both. Phase 6 (LLM
+dialogue) remains scaffolded as stubs — see the Plan for the full
+roadmap.
 
 ## Layout
 
@@ -41,7 +50,7 @@ packages/
   panem_shared/   data model (SQLAlchemy), content YAML schemas/loaders, settings, enums, world event types
   panem_bot/      the discord.py process: commands, proxying, scenes, staff tools, narration, travel, jobs
   panem_sim/      world tick loop, NPC movement (Phase 1), needs/jobs/economy/travel (Phase 2)
-  panem_api/      FastAPI REST/WebSocket bridge for the Activity (Phase 5+, not yet implemented)
+  panem_api/      FastAPI REST/WebSocket bridge for the Activity's live map (Phase 5)
 data/             districts, goods, jobs, routes (content YAML, validated at boot)
 migrations/       Alembic migrations
 scripts/          setup_guild.py (Phase 0), calibrate.py (Phase 2), plus stubs for later-phase scripts
@@ -565,6 +574,44 @@ Phase 4 constants that already existed before this milestone.
   fire a `Bulletin`; that path is covered by the unit tests instead,
   which force `unrest` directly rather than starving a population for
   dozens of simulated days.
+
+## Notes on this Milestone H (Phase 5: the Activity backend) build
+
+Plan §8. This is the API bridge only -- the actual Discord Activity
+(the embedded iframe app a player would open inside Discord, using
+Discord's Embedded App SDK) is a separate frontend project this repo
+doesn't contain; nothing here should be read as "the Activity is done."
+
+- **`panem_sim` writes `pos:{district_id}` to Redis every tick**
+  (`tick.py::_publish_positions`, a plain JSON string, not a durable
+  `WorldEvent`) -- `Npc.x/y`/`Character.x/y` were already being computed
+  for exactly this (the module docstrings said so since Phase 1), just
+  never actually published anywhere until now. Best-effort: a Redis
+  failure here is caught and logged, not raised -- it doesn't share
+  `FR-TCK-3`'s retry/alert path with the DB transaction, since a stale
+  map is a much smaller problem than a stuck tick loop.
+- **`panem_api` only reads that key back** -- `GET /districts`, `GET
+  /districts/{id}/positions`, and `WS /ws/districts/{id}/positions`
+  (a plain poll every `POSITIONS_POLL_INTERVAL_SECONDS`, not push-on-
+  change, since there's no pubsub notification on the key changing,
+  only an overwrite). A fresh world with no ticks yet, or a
+  Redis hiccup, reads back as empty positions, not an error.
+- **No auth is enforced anywhere in `panem_api`.** A real Discord
+  Activity authenticates through Discord's own OAuth handshake, which
+  needs live Activity credentials to build and verify against -- this
+  session had neither, so rather than write unverifiable placeholder
+  auth code, this is left as an explicit, documented gap. Don't expose
+  `panem_api` on a public port without addressing this first.
+- **`docker-compose.yml`'s `api` service publishes :8000 directly**;
+  the `caddy` reverse-proxy the original comment mentioned (Plan §8,
+  presumably for TLS/routing in a real deployment) isn't implemented
+  either.
+- **Verified live**: seeded a world, ran one tick, and hit the running
+  `panem_api` process's REST and WebSocket endpoints directly against
+  real Postgres + Redis -- both returned the same position data
+  `tick.py` had just written, confirming the write path (`panem_sim`)
+  and read path (`panem_api`) actually agree on the JSON shape end to
+  end, not just in unit tests against fakes.
 
 ## Upgrading past duplicate character names
 

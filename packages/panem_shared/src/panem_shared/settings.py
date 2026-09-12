@@ -83,6 +83,14 @@ class Settings(BaseSettings):
 
     games_api_key: str = ""
 
+    # panem_api (Phase 5, Plan §8): the REST/WebSocket bridge for the
+    # Activity's live map. No auth is enforced yet -- verifying a real
+    # Discord Activity's OAuth handshake needs credentials/a flow this
+    # session had no way to test against, so it's left as an explicit gap
+    # (see the README) rather than unverifiable placeholder auth code.
+    api_host: str = "0.0.0.0"
+    api_port: int = 8000
+
     def role_id_override_for_district(self, district_id: int) -> int:
         """0 means unset (auto-manage by name); see `*_role_id` fields above."""
         if district_id == 0:
