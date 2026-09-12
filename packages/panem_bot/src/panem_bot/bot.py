@@ -42,6 +42,7 @@ COGS = (
     "panem_bot.cogs.help",
     "panem_bot.cogs.travel",
     "panem_bot.cogs.jobs",
+    "panem_bot.cogs.residents",
 )
 
 

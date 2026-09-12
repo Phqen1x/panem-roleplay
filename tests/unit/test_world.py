@@ -12,6 +12,8 @@ from panem_shared.content.schemas import (
     DistrictCulture,
     DistrictMap,
     DistrictQuota,
+    Job,
+    JobOption,
     Location,
 )
 from panem_shared.db.models import DistrictState, Npc, NpcSchedule
@@ -49,8 +51,28 @@ def make_district(
     )
 
 
-def make_content(*districts: District) -> ContentBundle:
-    return ContentBundle(districts={d.id: d for d in districts}, goods={}, jobs={}, routes=[])
+def make_content(*districts: District, jobs: tuple[Job, ...] = ()) -> ContentBundle:
+    return ContentBundle(
+        districts={d.id: d for d in districts},
+        goods={},
+        jobs={j.id: j for j in jobs},
+        routes=[],
+    )
+
+
+def make_job(**overrides: object) -> Job:
+    defaults: dict[str, object] = dict(
+        id="job",
+        district=1,
+        title="Job",
+        workplace="market",
+        wage=10.0,
+        shift_phase="morning",
+        slots=5,
+        options=[JobOption(label="a"), JobOption(label="b"), JobOption(label="c")],
+    )
+    defaults.update(overrides)
+    return Job(**defaults)  # type: ignore[arg-type]
 
 
 class TestSeedDistrictState:
@@ -173,6 +195,59 @@ class TestSeedNpcs:
         assert npcs
         for npc in npcs:
             assert npc.home_location_id == "square"
+
+    async def test_npcs_get_unique_real_names(self, db_session):
+        content = make_content(make_district(1))
+
+        await world.seed_npcs(db_session, content, "test-seed")
+        await db_session.flush()
+
+        npcs = (await db_session.execute(select(Npc))).scalars().all()
+        names = [npc.name for npc in npcs]
+        assert all(not name.startswith("Resident") for name in names)
+        assert len(set(names)) == len(names)
+
+    async def test_npcs_are_assigned_a_district_job_when_one_exists(self, db_session):
+        job = make_job(id="only_job", district=1, workplace="market", shift_phase="morning")
+        content = make_content(make_district(1), jobs=(job,))
+
+        await world.seed_npcs(db_session, content, "test-seed")
+        await db_session.flush()
+
+        npcs = (await db_session.execute(select(Npc))).scalars().all()
+        assert all(npc.job_id == "only_job" for npc in npcs)
+
+    async def test_npcs_have_no_job_when_district_has_none(self, db_session):
+        content = make_content(make_district(1))
+
+        await world.seed_npcs(db_session, content, "test-seed")
+        await db_session.flush()
+
+        npcs = (await db_session.execute(select(Npc))).scalars().all()
+        assert all(npc.job_id is None for npc in npcs)
+
+    async def test_employed_npc_schedule_favors_workplace_during_shift_phase(self, db_session):
+        job = make_job(id="only_job", district=1, workplace="market", shift_phase="morning")
+        content = make_content(make_district(1), jobs=(job,))
+
+        await world.seed_npcs(db_session, content, "test-seed")
+        await db_session.flush()
+
+        morning_rows = (
+            (
+                await db_session.execute(
+                    select(NpcSchedule).where(NpcSchedule.phase == DayPhase.MORNING.value)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        by_npc: dict[str, dict[str, float]] = defaultdict(dict)
+        for row in morning_rows:
+            by_npc[row.npc_id][row.location_id] = row.weight
+
+        for weights in by_npc.values():
+            assert weights.get("market") == pytest.approx(0.85)
 
 
 class TestSeedWorld:

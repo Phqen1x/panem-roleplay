@@ -78,6 +78,10 @@ STRINGS: dict[str, str] = {
     "work_ok": "**{name}** works: +{wage} money, {rep_delta:+d} reputation.",
     "promotion_available": " **{name}** is eligible for a promotion to **{next_title}** -- ask staff.",
     "no_jobs_in_district": "No jobs are defined for that district yet.",
+    # Residents (FR-NPC)
+    "no_residents_in_district": "No residents are seeded for that district yet.",
+    "resident_not_found": "No resident by that name in this district.",
+    "resident_where_ok": "**{name}** ({job}) is currently at **{location}**.",
     # Tesserae (FR-ECO-7)
     "tesserae_claimed": "**{name}** claims tesserae: +{amount} money, {count} claimed total.",
     "tesserae_already_claimed": "**{name}** already claimed tesserae today.",

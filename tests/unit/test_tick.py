@@ -7,7 +7,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from panem_shared.content.loader import ContentBundle
-from panem_shared.content.schemas import District, DistrictCulture, DistrictMap, Location
+from panem_shared.content.schemas import (
+    District,
+    DistrictCulture,
+    DistrictMap,
+    Job,
+    JobOption,
+    Location,
+)
 from panem_shared.db.models import Npc, NpcSchedule, WorldClock
 from panem_shared.db.models import WorldEvent as WorldEventRow
 from panem_shared.db.session import session_scope
@@ -54,9 +61,23 @@ def make_district() -> District:
     )
 
 
+def make_job() -> Job:
+    return Job(
+        id="job",
+        district=1,
+        title="Job",
+        workplace="square",
+        wage=10.0,
+        shift_phase="morning",
+        slots=5,
+        options=[JobOption(label="a"), JobOption(label="b"), JobOption(label="c")],
+    )
+
+
 def make_content() -> ContentBundle:
     district = make_district()
-    return ContentBundle(districts={district.id: district}, goods={}, jobs={}, routes=[])
+    job = make_job()
+    return ContentBundle(districts={district.id: district}, goods={}, jobs={job.id: job}, routes=[])
 
 
 class TestFixedOrder:
@@ -117,6 +138,7 @@ async def seeded_world(db_session_factory: async_sessionmaker[AsyncSession]) -> 
                     district_id=district.id,
                     name=npc_id,
                     age=30,
+                    job_id="job",
                     location_id="home",
                     home_location_id="home",
                 )

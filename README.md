@@ -280,6 +280,31 @@ runs inside a rolled-back savepoint.
   action, not a game-time one) and refuses Capitol characters
   (`CAPITOL_DISTRICT_ID`); the payout (`TICKET_BASE` money, `+1`
   `tesserae_count`) is the existing spec-sourced tunable, not a guess.
+- **`/time`** shows an actual 12-hour clock (e.g. `12:00 PM`) and phase,
+  plus a real-seconds countdown to the next tick, instead of raw tick
+  numbers — `panem_shared.simtime.clock_string` scales against
+  `TICKS_PER_DAY` (not a hardcoded hour-per-tick), and the countdown
+  reads `WorldClock.updated_at` (new column, migration `2b838e376cd7`)
+  against `tick_interval_seconds`. `/character status` also now shows
+  whether a shift is open, and its due tick, in a new **Shift** field.
+- **Synthetic NPCs get a name and (usually) a job at seed time**
+  (`panem_sim/world.py`), not just a name pool: each is weight-assigned
+  one of its district's jobs (weighted by `slots`), and its schedule
+  pulls it toward that job's workplace during the job's `shift_phase`
+  instead of the generic public/market spread. Still well short of
+  Phase 3 (no traits/speech/personality) — see `world.py`'s module
+  docstring.
+- **Ambient narration only announces two kinds of NPC arrival**: showing
+  up at a job's workplace during its own shift phase, or arriving home
+  at night (`panem_sim/systems/schedule.py::_arrival_reason`). An NPC's
+  schedule sending them to the market or square mid-afternoon still
+  moves them (and updates `/resident where`'s answer) but posts nothing
+  — with ~23 NPCs/district re-rolling a weighted choice every tick, the
+  unfiltered version made a district's ambient thread unreadable.
+- **`/resident list`/`/resident where`** (new `cogs/residents.py`) is how
+  a player finds a district's residents (name + job) and looks up a
+  specific one's current location, since narration no longer covers most
+  of their movement.
 
 ## Upgrading past duplicate character names
 

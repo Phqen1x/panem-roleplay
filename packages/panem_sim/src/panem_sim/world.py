@@ -5,14 +5,16 @@ Seeding is idempotent and per-district: a district already holding
 `district_state`/`npcs` rows is left untouched, so re-running this against
 a world that's already been ticking is always safe.
 
-No real NPC content exists yet (`data/npcs/*.yaml` -- names, traits,
-speech, relationships -- is Phase 3 content, per the Plan's own §11
+No real NPC content exists yet (`data/npcs/*.yaml` -- traits, speech,
+relationships, backstory -- is Phase 3 content, per the Plan's own §11
 authoring table and `scripts/npc_generate.py`'s docstring). Phase 1/2's
-movement, needs, jobs, and shopkeeper mechanics only need *some* NPC
-bodies to exist, so this seeds a minimal synthetic population directly
-into `npcs`/`npc_schedule` -- no traits/speech/dialogue -- that Phase 3
-enriches in place later. The `Npc` table already has every column Phase 3
-needs; nothing here blocks it.
+movement, needs, jobs, and shopkeeper mechanics need NPC bodies with a
+name and (mostly) a job -- both cheap to synthesize from a name pool and
+each district's own job list -- so residents read naturally in narration
+and `/resident`, and the job-shift systems have something to act on. This
+still stops well short of Phase 3: no traits/speech/dialogue/personality,
+just identity. The `Npc` table already has every column Phase 3 needs;
+nothing here blocks it.
 """
 
 from __future__ import annotations
@@ -25,7 +27,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from panem_shared import constants
 from panem_shared.content.loader import ContentBundle, load_content
-from panem_shared.content.schemas import District, Location
+from panem_shared.content.names import sample_names
+from panem_shared.content.schemas import District, Job, Location
 from panem_shared.db.models import DistrictState, Npc, NpcSchedule
 from panem_shared.enums import DayPhase, LocationKind
 from panem_sim.rng import seed_rng
@@ -83,6 +86,31 @@ def _generic_schedule(district: District, home_id: str) -> dict[DayPhase, dict[s
     }
 
 
+def _schedule_for_npc(
+    district: District, home_id: str, job: Job | None
+) -> dict[DayPhase, dict[str, float]]:
+    """`_generic_schedule`, with an employed NPC's job phase overridden to
+    pull heavily toward its workplace instead of the generic public/market
+    spread -- otherwise an NPC with a job would only ever wander there by
+    the same chance as anyone else. The small remaining share stays home,
+    standing in for a day off/no-show rather than 100% attendance."""
+    schedule = _generic_schedule(district, home_id)
+    if job is not None:
+        schedule[job.shift_phase] = {job.workplace: 0.85, home_id: 0.15}
+    return schedule
+
+
+def _assign_job(rng: random.Random, district_jobs: list[Job]) -> str | None:
+    """Weighted by `slots` so higher-capacity jobs employ proportionally
+    more residents; `None` if the district has no jobs defined at all
+    (e.g. content still being authored)."""
+    if not district_jobs:
+        return None
+    return rng.choices(
+        [job.id for job in district_jobs], weights=[job.slots for job in district_jobs], k=1
+    )[0]
+
+
 def _home_location(district: District, rng: random.Random) -> Location:
     residential = [loc for loc in district.locations if loc.kind == LocationKind.RESIDENTIAL]
     pool = residential or [loc for loc in district.locations if loc.kind == LocationKind.PUBLIC]
@@ -97,21 +125,26 @@ async def seed_npcs(session: AsyncSession, content: ContentBundle, world_seed: s
         if district.id in existing_districts:
             continue
         rng = seed_rng(world_seed, f"npcs:{district.id}")
+        district_jobs = [job for job in content.jobs.values() if job.district == district.id]
+        names = sample_names(rng, constants.SYNTHETIC_NPCS_PER_DISTRICT)
         for n in range(1, constants.SYNTHETIC_NPCS_PER_DISTRICT + 1):
             npc_id = f"d{district.id}_npc_{n:03d}"
             home = _home_location(district, rng)
             age = rng.randint(18, 65)
+            job_id = _assign_job(rng, district_jobs)
             npc = Npc(
                 id=npc_id,
                 district_id=district.id,
-                name=f"Resident {n}",
+                name=names[n - 1],
                 age=age,
+                job_id=job_id,
                 home_location_id=home.id,
                 location_id=home.id,
             )
             session.add(npc)
 
-            schedule = _generic_schedule(district, home.id)
+            job = next((j for j in district_jobs if j.id == job_id), None)
+            schedule = _schedule_for_npc(district, home.id, job)
             for phase, weights in schedule.items():
                 for loc_id, weight in weights.items():
                     session.add(

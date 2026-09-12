@@ -7,6 +7,8 @@ from panem_shared.content.schemas import (
     District,
     DistrictCulture,
     DistrictMap,
+    Job,
+    JobOption,
     Location,
 )
 from panem_shared.db.models import Npc, NpcSchedule
@@ -37,18 +39,43 @@ def make_district() -> District:
     )
 
 
-def make_content(district: District) -> ContentBundle:
-    return ContentBundle(districts={district.id: district}, goods={}, jobs={}, routes=[])
+def make_content(district: District, *jobs: Job) -> ContentBundle:
+    return ContentBundle(
+        districts={district.id: district}, goods={}, jobs={j.id: j for j in jobs}, routes=[]
+    )
 
 
-def make_npc(npc_id: str, district_id: int, location_id: str) -> Npc:
+def make_job(**overrides: object) -> Job:
+    defaults: dict[str, object] = dict(
+        id="job",
+        district=1,
+        title="Job",
+        workplace="market",
+        wage=10.0,
+        shift_phase="morning",
+        slots=5,
+        options=[JobOption(label="a"), JobOption(label="b"), JobOption(label="c")],
+    )
+    defaults.update(overrides)
+    return Job(**defaults)  # type: ignore[arg-type]
+
+
+def make_npc(
+    npc_id: str,
+    district_id: int,
+    location_id: str,
+    *,
+    home_location_id: str | None = None,
+    job_id: str | None = None,
+) -> Npc:
     return Npc(
         id=npc_id,
         district_id=district_id,
         name=npc_id,
         age=30,
         location_id=location_id,
-        home_location_id=location_id,
+        home_location_id=home_location_id if home_location_id is not None else location_id,
+        job_id=job_id,
     )
 
 
@@ -79,14 +106,17 @@ class TestChooseLocation:
 
 
 class TestScheduleRun:
-    def test_npcs_converging_on_one_location_batch_into_one_narration_line(self):
+    def test_npcs_arriving_for_a_shift_batch_into_one_narration_line(self):
         district = make_district()
-        content = make_content(district)
-        npcs = {f"npc{i}": make_npc(f"npc{i}", district.id, "home") for i in range(5)}
+        job = make_job(workplace="market", shift_phase="morning")
+        content = make_content(district, job)
+        npcs = {
+            f"npc{i}": make_npc(f"npc{i}", district.id, "home", job_id=job.id) for i in range(5)
+        }
         schedules = {
             npc_id: [
                 NpcSchedule(
-                    npc_id=npc_id, phase=DayPhase.MORNING.value, location_id="square", weight=1.0
+                    npc_id=npc_id, phase=DayPhase.MORNING.value, location_id="market", weight=1.0
                 )
             ]
             for npc_id in npcs
@@ -101,12 +131,85 @@ class TestScheduleRun:
         assert len(events) == 1
         event = events[0]
         assert event.district_id == district.id
-        assert event.location_id == "square"
+        assert event.location_id == "market"
         assert event.tick == ctx.tick
+        assert "shift" in event.text
         for npc_id in npcs:
             assert npcs[npc_id].name in event.text
         for npc in npcs.values():
-            assert npc.location_id == "square"
+            assert npc.location_id == "market"
+
+    def test_npcs_arriving_home_at_night_batch_into_one_narration_line(self):
+        district = make_district()
+        content = make_content(district)
+        npcs = {f"npc{i}": make_npc(f"npc{i}", district.id, "market") for i in range(3)}
+        # make_npc defaults home_location_id to the given location_id, so
+        # override it to "home" -- these NPCs start at market, home is home.
+        for npc in npcs.values():
+            npc.home_location_id = "home"
+        schedules = {
+            npc_id: [
+                NpcSchedule(
+                    npc_id=npc_id, phase=DayPhase.NIGHT.value, location_id="home", weight=1.0
+                )
+            ]
+            for npc_id in npcs
+        }
+        state = WorldState(
+            districts={}, npcs=npcs, npc_schedules=schedules, characters={}, open_shifts=[]
+        )
+        ctx = make_ctx(content, phase=DayPhase.NIGHT)
+
+        events = schedule.run(state, ctx)
+
+        assert len(events) == 1
+        assert events[0].location_id == "home"
+        assert "home" in events[0].text
+        for npc in npcs.values():
+            assert npc.location_id == "home"
+
+    def test_daytime_move_to_a_non_work_non_home_location_is_silent(self):
+        district = make_district()
+        content = make_content(district)
+        npc = make_npc("npc1", district.id, "home")
+        schedules = {
+            "npc1": [
+                NpcSchedule(
+                    npc_id="npc1", phase=DayPhase.MORNING.value, location_id="square", weight=1.0
+                )
+            ]
+        }
+        state = WorldState(
+            districts={}, npcs={"npc1": npc}, npc_schedules=schedules, characters={}, open_shifts=[]
+        )
+        ctx = make_ctx(content)
+
+        events = schedule.run(state, ctx)
+
+        assert events == []
+        assert npc.location_id == "square"
+
+    def test_arriving_at_workplace_outside_the_shift_phase_is_silent(self):
+        district = make_district()
+        job = make_job(workplace="market", shift_phase="afternoon")
+        content = make_content(district, job)
+        npc = make_npc("npc1", district.id, "home", job_id=job.id)
+        schedules = {
+            "npc1": [
+                NpcSchedule(
+                    npc_id="npc1", phase=DayPhase.MORNING.value, location_id="market", weight=1.0
+                )
+            ]
+        }
+        state = WorldState(
+            districts={}, npcs={"npc1": npc}, npc_schedules=schedules, characters={}, open_shifts=[]
+        )
+        ctx = make_ctx(content, phase=DayPhase.MORNING)
+
+        events = schedule.run(state, ctx)
+
+        assert events == []
+        assert npc.location_id == "market"
 
     def test_npc_with_no_weight_change_produces_no_event(self):
         district = make_district()
