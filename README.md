@@ -16,13 +16,15 @@ exports, quotas, shopkeeper restocking, `/market prices|buy|sell`/
 district:<id>`, tickets, transit ticks, and visitor roles -- plus a real
 `scripts/calibrate.py`). Phase 2 is complete.
 
-**Phase 3 — NPC Minds** (Plan §6) is underway: synthetic NPCs get
-procedural traits/speech tone at seed time, `panem_sim/systems/social.py`
-builds real `RelationshipRow`s from shared-location proximity, `memory.py`
-forms and prunes `Memory` rows from notable events, and `/resident
-profile` surfaces a resident's personality and their stance toward a
-character. Real hand-authored NPC content (`data/npcs/*.yaml`) still
-doesn't exist -- see the Milestone F notes below.
+**Phase 3 — NPC Minds** (Plan §6) is underway: `data/npcs/*.yaml` gives
+every one of the 299 seeded residents a real name, age, job, traits, and
+a backstory/appearance (generated deterministically by
+`scripts/npc_generate.py` from each district's own industry/culture --
+see the Milestone I notes below for exactly what that does and doesn't
+mean), `panem_sim/systems/social.py` builds real `RelationshipRow`s from
+shared-location proximity, `memory.py` forms and prunes `Memory` rows
+from notable events, and `/resident profile` surfaces a resident's
+personality, backstory, and their stance toward a character.
 
 **Phase 4 — Crises** (Plan §7) is underway too:
 `panem_sim/systems/crisis.py` tracks each district's unrest (fed by
@@ -32,14 +34,22 @@ and announcing a level change as a `Bulletin`; `/staff district <id>`
 shows the raw numbers. See the Milestone G notes below for what's a
 placeholder pending the real Spec §7 text.
 
-**Phase 5 — The Activity** (Plan §8) has a working backend:
-`panem_api` is a FastAPI REST/WebSocket bridge serving each district's
-live NPC/character positions (`GET /districts`, `GET /districts/{id}
-/positions`, `WS /ws/districts/{id}/positions`), fed by `panem_sim`
-writing a JSON snapshot to Redis every tick. No frontend exists (an
-actual Discord Activity iframe/embedded app is a separate, substantial
-piece of work outside this repo's scope so far), and no auth is
-enforced -- see the Milestone H notes below for both. Phase 6 (LLM
+**Phase 5 — The Activity** (Plan §8) has a working backend and a real,
+testable frontend: `panem_api` is a FastAPI REST/WebSocket bridge
+serving each district's live NPC/character positions (`GET /districts`,
+`GET /districts/{id}/positions`, `WS /ws/districts/{id}/positions`), fed
+by `panem_sim` writing a JSON snapshot to Redis every tick, plus a
+static single-page app (`packages/panem_api/src/panem_api/static/`) it
+serves at its own root: a schematic live map (no real map art exists
+yet -- see the Milestone J notes) with a district picker, driven by the
+same position feed. It does the Discord embedded-app-sdk OAuth handshake
+(`GET /activity/config`, `POST /activity/token`) when actually running
+inside a Discord Activity iframe, and falls back to an unauthenticated
+"preview mode" when opened directly in a browser, which is how it's been
+tested end-to-end in this session (no live Discord Activity install was
+available to verify the real OAuth path against -- see the Milestone J
+notes for exactly what is and isn't verified). The data endpoints
+(`/districts*`) still enforce no auth of their own. Phase 6 (LLM
 dialogue) remains scaffolded as stubs — see the Plan for the full
 roadmap.
 
@@ -612,6 +622,99 @@ doesn't contain; nothing here should be read as "the Activity is done."
   `tick.py` had just written, confirming the write path (`panem_sim`)
   and read path (`panem_api`) actually agree on the JSON shape end to
   end, not just in unit tests against fakes.
+
+## Notes on this Milestone I (Phase 3: authored NPC content) build
+
+Plan §6.1/§11. Replaces every district's fully-synthetic NPC population
+with real, permanent content files, in response to a direct ask for
+"real NPC content" as part of "finish the project."
+
+- **`scripts/npc_generate.py` is templated procedural prose, not
+  hand-written literary backstory.** It combines a small bank of
+  district-flavored sentence templates (keyed off `District.industry`/
+  `culture.tone`) and a hand-written one-liner per trait (`_TRAIT_FLAVOR`,
+  covering all 24 words in `content/traits.py`) into 2-3 sentences per
+  NPC. It's meant as a real, permanent, hand-editable starting point
+  (`data/npcs/*.yaml` is just YAML -- a writer can open one and rewrite
+  any line), not a substitute for genuine authored content, and not the
+  same thing as Phase 6's planned LLM dialogue generation.
+- **Deterministic and idempotent per district**, same pattern as every
+  other seeded-content generator in this repo (`panem_sim.rng.seed_rng`):
+  re-running with the same `--seed` (default matches `Settings
+  .world_seed`'s own default) reproduces byte-identical output, verified
+  by actually diffing a regenerated file against the original during this
+  build.
+- **`panem_sim.world.seed_npcs` prefers authored content per district,
+  synthetic as the fallback.** A district with a `data/npcs/d<id>.yaml`
+  file uses exactly those NPCs (id/name/age/job/traits as authored); a
+  district with none still gets the original fully-synthetic population
+  Phase 1/2 shipped with. This means partial authoring (regenerate one
+  district, hand-edit another, leave a third untouched) always works,
+  and a fresh checkout with an empty `data/npcs/` still boots a complete,
+  playable world.
+- **All 299 residents (13 districts x 23) are authored now** -- this
+  build actually ran the generator for every district and committed the
+  output, not just the capability to do so. `/resident profile` shows
+  the new Backstory/Appearance fields when present.
+- **What this doesn't do**: no LLM was used anywhere in this generation
+  (Phase 6 scope, still stubbed); no NPC content was hand-written by a
+  person; `Npc.speech_style`'s "tone" bucket (warm/blunt/reserved/plain,
+  from Milestone F) is unchanged by this -- backstory and speech tone are
+  derived from the same traits independently and can read slightly
+  differently voiced from each other.
+
+## Notes on this Milestone J (Phase 5: the Activity frontend) build
+
+Plan §8. Builds the piece the Milestone H notes above explicitly called
+out as missing: an actual page for Discord's Activity iframe to load,
+plus a real OAuth exchange for it.
+
+- **No build step, deliberately.** This repo has no Node/npm tooling
+  anywhere else, so the frontend (`packages/panem_api/src/panem_api/
+  static/{index.html,app.js,style.css}`) is plain HTML/CSS/vanilla JS,
+  served directly by `panem_api` (`StaticFiles(html=True)` mounted at
+  `"/"`, registered *after* the API routes so `/health`, `/districts`,
+  etc. keep taking priority over it -- verified by a test that hits
+  `/health` through the exact same running app that also serves `/`).
+  `@discord/embedded-app-sdk` loads from `cdn.jsdelivr.net` via a
+  **dynamic** `import()` inside the same try/catch as the rest of the
+  Discord handshake -- a static top-level `import` of that URL was tried
+  first and found to be a real bug: when the CDN fetch fails (this
+  sandbox's own network egress proxy blocked it outright during testing;
+  a restrictive local network or an ad/tracker blocker would too), a
+  static import throws before any of the module's own code runs,
+  permanently stuck on "Connecting…" with no fallback at all. The
+  dynamic import fixes that: a failed fetch there is just one more path
+  into preview mode.
+- **Two run modes, both real, only one actually verified against
+  Discord.** Inside a real Activity iframe it does the documented
+  embedded-app-sdk flow: `ready()` → `commands.authorize()` → this
+  repo's own `POST /activity/token` (needs `DISCORD_CLIENT_SECRET`,
+  which only `panem_api` reads) → `commands.authenticate()`. Opened
+  directly in a browser (or when `DISCORD_CLIENT_ID` isn't configured,
+  or the handshake throws for any reason) it falls back to an
+  unauthenticated "preview mode" and shows the map anyway. **Only
+  preview mode was actually exercised this session** -- verified with a
+  real headless-Chromium screenshot of the running page (district picker
+  populated from `/districts`, a live character/NPC dot rendered from a
+  hand-seeded Redis position, correct preview-mode messaging). The
+  Discord-authenticated path was written to match Discord's documented
+  flow but never run against a live Activity install -- no credentials
+  or real Discord client this session could test against, same category
+  of gap as Milestone H's "no auth verified" note, not a new one.
+- **No real map art.** `District.map.image` in `data/*.yaml` has always
+  been a placeholder path (no file at that path exists anywhere in this
+  repo -- see the Milestone A-era notes). Rather than pretend otherwise,
+  the frontend draws a schematic layout instead: each location as a
+  labeled circle at its `map.location_coords` position, to scale against
+  `map_width`/`map_height` (now returned by `GET /districts` alongside
+  each district's locations, extended for exactly this), with NPC dots
+  (small, gray) and character dots (larger, labeled, gold) layered on
+  top from the existing positions feed.
+- **The data endpoints (`/districts*`) still have no auth of their
+  own** -- unchanged from Milestone H. `/activity/config` returns the
+  client id (not a secret; Discord Activities put it in the iframe URL
+  already) so the static frontend never has to hardcode it.
 
 ## Upgrading past duplicate character names
 

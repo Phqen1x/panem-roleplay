@@ -30,6 +30,11 @@ class Settings(BaseSettings):
 
     discord_token: str = ""
     discord_client_id: str = ""
+    # Only panem_api's Activity OAuth token exchange (`POST /activity/token`)
+    # reads this -- the bot process authenticates with `discord_token`
+    # instead, and never needs an OAuth client secret. Get this from the
+    # Developer Portal's OAuth2 page, same app as `discord_client_id`.
+    discord_client_secret: str = ""
     discord_guild_id: DiscordId = 0
     # Every command sync is one call to Discord's (tightly rate-limited)
     # guild command-overwrite endpoint. Restarting the bot repeatedly during
@@ -84,10 +89,14 @@ class Settings(BaseSettings):
     games_api_key: str = ""
 
     # panem_api (Phase 5, Plan §8): the REST/WebSocket bridge for the
-    # Activity's live map. No auth is enforced yet -- verifying a real
-    # Discord Activity's OAuth handshake needs credentials/a flow this
-    # session had no way to test against, so it's left as an explicit gap
-    # (see the README) rather than unverifiable placeholder auth code.
+    # Activity's live map, plus a static frontend and the OAuth token
+    # exchange it needs (`GET /activity/config`, `POST /activity/token`).
+    # The data endpoints themselves (`/districts*`) still enforce no auth
+    # of their own -- anyone who can reach the process can read them --
+    # this was never verified against a live Discord Activity install
+    # (no credentials/flow this session could test against), so treat it
+    # as an explicit, documented gap (see the README) rather than
+    # unverified placeholder access control.
     api_host: str = "0.0.0.0"
     api_port: int = 8000
 

@@ -22,7 +22,12 @@ def main() -> None:
     content = load_content(DATA_DIR)
     redis_client: redis.Redis = redis.from_url(settings.redis_url, decode_responses=True)
 
-    app = create_app(content=content, redis_client=redis_client)
+    app = create_app(
+        content=content,
+        redis_client=redis_client,
+        discord_client_id=settings.discord_client_id,
+        discord_client_secret=settings.discord_client_secret,
+    )
     uvicorn.run(app, host=settings.api_host, port=settings.api_port)
 
 
