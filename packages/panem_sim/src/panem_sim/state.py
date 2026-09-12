@@ -16,10 +16,10 @@ need only `districts`/`npcs`/`npc_schedules`; later milestones add
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from panem_shared.content.loader import ContentBundle
-from panem_shared.db.models import DistrictState, Npc, NpcSchedule
+from panem_shared.db.models import Character, DistrictState, JobHistory, Npc, NpcSchedule, Shift
 from panem_shared.enums import DayPhase
 
 
@@ -42,3 +42,15 @@ class WorldState:
     npc_schedules: dict[str, list[NpcSchedule]]
     """Keyed by `npc_id`; each NPC's full set of `(phase, location_id,
     weight)` rows."""
+    characters: dict[int, Character]
+    open_shifts: list[Shift]
+    """Every `Shift` row with `result IS NULL` -- the ones `jobs.py` still
+    needs to either see resolved (RP credit / `/work`, both outside the
+    tick loop) or mark missed once `tick_due` passes."""
+    new_shifts: list[Shift] = field(default_factory=list)
+    """`Shift` rows `jobs.py` creates this tick (not yet in the session --
+    `tick.py` adds them after the systems loop, same as new `WorldEvent`
+    rows)."""
+    new_job_history: list[JobHistory] = field(default_factory=list)
+    """`JobHistory` rows `jobs.py` creates this tick (e.g. on firing);
+    persisted by `tick.py` the same way as `new_shifts`."""

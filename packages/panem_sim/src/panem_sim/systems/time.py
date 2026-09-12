@@ -32,5 +32,14 @@ def advance(previous_tick: int) -> tuple[int, DayPhase, int, int]:
     return tick, phase, day, month
 
 
+def is_phase_boundary(tick: int) -> bool:
+    """True on the exact tick a day phase begins (Spec §1.3's 4 phases
+    divide `TICKS_PER_DAY` evenly, so this is phase-agnostic: every
+    `_TICKS_PER_PHASE`-th tick starts *some* phase). Used by `jobs.py` to
+    open a shift/run NPC job completion once per phase window, not once
+    per tick within it."""
+    return tick % _TICKS_PER_PHASE == 0
+
+
 def run(state: WorldState, ctx: TickContext) -> list[AnyWorldEvent]:
     return []

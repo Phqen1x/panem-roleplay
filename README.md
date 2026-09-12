@@ -6,22 +6,23 @@ Plan) and `panem-long-year-spec.md` (the Spec, which wins on any
 disagreement with the Plan).
 
 This repository implements **Phase 0 — Foundation** (character creation and
-staff approval, Discord Forum-based scenes, and character proxying) and
-**Phase 1 — World Simulation** (Plan §4): a deterministic tick loop
-(`panem_sim`), NPC movement, ambient narration back into Discord, and
-intra-district `/travel`/`/where`. Phase 2 (economy, jobs/shifts, markets —
-Plan §5) has its schema and content already in place but no runtime logic
-yet. Phases 3-6 (NPC minds, crises, the Activity, and LLM dialogue) are
-scaffolded as empty packages and land in that order — see the Plan for the
-full roadmap.
+staff approval, Discord Forum-based scenes, and character proxying),
+**Phase 1 — World Simulation** (Plan §4: a deterministic tick loop, NPC
+movement, ambient narration, intra-district `/travel`/`/where`), and the
+first half of **Phase 2 — Economy** (Plan §5.1–§5.3: nightly hunger/health,
+job shifts, `/work`, `/job list|apply|quit`, `/tesserae claim`). Markets,
+shopkeepers, quotas, and cross-district travel (Plan §5.4–§5.6) don't have
+runtime logic yet, though their schema and content do. Phases 3-6 (NPC
+minds, crises, the Activity, and LLM dialogue) are scaffolded as empty
+packages and land in that order — see the Plan for the full roadmap.
 
 ## Layout
 
 ```
 packages/
   panem_shared/   data model (SQLAlchemy), content YAML schemas/loaders, settings, enums, world event types
-  panem_bot/      the discord.py process: commands, proxying, scenes, staff tools, narration, travel
-  panem_sim/      world tick loop, NPC movement (Phase 1); economy/jobs land in Phase 2
+  panem_bot/      the discord.py process: commands, proxying, scenes, staff tools, narration, travel, jobs
+  panem_sim/      world tick loop, NPC movement (Phase 1), needs/jobs (Phase 2 partial); markets land later
   panem_api/      FastAPI REST/WebSocket bridge for the Activity (Phase 5+, not yet implemented)
 data/             districts, goods, jobs, routes (content YAML, validated at boot)
 migrations/       Alembic migrations
@@ -230,6 +231,55 @@ runs inside a rolled-back savepoint.
   speaking in this thread," a different concern from "where is my
   character." Both are intra-district only; cross-district travel
   (tickets, transit ticks, visitor roles — FR-LOC-7/8/9) is Phase 2 scope.
+
+## Notes on this Phase 2 (partial) build
+
+- **Only Plan §5.1–§5.3 (needs, jobs, shifts) — not the whole of Phase 2.**
+  `panem_sim/systems/economy.py`, `crisis.py`, `social.py`, and `memory.py`
+  are still no-op stubs; markets, shopkeepers, quotas/exports, and
+  cross-district travel (`/travel district:<id>`, tickets, transit) aren't
+  built. `scripts/calibrate.py` (the 12-month headless economy check) is
+  still the stub that raises "not implemented".
+- **The hunger/health tunables in `constants.py` are placeholders, not
+  the spec's real numbers.** `panem-long-year-spec.md` §10 wasn't
+  available in the session that built this (only the Plan's
+  higher-level description) — `NIGHTLY_LIVING_COST`, `HUNGER_*`, and
+  `HEALTH_*` were chosen to be reasonable, not authoritative. Re-check
+  them against the real spec before relying on the numbers, though the
+  mechanism (pay or hunger rises; high hunger erodes health) is right.
+- **`JobOption.risk_effect` only recognizes the keys `data/jobs.yaml`
+  actually uses** (`health`, a delta like `-20`) plus two speculative
+  extras (`reputation`, `jailed_ticks`) no current job exercises.
+- **NPCs never get a `Shift` row or miss-tracking** — `shifts.character_id`
+  is a FK to `characters`, not `npcs`, and there's no player to notify
+  either way. An NPC with a matching job instead just probabilistically
+  "completes" it in place each phase boundary
+  (`NPC_JOB_COMPLETION_PROB`, also a placeholder), feeding `Npc.money`
+  only — no district production yet, since that's the economy system's
+  job (Milestone D).
+- **A missed shift or firing is a pure DB-state change, not a push
+  notification.** There's no DM when a character is warned or fired;
+  they find out via `/job list`/`/work` failing next time. A proper
+  notification would need a new DM-capable event kind alongside the
+  existing district-scoped `NarrationLine`/`Bulletin`, which is more
+  than this milestone's scope.
+- **RP credit (`FR-PRX-7`)** completes an open shift automatically
+  (as if `/work` picked option 0) when a proxied message is
+  `RP_CREDIT_MIN_CHARS` (120) characters or longer *and* posted in a
+  scene whose location matches the job's `workplace` — checked in
+  `panem_bot/cogs/proxy.py`'s `on_message`, right where a scene's
+  location already syncs onto the character.
+- **Promotion (`FR-JOB-9`) only checks `ladder_requirement`'s
+  `min_reputation` key** — its exact schema wasn't available either;
+  a job with no `ladder_next` is never promotion-eligible, and one with
+  no `min_reputation` in its requirement is always eligible once it has
+  `ladder_next` set. Shown as a note after `/work`, not a separate
+  accept/decline flow.
+- **Tesserae (`/tesserae claim`, FR-ECO-7)** is once per real day (a
+  Redis key with a 24h TTL, not tied to the sim's tick clock — a player
+  action, not a game-time one) and refuses Capitol characters
+  (`CAPITOL_DISTRICT_ID`); the payout (`TICKET_BASE` money, `+1`
+  `tesserae_count`) is the existing spec-sourced tunable, not a guess.
 
 ## Upgrading past duplicate character names
 

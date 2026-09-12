@@ -49,6 +49,32 @@ class JobSelectView(discord.ui.View):
         self.add_item(JobSelect(jobs, on_choose))
 
 
+class WorkOptionSelect(discord.ui.Select):
+    def __init__(
+        self,
+        labels: list[str],
+        on_choose: Callable[[discord.Interaction, int], Awaitable[None]],
+    ) -> None:
+        options = [
+            discord.SelectOption(label=label, value=str(i)) for i, label in enumerate(labels)
+        ]
+        super().__init__(placeholder="Choose how to work this shift...", options=options)
+        self._on_choose = on_choose
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await self._on_choose(interaction, int(self.values[0]))
+
+
+class WorkOptionView(discord.ui.View):
+    def __init__(
+        self,
+        labels: list[str],
+        on_choose: Callable[[discord.Interaction, int], Awaitable[None]],
+    ) -> None:
+        super().__init__(timeout=300)
+        self.add_item(WorkOptionSelect(labels, on_choose))
+
+
 class ChangesNoteModal(discord.ui.Modal, title="Request Changes"):
     note = discord.ui.TextInput(
         label="Note to applicant", style=discord.TextStyle.paragraph, max_length=1000

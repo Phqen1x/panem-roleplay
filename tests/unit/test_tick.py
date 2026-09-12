@@ -18,9 +18,7 @@ from panem_sim.systems import (
     crisis,
     economy,
     games,
-    jobs,
     memory,
-    needs,
     schedule,
     social,
     time,
@@ -75,8 +73,8 @@ class TestFixedOrder:
             "games",
         ]
 
-    def test_every_stub_beyond_time_and_schedule_returns_no_events(self):
-        for module in (needs, jobs, economy, social, memory, crisis, games):
+    def test_every_remaining_stub_returns_no_events(self):
+        for module in (economy, social, memory, crisis, games):
             assert module.run(None, None) == []  # type: ignore[arg-type]
 
 

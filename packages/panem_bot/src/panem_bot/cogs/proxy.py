@@ -4,18 +4,22 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
+import random
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from panem_bot import redis_keys
 from panem_bot.outbound import OutboundMessage, SendPriority
 from panem_bot.services import characters as characters_svc
+from panem_bot.services import jobs as jobs_svc
 from panem_bot.services import proxy as proxy_svc
+from panem_bot.services import shifts as shifts_svc
 from panem_bot.strings import t
-from panem_shared.db.models import Character, DiscordChannel, Scene, User
+from panem_shared.db.models import Character, DiscordChannel, Scene, Shift, User, WorldClock
 from panem_shared.enums import ChannelKind, CharacterStatus, SceneKind
 
 
@@ -127,6 +131,31 @@ class ProxyCog(commands.Cog):
 
     # ------------------------------------------------------------ proxying
 
+    async def _apply_rp_credit(
+        self, session: AsyncSession, character: Character, scene: Scene, content: str
+    ) -> None:
+        """FR-PRX-7: a long-enough proxied message inside the scene tagged
+        for the character's open shift's workplace completes that shift as
+        if `/work` had picked option 0, with no separate command needed."""
+        open_shift = (
+            await session.execute(
+                select(Shift).where(Shift.character_id == character.id, Shift.result.is_(None))
+            )
+        ).scalar_one_or_none()
+        if open_shift is None:
+            return
+
+        job = await jobs_svc.get_job(session, self.bot.content, open_shift.job_id)  # type: ignore[attr-defined]
+        if job is None or scene.location_id != job.workplace:
+            return
+        if not shifts_svc.meets_rp_credit(content):
+            return
+
+        clock = await session.get(WorldClock, 1)
+        current_tick = clock.tick if clock is not None else 0
+        outcome = shifts_svc.resolve_shift(job, 0, is_player=True, rng=random.Random())
+        shifts_svc.apply_shift_outcome(open_shift, character, outcome, tick=current_tick)
+
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot:
@@ -228,6 +257,7 @@ class ProxyCog(commands.Cog):
                 scene.last_message_at = dt.datetime.now(dt.UTC)
                 if scene.kind != SceneKind.STAFF.value or scene.pins_location:
                     character.location_id = scene.location_id
+                await self._apply_rp_credit(session, character, scene, content)
 
         with contextlib.suppress(discord.HTTPException):
             await message.delete()

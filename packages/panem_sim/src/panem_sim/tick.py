@@ -24,7 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from panem_shared.content.loader import ContentBundle
-from panem_shared.db.models import DistrictState, Npc, NpcSchedule, WorldClock
+from panem_shared.db.models import Character, DistrictState, Npc, NpcSchedule, Shift, WorldClock
 from panem_shared.db.models import WorldEvent as WorldEventRow
 from panem_shared.db.session import session_scope
 from panem_shared.events import AnyWorldEvent, parse_event, publish
@@ -53,8 +53,19 @@ async def _load_state(session: AsyncSession) -> tuple[WorldState, WorldClock]:
     schedules: dict[str, list[NpcSchedule]] = {}
     for row in (await session.execute(select(NpcSchedule))).scalars():
         schedules.setdefault(row.npc_id, []).append(row)
+    characters = {row.id: row for row in (await session.execute(select(Character))).scalars()}
+    open_shifts = list(
+        (await session.execute(select(Shift).where(Shift.result.is_(None)))).scalars()
+    )
 
-    return WorldState(districts=districts, npcs=npcs, npc_schedules=schedules), clock
+    state = WorldState(
+        districts=districts,
+        npcs=npcs,
+        npc_schedules=schedules,
+        characters=characters,
+        open_shifts=open_shifts,
+    )
+    return state, clock
 
 
 def _event_row(event: AnyWorldEvent) -> WorldEventRow:
@@ -93,6 +104,10 @@ async def _run_tick_once(
         clock.tick = tick
         for event in events:
             session.add(_event_row(event))
+        for shift in state.new_shifts:
+            session.add(shift)
+        for history_row in state.new_job_history:
+            session.add(history_row)
 
     return events
 

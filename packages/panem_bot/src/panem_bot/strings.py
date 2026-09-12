@@ -67,6 +67,21 @@ STRINGS: dict[str, str] = {
     "job_set_ok": "Job **{job_id}** saved for district {district_id}.",
     "job_option_ok": "Job **{job_id}** option {slot} saved.",
     "job_removed_ok": "Job **{job_id}** removed.",
+    # Jobs and shifts (FR-JOB)
+    "already_employed": "That character already has a job — quit it first with `/job quit`.",
+    "not_employed": "That character doesn't have a job to quit.",
+    "reputation_too_low": "Reputation too low for that job (needs {min_reputation}).",
+    "job_applied": "**{name}** is now working as **{title}**.",
+    "job_quit": "**{name}** has left their job.",
+    "job_no_open_shift": "**{name}** doesn't have a shift open right now.",
+    "shift_no_longer_open": "That shift is no longer open.",
+    "work_ok": "**{name}** works: +{wage} money, {rep_delta:+d} reputation.",
+    "promotion_available": " **{name}** is eligible for a promotion to **{next_title}** -- ask staff.",
+    "no_jobs_in_district": "No jobs are defined for that district yet.",
+    # Tesserae (FR-ECO-7)
+    "tesserae_claimed": "**{name}** claims tesserae: +{amount} money, {count} claimed total.",
+    "tesserae_already_claimed": "**{name}** already claimed tesserae today.",
+    "tesserae_not_eligible": "Only District characters can claim tesserae.",
     # Generic
     "world_paused": "The world is paused.",
     "unexpected_error": "Something went wrong (ref `{ref}`).",

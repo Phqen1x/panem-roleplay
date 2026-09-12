@@ -91,7 +91,9 @@ class TestScheduleRun:
             ]
             for npc_id in npcs
         }
-        state = WorldState(districts={}, npcs=npcs, npc_schedules=schedules)
+        state = WorldState(
+            districts={}, npcs=npcs, npc_schedules=schedules, characters={}, open_shifts=[]
+        )
         ctx = make_ctx(content)
 
         events = schedule.run(state, ctx)
@@ -117,7 +119,9 @@ class TestScheduleRun:
                 )
             ]
         }
-        state = WorldState(districts={}, npcs={"npc1": npc}, npc_schedules=schedules)
+        state = WorldState(
+            districts={}, npcs={"npc1": npc}, npc_schedules=schedules, characters={}, open_shifts=[]
+        )
         ctx = make_ctx(content)
 
         events = schedule.run(state, ctx)
@@ -136,7 +140,9 @@ class TestScheduleRun:
                 )
             ]
         }
-        state = WorldState(districts={}, npcs={"npc1": npc}, npc_schedules=schedules)
+        state = WorldState(
+            districts={}, npcs={"npc1": npc}, npc_schedules=schedules, characters={}, open_shifts=[]
+        )
         ctx = make_ctx(content, phase=DayPhase.MORNING)
 
         events = schedule.run(state, ctx)
@@ -155,7 +161,9 @@ class TestScheduleRun:
                 )
             ]
         }
-        state = WorldState(districts={}, npcs={"npc1": npc}, npc_schedules=schedules)
+        state = WorldState(
+            districts={}, npcs={"npc1": npc}, npc_schedules=schedules, characters={}, open_shifts=[]
+        )
         ctx = make_ctx(content)
 
         schedule.run(state, ctx)
@@ -189,7 +197,9 @@ class TestScheduleRun:
                 ]
                 for npc_id in npcs
             }
-            return WorldState(districts={}, npcs=npcs, npc_schedules=schedules)
+            return WorldState(
+                districts={}, npcs=npcs, npc_schedules=schedules, characters={}, open_shifts=[]
+            )
 
         state1, state2 = build_state(), build_state()
         events1 = schedule.run(state1, make_ctx(content, tick=42))
