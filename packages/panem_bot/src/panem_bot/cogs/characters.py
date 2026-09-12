@@ -22,6 +22,7 @@ from panem_bot.views import (
 from panem_shared import constants
 from panem_shared.db.models import Character, Shift, User, WorldClock
 from panem_shared.enums import CharacterStatus
+from panem_shared.simtime import clock_string, phase_time_range
 
 EMBED_FIELD_VALUE_LIMIT = 1024
 
@@ -514,6 +515,7 @@ class CharacterCog(commands.Cog):
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
             job_name = "Unemployed"
+            job = None
             if row.job_id:
                 job = await jobs_svc.get_job(session, self.bot.content, row.job_id)
                 job_name = job.title if job else row.job_id
@@ -525,7 +527,6 @@ class CharacterCog(commands.Cog):
                 )
                 location_name = location.name if location else row.location_id
 
-            shift_value = "-"
             open_shift = (
                 await session.execute(
                     select(Shift).where(Shift.character_id == row.id, Shift.result.is_(None))
@@ -534,10 +535,15 @@ class CharacterCog(commands.Cog):
             if open_shift is not None:
                 clock = await session.get(WorldClock, 1)
                 current_tick = clock.tick if clock is not None else 0
+                due_time = clock_string(open_shift.tick_due)
                 if current_tick >= open_shift.tick_due:
-                    shift_value = f"Overdue since tick {open_shift.tick_due} -- work it now!"
+                    shift_value = f"Overdue since {due_time} -- work it now!"
                 else:
-                    shift_value = f"Open, due by tick {open_shift.tick_due}"
+                    shift_value = f"Open, due by {due_time}"
+            elif job is not None:
+                shift_value = f"No shift open -- works {phase_time_range(job.shift_phase)}"
+            else:
+                shift_value = "No job"
         embed = discord.Embed(title=row.name)
         embed.add_field(name="Status", value=row.status)
         embed.add_field(name="Money", value=str(row.money))

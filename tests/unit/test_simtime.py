@@ -9,6 +9,7 @@ from panem_shared.simtime import (
     clock_string,
     current,
     is_phase_boundary,
+    phase_time_range,
     seconds_until_next_tick,
     ticks_until_next_phase,
 )
@@ -79,6 +80,17 @@ class TestClockString:
     def test_wraps_across_days(self):
         assert clock_string(constants.TICKS_PER_DAY) == "12:00 AM"
         assert clock_string(constants.TICKS_PER_DAY + 13) == "1:00 PM"
+
+
+class TestPhaseTimeRange:
+    def test_night_wraps_past_midnight(self):
+        assert phase_time_range(DayPhase.NIGHT) == "12:00 AM - 6:00 AM"
+
+    def test_morning(self):
+        assert phase_time_range(DayPhase.MORNING) == "6:00 AM - 12:00 PM"
+
+    def test_evening_ends_back_at_midnight(self):
+        assert phase_time_range(DayPhase.EVENING) == "6:00 PM - 12:00 AM"
 
 
 class TestSecondsUntilNextTick:

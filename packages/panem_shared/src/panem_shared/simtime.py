@@ -67,6 +67,16 @@ def clock_string(tick: int) -> str:
     return f"{hour12}:{minute:02d} {period}"
 
 
+def phase_time_range(phase: DayPhase) -> str:
+    """The wall-clock range `phase` covers, e.g. `"6:00 AM - 12:00 PM"` for
+    `DayPhase.MORNING` -- used wherever a player needs to know *when* a
+    phase-gated thing (like a job's shift) happens, not just its name."""
+    index = _PHASE_ORDER.index(phase)
+    start_tick = index * _TICKS_PER_PHASE
+    end_tick = (start_tick + _TICKS_PER_PHASE) % constants.TICKS_PER_DAY
+    return f"{clock_string(start_tick)} - {clock_string(end_tick)}"
+
+
 def seconds_until_next_tick(
     updated_at: dt.datetime, tick_interval_seconds: int, *, now: dt.datetime | None = None
 ) -> float:
