@@ -194,6 +194,72 @@ class TestMissedShifts:
         assert state.new_job_history[0].character_id == 1
 
 
+class TestTravelGraceExcusesMissedShifts:
+    """FR-LOC-9: a shift missed while traveling is excused, not missed."""
+
+    def test_shift_missed_while_in_transit_is_excused_not_missed(self):
+        content = make_content(make_job())
+        character = make_character(
+            1, job_id="miner", consecutive_missed=2, in_transit_until_tick=10_000
+        )
+        state = WorldState(
+            districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
+        )
+        jobs.run(state, make_ctx(content, tick=PHASE_TICKS, phase=DayPhase.MORNING))
+        shift = state.open_shifts[0]
+
+        jobs.run(state, make_ctx(content, tick=shift.tick_due, phase=DayPhase.AFTERNOON))
+
+        assert shift.result == ShiftResult.EXCUSED.value
+        assert character.consecutive_missed == 0
+
+    def test_shift_missed_while_visiting_within_grace_window_is_excused(self):
+        content = make_content(make_job())
+        character = make_character(1, job_id="miner", consecutive_missed=2, away_since_tick=0)
+        state = WorldState(
+            districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
+        )
+        jobs.run(state, make_ctx(content, tick=PHASE_TICKS, phase=DayPhase.MORNING))
+        shift = state.open_shifts[0]
+        assert shift.tick_due <= constants.AWAY_GRACE_DAYS * constants.TICKS_PER_DAY
+
+        jobs.run(state, make_ctx(content, tick=shift.tick_due, phase=DayPhase.AFTERNOON))
+
+        assert shift.result == ShiftResult.EXCUSED.value
+        assert character.consecutive_missed == 0
+
+    def test_shift_missed_once_grace_window_has_elapsed_still_counts(self):
+        content = make_content(make_job())
+        long_ago = -(constants.AWAY_GRACE_DAYS * constants.TICKS_PER_DAY) - 1
+        character = make_character(
+            1, job_id="miner", consecutive_missed=2, away_since_tick=long_ago
+        )
+        state = WorldState(
+            districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
+        )
+        jobs.run(state, make_ctx(content, tick=PHASE_TICKS, phase=DayPhase.MORNING))
+        shift = state.open_shifts[0]
+
+        jobs.run(state, make_ctx(content, tick=shift.tick_due, phase=DayPhase.AFTERNOON))
+
+        assert shift.result == ShiftResult.MISSED.value
+        assert character.consecutive_missed == 3
+
+    def test_not_away_and_not_in_transit_is_missed_as_normal(self):
+        content = make_content(make_job())
+        character = make_character(1, job_id="miner", consecutive_missed=2)
+        state = WorldState(
+            districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
+        )
+        jobs.run(state, make_ctx(content, tick=PHASE_TICKS, phase=DayPhase.MORNING))
+        shift = state.open_shifts[0]
+
+        jobs.run(state, make_ctx(content, tick=shift.tick_due, phase=DayPhase.AFTERNOON))
+
+        assert shift.result == ShiftResult.MISSED.value
+        assert character.consecutive_missed == 3
+
+
 class TestNpcJobCompletion:
     def test_npc_gains_wage_probabilistically_at_phase_boundary(self):
         job = make_job(shift_phase="morning", wage=10.0)

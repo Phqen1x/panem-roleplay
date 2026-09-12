@@ -9,15 +9,14 @@ This repository implements **Phase 0 — Foundation** (character creation and
 staff approval, Discord Forum-based scenes, and character proxying),
 **Phase 1 — World Simulation** (Plan §4: a deterministic tick loop, NPC
 movement, ambient narration, intra-district `/travel`/`/where`), and
-**Phase 2 — Economy** (Plan §5.1–§5.4/5.6: nightly hunger/health, job
-shifts, `/work`, `/job list|apply|quit`, and now district-level supply/
-demand pricing, exports, quotas, shopkeeper restocking, and `/market
-prices|buy|sell`/`/inventory`). Cross-district travel (Plan §5.5,
-`/travel district:<id>`, tickets/transit/visitor roles) and
-`scripts/calibrate.py`'s real implementation are the one piece of Phase 2
-still outstanding. Phases 3-6 (NPC minds, crises, the Activity, and LLM
-dialogue) are scaffolded as empty packages and land in that order — see
-the Plan for the full roadmap.
+**Phase 2 — Economy** (Plan §5: nightly hunger/health, job shifts,
+`/work`, `/job list|apply|quit`, district-level supply/demand pricing,
+exports, quotas, shopkeeper restocking, `/market prices|buy|sell`/
+`/inventory`, and now cross-district travel by train -- `/travel
+district:<id>`, tickets, transit ticks, and visitor roles -- plus a real
+`scripts/calibrate.py`). Phase 2 is complete. Phases 3-6 (NPC minds,
+crises, the Activity, and LLM dialogue) are scaffolded as empty packages
+and land in that order — see the Plan for the full roadmap.
 
 ## Layout
 
@@ -25,11 +24,11 @@ the Plan for the full roadmap.
 packages/
   panem_shared/   data model (SQLAlchemy), content YAML schemas/loaders, settings, enums, world event types
   panem_bot/      the discord.py process: commands, proxying, scenes, staff tools, narration, travel, jobs
-  panem_sim/      world tick loop, NPC movement (Phase 1), needs/jobs/economy (Phase 2); cross-district travel lands later
+  panem_sim/      world tick loop, NPC movement (Phase 1), needs/jobs/economy/travel (Phase 2)
   panem_api/      FastAPI REST/WebSocket bridge for the Activity (Phase 5+, not yet implemented)
 data/             districts, goods, jobs, routes (content YAML, validated at boot)
 migrations/       Alembic migrations
-scripts/          setup_guild.py (Phase 0) plus stubs for later-phase scripts
+scripts/          setup_guild.py (Phase 0), calibrate.py (Phase 2), plus stubs for later-phase scripts
 deploy/           docker-compose, Dockerfile, systemd unit
 tests/            pytest (service-layer unit tests; no live Discord needed)
 ```
@@ -239,18 +238,18 @@ runs inside a rolled-back savepoint.
   bot, rather than resolving an "active" character from `/rp`'s
   thread-session mechanism — that exists specifically for "who is
   speaking in this thread," a different concern from "where is my
-  character." Both are intra-district only; cross-district travel
-  (tickets, transit ticks, visitor roles — FR-LOC-7/8/9) is Phase 2 scope.
+  character." Both were intra-district only at the time Phase 1 shipped;
+  `/travel district:<id>` (cross-district, tickets/transit/visitor roles)
+  is a later addition to the same command -- see the Phase 2 notes below.
 
 ## Notes on this Phase 2 build
 
-- **Needs, jobs, shifts, and now the economy (markets/quotas/exports/
-  shopkeepers) are built — cross-district travel is the one piece left.**
-  `panem_sim/systems/crisis.py`, `social.py`, and `memory.py` are still
-  no-op stubs (Phase 3+ scope); `/travel district:<id>` (tickets, transit,
-  visitor roles, FR-LOC-7/8/9) isn't built yet, and `scripts/calibrate.py`
-  (the 12-month headless economy check) is still the stub that raises
-  "not implemented" — see the Milestone D notes below for what *is* built.
+- **Phase 2 is complete**: needs, jobs/shifts, the economy (markets/
+  quotas/exports/shopkeepers), cross-district travel, and
+  `scripts/calibrate.py` are all built. `panem_sim/systems/crisis.py`,
+  `social.py`, and `memory.py` remain no-op stubs (Phase 3/4 scope) — see
+  the Milestone D notes below for the economy, and the Milestone E notes
+  further down for travel and calibration.
 - **The hunger/health tunables in `constants.py` are placeholders, not
   the spec's real numbers.** `panem-long-year-spec.md` §10 wasn't
   available in the session that built this (only the Plan's
@@ -385,9 +384,67 @@ runs inside a rolled-back savepoint.
   set by `/travel`) -- trading isn't available district-wide from
   anywhere, since which specific market you're at is what determines
   whether `Location.illicit` even applies.
-- **Cross-district travel (`/travel district:<id>`, FR-LOC-7/8/9) and
-  `scripts/calibrate.py`'s real implementation are not built in this
-  pass** -- the remaining pieces of Plan §5.5/5.6 to complete Phase 2.
+## Notes on this Milestone E (cross-district travel + calibration) build
+
+Completes Phase 2 (Plan §5.5/5.6, FR-LOC-7/8/9, T-2.1).
+
+- **`/travel district:<id>` is the same `/travel` command**, not a new
+  one -- pass `location` for intra-district movement (unchanged) or
+  `district` for a cross-district trip, never both. A character must be
+  standing at their current district's one `kind: station` location
+  (`travel_svc.resolve_station`; every district's content is already
+  validated to have exactly one) and not already jailed or in transit.
+  The ticket is `train_ticket_dN` from `data/goods.yaml` at its flat
+  `base_price` -- these are Milestone D's `kind: ticket` goods, already
+  authored but never actually purchasable until now; there's no dynamic
+  ticket pricing (no supply/demand model for a service, unlike physical
+  goods).
+- **Travel is two-phase, not instant**: `/travel district:<id>` deducts
+  the fare and sets `Character.in_transit_until_tick`/
+  `transit_destination_id`, but doesn't move the character yet.
+  `panem_sim/systems/time.py::run` resolves the actual arrival once the
+  sim tick reaches that tick -- `time.py` otherwise only advances the
+  clock, but "is it time yet" for a character's journey has no more
+  natural home among the fixed systems, and this avoids adding a new
+  system to `FIXED_ORDER` for one `Character`-mutating step. On arrival
+  the character lands at the destination's station, a `CharacterArrived`
+  event (new `WorldEvent` kind) tells the bot to swap the district
+  "visitor" role, and a `NarrationLine` announces them there the same as
+  any other arrival.
+- **The bot never grants or revokes a character's home district role**,
+  only a temporary one for wherever they're currently visiting
+  (`narrator.py::_handle_character_arrived`) -- consistent with Phase 1's
+  choice to leave home-role assignment to Discord onboarding entirely.
+  Multi-hop travel (home → A → B) drops A's visitor role and grants B's;
+  the home role, whichever district that is, is never touched.
+  Role-swap failures (missing roles, permissions) are caught and logged,
+  not raised -- a guild not yet run through `setup_guild.py`'s role setup
+  shouldn't break the tick loop over it.
+- **A shift missed while traveling is excused, not missed** (a new
+  `Character.away_since_tick` column, migration `f3a1c9d7b4e2`): the
+  existing `TRANSIT_TICKS`/`AWAY_GRACE_DAYS` constants were already in
+  `constants.py`, unused, clearly waiting for exactly this. Set the
+  moment a character first leaves their home district, cleared on
+  return; `panem_sim/systems/jobs.py::_resolve_missed_shifts` excuses a
+  shift due while still en route, or within `AWAY_GRACE_DAYS` of that
+  departure -- long enough for a short trip, not a permanent way to dodge
+  `MISSES_TO_FIRE` by never going home. This is the one place
+  `jailed_until_tick` gates anything at all in the whole codebase today
+  (checked in `check_can_travel_district`) -- otherwise-unenforced
+  elsewhere, but leaving a jailed character free to hop a train away
+  from the consequence felt like a real gap worth closing here.
+- **`scripts/calibrate.py` is a real 12-simulated-month headless run**
+  now (zero player characters, per T-2.1), reporting each district's
+  final quota/price/treasury numbers and flagging a price pinned at
+  `PRICE_CLAMP_MIN`/`MAX` or a negative treasury. T-2.1's actual target
+  bands weren't available in this session's context (no spec/plan file
+  to read them from), so it reports and flags structurally suspicious
+  numbers rather than asserting specific ranges against unknown targets
+  -- a sanity check to read, not a pass/fail gate. It refuses to run
+  against the configured `DATABASE_URL` (only `--database-url`/
+  `CALIBRATE_DATABASE_URL`, a scratch database), since a 12-month
+  fast-forward is not something to risk running against a live game by
+  a typo.
 
 ## Upgrading past duplicate character names
 

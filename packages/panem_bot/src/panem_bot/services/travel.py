@@ -1,8 +1,5 @@
-"""Character travel within a district (Spec FR-LOC-2/3, CMD-14/15).
-
-Cross-district travel (ticket purchase, transit ticks, visitor roles) is
-Milestone D scope (Plan §5.5, FR-LOC-7/8/9) -- this only covers moving a
-character between locations already inside `current_district_id`.
+"""Character travel, both within a district (Spec FR-LOC-2/3, CMD-14/15)
+and across districts by train (FR-LOC-7/8/9, CMD-14b).
 """
 
 from __future__ import annotations
@@ -13,7 +10,7 @@ from panem_bot.errors import NotAllowed, NotFound
 from panem_bot.services.proxy import has_location_access
 from panem_shared.content.schemas import District, Location
 from panem_shared.db.models import Character
-from panem_shared.enums import CharacterStatus
+from panem_shared.enums import CharacterStatus, LocationKind
 
 
 def resolve_location(district: District, location_id: str) -> Location:
@@ -46,3 +43,48 @@ def place(district: District, location: Location) -> tuple[float, float] | None:
     cx, cy = coords
     radius = location.radius
     return cx + random.uniform(-radius, radius), cy + random.uniform(-radius, radius)
+
+
+def resolve_station(district: District) -> Location:
+    """The district's one `kind: station` location (`District` content
+    validation already guarantees exactly one exists) -- cross-district
+    travel departs from and arrives at this location specifically."""
+    station = next((loc for loc in district.locations if loc.kind == LocationKind.STATION), None)
+    if station is None:  # pragma: no cover -- guaranteed by content validation
+        raise NotFound("location_not_found")
+    return station
+
+
+def ticket_good_id(destination_id: int) -> str:
+    return f"train_ticket_d{destination_id}"
+
+
+def check_can_travel_district(
+    *,
+    character: Character,
+    district: District,
+    destination_id: int,
+    current_tick: int,
+) -> None:
+    """FR-LOC-7/8/9. `district` is the character's current district
+    (`current_district_id`'s content), not their home. Raises
+    `NotAllowed`/`NotFound` on refusal; doesn't check money -- the ticket
+    price depends on content the caller already has to look up
+    separately (`ticket_good_id` + `ContentBundle.goods`), so that check
+    stays in the cog alongside the actual deduction."""
+    if character.status == CharacterStatus.DEAD.value:
+        raise NotAllowed("character_dead")
+    if character.status != CharacterStatus.APPROVED.value:
+        raise NotAllowed("character_not_approved")
+    if character.jailed_until_tick is not None and character.jailed_until_tick > current_tick:
+        raise NotAllowed("travel_jailed", name=character.name)
+    if (
+        character.in_transit_until_tick is not None
+        and character.in_transit_until_tick > current_tick
+    ):
+        raise NotAllowed("travel_already_in_transit", name=character.name)
+    if destination_id == district.id:
+        raise NotAllowed("travel_same_district", name=character.name)
+    station = resolve_station(district)
+    if character.location_id != station.id:
+        raise NotAllowed("travel_not_at_station", name=character.name, station=station.name)

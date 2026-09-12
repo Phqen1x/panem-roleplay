@@ -93,6 +93,89 @@ class TestCheckCanTravel:
         travel_svc.check_can_travel(character=character, location=location)  # no raise
 
 
+class TestResolveStation:
+    def test_finds_the_station_location(self):
+        district = make_district()
+        station = travel_svc.resolve_station(district)
+        assert station.id == "station"
+
+
+class TestTicketGoodId:
+    def test_builds_the_per_district_ticket_id(self):
+        assert travel_svc.ticket_good_id(0) == "train_ticket_d0"
+        assert travel_svc.ticket_good_id(12) == "train_ticket_d12"
+
+
+class TestCheckCanTravelDistrict:
+    def test_allows_approved_character_at_the_station(self):
+        district = make_district()
+        character = make_character(location_id="station")
+        travel_svc.check_can_travel_district(
+            character=character, district=district, destination_id=1, current_tick=100
+        )  # no raise
+
+    def test_refuses_dead_character(self):
+        district = make_district()
+        character = make_character(status=CharacterStatus.DEAD.value, location_id="station")
+        with pytest.raises(NotAllowed) as exc_info:
+            travel_svc.check_can_travel_district(
+                character=character, district=district, destination_id=1, current_tick=100
+            )
+        assert exc_info.value.reason_key == "character_dead"
+
+    def test_refuses_non_approved_character(self):
+        district = make_district()
+        character = make_character(status=CharacterStatus.PENDING.value, location_id="station")
+        with pytest.raises(NotAllowed) as exc_info:
+            travel_svc.check_can_travel_district(
+                character=character, district=district, destination_id=1, current_tick=100
+            )
+        assert exc_info.value.reason_key == "character_not_approved"
+
+    def test_refuses_jailed_character(self):
+        district = make_district()
+        character = make_character(location_id="station", jailed_until_tick=200)
+        with pytest.raises(NotAllowed) as exc_info:
+            travel_svc.check_can_travel_district(
+                character=character, district=district, destination_id=1, current_tick=100
+            )
+        assert exc_info.value.reason_key == "travel_jailed"
+
+    def test_allows_once_jail_sentence_has_passed(self):
+        district = make_district()
+        character = make_character(location_id="station", jailed_until_tick=50)
+        travel_svc.check_can_travel_district(
+            character=character, district=district, destination_id=1, current_tick=100
+        )  # no raise
+
+    def test_refuses_character_already_in_transit(self):
+        district = make_district()
+        character = make_character(location_id="station", in_transit_until_tick=150)
+        with pytest.raises(NotAllowed) as exc_info:
+            travel_svc.check_can_travel_district(
+                character=character, district=district, destination_id=1, current_tick=100
+            )
+        assert exc_info.value.reason_key == "travel_already_in_transit"
+
+    def test_refuses_traveling_to_current_district(self):
+        district = make_district()
+        character = make_character(location_id="station")
+        with pytest.raises(NotAllowed) as exc_info:
+            travel_svc.check_can_travel_district(
+                character=character, district=district, destination_id=12, current_tick=100
+            )
+        assert exc_info.value.reason_key == "travel_same_district"
+
+    def test_refuses_when_not_at_the_station(self):
+        district = make_district()
+        character = make_character(location_id="square")
+        with pytest.raises(NotAllowed) as exc_info:
+            travel_svc.check_can_travel_district(
+                character=character, district=district, destination_id=1, current_tick=100
+            )
+        assert exc_info.value.reason_key == "travel_not_at_station"
+
+
 class TestPlace:
     def test_places_within_location_radius_of_map_coords(self):
         district = make_district()

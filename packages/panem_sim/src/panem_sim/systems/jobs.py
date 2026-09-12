@@ -41,6 +41,21 @@ def _job_for(ctx: TickContext, job_id: str | None) -> Job | None:
     return ctx.content.jobs.get(job_id)
 
 
+def _is_within_travel_grace(character: Character, ctx: TickContext) -> bool:
+    """FR-LOC-9: a shift missed while physically en route is always
+    excused; one missed while visiting another district still is, for
+    `AWAY_GRACE_DAYS` from the tick they first left home -- long enough
+    to cover a short trip, not so long that leaving home is a permanent
+    way to dodge `MISSES_TO_FIRE`."""
+    if character.in_transit_until_tick is not None and character.in_transit_until_tick >= ctx.tick:
+        return True
+    if character.away_since_tick is None:
+        return False
+    return (
+        ctx.tick - character.away_since_tick <= constants.AWAY_GRACE_DAYS * constants.TICKS_PER_DAY
+    )
+
+
 def _resolve_missed_shifts(state: WorldState, ctx: TickContext) -> None:
     still_open: list[Shift] = []
     for shift in state.open_shifts:
@@ -48,8 +63,13 @@ def _resolve_missed_shifts(state: WorldState, ctx: TickContext) -> None:
             still_open.append(shift)
             continue
 
-        shift.result = ShiftResult.MISSED.value
         character = state.characters.get(shift.character_id)
+        if character is not None and _is_within_travel_grace(character, ctx):
+            shift.result = ShiftResult.EXCUSED.value
+            character.consecutive_missed = 0
+            continue
+
+        shift.result = ShiftResult.MISSED.value
         if character is None:
             continue
         character.consecutive_missed += 1

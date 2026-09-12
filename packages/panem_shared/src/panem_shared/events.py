@@ -50,8 +50,23 @@ class Bulletin(_EventBase):
     text: str
 
 
-WorldEvent = Annotated[NarrationLine | Bulletin, Field(discriminator="kind")]
-AnyWorldEvent = NarrationLine | Bulletin
+class CharacterArrived(_EventBase):
+    """A character's cross-district transit finished (FR-LOC-9). Consumed
+    by the bot to grant the destination district's "visitor" role and
+    drop the origin's, if either isn't the character's home district
+    (`Character.district_id`, never touched here). Arrival narration
+    itself is a separate `NarrationLine` at the destination's station,
+    the same as any other arrival."""
+
+    kind: Literal["CharacterArrived"] = "CharacterArrived"
+    character_id: int
+    district_id: int
+    """Destination district -- where the character just arrived."""
+    origin_district_id: int
+
+
+WorldEvent = Annotated[NarrationLine | Bulletin | CharacterArrived, Field(discriminator="kind")]
+AnyWorldEvent = NarrationLine | Bulletin | CharacterArrived
 
 _event_adapter: TypeAdapter[AnyWorldEvent] = TypeAdapter(WorldEvent)
 

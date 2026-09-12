@@ -102,6 +102,11 @@ class Character(TimestampMixin, Base):
 
     in_transit_until_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
     transit_destination_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    away_since_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """Set when a character first leaves `district_id` (home); cleared on
+    return. `panem_sim.systems.jobs` excuses missed shifts for
+    `AWAY_GRACE_DAYS` from this tick before they count against
+    `consecutive_missed` again (FR-LOC-9)."""
 
     user: Mapped[User] = relationship(back_populates="characters")
 

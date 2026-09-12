@@ -57,6 +57,16 @@ STRINGS: dict[str, str] = {
     "travel_ok": "**{name}** travels to **{location}**.",
     "no_location_set": "**{name}** hasn't traveled anywhere yet -- use `/travel`.",
     "where_ok": "**{name}** is at **{location}** ({district}).",
+    "travel_pick_one": "Give either `location` or `district`, not both or neither.",
+    "travel_jailed": "**{name}** is locked up and isn't going anywhere.",
+    "travel_already_in_transit": "**{name}** is already on a train -- check `/character status`.",
+    "travel_same_district": "**{name}** is already there.",
+    "travel_not_at_station": "**{name}** needs to be at **{station}** to catch a train.",
+    "travel_no_route": "There's no train route to that district.",
+    "travel_insufficient_funds": "**{name}** can't afford the {price}-coin ticket.",
+    "travel_district_ok": (
+        "**{name}** boards a train for **{district}** -- arriving in {ticks} ticks."
+    ),
     # Staff job editing (/staff job ...)
     "job_bad_json": "Not valid JSON: {detail}",
     "job_schema_invalid": "Doesn't match the job schema: {detail}",
