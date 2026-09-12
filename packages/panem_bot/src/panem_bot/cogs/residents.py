@@ -164,12 +164,20 @@ class ResidentCog(commands.Cog):
             name = npc.name
             traits = ", ".join(npc.traits) if npc.traits else "unknown"
             tone = npc.speech_style.get("tone", "unknown") if npc.speech_style else "unknown"
+            authored = content.npcs.get(npc.id)
 
         embed = discord.Embed(title=name)
         embed.add_field(name="Job", value=job_name)
         embed.add_field(name="Traits", value=traits.capitalize())
         embed.add_field(name="Speech", value=tone.capitalize())
         embed.add_field(name=f"Opinion of {char.name}", value=stance.capitalize())
+        if authored is not None:
+            if authored.appearance:
+                embed.add_field(name="Appearance", value=authored.appearance, inline=False)
+            backstory = authored.backstory
+            if len(backstory) > EMBED_FIELD_VALUE_LIMIT:
+                backstory = backstory[: EMBED_FIELD_VALUE_LIMIT - 1] + "…"
+            embed.add_field(name="Backstory", value=backstory, inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @resident_profile.autocomplete("resident")

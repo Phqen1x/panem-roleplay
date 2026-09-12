@@ -1,0 +1,322 @@
+- id: d5_npc_001
+  district: 5
+  name: Beatrix Marrow
+  age: 29
+  job_id: d5_technician
+  home_location_id: residential
+  traits:
+  - ambitious
+  - reckless
+  backstory: Beatrix Marrow was born and raised right here in District Five, watchful like most of the
+    power families around them. Beatrix Marrow took up work as a Grid Technician at The Dam -- steady
+    enough, if nothing to brag about. Beatrix Marrow is always angling for something better than this,
+    and takes chances that make their neighbors wince.
+  appearance: Looks older than 29 -- District Five does that to people.
+- id: d5_npc_002
+  district: 5
+  name: Marisol Juniper
+  age: 51
+  job_id: d5_technician
+  home_location_id: residential
+  traits:
+  - patient
+  - shy
+  backstory: Marisol Juniper was born and raised right here in District Five, watchful like most of the
+    power families around them. Marisol Juniper took up work as a Grid Technician at The Dam -- steady
+    enough, if nothing to brag about. Marisol Juniper can outwait anyone, on anything, and goes quiet
+    the moment a stranger's in the room.
+  appearance: A 51-year-old who still moves like someone half that age.
+- id: d5_npc_003
+  district: 5
+  name: Dara Ridgely
+  age: 46
+  job_id: d5_engineer
+  home_location_id: residential
+  traits:
+  - cautious
+  - gentle
+  backstory: Dara Ridgely came up in a watchful corner of District Five, one of the many faces the power
+    trade never seems to run short of. These days Dara Ridgely works as an Engineer at The Dam, and has
+    the calluses to prove it. Dara Ridgely weighs every decision twice before making it once, and handles
+    even strangers like something breakable.
+  appearance: Looks older than 46 -- District Five does that to people.
+- id: d5_npc_004
+  district: 5
+  name: Lior Vane
+  age: 55
+  job_id: d5_technician
+  home_location_id: residential
+  traits:
+  - hot-tempered
+  - loyal
+  backstory: Lior Vane grew up in District Five's back streets, the kind of power household where everyone
+    pitches in young. Lior Vane spends most days as a Grid Technician, putting in hours at The Dam like
+    everyone else on the block. Lior Vane has a short fuse that's gotten them in trouble more than once,
+    and would stand by a friend even when it costs them.
+  appearance: 55 years old, lean and weathered from years of power work.
+- id: d5_npc_005
+  district: 5
+  name: Emrys Slate
+  age: 57
+  job_id: d5_engineer
+  home_location_id: residential
+  traits:
+  - ambitious
+  - shy
+  backstory: Emrys Slate came up in a tired corner of District Five, one of the many faces the power trade
+    never seems to run short of. These days Emrys Slate works as an Engineer at The Dam, and has the calluses
+    to prove it. Emrys Slate is always angling for something better than this, and goes quiet the moment
+    a stranger's in the room.
+  appearance: 57 years old, lean and weathered from years of power work.
+- id: d5_npc_006
+  district: 5
+  name: Noor Sedgwick
+  age: 27
+  job_id: d5_technician
+  home_location_id: residential
+  traits:
+  - cheerful
+  - loyal
+  backstory: Noor Sedgwick was born and raised right here in District Five, watchful like most of the
+    power families around them. Noor Sedgwick spends most days as a Grid Technician, putting in hours
+    at The Dam like everyone else on the block. Noor Sedgwick somehow keeps smiling no matter how the
+    week's gone, and would stand by a friend even when it costs them.
+  appearance: A 27-year-old with power-worn hands and tired eyes.
+- id: d5_npc_007
+  district: 5
+  name: Rosalind Briarwood
+  age: 48
+  job_id: d5_technician
+  home_location_id: residential
+  traits:
+  - loyal
+  - patient
+  backstory: Rosalind Briarwood grew up in District Five's back streets, the kind of power household where
+    everyone pitches in young. Rosalind Briarwood spends most days as a Grid Technician, putting in hours
+    at The Dam like everyone else on the block. Rosalind Briarwood would stand by a friend even when it
+    costs them, and can outwait anyone, on anything.
+  appearance: 48 years old, lean and weathered from years of power work.
+- id: d5_npc_008
+  district: 5
+  name: Briar Yarrow
+  age: 55
+  job_id: d5_technician
+  home_location_id: residential
+  traits:
+  - humble
+  - stoic
+  backstory: Nobody in Briar Yarrow's family has ever left District Five; the power work runs in the blood,
+    generation after generation. Briar Yarrow took up work as a Grid Technician at The Dam -- steady enough,
+    if nothing to brag about. Briar Yarrow shrugs off compliments like they don't quite fit, and doesn't
+    say much, and what little they do say tends to be the truth.
+  appearance: A 55-year-old with power-worn hands and tired eyes.
+- id: d5_npc_009
+  district: 5
+  name: Elin Vane
+  age: 56
+  job_id: d5_technician
+  home_location_id: residential
+  traits:
+  - cowardly
+  - gossipy
+  backstory: Nobody in Elin Vane's family has ever left District Five; the power work runs in the blood,
+    generation after generation. Elin Vane took up work as a Grid Technician at The Dam -- steady enough,
+    if nothing to brag about. Elin Vane keeps to the back of any crowd, just in case, and knows everyone's
+    business before they've finished telling it.
+  appearance: A 56-year-old who still moves like someone half that age.
+- id: d5_npc_010
+  district: 5
+  name: Ursa Loamfield
+  age: 21
+  job_id: d5_technician
+  home_location_id: residential
+  traits:
+  - humble
+  - witty
+  backstory: Nobody in Ursa Loamfield's family has ever left District Five; the power work runs in the
+    blood, generation after generation. Ursa Loamfield took up work as a Grid Technician at The Dam --
+    steady enough, if nothing to brag about. Ursa Loamfield shrugs off compliments like they don't quite
+    fit, and has a line ready for every occasion, wanted or not.
+  appearance: Looks older than 21 -- District Five does that to people.
+- id: d5_npc_011
+  district: 5
+  name: Wren Ironside
+  age: 64
+  job_id: d5_technician
+  home_location_id: residential
+  traits:
+  - cheerful
+  - stoic
+  backstory: Wren Ironside's earliest memory is the smell of power work -- District Five doesn't let you
+    forget what feeds it. Wren Ironside spends most days as a Grid Technician, putting in hours at The
+    Dam like everyone else on the block. Wren Ironside somehow keeps smiling no matter how the week's
+    gone, and doesn't say much, and what little they do say tends to be the truth.
+  appearance: A 64-year-old who still moves like someone half that age.
+- id: d5_npc_012
+  district: 5
+  name: Fenn Vane
+  age: 49
+  job_id: d5_technician
+  home_location_id: residential
+  traits:
+  - patient
+  - shy
+  backstory: Nobody in Fenn Vane's family has ever left District Five; the power work runs in the blood,
+    generation after generation. Fenn Vane took up work as a Grid Technician at The Dam -- steady enough,
+    if nothing to brag about. Fenn Vane can outwait anyone, on anything, and goes quiet the moment a stranger's
+    in the room.
+  appearance: Looks older than 49 -- District Five does that to people.
+- id: d5_npc_013
+  district: 5
+  name: Odalys Underhill
+  age: 48
+  job_id: d5_engineer
+  home_location_id: residential
+  traits:
+  - brave
+  - sharp-tongued
+  backstory: Odalys Underhill came up in a tired corner of District Five, one of the many faces the power
+    trade never seems to run short of. These days Odalys Underhill works as an Engineer at The Dam, and
+    has the calluses to prove it. Odalys Underhill walks toward trouble other people walk away from, and
+    has a tongue sharper than most peacekeepers' patience.
+  appearance: 48 years old, lean and weathered from years of power work.
+- id: d5_npc_014
+  district: 5
+  name: Cass Pemberton
+  age: 64
+  job_id: d5_technician
+  home_location_id: residential
+  traits:
+  - cheerful
+  - witty
+  backstory: Cass Pemberton was born and raised right here in District Five, watchful like most of the
+    power families around them. These days Cass Pemberton works as a Grid Technician at The Dam, and has
+    the calluses to prove it. Cass Pemberton somehow keeps smiling no matter how the week's gone, and
+    has a line ready for every occasion, wanted or not.
+  appearance: Looks older than 64 -- District Five does that to people.
+- id: d5_npc_015
+  district: 5
+  name: Xiomara Norwich
+  age: 41
+  job_id: d5_engineer
+  home_location_id: residential
+  traits:
+  - humble
+  - reckless
+  backstory: Xiomara Norwich grew up in District Five's back streets, the kind of power household where
+    everyone pitches in young. Xiomara Norwich took up work as an Engineer at The Dam -- steady enough,
+    if nothing to brag about. Xiomara Norwich shrugs off compliments like they don't quite fit, and takes
+    chances that make their neighbors wince.
+  appearance: A 41-year-old who still moves like someone half that age.
+- id: d5_npc_016
+  district: 5
+  name: Elin Thistledown
+  age: 27
+  job_id: d5_technician
+  home_location_id: residential
+  traits:
+  - paranoid
+  - witty
+  backstory: Nobody in Elin Thistledown's family has ever left District Five; the power work runs in the
+    blood, generation after generation. Elin Thistledown took up work as a Grid Technician at The Dam
+    -- steady enough, if nothing to brag about. Elin Thistledown checks over their shoulder more than
+    anyone should have to, and has a line ready for every occasion, wanted or not.
+  appearance: A 27-year-old who still moves like someone half that age.
+- id: d5_npc_017
+  district: 5
+  name: Rosalind Hargrove
+  age: 22
+  job_id: d5_engineer
+  home_location_id: residential
+  traits:
+  - hot-tempered
+  - reckless
+  backstory: Rosalind Hargrove was born and raised right here in District Five, clinical like most of
+    the power families around them. These days Rosalind Hargrove works as an Engineer at The Dam, and
+    has the calluses to prove it. Rosalind Hargrove has a short fuse that's gotten them in trouble more
+    than once, and takes chances that make their neighbors wince.
+  appearance: A 22-year-old with power-worn hands and tired eyes.
+- id: d5_npc_018
+  district: 5
+  name: Quill Blackwell
+  age: 51
+  job_id: d5_technician
+  home_location_id: residential
+  traits:
+  - suspicious
+  - vengeful
+  backstory: Quill Blackwell's earliest memory is the smell of power work -- District Five doesn't let
+    you forget what feeds it. Quill Blackwell spends most days as a Grid Technician, putting in hours
+    at The Dam like everyone else on the block. Quill Blackwell trusts almost no one, and says so plainly,
+    and doesn't forget a wrong, and doesn't forgive one either.
+  appearance: Looks older than 51 -- District Five does that to people.
+- id: d5_npc_019
+  district: 5
+  name: Noor Flint
+  age: 31
+  job_id: d5_technician
+  home_location_id: residential
+  traits:
+  - cautious
+  - stoic
+  backstory: Noor Flint grew up in District Five's back streets, the kind of power household where everyone
+    pitches in young. These days Noor Flint works as a Grid Technician at The Dam, and has the calluses
+    to prove it. Noor Flint weighs every decision twice before making it once, and doesn't say much, and
+    what little they do say tends to be the truth.
+  appearance: A 31-year-old with power-worn hands and tired eyes.
+- id: d5_npc_020
+  district: 5
+  name: Zinnia Underhill
+  age: 25
+  job_id: d5_technician
+  home_location_id: residential
+  traits:
+  - humble
+  - shy
+  backstory: Zinnia Underhill came up in a clinical corner of District Five, one of the many faces the
+    power trade never seems to run short of. Zinnia Underhill took up work as a Grid Technician at The
+    Dam -- steady enough, if nothing to brag about. Zinnia Underhill shrugs off compliments like they
+    don't quite fit, and goes quiet the moment a stranger's in the room.
+  appearance: A 25-year-old with power-worn hands and tired eyes.
+- id: d5_npc_021
+  district: 5
+  name: Nash Blackwell
+  age: 24
+  job_id: d5_technician
+  home_location_id: residential
+  traits:
+  - gossipy
+  - loyal
+  backstory: Nash Blackwell's earliest memory is the smell of power work -- District Five doesn't let
+    you forget what feeds it. These days Nash Blackwell works as a Grid Technician at The Dam, and has
+    the calluses to prove it. Nash Blackwell knows everyone's business before they've finished telling
+    it, and would stand by a friend even when it costs them.
+  appearance: Looks older than 24 -- District Five does that to people.
+- id: d5_npc_022
+  district: 5
+  name: Ada Everhart
+  age: 36
+  job_id: d5_engineer
+  home_location_id: residential
+  traits:
+  - loyal
+  - vengeful
+  backstory: Ada Everhart came up in a tired corner of District Five, one of the many faces the power
+    trade never seems to run short of. Ada Everhart took up work as an Engineer at The Dam -- steady enough,
+    if nothing to brag about. Ada Everhart would stand by a friend even when it costs them, and doesn't
+    forget a wrong, and doesn't forgive one either.
+  appearance: 36 years old, lean and weathered from years of power work.
+- id: d5_npc_023
+  district: 5
+  name: Yusuf Thistledown
+  age: 49
+  job_id: d5_technician
+  home_location_id: residential
+  traits:
+  - shy
+  - stoic
+  backstory: Nobody in Yusuf Thistledown's family has ever left District Five; the power work runs in
+    the blood, generation after generation. Yusuf Thistledown took up work as a Grid Technician at The
+    Dam -- steady enough, if nothing to brag about. Yusuf Thistledown goes quiet the moment a stranger's
+    in the room, and doesn't say much, and what little they do say tends to be the truth.
+  appearance: 49 years old, lean and weathered from years of power work.

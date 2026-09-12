@@ -176,3 +176,25 @@ class Route(BaseModel):
     to: int = Field(ge=0, le=12)
     good: str
     capacity: float = Field(ge=0)
+
+
+class NpcContent(BaseModel):
+    """A hand-authored (or generator-authored, `scripts/npc_generate.py`)
+    resident living in `data/npcs/d<district>.yaml` (Plan §6.1/§11, Spec
+    §5.4) -- real identity/flavor text for a specific NPC, as opposed to
+    the fully-synthetic population `panem_sim.world.seed_npcs` falls back
+    to for any district with no authored file. `backstory`/`appearance`
+    are display-only flavor text, never simulated, so they live here in
+    content rather than as DB columns on `Npc`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    district: int = Field(ge=0, le=12)
+    name: str
+    age: int = Field(ge=12, le=90)
+    job_id: str | None = None
+    home_location_id: str
+    traits: list[str] = Field(default_factory=list)
+    backstory: str = Field(max_length=1500)
+    appearance: str = Field(default="", max_length=400)

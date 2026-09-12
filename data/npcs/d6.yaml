@@ -1,0 +1,322 @@
+- id: d6_npc_001
+  district: 6
+  name: Kellan Marrow
+  age: 53
+  job_id: d6_dispatcher
+  home_location_id: residential
+  traits:
+  - proud
+  - vengeful
+  backstory: Kellan Marrow's earliest memory is the smell of transport work -- District Six doesn't let
+    you forget what feeds it. Kellan Marrow spends most days as a Rail Dispatcher, putting in hours at
+    The Rail Yards like everyone else on the block. Kellan Marrow won't ask for help even when they plainly
+    need it, and doesn't forget a wrong, and doesn't forgive one either.
+  appearance: Looks older than 53 -- District Six does that to people.
+- id: d6_npc_002
+  district: 6
+  name: Tobias Norwich
+  age: 45
+  job_id: d6_mechanic
+  home_location_id: residential
+  traits:
+  - gentle
+  - sharp-tongued
+  backstory: Nobody in Tobias Norwich's family has ever left District Six; the transport work runs in
+    the blood, generation after generation. These days Tobias Norwich works as a Mechanic at The Rail
+    Yards, and has the calluses to prove it. Tobias Norwich handles even strangers like something breakable,
+    and has a tongue sharper than most peacekeepers' patience.
+  appearance: Looks older than 45 -- District Six does that to people.
+- id: d6_npc_003
+  district: 6
+  name: Jory Ridgely
+  age: 56
+  job_id: d6_mechanic
+  home_location_id: residential
+  traits:
+  - bitter
+  - patient
+  backstory: Nobody in Jory Ridgely's family has ever left District Six; the transport work runs in the
+    blood, generation after generation. Jory Ridgely took up work as a Mechanic at The Rail Yards -- steady
+    enough, if nothing to brag about. Jory Ridgely carries an old grudge like it happened yesterday, and
+    can outwait anyone, on anything.
+  appearance: 56 years old, lean and weathered from years of transport work.
+- id: d6_npc_004
+  district: 6
+  name: Kestrel Yarrow
+  age: 36
+  job_id: d6_hustler
+  home_location_id: residential
+  traits:
+  - gentle
+  - stoic
+  backstory: Kestrel Yarrow's earliest memory is the smell of transport work -- District Six doesn't let
+    you forget what feeds it. Kestrel Yarrow took up work as a Yard Hustler at The Underpass -- steady
+    enough, if nothing to brag about. Kestrel Yarrow handles even strangers like something breakable,
+    and doesn't say much, and what little they do say tends to be the truth.
+  appearance: A 36-year-old with transport-worn hands and tired eyes.
+- id: d6_npc_005
+  district: 6
+  name: Marisol Cinder
+  age: 33
+  job_id: d6_mechanic
+  home_location_id: residential
+  traits:
+  - cowardly
+  - reckless
+  backstory: Marisol Cinder's earliest memory is the smell of transport work -- District Six doesn't let
+    you forget what feeds it. Marisol Cinder spends most days as a Mechanic, putting in hours at The Rail
+    Yards like everyone else on the block. Marisol Cinder keeps to the back of any crowd, just in case,
+    and takes chances that make their neighbors wince.
+  appearance: 33 years old, lean and weathered from years of transport work.
+- id: d6_npc_006
+  district: 6
+  name: Ursa Sedgwick
+  age: 45
+  job_id: d6_hustler
+  home_location_id: residential
+  traits:
+  - boastful
+  - vengeful
+  backstory: Nobody in Ursa Sedgwick's family has ever left District Six; the transport work runs in the
+    blood, generation after generation. Ursa Sedgwick took up work as a Yard Hustler at The Underpass
+    -- steady enough, if nothing to brag about. Ursa Sedgwick never tells a story without making themself
+    the hero of it, and doesn't forget a wrong, and doesn't forgive one either.
+  appearance: 45 years old, lean and weathered from years of transport work.
+- id: d6_npc_007
+  district: 6
+  name: Elin Grimshaw
+  age: 47
+  job_id: d6_hustler
+  home_location_id: residential
+  traits:
+  - bitter
+  - witty
+  backstory: Elin Grimshaw was born and raised right here in District Six, jittery like most of the transport
+    families around them. Elin Grimshaw took up work as a Yard Hustler at The Underpass -- steady enough,
+    if nothing to brag about. Elin Grimshaw carries an old grudge like it happened yesterday, and has
+    a line ready for every occasion, wanted or not.
+  appearance: Looks older than 47 -- District Six does that to people.
+- id: d6_npc_008
+  district: 6
+  name: Elin Dunmore
+  age: 30
+  job_id: d6_dispatcher
+  home_location_id: residential
+  traits:
+  - paranoid
+  - shy
+  backstory: Elin Dunmore grew up in District Six's back streets, the kind of transport household where
+    everyone pitches in young. Elin Dunmore spends most days as a Rail Dispatcher, putting in hours at
+    The Rail Yards like everyone else on the block. Elin Dunmore checks over their shoulder more than
+    anyone should have to, and goes quiet the moment a stranger's in the room.
+  appearance: A 30-year-old who still moves like someone half that age.
+- id: d6_npc_009
+  district: 6
+  name: Rosalind Dunmore
+  age: 63
+  job_id: d6_mechanic
+  home_location_id: residential
+  traits:
+  - ambitious
+  - suspicious
+  backstory: Nobody in Rosalind Dunmore's family has ever left District Six; the transport work runs in
+    the blood, generation after generation. Rosalind Dunmore spends most days as a Mechanic, putting in
+    hours at The Rail Yards like everyone else on the block. Rosalind Dunmore is always angling for something
+    better than this, and trusts almost no one, and says so plainly.
+  appearance: 63 years old, lean and weathered from years of transport work.
+- id: d6_npc_010
+  district: 6
+  name: Yusuf Quarrie
+  age: 59
+  job_id: d6_dispatcher
+  home_location_id: residential
+  traits:
+  - cheerful
+  - patient
+  backstory: Yusuf Quarrie's earliest memory is the smell of transport work -- District Six doesn't let
+    you forget what feeds it. Yusuf Quarrie took up work as a Rail Dispatcher at The Rail Yards -- steady
+    enough, if nothing to brag about. Yusuf Quarrie somehow keeps smiling no matter how the week's gone,
+    and can outwait anyone, on anything.
+  appearance: A 59-year-old who still moves like someone half that age.
+- id: d6_npc_011
+  district: 6
+  name: Farrah Rowntree
+  age: 20
+  job_id: d6_dispatcher
+  home_location_id: residential
+  traits:
+  - cowardly
+  - suspicious
+  backstory: Farrah Rowntree grew up in District Six's back streets, the kind of transport household where
+    everyone pitches in young. Farrah Rowntree took up work as a Rail Dispatcher at The Rail Yards --
+    steady enough, if nothing to brag about. Farrah Rowntree keeps to the back of any crowd, just in case,
+    and trusts almost no one, and says so plainly.
+  appearance: A 20-year-old who still moves like someone half that age.
+- id: d6_npc_012
+  district: 6
+  name: Fenn Blackwell
+  age: 18
+  job_id: d6_mechanic
+  home_location_id: residential
+  traits:
+  - humble
+  - reckless
+  backstory: Nobody in Fenn Blackwell's family has ever left District Six; the transport work runs in
+    the blood, generation after generation. Fenn Blackwell spends most days as a Mechanic, putting in
+    hours at The Rail Yards like everyone else on the block. Fenn Blackwell shrugs off compliments like
+    they don't quite fit, and takes chances that make their neighbors wince.
+  appearance: Looks older than 18 -- District Six does that to people.
+- id: d6_npc_013
+  district: 6
+  name: Elin Vane
+  age: 29
+  job_id: d6_hustler
+  home_location_id: residential
+  traits:
+  - boastful
+  - patient
+  backstory: Elin Vane was born and raised right here in District Six, fast-talking like most of the transport
+    families around them. Elin Vane spends most days as a Yard Hustler, putting in hours at The Underpass
+    like everyone else on the block. Elin Vane never tells a story without making themself the hero of
+    it, and can outwait anyone, on anything.
+  appearance: A 29-year-old who still moves like someone half that age.
+- id: d6_npc_014
+  district: 6
+  name: Rosalind Larke
+  age: 19
+  job_id: d6_black_marketeer
+  home_location_id: residential
+  traits:
+  - gentle
+  - vengeful
+  backstory: Rosalind Larke's earliest memory is the smell of transport work -- District Six doesn't let
+    you forget what feeds it. Rosalind Larke took up work as a Black Marketeer at The Underpass -- steady
+    enough, if nothing to brag about. Rosalind Larke handles even strangers like something breakable,
+    and doesn't forget a wrong, and doesn't forgive one either.
+  appearance: A 19-year-old with transport-worn hands and tired eyes.
+- id: d6_npc_015
+  district: 6
+  name: Hollis Kestner
+  age: 22
+  job_id: d6_mechanic
+  home_location_id: residential
+  traits:
+  - cautious
+  - paranoid
+  backstory: Hollis Kestner came up in a addled corner of District Six, one of the many faces the transport
+    trade never seems to run short of. These days Hollis Kestner works as a Mechanic at The Rail Yards,
+    and has the calluses to prove it. Hollis Kestner weighs every decision twice before making it once,
+    and checks over their shoulder more than anyone should have to.
+  appearance: Looks older than 22 -- District Six does that to people.
+- id: d6_npc_016
+  district: 6
+  name: Emrys Hargrove
+  age: 38
+  job_id: d6_dispatcher
+  home_location_id: residential
+  traits:
+  - sharp-tongued
+  - witty
+  backstory: Emrys Hargrove was born and raised right here in District Six, addled like most of the transport
+    families around them. Emrys Hargrove took up work as a Rail Dispatcher at The Rail Yards -- steady
+    enough, if nothing to brag about. Emrys Hargrove has a tongue sharper than most peacekeepers' patience,
+    and has a line ready for every occasion, wanted or not.
+  appearance: A 38-year-old who still moves like someone half that age.
+- id: d6_npc_017
+  district: 6
+  name: Merrick Hargrove
+  age: 57
+  job_id: d6_dispatcher
+  home_location_id: residential
+  traits:
+  - sharp-tongued
+  - stoic
+  backstory: Merrick Hargrove's earliest memory is the smell of transport work -- District Six doesn't
+    let you forget what feeds it. Merrick Hargrove took up work as a Rail Dispatcher at The Rail Yards
+    -- steady enough, if nothing to brag about. Merrick Hargrove has a tongue sharper than most peacekeepers'
+    patience, and doesn't say much, and what little they do say tends to be the truth.
+  appearance: 57 years old, lean and weathered from years of transport work.
+- id: d6_npc_018
+  district: 6
+  name: Arlo Wilder
+  age: 27
+  job_id: d6_hustler
+  home_location_id: residential
+  traits:
+  - brave
+  - vengeful
+  backstory: Arlo Wilder came up in a addled corner of District Six, one of the many faces the transport
+    trade never seems to run short of. Arlo Wilder took up work as a Yard Hustler at The Underpass --
+    steady enough, if nothing to brag about. Arlo Wilder walks toward trouble other people walk away from,
+    and doesn't forget a wrong, and doesn't forgive one either.
+  appearance: 27 years old, lean and weathered from years of transport work.
+- id: d6_npc_019
+  district: 6
+  name: Elin Fenwick
+  age: 60
+  job_id: d6_dispatcher
+  home_location_id: residential
+  traits:
+  - brave
+  - suspicious
+  backstory: Elin Fenwick was born and raised right here in District Six, fast-talking like most of the
+    transport families around them. These days Elin Fenwick works as a Rail Dispatcher at The Rail Yards,
+    and has the calluses to prove it. Elin Fenwick walks toward trouble other people walk away from, and
+    trusts almost no one, and says so plainly.
+  appearance: Looks older than 60 -- District Six does that to people.
+- id: d6_npc_020
+  district: 6
+  name: Arlo Slate
+  age: 45
+  job_id: d6_dispatcher
+  home_location_id: residential
+  traits:
+  - cowardly
+  - kind
+  backstory: Nobody in Arlo Slate's family has ever left District Six; the transport work runs in the
+    blood, generation after generation. Arlo Slate took up work as a Rail Dispatcher at The Rail Yards
+    -- steady enough, if nothing to brag about. Arlo Slate keeps to the back of any crowd, just in case,
+    and will give away a meal they can't spare without a second thought.
+  appearance: A 45-year-old who still moves like someone half that age.
+- id: d6_npc_021
+  district: 6
+  name: Yusuf Ivorine
+  age: 43
+  job_id: d6_dispatcher
+  home_location_id: residential
+  traits:
+  - bitter
+  - shy
+  backstory: Nobody in Yusuf Ivorine's family has ever left District Six; the transport work runs in the
+    blood, generation after generation. Yusuf Ivorine spends most days as a Rail Dispatcher, putting in
+    hours at The Rail Yards like everyone else on the block. Yusuf Ivorine carries an old grudge like
+    it happened yesterday, and goes quiet the moment a stranger's in the room.
+  appearance: 43 years old, lean and weathered from years of transport work.
+- id: d6_npc_022
+  district: 6
+  name: Ursa Ironside
+  age: 26
+  job_id: d6_dispatcher
+  home_location_id: residential
+  traits:
+  - boastful
+  - hot-tempered
+  backstory: Ursa Ironside grew up in District Six's back streets, the kind of transport household where
+    everyone pitches in young. These days Ursa Ironside works as a Rail Dispatcher at The Rail Yards,
+    and has the calluses to prove it. Ursa Ironside never tells a story without making themself the hero
+    of it, and has a short fuse that's gotten them in trouble more than once.
+  appearance: A 26-year-old who still moves like someone half that age.
+- id: d6_npc_023
+  district: 6
+  name: Fenn Coalfield
+  age: 23
+  job_id: d6_dispatcher
+  home_location_id: residential
+  traits:
+  - cheerful
+  - vengeful
+  backstory: Fenn Coalfield grew up in District Six's back streets, the kind of transport household where
+    everyone pitches in young. Fenn Coalfield spends most days as a Rail Dispatcher, putting in hours
+    at The Rail Yards like everyone else on the block. Fenn Coalfield somehow keeps smiling no matter
+    how the week's gone, and doesn't forget a wrong, and doesn't forgive one either.
+  appearance: A 23-year-old who still moves like someone half that age.

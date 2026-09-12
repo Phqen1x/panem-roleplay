@@ -1,0 +1,322 @@
+- id: d3_npc_001
+  district: 3
+  name: Rosalind Underhill
+  age: 27
+  job_id: d3_assembler
+  home_location_id: residential
+  traits:
+  - brave
+  - sharp-tongued
+  backstory: Rosalind Underhill's earliest memory is the smell of electronics work -- District Three doesn't
+    let you forget what feeds it. These days Rosalind Underhill works as an Assembler at The Assembly
+    Floor, and has the calluses to prove it. Rosalind Underhill walks toward trouble other people walk
+    away from, and has a tongue sharper than most peacekeepers' patience.
+  appearance: A 27-year-old with electronics-worn hands and tired eyes.
+- id: d3_npc_002
+  district: 3
+  name: Fenn Juniper
+  age: 48
+  job_id: d3_assembler
+  home_location_id: residential
+  traits:
+  - suspicious
+  - witty
+  backstory: Fenn Juniper's earliest memory is the smell of electronics work -- District Three doesn't
+    let you forget what feeds it. Fenn Juniper spends most days as an Assembler, putting in hours at The
+    Assembly Floor like everyone else on the block. Fenn Juniper trusts almost no one, and says so plainly,
+    and has a line ready for every occasion, wanted or not.
+  appearance: Looks older than 48 -- District Three does that to people.
+- id: d3_npc_003
+  district: 3
+  name: Ines Graystone
+  age: 51
+  job_id: d3_assembler
+  home_location_id: residential
+  traits:
+  - boastful
+  - patient
+  backstory: Ines Graystone was born and raised right here in District Three, restless like most of the
+    electronics families around them. These days Ines Graystone works as an Assembler at The Assembly
+    Floor, and has the calluses to prove it. Ines Graystone never tells a story without making themself
+    the hero of it, and can outwait anyone, on anything.
+  appearance: A 51-year-old who still moves like someone half that age.
+- id: d3_npc_004
+  district: 3
+  name: Lior Graystone
+  age: 18
+  job_id: d3_clerk
+  home_location_id: residential
+  traits:
+  - cowardly
+  - loyal
+  backstory: Nobody in Lior Graystone's family has ever left District Three; the electronics work runs
+    in the blood, generation after generation. Lior Graystone took up work as a Clerk at Justice Building
+    -- steady enough, if nothing to brag about. Lior Graystone keeps to the back of any crowd, just in
+    case, and would stand by a friend even when it costs them.
+  appearance: Looks older than 18 -- District Three does that to people.
+- id: d3_npc_005
+  district: 3
+  name: Arlo Ashgrove
+  age: 33
+  job_id: d3_assembler
+  home_location_id: residential
+  traits:
+  - hot-tempered
+  - patient
+  backstory: Arlo Ashgrove's earliest memory is the smell of electronics work -- District Three doesn't
+    let you forget what feeds it. These days Arlo Ashgrove works as an Assembler at The Assembly Floor,
+    and has the calluses to prove it. Arlo Ashgrove has a short fuse that's gotten them in trouble more
+    than once, and can outwait anyone, on anything.
+  appearance: Looks older than 33 -- District Three does that to people.
+- id: d3_npc_006
+  district: 3
+  name: Emrys Rowntree
+  age: 33
+  job_id: d3_assembler
+  home_location_id: residential
+  traits:
+  - lazy
+  - suspicious
+  backstory: Emrys Rowntree came up in a technical corner of District Three, one of the many faces the
+    electronics trade never seems to run short of. Emrys Rowntree took up work as an Assembler at The
+    Assembly Floor -- steady enough, if nothing to brag about. Emrys Rowntree does exactly as much as
+    gets by, and not a step more, and trusts almost no one, and says so plainly.
+  appearance: Looks older than 33 -- District Three does that to people.
+- id: d3_npc_007
+  district: 3
+  name: Xiomara Ashgrove
+  age: 55
+  job_id: d3_assembler
+  home_location_id: residential
+  traits:
+  - cheerful
+  - patient
+  backstory: Xiomara Ashgrove was born and raised right here in District Three, technical like most of
+    the electronics families around them. Xiomara Ashgrove took up work as an Assembler at The Assembly
+    Floor -- steady enough, if nothing to brag about. Xiomara Ashgrove somehow keeps smiling no matter
+    how the week's gone, and can outwait anyone, on anything.
+  appearance: Looks older than 55 -- District Three does that to people.
+- id: d3_npc_008
+  district: 3
+  name: Vesper Quarrie
+  age: 25
+  job_id: d3_technician
+  home_location_id: residential
+  traits:
+  - proud
+  - witty
+  backstory: Nobody in Vesper Quarrie's family has ever left District Three; the electronics work runs
+    in the blood, generation after generation. These days Vesper Quarrie works as a Technician at The
+    Assembly Floor, and has the calluses to prove it. Vesper Quarrie won't ask for help even when they
+    plainly need it, and has a line ready for every occasion, wanted or not.
+  appearance: 25 years old, lean and weathered from years of electronics work.
+- id: d3_npc_009
+  district: 3
+  name: Noor Pemberton
+  age: 53
+  job_id: d3_technician
+  home_location_id: residential
+  traits:
+  - reckless
+  - witty
+  backstory: Noor Pemberton's earliest memory is the smell of electronics work -- District Three doesn't
+    let you forget what feeds it. Noor Pemberton took up work as a Technician at The Assembly Floor --
+    steady enough, if nothing to brag about. Noor Pemberton takes chances that make their neighbors wince,
+    and has a line ready for every occasion, wanted or not.
+  appearance: 53 years old, lean and weathered from years of electronics work.
+- id: d3_npc_010
+  district: 3
+  name: Vesper Hargrove
+  age: 28
+  job_id: d3_assembler
+  home_location_id: residential
+  traits:
+  - brave
+  - proud
+  backstory: Vesper Hargrove was born and raised right here in District Three, wry like most of the electronics
+    families around them. Vesper Hargrove took up work as an Assembler at The Assembly Floor -- steady
+    enough, if nothing to brag about. Vesper Hargrove walks toward trouble other people walk away from,
+    and won't ask for help even when they plainly need it.
+  appearance: A 28-year-old who still moves like someone half that age.
+- id: d3_npc_011
+  district: 3
+  name: Hollis Ridgely
+  age: 51
+  job_id: d3_technician
+  home_location_id: residential
+  traits:
+  - gossipy
+  - reckless
+  backstory: Hollis Ridgely came up in a wry corner of District Three, one of the many faces the electronics
+    trade never seems to run short of. Hollis Ridgely spends most days as a Technician, putting in hours
+    at The Assembly Floor like everyone else on the block. Hollis Ridgely knows everyone's business before
+    they've finished telling it, and takes chances that make their neighbors wince.
+  appearance: Looks older than 51 -- District Three does that to people.
+- id: d3_npc_012
+  district: 3
+  name: Cass Yarrow
+  age: 61
+  job_id: d3_assembler
+  home_location_id: residential
+  traits:
+  - loyal
+  - paranoid
+  backstory: Cass Yarrow's earliest memory is the smell of electronics work -- District Three doesn't
+    let you forget what feeds it. Cass Yarrow took up work as an Assembler at The Assembly Floor -- steady
+    enough, if nothing to brag about. Cass Yarrow would stand by a friend even when it costs them, and
+    checks over their shoulder more than anyone should have to.
+  appearance: 61 years old, lean and weathered from years of electronics work.
+- id: d3_npc_013
+  district: 3
+  name: Corvin Drummond
+  age: 65
+  job_id: d3_assembler
+  home_location_id: residential
+  traits:
+  - boastful
+  - witty
+  backstory: Corvin Drummond grew up in District Three's back streets, the kind of electronics household
+    where everyone pitches in young. Corvin Drummond spends most days as an Assembler, putting in hours
+    at The Assembly Floor like everyone else on the block. Corvin Drummond never tells a story without
+    making themself the hero of it, and has a line ready for every occasion, wanted or not.
+  appearance: A 65-year-old who still moves like someone half that age.
+- id: d3_npc_014
+  district: 3
+  name: Odalys Vane
+  age: 57
+  job_id: d3_assembler
+  home_location_id: residential
+  traits:
+  - vengeful
+  - witty
+  backstory: Odalys Vane came up in a restless corner of District Three, one of the many faces the electronics
+    trade never seems to run short of. Odalys Vane took up work as an Assembler at The Assembly Floor
+    -- steady enough, if nothing to brag about. Odalys Vane doesn't forget a wrong, and doesn't forgive
+    one either, and has a line ready for every occasion, wanted or not.
+  appearance: Looks older than 57 -- District Three does that to people.
+- id: d3_npc_015
+  district: 3
+  name: Hollis Rowntree
+  age: 53
+  job_id: d3_assembler
+  home_location_id: residential
+  traits:
+  - boastful
+  - gentle
+  backstory: Hollis Rowntree came up in a wry corner of District Three, one of the many faces the electronics
+    trade never seems to run short of. These days Hollis Rowntree works as an Assembler at The Assembly
+    Floor, and has the calluses to prove it. Hollis Rowntree never tells a story without making themself
+    the hero of it, and handles even strangers like something breakable.
+  appearance: A 53-year-old who still moves like someone half that age.
+- id: d3_npc_016
+  district: 3
+  name: Fenn Hargrove
+  age: 41
+  job_id: d3_technician
+  home_location_id: residential
+  traits:
+  - gossipy
+  - patient
+  backstory: Fenn Hargrove grew up in District Three's back streets, the kind of electronics household
+    where everyone pitches in young. These days Fenn Hargrove works as a Technician at The Assembly Floor,
+    and has the calluses to prove it. Fenn Hargrove knows everyone's business before they've finished
+    telling it, and can outwait anyone, on anything.
+  appearance: A 41-year-old who still moves like someone half that age.
+- id: d3_npc_017
+  district: 3
+  name: Noor Ironside
+  age: 39
+  job_id: d3_assembler
+  home_location_id: residential
+  traits:
+  - boastful
+  - gossipy
+  backstory: Noor Ironside came up in a wry corner of District Three, one of the many faces the electronics
+    trade never seems to run short of. Noor Ironside took up work as an Assembler at The Assembly Floor
+    -- steady enough, if nothing to brag about. Noor Ironside never tells a story without making themself
+    the hero of it, and knows everyone's business before they've finished telling it.
+  appearance: A 39-year-old with electronics-worn hands and tired eyes.
+- id: d3_npc_018
+  district: 3
+  name: Yusuf Everhart
+  age: 65
+  job_id: d3_assembler
+  home_location_id: residential
+  traits:
+  - cautious
+  - gentle
+  backstory: Yusuf Everhart came up in a wry corner of District Three, one of the many faces the electronics
+    trade never seems to run short of. Yusuf Everhart spends most days as an Assembler, putting in hours
+    at The Assembly Floor like everyone else on the block. Yusuf Everhart weighs every decision twice
+    before making it once, and handles even strangers like something breakable.
+  appearance: Looks older than 65 -- District Three does that to people.
+- id: d3_npc_019
+  district: 3
+  name: Junia Thistledown
+  age: 63
+  job_id: d3_assembler
+  home_location_id: residential
+  traits:
+  - humble
+  - patient
+  backstory: Junia Thistledown came up in a technical corner of District Three, one of the many faces
+    the electronics trade never seems to run short of. Junia Thistledown spends most days as an Assembler,
+    putting in hours at The Assembly Floor like everyone else on the block. Junia Thistledown shrugs off
+    compliments like they don't quite fit, and can outwait anyone, on anything.
+  appearance: A 63-year-old with electronics-worn hands and tired eyes.
+- id: d3_npc_020
+  district: 3
+  name: Merrick Wilder
+  age: 46
+  job_id: d3_technician
+  home_location_id: residential
+  traits:
+  - gentle
+  - proud
+  backstory: Nobody in Merrick Wilder's family has ever left District Three; the electronics work runs
+    in the blood, generation after generation. Merrick Wilder took up work as a Technician at The Assembly
+    Floor -- steady enough, if nothing to brag about. Merrick Wilder handles even strangers like something
+    breakable, and won't ask for help even when they plainly need it.
+  appearance: Looks older than 46 -- District Three does that to people.
+- id: d3_npc_021
+  district: 3
+  name: Kellan Wilder
+  age: 42
+  job_id: d3_assembler
+  home_location_id: residential
+  traits:
+  - cowardly
+  - shy
+  backstory: Nobody in Kellan Wilder's family has ever left District Three; the electronics work runs
+    in the blood, generation after generation. Kellan Wilder spends most days as an Assembler, putting
+    in hours at The Assembly Floor like everyone else on the block. Kellan Wilder keeps to the back of
+    any crowd, just in case, and goes quiet the moment a stranger's in the room.
+  appearance: Looks older than 42 -- District Three does that to people.
+- id: d3_npc_022
+  district: 3
+  name: Corvin Larke
+  age: 31
+  job_id: d3_technician
+  home_location_id: residential
+  traits:
+  - patient
+  - shy
+  backstory: Corvin Larke grew up in District Three's back streets, the kind of electronics household
+    where everyone pitches in young. Corvin Larke spends most days as a Technician, putting in hours at
+    The Assembly Floor like everyone else on the block. Corvin Larke can outwait anyone, on anything,
+    and goes quiet the moment a stranger's in the room.
+  appearance: A 31-year-old who still moves like someone half that age.
+- id: d3_npc_023
+  district: 3
+  name: Lior Ridgely
+  age: 64
+  job_id: d3_clerk
+  home_location_id: residential
+  traits:
+  - shy
+  - suspicious
+  backstory: Lior Ridgely was born and raised right here in District Three, restless like most of the
+    electronics families around them. These days Lior Ridgely works as a Clerk at Justice Building, and
+    has the calluses to prove it. Lior Ridgely goes quiet the moment a stranger's in the room, and trusts
+    almost no one, and says so plainly.
+  appearance: A 64-year-old who still moves like someone half that age.

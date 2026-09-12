@@ -1,0 +1,322 @@
+- id: d11_npc_001
+  district: 11
+  name: Briar Oakes
+  age: 39
+  job_id: d11_picker
+  home_location_id: residential
+  traits:
+  - cautious
+  - suspicious
+  backstory: Briar Oakes was born and raised right here in District Eleven, communal like most of the
+    produce families around them. Briar Oakes took up work as a Picker at The Orchards -- steady enough,
+    if nothing to brag about. Briar Oakes weighs every decision twice before making it once, and trusts
+    almost no one, and says so plainly.
+  appearance: 39 years old, lean and weathered from years of produce work.
+- id: d11_npc_002
+  district: 11
+  name: Junia Ironside
+  age: 54
+  job_id: d11_clerk
+  home_location_id: residential
+  traits:
+  - paranoid
+  - proud
+  backstory: Junia Ironside was born and raised right here in District Eleven, watched like most of the
+    produce families around them. These days Junia Ironside works as a Clerk at Justice Building, and
+    has the calluses to prove it. Junia Ironside checks over their shoulder more than anyone should have
+    to, and won't ask for help even when they plainly need it.
+  appearance: A 54-year-old who still moves like someone half that age.
+- id: d11_npc_003
+  district: 11
+  name: Ada Blackwell
+  age: 44
+  job_id: d11_presser
+  home_location_id: residential
+  traits:
+  - ambitious
+  - boastful
+  backstory: Ada Blackwell came up in a weary corner of District Eleven, one of the many faces the produce
+    trade never seems to run short of. These days Ada Blackwell works as an Oil Presser at The Orchards,
+    and has the calluses to prove it. Ada Blackwell is always angling for something better than this,
+    and never tells a story without making themself the hero of it.
+  appearance: 44 years old, lean and weathered from years of produce work.
+- id: d11_npc_004
+  district: 11
+  name: Dara Ashgrove
+  age: 26
+  job_id: d11_clerk
+  home_location_id: residential
+  traits:
+  - bitter
+  - stoic
+  backstory: Dara Ashgrove came up in a communal corner of District Eleven, one of the many faces the
+    produce trade never seems to run short of. These days Dara Ashgrove works as a Clerk at Justice Building,
+    and has the calluses to prove it. Dara Ashgrove carries an old grudge like it happened yesterday,
+    and doesn't say much, and what little they do say tends to be the truth.
+  appearance: Looks older than 26 -- District Eleven does that to people.
+- id: d11_npc_005
+  district: 11
+  name: Junia Ivorine
+  age: 28
+  job_id: d11_picker
+  home_location_id: residential
+  traits:
+  - ambitious
+  - shy
+  backstory: Junia Ivorine came up in a weary corner of District Eleven, one of the many faces the produce
+    trade never seems to run short of. Junia Ivorine took up work as a Picker at The Orchards -- steady
+    enough, if nothing to brag about. Junia Ivorine is always angling for something better than this,
+    and goes quiet the moment a stranger's in the room.
+  appearance: 28 years old, lean and weathered from years of produce work.
+- id: d11_npc_006
+  district: 11
+  name: Ivo Juniper
+  age: 27
+  job_id: d11_picker
+  home_location_id: residential
+  traits:
+  - gentle
+  - gossipy
+  backstory: Ivo Juniper grew up in District Eleven's back streets, the kind of produce household where
+    everyone pitches in young. These days Ivo Juniper works as a Picker at The Orchards, and has the calluses
+    to prove it. Ivo Juniper handles even strangers like something breakable, and knows everyone's business
+    before they've finished telling it.
+  appearance: A 27-year-old who still moves like someone half that age.
+- id: d11_npc_007
+  district: 11
+  name: Gideon Juniper
+  age: 65
+  job_id: d11_picker
+  home_location_id: residential
+  traits:
+  - paranoid
+  - patient
+  backstory: Gideon Juniper grew up in District Eleven's back streets, the kind of produce household where
+    everyone pitches in young. These days Gideon Juniper works as a Picker at The Orchards, and has the
+    calluses to prove it. Gideon Juniper checks over their shoulder more than anyone should have to, and
+    can outwait anyone, on anything.
+  appearance: A 65-year-old with produce-worn hands and tired eyes.
+- id: d11_npc_008
+  district: 11
+  name: Hollis Pemberton
+  age: 44
+  job_id: d11_picker
+  home_location_id: residential
+  traits:
+  - gentle
+  - hot-tempered
+  backstory: Hollis Pemberton was born and raised right here in District Eleven, watched like most of
+    the produce families around them. Hollis Pemberton spends most days as a Picker, putting in hours
+    at The Orchards like everyone else on the block. Hollis Pemberton handles even strangers like something
+    breakable, and has a short fuse that's gotten them in trouble more than once.
+  appearance: Looks older than 44 -- District Eleven does that to people.
+- id: d11_npc_009
+  district: 11
+  name: Junia Elmhurst
+  age: 39
+  job_id: d11_picker
+  home_location_id: residential
+  traits:
+  - patient
+  - reckless
+  backstory: Junia Elmhurst came up in a weary corner of District Eleven, one of the many faces the produce
+    trade never seems to run short of. These days Junia Elmhurst works as a Picker at The Orchards, and
+    has the calluses to prove it. Junia Elmhurst can outwait anyone, on anything, and takes chances that
+    make their neighbors wince.
+  appearance: Looks older than 39 -- District Eleven does that to people.
+- id: d11_npc_010
+  district: 11
+  name: Ada Juniper
+  age: 43
+  job_id: d11_picker
+  home_location_id: residential
+  traits:
+  - hot-tempered
+  - vengeful
+  backstory: Nobody in Ada Juniper's family has ever left District Eleven; the produce work runs in the
+    blood, generation after generation. These days Ada Juniper works as a Picker at The Orchards, and
+    has the calluses to prove it. Ada Juniper has a short fuse that's gotten them in trouble more than
+    once, and doesn't forget a wrong, and doesn't forgive one either.
+  appearance: 43 years old, lean and weathered from years of produce work.
+- id: d11_npc_011
+  district: 11
+  name: Petra Dunmore
+  age: 30
+  job_id: d11_picker
+  home_location_id: residential
+  traits:
+  - loyal
+  - vengeful
+  backstory: Petra Dunmore's earliest memory is the smell of produce work -- District Eleven doesn't let
+    you forget what feeds it. Petra Dunmore spends most days as a Picker, putting in hours at The Orchards
+    like everyone else on the block. Petra Dunmore would stand by a friend even when it costs them, and
+    doesn't forget a wrong, and doesn't forgive one either.
+  appearance: A 30-year-old with produce-worn hands and tired eyes.
+- id: d11_npc_012
+  district: 11
+  name: Sable Mossgrove
+  age: 24
+  job_id: d11_picker
+  home_location_id: residential
+  traits:
+  - cautious
+  - suspicious
+  backstory: Sable Mossgrove grew up in District Eleven's back streets, the kind of produce household
+    where everyone pitches in young. Sable Mossgrove spends most days as a Picker, putting in hours at
+    The Orchards like everyone else on the block. Sable Mossgrove weighs every decision twice before making
+    it once, and trusts almost no one, and says so plainly.
+  appearance: Looks older than 24 -- District Eleven does that to people.
+- id: d11_npc_013
+  district: 11
+  name: Gideon Quarrie
+  age: 61
+  job_id: d11_picker
+  home_location_id: residential
+  traits:
+  - gossipy
+  - proud
+  backstory: Gideon Quarrie was born and raised right here in District Eleven, communal like most of the
+    produce families around them. Gideon Quarrie spends most days as a Picker, putting in hours at The
+    Orchards like everyone else on the block. Gideon Quarrie knows everyone's business before they've
+    finished telling it, and won't ask for help even when they plainly need it.
+  appearance: 61 years old, lean and weathered from years of produce work.
+- id: d11_npc_014
+  district: 11
+  name: Ursa Underhill
+  age: 52
+  job_id: d11_presser
+  home_location_id: residential
+  traits:
+  - gossipy
+  - reckless
+  backstory: Ursa Underhill came up in a weary corner of District Eleven, one of the many faces the produce
+    trade never seems to run short of. Ursa Underhill took up work as an Oil Presser at The Orchards --
+    steady enough, if nothing to brag about. Ursa Underhill knows everyone's business before they've finished
+    telling it, and takes chances that make their neighbors wince.
+  appearance: 52 years old, lean and weathered from years of produce work.
+- id: d11_npc_015
+  district: 11
+  name: Fenn Ivorine
+  age: 27
+  job_id: d11_picker
+  home_location_id: residential
+  traits:
+  - gentle
+  - hot-tempered
+  backstory: Fenn Ivorine came up in a communal corner of District Eleven, one of the many faces the produce
+    trade never seems to run short of. These days Fenn Ivorine works as a Picker at The Orchards, and
+    has the calluses to prove it. Fenn Ivorine handles even strangers like something breakable, and has
+    a short fuse that's gotten them in trouble more than once.
+  appearance: 27 years old, lean and weathered from years of produce work.
+- id: d11_npc_016
+  district: 11
+  name: Junia Ashgrove
+  age: 45
+  job_id: d11_picker
+  home_location_id: residential
+  traits:
+  - hot-tempered
+  - kind
+  backstory: Junia Ashgrove grew up in District Eleven's back streets, the kind of produce household where
+    everyone pitches in young. These days Junia Ashgrove works as a Picker at The Orchards, and has the
+    calluses to prove it. Junia Ashgrove has a short fuse that's gotten them in trouble more than once,
+    and will give away a meal they can't spare without a second thought.
+  appearance: 45 years old, lean and weathered from years of produce work.
+- id: d11_npc_017
+  district: 11
+  name: Greta Briarwood
+  age: 28
+  job_id: d11_picker
+  home_location_id: residential
+  traits:
+  - bitter
+  - humble
+  backstory: Greta Briarwood was born and raised right here in District Eleven, weary like most of the
+    produce families around them. Greta Briarwood took up work as a Picker at The Orchards -- steady enough,
+    if nothing to brag about. Greta Briarwood carries an old grudge like it happened yesterday, and shrugs
+    off compliments like they don't quite fit.
+  appearance: 28 years old, lean and weathered from years of produce work.
+- id: d11_npc_018
+  district: 11
+  name: Delphine Pryce
+  age: 27
+  job_id: d11_picker
+  home_location_id: residential
+  traits:
+  - ambitious
+  - suspicious
+  backstory: Delphine Pryce came up in a communal corner of District Eleven, one of the many faces the
+    produce trade never seems to run short of. These days Delphine Pryce works as a Picker at The Orchards,
+    and has the calluses to prove it. Delphine Pryce is always angling for something better than this,
+    and trusts almost no one, and says so plainly.
+  appearance: Looks older than 27 -- District Eleven does that to people.
+- id: d11_npc_019
+  district: 11
+  name: Ada Mossgrove
+  age: 32
+  job_id: d11_picker
+  home_location_id: residential
+  traits:
+  - proud
+  - suspicious
+  backstory: Ada Mossgrove's earliest memory is the smell of produce work -- District Eleven doesn't let
+    you forget what feeds it. Ada Mossgrove took up work as a Picker at The Orchards -- steady enough,
+    if nothing to brag about. Ada Mossgrove won't ask for help even when they plainly need it, and trusts
+    almost no one, and says so plainly.
+  appearance: 32 years old, lean and weathered from years of produce work.
+- id: d11_npc_020
+  district: 11
+  name: Lior Nettle
+  age: 35
+  job_id: d11_picker
+  home_location_id: residential
+  traits:
+  - gentle
+  - reckless
+  backstory: Lior Nettle grew up in District Eleven's back streets, the kind of produce household where
+    everyone pitches in young. Lior Nettle took up work as a Picker at The Orchards -- steady enough,
+    if nothing to brag about. Lior Nettle handles even strangers like something breakable, and takes chances
+    that make their neighbors wince.
+  appearance: A 35-year-old with produce-worn hands and tired eyes.
+- id: d11_npc_021
+  district: 11
+  name: Dara Loamfield
+  age: 34
+  job_id: d11_picker
+  home_location_id: residential
+  traits:
+  - boastful
+  - cautious
+  backstory: Dara Loamfield was born and raised right here in District Eleven, watched like most of the
+    produce families around them. These days Dara Loamfield works as a Picker at The Orchards, and has
+    the calluses to prove it. Dara Loamfield never tells a story without making themself the hero of it,
+    and weighs every decision twice before making it once.
+  appearance: Looks older than 34 -- District Eleven does that to people.
+- id: d11_npc_022
+  district: 11
+  name: Odalys Everhart
+  age: 18
+  job_id: d11_presser
+  home_location_id: residential
+  traits:
+  - ambitious
+  - patient
+  backstory: Odalys Everhart came up in a weary corner of District Eleven, one of the many faces the produce
+    trade never seems to run short of. Odalys Everhart took up work as an Oil Presser at The Orchards
+    -- steady enough, if nothing to brag about. Odalys Everhart is always angling for something better
+    than this, and can outwait anyone, on anything.
+  appearance: 18 years old, lean and weathered from years of produce work.
+- id: d11_npc_023
+  district: 11
+  name: Yusuf Quarrie
+  age: 42
+  job_id: d11_picker
+  home_location_id: residential
+  traits:
+  - brave
+  - loyal
+  backstory: Yusuf Quarrie was born and raised right here in District Eleven, watched like most of the
+    produce families around them. Yusuf Quarrie took up work as a Picker at The Orchards -- steady enough,
+    if nothing to brag about. Yusuf Quarrie walks toward trouble other people walk away from, and would
+    stand by a friend even when it costs them.
+  appearance: A 42-year-old with produce-worn hands and tired eyes.

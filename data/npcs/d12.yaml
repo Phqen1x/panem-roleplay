@@ -1,0 +1,322 @@
+- id: d12_npc_001
+  district: 12
+  name: Beatrix Fenwick
+  age: 58
+  job_id: hob_trader
+  home_location_id: seam
+  traits:
+  - hot-tempered
+  - vengeful
+  backstory: Beatrix Fenwick grew up in District Twelve's back streets, the kind of coal household where
+    everyone pitches in young. These days Beatrix Fenwick works as a Hob Trader at The Hob, and has the
+    calluses to prove it. Beatrix Fenwick has a short fuse that's gotten them in trouble more than once,
+    and doesn't forget a wrong, and doesn't forgive one either.
+  appearance: 58 years old, lean and weathered from years of coal work.
+- id: d12_npc_002
+  district: 12
+  name: Beatrix Mossgrove
+  age: 41
+  job_id: hob_trader
+  home_location_id: merchant_row
+  traits:
+  - gentle
+  - reckless
+  backstory: Beatrix Mossgrove came up in a mutually_loyal corner of District Twelve, one of the many
+    faces the coal trade never seems to run short of. These days Beatrix Mossgrove works as a Hob Trader
+    at The Hob, and has the calluses to prove it. Beatrix Mossgrove handles even strangers like something
+    breakable, and takes chances that make their neighbors wince.
+  appearance: A 41-year-old who still moves like someone half that age.
+- id: d12_npc_003
+  district: 12
+  name: Yusuf Larke
+  age: 50
+  job_id: miner
+  home_location_id: merchant_row
+  traits:
+  - patient
+  - sharp-tongued
+  backstory: Nobody in Yusuf Larke's family has ever left District Twelve; the coal work runs in the blood,
+    generation after generation. Yusuf Larke spends most days as a Miner, putting in hours at Mine Entrance
+    like everyone else on the block. Yusuf Larke can outwait anyone, on anything, and has a tongue sharper
+    than most peacekeepers' patience.
+  appearance: 50 years old, lean and weathered from years of coal work.
+- id: d12_npc_004
+  district: 12
+  name: Kestrel Dunmore
+  age: 59
+  job_id: miner
+  home_location_id: seam
+  traits:
+  - hot-tempered
+  - lazy
+  backstory: Nobody in Kestrel Dunmore's family has ever left District Twelve; the coal work runs in the
+    blood, generation after generation. Kestrel Dunmore spends most days as a Miner, putting in hours
+    at Mine Entrance like everyone else on the block. Kestrel Dunmore has a short fuse that's gotten them
+    in trouble more than once, and does exactly as much as gets by, and not a step more.
+  appearance: A 59-year-old with coal-worn hands and tired eyes.
+- id: d12_npc_005
+  district: 12
+  name: Junia Loamfield
+  age: 20
+  job_id: miner
+  home_location_id: seam
+  traits:
+  - kind
+  - stoic
+  backstory: Junia Loamfield came up in a dry corner of District Twelve, one of the many faces the coal
+    trade never seems to run short of. These days Junia Loamfield works as a Miner at Mine Entrance, and
+    has the calluses to prove it. Junia Loamfield will give away a meal they can't spare without a second
+    thought, and doesn't say much, and what little they do say tends to be the truth.
+  appearance: Looks older than 20 -- District Twelve does that to people.
+- id: d12_npc_006
+  district: 12
+  name: Kellan Ashford
+  age: 47
+  job_id: miner
+  home_location_id: seam
+  traits:
+  - boastful
+  - vengeful
+  backstory: Kellan Ashford grew up in District Twelve's back streets, the kind of coal household where
+    everyone pitches in young. Kellan Ashford took up work as a Miner at Mine Entrance -- steady enough,
+    if nothing to brag about. Kellan Ashford never tells a story without making themself the hero of it,
+    and doesn't forget a wrong, and doesn't forgive one either.
+  appearance: A 47-year-old who still moves like someone half that age.
+- id: d12_npc_007
+  district: 12
+  name: Dara Hargrove
+  age: 46
+  job_id: miner
+  home_location_id: seam
+  traits:
+  - gossipy
+  - witty
+  backstory: Dara Hargrove came up in a dry corner of District Twelve, one of the many faces the coal
+    trade never seems to run short of. These days Dara Hargrove works as a Miner at Mine Entrance, and
+    has the calluses to prove it. Dara Hargrove knows everyone's business before they've finished telling
+    it, and has a line ready for every occasion, wanted or not.
+  appearance: A 46-year-old with coal-worn hands and tired eyes.
+- id: d12_npc_008
+  district: 12
+  name: Fenn Vane
+  age: 36
+  job_id: miner
+  home_location_id: seam
+  traits:
+  - hot-tempered
+  - kind
+  backstory: Fenn Vane was born and raised right here in District Twelve, mutually_loyal like most of
+    the coal families around them. These days Fenn Vane works as a Miner at Mine Entrance, and has the
+    calluses to prove it. Fenn Vane has a short fuse that's gotten them in trouble more than once, and
+    will give away a meal they can't spare without a second thought.
+  appearance: A 36-year-old with coal-worn hands and tired eyes.
+- id: d12_npc_009
+  district: 12
+  name: Corvin Coalfield
+  age: 63
+  job_id: healer
+  home_location_id: seam
+  traits:
+  - loyal
+  - sharp-tongued
+  backstory: Corvin Coalfield grew up in District Twelve's back streets, the kind of coal household where
+    everyone pitches in young. Corvin Coalfield spends most days as a Healer, putting in hours at The
+    Square like everyone else on the block. Corvin Coalfield would stand by a friend even when it costs
+    them, and has a tongue sharper than most peacekeepers' patience.
+  appearance: 63 years old, lean and weathered from years of coal work.
+- id: d12_npc_010
+  district: 12
+  name: Lior Hollow
+  age: 22
+  job_id: baker
+  home_location_id: merchant_row
+  traits:
+  - ambitious
+  - gossipy
+  backstory: Lior Hollow grew up in District Twelve's back streets, the kind of coal household where everyone
+    pitches in young. Lior Hollow spends most days as a Baker, putting in hours at Merchant Row like everyone
+    else on the block. Lior Hollow is always angling for something better than this, and knows everyone's
+    business before they've finished telling it.
+  appearance: 22 years old, lean and weathered from years of coal work.
+- id: d12_npc_011
+  district: 12
+  name: Petra Kestner
+  age: 20
+  job_id: miner
+  home_location_id: seam
+  traits:
+  - ambitious
+  - boastful
+  backstory: Nobody in Petra Kestner's family has ever left District Twelve; the coal work runs in the
+    blood, generation after generation. These days Petra Kestner works as a Miner at Mine Entrance, and
+    has the calluses to prove it. Petra Kestner is always angling for something better than this, and
+    never tells a story without making themself the hero of it.
+  appearance: 20 years old, lean and weathered from years of coal work.
+- id: d12_npc_012
+  district: 12
+  name: Beatrix Coalfield
+  age: 37
+  job_id: clerk
+  home_location_id: seam
+  traits:
+  - humble
+  - vengeful
+  backstory: Beatrix Coalfield's earliest memory is the smell of coal work -- District Twelve doesn't
+    let you forget what feeds it. Beatrix Coalfield took up work as a Clerk at Justice Building -- steady
+    enough, if nothing to brag about. Beatrix Coalfield shrugs off compliments like they don't quite fit,
+    and doesn't forget a wrong, and doesn't forgive one either.
+  appearance: A 37-year-old who still moves like someone half that age.
+- id: d12_npc_013
+  district: 12
+  name: Ada Coalfield
+  age: 56
+  job_id: miner
+  home_location_id: seam
+  traits:
+  - reckless
+  - witty
+  backstory: Ada Coalfield came up in a mutually_loyal corner of District Twelve, one of the many faces
+    the coal trade never seems to run short of. Ada Coalfield took up work as a Miner at Mine Entrance
+    -- steady enough, if nothing to brag about. Ada Coalfield takes chances that make their neighbors
+    wince, and has a line ready for every occasion, wanted or not.
+  appearance: A 56-year-old who still moves like someone half that age.
+- id: d12_npc_014
+  district: 12
+  name: Marisol Cinder
+  age: 30
+  job_id: miner
+  home_location_id: seam
+  traits:
+  - cowardly
+  - reckless
+  backstory: Nobody in Marisol Cinder's family has ever left District Twelve; the coal work runs in the
+    blood, generation after generation. Marisol Cinder spends most days as a Miner, putting in hours at
+    Mine Entrance like everyone else on the block. Marisol Cinder keeps to the back of any crowd, just
+    in case, and takes chances that make their neighbors wince.
+  appearance: A 30-year-old who still moves like someone half that age.
+- id: d12_npc_015
+  district: 12
+  name: Greta Pemberton
+  age: 32
+  job_id: miner
+  home_location_id: merchant_row
+  traits:
+  - proud
+  - vengeful
+  backstory: Greta Pemberton grew up in District Twelve's back streets, the kind of coal household where
+    everyone pitches in young. Greta Pemberton took up work as a Miner at Mine Entrance -- steady enough,
+    if nothing to brag about. Greta Pemberton won't ask for help even when they plainly need it, and doesn't
+    forget a wrong, and doesn't forgive one either.
+  appearance: A 32-year-old who still moves like someone half that age.
+- id: d12_npc_016
+  district: 12
+  name: Zinnia Thistledown
+  age: 54
+  job_id: clerk
+  home_location_id: merchant_row
+  traits:
+  - boastful
+  - brave
+  backstory: Zinnia Thistledown was born and raised right here in District Twelve, mutually_loyal like
+    most of the coal families around them. Zinnia Thistledown took up work as a Clerk at Justice Building
+    -- steady enough, if nothing to brag about. Zinnia Thistledown never tells a story without making
+    themself the hero of it, and walks toward trouble other people walk away from.
+  appearance: A 54-year-old with coal-worn hands and tired eyes.
+- id: d12_npc_017
+  district: 12
+  name: Dara Cinder
+  age: 39
+  job_id: hob_trader
+  home_location_id: seam
+  traits:
+  - proud
+  - sharp-tongued
+  backstory: Dara Cinder was born and raised right here in District Twelve, dry like most of the coal
+    families around them. Dara Cinder spends most days as a Hob Trader, putting in hours at The Hob like
+    everyone else on the block. Dara Cinder won't ask for help even when they plainly need it, and has
+    a tongue sharper than most peacekeepers' patience.
+  appearance: Looks older than 39 -- District Twelve does that to people.
+- id: d12_npc_018
+  district: 12
+  name: Gideon Ashford
+  age: 22
+  job_id: miner
+  home_location_id: merchant_row
+  traits:
+  - cheerful
+  - stoic
+  backstory: Gideon Ashford grew up in District Twelve's back streets, the kind of coal household where
+    everyone pitches in young. Gideon Ashford took up work as a Miner at Mine Entrance -- steady enough,
+    if nothing to brag about. Gideon Ashford somehow keeps smiling no matter how the week's gone, and
+    doesn't say much, and what little they do say tends to be the truth.
+  appearance: Looks older than 22 -- District Twelve does that to people.
+- id: d12_npc_019
+  district: 12
+  name: Petra Ivorine
+  age: 58
+  job_id: miner
+  home_location_id: seam
+  traits:
+  - lazy
+  - witty
+  backstory: Petra Ivorine came up in a dry corner of District Twelve, one of the many faces the coal
+    trade never seems to run short of. Petra Ivorine spends most days as a Miner, putting in hours at
+    Mine Entrance like everyone else on the block. Petra Ivorine does exactly as much as gets by, and
+    not a step more, and has a line ready for every occasion, wanted or not.
+  appearance: A 58-year-old who still moves like someone half that age.
+- id: d12_npc_020
+  district: 12
+  name: Elin Drummond
+  age: 22
+  job_id: miner
+  home_location_id: merchant_row
+  traits:
+  - boastful
+  - cowardly
+  backstory: Elin Drummond grew up in District Twelve's back streets, the kind of coal household where
+    everyone pitches in young. These days Elin Drummond works as a Miner at Mine Entrance, and has the
+    calluses to prove it. Elin Drummond never tells a story without making themself the hero of it, and
+    keeps to the back of any crowd, just in case.
+  appearance: A 22-year-old with coal-worn hands and tired eyes.
+- id: d12_npc_021
+  district: 12
+  name: Marisol Grimshaw
+  age: 19
+  job_id: miner
+  home_location_id: merchant_row
+  traits:
+  - cautious
+  - gossipy
+  backstory: Marisol Grimshaw's earliest memory is the smell of coal work -- District Twelve doesn't let
+    you forget what feeds it. Marisol Grimshaw spends most days as a Miner, putting in hours at Mine Entrance
+    like everyone else on the block. Marisol Grimshaw weighs every decision twice before making it once,
+    and knows everyone's business before they've finished telling it.
+  appearance: 19 years old, lean and weathered from years of coal work.
+- id: d12_npc_022
+  district: 12
+  name: Ada Underhill
+  age: 61
+  job_id: shift_boss
+  home_location_id: merchant_row
+  traits:
+  - humble
+  - lazy
+  backstory: Ada Underhill grew up in District Twelve's back streets, the kind of coal household where
+    everyone pitches in young. These days Ada Underhill works as a Shift Boss at Mine Entrance, and has
+    the calluses to prove it. Ada Underhill shrugs off compliments like they don't quite fit, and does
+    exactly as much as gets by, and not a step more.
+  appearance: 61 years old, lean and weathered from years of coal work.
+- id: d12_npc_023
+  district: 12
+  name: Xiomara Marrow
+  age: 29
+  job_id: miner
+  home_location_id: seam
+  traits:
+  - humble
+  - vengeful
+  backstory: Xiomara Marrow grew up in District Twelve's back streets, the kind of coal household where
+    everyone pitches in young. Xiomara Marrow took up work as a Miner at Mine Entrance -- steady enough,
+    if nothing to brag about. Xiomara Marrow shrugs off compliments like they don't quite fit, and doesn't
+    forget a wrong, and doesn't forgive one either.
+  appearance: A 29-year-old who still moves like someone half that age.

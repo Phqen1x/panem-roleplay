@@ -1,0 +1,322 @@
+- id: d10_npc_001
+  district: 10
+  name: Jory Rowntree
+  age: 19
+  job_id: d10_herder
+  home_location_id: residential
+  traits:
+  - cautious
+  - kind
+  backstory: Jory Rowntree grew up in District Ten's back streets, the kind of livestock household where
+    everyone pitches in young. These days Jory Rowntree works as a Herder at The Stockyards, and has the
+    calluses to prove it. Jory Rowntree weighs every decision twice before making it once, and will give
+    away a meal they can't spare without a second thought.
+  appearance: 19 years old, lean and weathered from years of livestock work.
+- id: d10_npc_002
+  district: 10
+  name: Emrys Nettle
+  age: 48
+  job_id: d10_herder
+  home_location_id: residential
+  traits:
+  - lazy
+  - stoic
+  backstory: Emrys Nettle grew up in District Ten's back streets, the kind of livestock household where
+    everyone pitches in young. Emrys Nettle spends most days as a Herder, putting in hours at The Stockyards
+    like everyone else on the block. Emrys Nettle does exactly as much as gets by, and not a step more,
+    and doesn't say much, and what little they do say tends to be the truth.
+  appearance: 48 years old, lean and weathered from years of livestock work.
+- id: d10_npc_003
+  district: 10
+  name: Zinnia Quarrie
+  age: 44
+  job_id: d10_herder
+  home_location_id: residential
+  traits:
+  - ambitious
+  - stoic
+  backstory: Zinnia Quarrie was born and raised right here in District Ten, weathered like most of the
+    livestock families around them. These days Zinnia Quarrie works as a Herder at The Stockyards, and
+    has the calluses to prove it. Zinnia Quarrie is always angling for something better than this, and
+    doesn't say much, and what little they do say tends to be the truth.
+  appearance: A 44-year-old with livestock-worn hands and tired eyes.
+- id: d10_npc_004
+  district: 10
+  name: Halcyon Dunmore
+  age: 23
+  job_id: d10_herder
+  home_location_id: residential
+  traits:
+  - loyal
+  - proud
+  backstory: Halcyon Dunmore's earliest memory is the smell of livestock work -- District Ten doesn't
+    let you forget what feeds it. Halcyon Dunmore spends most days as a Herder, putting in hours at The
+    Stockyards like everyone else on the block. Halcyon Dunmore would stand by a friend even when it costs
+    them, and won't ask for help even when they plainly need it.
+  appearance: 23 years old, lean and weathered from years of livestock work.
+- id: d10_npc_005
+  district: 10
+  name: Sable Pemberton
+  age: 24
+  job_id: d10_herder
+  home_location_id: residential
+  traits:
+  - cowardly
+  - lazy
+  backstory: Nobody in Sable Pemberton's family has ever left District Ten; the livestock work runs in
+    the blood, generation after generation. Sable Pemberton took up work as a Herder at The Stockyards
+    -- steady enough, if nothing to brag about. Sable Pemberton keeps to the back of any crowd, just in
+    case, and does exactly as much as gets by, and not a step more.
+  appearance: Looks older than 24 -- District Ten does that to people.
+- id: d10_npc_006
+  district: 10
+  name: Sable Marrow
+  age: 37
+  job_id: d10_herder
+  home_location_id: residential
+  traits:
+  - loyal
+  - paranoid
+  backstory: Sable Marrow's earliest memory is the smell of livestock work -- District Ten doesn't let
+    you forget what feeds it. These days Sable Marrow works as a Herder at The Stockyards, and has the
+    calluses to prove it. Sable Marrow would stand by a friend even when it costs them, and checks over
+    their shoulder more than anyone should have to.
+  appearance: 37 years old, lean and weathered from years of livestock work.
+- id: d10_npc_007
+  district: 10
+  name: Marisol Dunmore
+  age: 54
+  job_id: d10_herder
+  home_location_id: residential
+  traits:
+  - kind
+  - proud
+  backstory: Nobody in Marisol Dunmore's family has ever left District Ten; the livestock work runs in
+    the blood, generation after generation. Marisol Dunmore spends most days as a Herder, putting in hours
+    at The Stockyards like everyone else on the block. Marisol Dunmore will give away a meal they can't
+    spare without a second thought, and won't ask for help even when they plainly need it.
+  appearance: A 54-year-old with livestock-worn hands and tired eyes.
+- id: d10_npc_008
+  district: 10
+  name: Kestrel Rowntree
+  age: 58
+  job_id: d10_herder
+  home_location_id: residential
+  traits:
+  - bitter
+  - boastful
+  backstory: Kestrel Rowntree came up in a plainspoken corner of District Ten, one of the many faces the
+    livestock trade never seems to run short of. These days Kestrel Rowntree works as a Herder at The
+    Stockyards, and has the calluses to prove it. Kestrel Rowntree carries an old grudge like it happened
+    yesterday, and never tells a story without making themself the hero of it.
+  appearance: Looks older than 58 -- District Ten does that to people.
+- id: d10_npc_009
+  district: 10
+  name: Gideon Underhill
+  age: 35
+  job_id: d10_butcher
+  home_location_id: residential
+  traits:
+  - gossipy
+  - sharp-tongued
+  backstory: Gideon Underhill was born and raised right here in District Ten, hard-worked like most of
+    the livestock families around them. These days Gideon Underhill works as a Butcher at The Stockyards,
+    and has the calluses to prove it. Gideon Underhill knows everyone's business before they've finished
+    telling it, and has a tongue sharper than most peacekeepers' patience.
+  appearance: Looks older than 35 -- District Ten does that to people.
+- id: d10_npc_010
+  district: 10
+  name: Merrick Cinder
+  age: 37
+  job_id: d10_clerk
+  home_location_id: residential
+  traits:
+  - humble
+  - stoic
+  backstory: Nobody in Merrick Cinder's family has ever left District Ten; the livestock work runs in
+    the blood, generation after generation. Merrick Cinder spends most days as a Clerk, putting in hours
+    at Justice Building like everyone else on the block. Merrick Cinder shrugs off compliments like they
+    don't quite fit, and doesn't say much, and what little they do say tends to be the truth.
+  appearance: Looks older than 37 -- District Ten does that to people.
+- id: d10_npc_011
+  district: 10
+  name: Rosalind Coalfield
+  age: 27
+  job_id: d10_butcher
+  home_location_id: residential
+  traits:
+  - cautious
+  - witty
+  backstory: Rosalind Coalfield came up in a hard-worked corner of District Ten, one of the many faces
+    the livestock trade never seems to run short of. Rosalind Coalfield spends most days as a Butcher,
+    putting in hours at The Stockyards like everyone else on the block. Rosalind Coalfield weighs every
+    decision twice before making it once, and has a line ready for every occasion, wanted or not.
+  appearance: Looks older than 27 -- District Ten does that to people.
+- id: d10_npc_012
+  district: 10
+  name: Merrick Pemberton
+  age: 46
+  job_id: d10_butcher
+  home_location_id: residential
+  traits:
+  - cautious
+  - humble
+  backstory: Merrick Pemberton's earliest memory is the smell of livestock work -- District Ten doesn't
+    let you forget what feeds it. Merrick Pemberton spends most days as a Butcher, putting in hours at
+    The Stockyards like everyone else on the block. Merrick Pemberton weighs every decision twice before
+    making it once, and shrugs off compliments like they don't quite fit.
+  appearance: Looks older than 46 -- District Ten does that to people.
+- id: d10_npc_013
+  district: 10
+  name: Nash Osgood
+  age: 36
+  job_id: d10_butcher
+  home_location_id: residential
+  traits:
+  - cowardly
+  - humble
+  backstory: Nash Osgood was born and raised right here in District Ten, weathered like most of the livestock
+    families around them. Nash Osgood took up work as a Butcher at The Stockyards -- steady enough, if
+    nothing to brag about. Nash Osgood keeps to the back of any crowd, just in case, and shrugs off compliments
+    like they don't quite fit.
+  appearance: 36 years old, lean and weathered from years of livestock work.
+- id: d10_npc_014
+  district: 10
+  name: Yusuf Nettle
+  age: 28
+  job_id: d10_butcher
+  home_location_id: residential
+  traits:
+  - hot-tempered
+  - humble
+  backstory: Yusuf Nettle came up in a plainspoken corner of District Ten, one of the many faces the livestock
+    trade never seems to run short of. Yusuf Nettle spends most days as a Butcher, putting in hours at
+    The Stockyards like everyone else on the block. Yusuf Nettle has a short fuse that's gotten them in
+    trouble more than once, and shrugs off compliments like they don't quite fit.
+  appearance: 28 years old, lean and weathered from years of livestock work.
+- id: d10_npc_015
+  district: 10
+  name: Petra Ivorine
+  age: 58
+  job_id: d10_herder
+  home_location_id: residential
+  traits:
+  - cautious
+  - loyal
+  backstory: Petra Ivorine grew up in District Ten's back streets, the kind of livestock household where
+    everyone pitches in young. Petra Ivorine spends most days as a Herder, putting in hours at The Stockyards
+    like everyone else on the block. Petra Ivorine weighs every decision twice before making it once,
+    and would stand by a friend even when it costs them.
+  appearance: A 58-year-old with livestock-worn hands and tired eyes.
+- id: d10_npc_016
+  district: 10
+  name: Hollis Larke
+  age: 63
+  job_id: d10_herder
+  home_location_id: residential
+  traits:
+  - kind
+  - shy
+  backstory: Hollis Larke came up in a weathered corner of District Ten, one of the many faces the livestock
+    trade never seems to run short of. Hollis Larke took up work as a Herder at The Stockyards -- steady
+    enough, if nothing to brag about. Hollis Larke will give away a meal they can't spare without a second
+    thought, and goes quiet the moment a stranger's in the room.
+  appearance: A 63-year-old with livestock-worn hands and tired eyes.
+- id: d10_npc_017
+  district: 10
+  name: Delphine Juniper
+  age: 18
+  job_id: d10_butcher
+  home_location_id: residential
+  traits:
+  - gossipy
+  - kind
+  backstory: Delphine Juniper came up in a weathered corner of District Ten, one of the many faces the
+    livestock trade never seems to run short of. Delphine Juniper took up work as a Butcher at The Stockyards
+    -- steady enough, if nothing to brag about. Delphine Juniper knows everyone's business before they've
+    finished telling it, and will give away a meal they can't spare without a second thought.
+  appearance: 18 years old, lean and weathered from years of livestock work.
+- id: d10_npc_018
+  district: 10
+  name: Ivo Ironside
+  age: 53
+  job_id: d10_herder
+  home_location_id: residential
+  traits:
+  - proud
+  - stoic
+  backstory: Ivo Ironside's earliest memory is the smell of livestock work -- District Ten doesn't let
+    you forget what feeds it. These days Ivo Ironside works as a Herder at The Stockyards, and has the
+    calluses to prove it. Ivo Ironside won't ask for help even when they plainly need it, and doesn't
+    say much, and what little they do say tends to be the truth.
+  appearance: Looks older than 53 -- District Ten does that to people.
+- id: d10_npc_019
+  district: 10
+  name: Briar Dunmore
+  age: 40
+  job_id: d10_clerk
+  home_location_id: residential
+  traits:
+  - bitter
+  - hot-tempered
+  backstory: Briar Dunmore was born and raised right here in District Ten, weathered like most of the
+    livestock families around them. Briar Dunmore took up work as a Clerk at Justice Building -- steady
+    enough, if nothing to brag about. Briar Dunmore carries an old grudge like it happened yesterday,
+    and has a short fuse that's gotten them in trouble more than once.
+  appearance: 40 years old, lean and weathered from years of livestock work.
+- id: d10_npc_020
+  district: 10
+  name: Gideon Quarrie
+  age: 59
+  job_id: d10_butcher
+  home_location_id: residential
+  traits:
+  - gentle
+  - reckless
+  backstory: Gideon Quarrie came up in a plainspoken corner of District Ten, one of the many faces the
+    livestock trade never seems to run short of. These days Gideon Quarrie works as a Butcher at The Stockyards,
+    and has the calluses to prove it. Gideon Quarrie handles even strangers like something breakable,
+    and takes chances that make their neighbors wince.
+  appearance: Looks older than 59 -- District Ten does that to people.
+- id: d10_npc_021
+  district: 10
+  name: Beatrix Ashford
+  age: 52
+  job_id: d10_herder
+  home_location_id: residential
+  traits:
+  - lazy
+  - paranoid
+  backstory: Nobody in Beatrix Ashford's family has ever left District Ten; the livestock work runs in
+    the blood, generation after generation. Beatrix Ashford spends most days as a Herder, putting in hours
+    at The Stockyards like everyone else on the block. Beatrix Ashford does exactly as much as gets by,
+    and not a step more, and checks over their shoulder more than anyone should have to.
+  appearance: 52 years old, lean and weathered from years of livestock work.
+- id: d10_npc_022
+  district: 10
+  name: Gideon Hargrove
+  age: 65
+  job_id: d10_herder
+  home_location_id: residential
+  traits:
+  - bitter
+  - gossipy
+  backstory: Nobody in Gideon Hargrove's family has ever left District Ten; the livestock work runs in
+    the blood, generation after generation. These days Gideon Hargrove works as a Herder at The Stockyards,
+    and has the calluses to prove it. Gideon Hargrove carries an old grudge like it happened yesterday,
+    and knows everyone's business before they've finished telling it.
+  appearance: A 65-year-old who still moves like someone half that age.
+- id: d10_npc_023
+  district: 10
+  name: Ivo Coalfield
+  age: 52
+  job_id: d10_butcher
+  home_location_id: residential
+  traits:
+  - cowardly
+  - gossipy
+  backstory: Ivo Coalfield grew up in District Ten's back streets, the kind of livestock household where
+    everyone pitches in young. Ivo Coalfield spends most days as a Butcher, putting in hours at The Stockyards
+    like everyone else on the block. Ivo Coalfield keeps to the back of any crowd, just in case, and knows
+    everyone's business before they've finished telling it.
+  appearance: A 52-year-old with livestock-worn hands and tired eyes.

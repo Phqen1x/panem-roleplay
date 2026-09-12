@@ -1,0 +1,322 @@
+- id: d2_npc_001
+  district: 2
+  name: Fenn Wilder
+  age: 63
+  job_id: d2_quarrier
+  home_location_id: residential
+  traits:
+  - lazy
+  - reckless
+  backstory: Fenn Wilder's earliest memory is the smell of masonry work -- District Two doesn't let you
+    forget what feeds it. Fenn Wilder took up work as a Quarrier at The Quarry -- steady enough, if nothing
+    to brag about. Fenn Wilder does exactly as much as gets by, and not a step more, and takes chances
+    that make their neighbors wince.
+  appearance: A 63-year-old who still moves like someone half that age.
+- id: d2_npc_002
+  district: 2
+  name: Briar Loamfield
+  age: 46
+  job_id: d2_quarrier
+  home_location_id: residential
+  traits:
+  - boastful
+  - lazy
+  backstory: Briar Loamfield was born and raised right here in District Two, loyal like most of the masonry
+    families around them. These days Briar Loamfield works as a Quarrier at The Quarry, and has the calluses
+    to prove it. Briar Loamfield never tells a story without making themself the hero of it, and does
+    exactly as much as gets by, and not a step more.
+  appearance: A 46-year-old with masonry-worn hands and tired eyes.
+- id: d2_npc_003
+  district: 2
+  name: Kellan Juniper
+  age: 34
+  job_id: d2_armorer
+  home_location_id: residential
+  traits:
+  - kind
+  - shy
+  backstory: Kellan Juniper was born and raised right here in District Two, disciplined like most of the
+    masonry families around them. These days Kellan Juniper works as an Armorer at The Quarry, and has
+    the calluses to prove it. Kellan Juniper will give away a meal they can't spare without a second thought,
+    and goes quiet the moment a stranger's in the room.
+  appearance: 34 years old, lean and weathered from years of masonry work.
+- id: d2_npc_004
+  district: 2
+  name: Odalys Graystone
+  age: 32
+  job_id: d2_quarrier
+  home_location_id: residential
+  traits:
+  - paranoid
+  - sharp-tongued
+  backstory: Odalys Graystone was born and raised right here in District Two, martial like most of the
+    masonry families around them. Odalys Graystone spends most days as a Quarrier, putting in hours at
+    The Quarry like everyone else on the block. Odalys Graystone checks over their shoulder more than
+    anyone should have to, and has a tongue sharper than most peacekeepers' patience.
+  appearance: Looks older than 32 -- District Two does that to people.
+- id: d2_npc_005
+  district: 2
+  name: Briar Fenwick
+  age: 55
+  job_id: d2_quarrier
+  home_location_id: residential
+  traits:
+  - cowardly
+  - hot-tempered
+  backstory: Briar Fenwick grew up in District Two's back streets, the kind of masonry household where
+    everyone pitches in young. These days Briar Fenwick works as a Quarrier at The Quarry, and has the
+    calluses to prove it. Briar Fenwick keeps to the back of any crowd, just in case, and has a short
+    fuse that's gotten them in trouble more than once.
+  appearance: Looks older than 55 -- District Two does that to people.
+- id: d2_npc_006
+  district: 2
+  name: Gideon Fenwick
+  age: 65
+  job_id: d2_quarrier
+  home_location_id: residential
+  traits:
+  - ambitious
+  - cowardly
+  backstory: Gideon Fenwick's earliest memory is the smell of masonry work -- District Two doesn't let
+    you forget what feeds it. Gideon Fenwick spends most days as a Quarrier, putting in hours at The Quarry
+    like everyone else on the block. Gideon Fenwick is always angling for something better than this,
+    and keeps to the back of any crowd, just in case.
+  appearance: Looks older than 65 -- District Two does that to people.
+- id: d2_npc_007
+  district: 2
+  name: Jory Ashford
+  age: 44
+  job_id: d2_peacekeeper_aux
+  home_location_id: residential
+  traits:
+  - hot-tempered
+  - kind
+  backstory: Nobody in Jory Ashford's family has ever left District Two; the masonry work runs in the
+    blood, generation after generation. These days Jory Ashford works as a Peacekeeper Auxiliary at The
+    Garrison, and has the calluses to prove it. Jory Ashford has a short fuse that's gotten them in trouble
+    more than once, and will give away a meal they can't spare without a second thought.
+  appearance: A 44-year-old with masonry-worn hands and tired eyes.
+- id: d2_npc_008
+  district: 2
+  name: Ines Flint
+  age: 26
+  job_id: d2_quarrier
+  home_location_id: residential
+  traits:
+  - gentle
+  - gossipy
+  backstory: Ines Flint's earliest memory is the smell of masonry work -- District Two doesn't let you
+    forget what feeds it. Ines Flint took up work as a Quarrier at The Quarry -- steady enough, if nothing
+    to brag about. Ines Flint handles even strangers like something breakable, and knows everyone's business
+    before they've finished telling it.
+  appearance: Looks older than 26 -- District Two does that to people.
+- id: d2_npc_009
+  district: 2
+  name: Ada Underhill
+  age: 65
+  job_id: d2_quarrier
+  home_location_id: residential
+  traits:
+  - ambitious
+  - vengeful
+  backstory: Ada Underhill was born and raised right here in District Two, loyal like most of the masonry
+    families around them. Ada Underhill took up work as a Quarrier at The Quarry -- steady enough, if
+    nothing to brag about. Ada Underhill is always angling for something better than this, and doesn't
+    forget a wrong, and doesn't forgive one either.
+  appearance: A 65-year-old who still moves like someone half that age.
+- id: d2_npc_010
+  district: 2
+  name: Xiomara Marrow
+  age: 44
+  job_id: d2_peacekeeper_aux
+  home_location_id: residential
+  traits:
+  - cautious
+  - hot-tempered
+  backstory: Nobody in Xiomara Marrow's family has ever left District Two; the masonry work runs in the
+    blood, generation after generation. These days Xiomara Marrow works as a Peacekeeper Auxiliary at
+    The Garrison, and has the calluses to prove it. Xiomara Marrow weighs every decision twice before
+    making it once, and has a short fuse that's gotten them in trouble more than once.
+  appearance: A 44-year-old who still moves like someone half that age.
+- id: d2_npc_011
+  district: 2
+  name: Xiomara Quarrie
+  age: 25
+  job_id: d2_quarrier
+  home_location_id: residential
+  traits:
+  - lazy
+  - vengeful
+  backstory: Xiomara Quarrie was born and raised right here in District Two, loyal like most of the masonry
+    families around them. Xiomara Quarrie took up work as a Quarrier at The Quarry -- steady enough, if
+    nothing to brag about. Xiomara Quarrie does exactly as much as gets by, and not a step more, and doesn't
+    forget a wrong, and doesn't forgive one either.
+  appearance: 25 years old, lean and weathered from years of masonry work.
+- id: d2_npc_012
+  district: 2
+  name: Emrys Ironside
+  age: 65
+  job_id: d2_quarrier
+  home_location_id: residential
+  traits:
+  - kind
+  - reckless
+  backstory: Emrys Ironside was born and raised right here in District Two, disciplined like most of the
+    masonry families around them. Emrys Ironside spends most days as a Quarrier, putting in hours at The
+    Quarry like everyone else on the block. Emrys Ironside will give away a meal they can't spare without
+    a second thought, and takes chances that make their neighbors wince.
+  appearance: Looks older than 65 -- District Two does that to people.
+- id: d2_npc_013
+  district: 2
+  name: Marisol Nettle
+  age: 48
+  job_id: d2_peacekeeper_aux
+  home_location_id: residential
+  traits:
+  - brave
+  - cowardly
+  backstory: Marisol Nettle was born and raised right here in District Two, loyal like most of the masonry
+    families around them. Marisol Nettle spends most days as a Peacekeeper Auxiliary, putting in hours
+    at The Garrison like everyone else on the block. Marisol Nettle walks toward trouble other people
+    walk away from, and keeps to the back of any crowd, just in case.
+  appearance: 48 years old, lean and weathered from years of masonry work.
+- id: d2_npc_014
+  district: 2
+  name: Yusuf Loamfield
+  age: 36
+  job_id: d2_quarrier
+  home_location_id: residential
+  traits:
+  - paranoid
+  - shy
+  backstory: Nobody in Yusuf Loamfield's family has ever left District Two; the masonry work runs in the
+    blood, generation after generation. Yusuf Loamfield spends most days as a Quarrier, putting in hours
+    at The Quarry like everyone else on the block. Yusuf Loamfield checks over their shoulder more than
+    anyone should have to, and goes quiet the moment a stranger's in the room.
+  appearance: A 36-year-old with masonry-worn hands and tired eyes.
+- id: d2_npc_015
+  district: 2
+  name: Zinnia Hollow
+  age: 40
+  job_id: d2_quarrier
+  home_location_id: residential
+  traits:
+  - brave
+  - vengeful
+  backstory: Zinnia Hollow grew up in District Two's back streets, the kind of masonry household where
+    everyone pitches in young. These days Zinnia Hollow works as a Quarrier at The Quarry, and has the
+    calluses to prove it. Zinnia Hollow walks toward trouble other people walk away from, and doesn't
+    forget a wrong, and doesn't forgive one either.
+  appearance: A 40-year-old with masonry-worn hands and tired eyes.
+- id: d2_npc_016
+  district: 2
+  name: Nash Ashgrove
+  age: 18
+  job_id: d2_armorer
+  home_location_id: residential
+  traits:
+  - sharp-tongued
+  - shy
+  backstory: Nobody in Nash Ashgrove's family has ever left District Two; the masonry work runs in the
+    blood, generation after generation. Nash Ashgrove spends most days as an Armorer, putting in hours
+    at The Quarry like everyone else on the block. Nash Ashgrove has a tongue sharper than most peacekeepers'
+    patience, and goes quiet the moment a stranger's in the room.
+  appearance: Looks older than 18 -- District Two does that to people.
+- id: d2_npc_017
+  district: 2
+  name: Nash Drummond
+  age: 53
+  job_id: d2_quarrier
+  home_location_id: residential
+  traits:
+  - cautious
+  - kind
+  backstory: Nash Drummond was born and raised right here in District Two, loyal like most of the masonry
+    families around them. Nash Drummond spends most days as a Quarrier, putting in hours at The Quarry
+    like everyone else on the block. Nash Drummond weighs every decision twice before making it once,
+    and will give away a meal they can't spare without a second thought.
+  appearance: Looks older than 53 -- District Two does that to people.
+- id: d2_npc_018
+  district: 2
+  name: Ada Wilder
+  age: 41
+  job_id: d2_academy_trainer
+  home_location_id: residential
+  traits:
+  - paranoid
+  - proud
+  backstory: Ada Wilder grew up in District Two's back streets, the kind of masonry household where everyone
+    pitches in young. Ada Wilder spends most days as an Academy Trainer, putting in hours at The Academy
+    like everyone else on the block. Ada Wilder checks over their shoulder more than anyone should have
+    to, and won't ask for help even when they plainly need it.
+  appearance: 41 years old, lean and weathered from years of masonry work.
+- id: d2_npc_019
+  district: 2
+  name: Ines Pryce
+  age: 60
+  job_id: d2_academy_trainer
+  home_location_id: residential
+  traits:
+  - boastful
+  - humble
+  backstory: Ines Pryce's earliest memory is the smell of masonry work -- District Two doesn't let you
+    forget what feeds it. These days Ines Pryce works as an Academy Trainer at The Academy, and has the
+    calluses to prove it. Ines Pryce never tells a story without making themself the hero of it, and shrugs
+    off compliments like they don't quite fit.
+  appearance: 60 years old, lean and weathered from years of masonry work.
+- id: d2_npc_020
+  district: 2
+  name: Xiomara Blackwell
+  age: 28
+  job_id: d2_academy_trainer
+  home_location_id: residential
+  traits:
+  - lazy
+  - paranoid
+  backstory: Xiomara Blackwell's earliest memory is the smell of masonry work -- District Two doesn't
+    let you forget what feeds it. Xiomara Blackwell took up work as an Academy Trainer at The Academy
+    -- steady enough, if nothing to brag about. Xiomara Blackwell does exactly as much as gets by, and
+    not a step more, and checks over their shoulder more than anyone should have to.
+  appearance: A 28-year-old who still moves like someone half that age.
+- id: d2_npc_021
+  district: 2
+  name: Beatrix Pemberton
+  age: 32
+  job_id: d2_academy_trainer
+  home_location_id: residential
+  traits:
+  - cowardly
+  - patient
+  backstory: Beatrix Pemberton came up in a disciplined corner of District Two, one of the many faces
+    the masonry trade never seems to run short of. These days Beatrix Pemberton works as an Academy Trainer
+    at The Academy, and has the calluses to prove it. Beatrix Pemberton keeps to the back of any crowd,
+    just in case, and can outwait anyone, on anything.
+  appearance: A 32-year-old with masonry-worn hands and tired eyes.
+- id: d2_npc_022
+  district: 2
+  name: Greta Yarrow
+  age: 37
+  job_id: d2_quarrier
+  home_location_id: residential
+  traits:
+  - cautious
+  - cheerful
+  backstory: Greta Yarrow's earliest memory is the smell of masonry work -- District Two doesn't let you
+    forget what feeds it. These days Greta Yarrow works as a Quarrier at The Quarry, and has the calluses
+    to prove it. Greta Yarrow weighs every decision twice before making it once, and somehow keeps smiling
+    no matter how the week's gone.
+  appearance: A 37-year-old who still moves like someone half that age.
+- id: d2_npc_023
+  district: 2
+  name: Emrys Drummond
+  age: 33
+  job_id: d2_quarrier
+  home_location_id: residential
+  traits:
+  - gentle
+  - vengeful
+  backstory: Emrys Drummond's earliest memory is the smell of masonry work -- District Two doesn't let
+    you forget what feeds it. Emrys Drummond spends most days as a Quarrier, putting in hours at The Quarry
+    like everyone else on the block. Emrys Drummond handles even strangers like something breakable, and
+    doesn't forget a wrong, and doesn't forgive one either.
+  appearance: 33 years old, lean and weathered from years of masonry work.

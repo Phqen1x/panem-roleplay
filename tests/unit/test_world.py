@@ -15,6 +15,7 @@ from panem_shared.content.schemas import (
     Job,
     JobOption,
     Location,
+    NpcContent,
 )
 from panem_shared.content.traits import TRAITS_PER_NPC
 from panem_shared.db.models import DistrictState, Npc, NpcSchedule
@@ -52,13 +53,32 @@ def make_district(
     )
 
 
-def make_content(*districts: District, jobs: tuple[Job, ...] = ()) -> ContentBundle:
+def make_content(
+    *districts: District, jobs: tuple[Job, ...] = (), npcs: tuple[NpcContent, ...] = ()
+) -> ContentBundle:
     return ContentBundle(
         districts={d.id: d for d in districts},
         goods={},
         jobs={j.id: j for j in jobs},
         routes=[],
+        npcs={n.id: n for n in npcs},
     )
+
+
+def make_npc_content(**overrides: object) -> NpcContent:
+    defaults: dict[str, object] = dict(
+        id="authored_1",
+        district=1,
+        name="Authored One",
+        age=40,
+        job_id=None,
+        home_location_id="home",
+        traits=["kind", "brave"],
+        backstory="A hand-authored life story.",
+        appearance="Tall.",
+    )
+    defaults.update(overrides)
+    return NpcContent(**defaults)  # type: ignore[arg-type]
 
 
 def make_job(**overrides: object) -> Job:
@@ -282,6 +302,92 @@ class TestSeedNpcs:
 
         for weights in by_npc.values():
             assert weights.get("market") == pytest.approx(0.85)
+
+
+class TestSeedNpcsFromAuthoredContent:
+    async def test_seeds_exactly_the_authored_npcs_not_synthetic_ones(self, db_session):
+        npc = make_npc_content(id="d1_hero", district=1, name="Hero", home_location_id="home")
+        content = make_content(make_district(1), npcs=(npc,))
+
+        await world.seed_npcs(db_session, content, "test-seed")
+        await db_session.flush()
+
+        rows = (await db_session.execute(select(Npc))).scalars().all()
+        assert [row.id for row in rows] == ["d1_hero"]
+        assert rows[0].name == "Hero"
+
+    async def test_authored_npc_keeps_its_own_traits(self, db_session):
+        npc = make_npc_content(
+            id="d1_hero", district=1, home_location_id="home", traits=["witty", "shy"]
+        )
+        content = make_content(make_district(1), npcs=(npc,))
+
+        await world.seed_npcs(db_session, content, "test-seed")
+        await db_session.flush()
+
+        row = (await db_session.execute(select(Npc))).scalar_one()
+        assert row.traits == ["witty", "shy"]
+
+    async def test_authored_npc_gets_a_schedule_summing_to_one(self, db_session):
+        npc = make_npc_content(id="d1_hero", district=1, home_location_id="home")
+        content = make_content(make_district(1), npcs=(npc,))
+
+        await world.seed_npcs(db_session, content, "test-seed")
+        await db_session.flush()
+
+        rows = (
+            (await db_session.execute(select(NpcSchedule).where(NpcSchedule.npc_id == "d1_hero")))
+            .scalars()
+            .all()
+        )
+        sums: dict[str, float] = defaultdict(float)
+        for row in rows:
+            sums[row.phase] += row.weight
+        for phase, total in sums.items():
+            assert total == pytest.approx(1.0, abs=1e-6), f"{phase} summed to {total}"
+
+    async def test_authored_npc_with_shopkeeper_job_gets_float_target(self, db_session):
+        job = make_job(id="hob_trader", district=1, workplace="market")
+        npc = make_npc_content(
+            id="d1_hero", district=1, home_location_id="home", job_id="hob_trader"
+        )
+        content = make_content(make_district(1), jobs=(job,), npcs=(npc,))
+
+        await world.seed_npcs(db_session, content, "test-seed")
+        await db_session.flush()
+
+        row = (await db_session.execute(select(Npc))).scalar_one()
+        assert row.float_target == constants.SHOPKEEPER_FLOAT_TARGET
+
+    async def test_district_with_no_authored_content_still_uses_synthetic_fallback(
+        self, db_session
+    ):
+        other_district_npc = make_npc_content(id="d2_hero", district=2, home_location_id="home")
+        content = make_content(make_district(1), make_district(2), npcs=(other_district_npc,))
+
+        await world.seed_npcs(db_session, content, "test-seed")
+        await db_session.flush()
+
+        d1_count = len(
+            (await db_session.execute(select(Npc).where(Npc.district_id == 1))).scalars().all()
+        )
+        d2_rows = (
+            (await db_session.execute(select(Npc).where(Npc.district_id == 2))).scalars().all()
+        )
+        assert d1_count == constants.SYNTHETIC_NPCS_PER_DISTRICT
+        assert [row.id for row in d2_rows] == ["d2_hero"]
+
+    async def test_is_idempotent(self, db_session):
+        npc = make_npc_content(id="d1_hero", district=1, home_location_id="home")
+        content = make_content(make_district(1), npcs=(npc,))
+
+        await world.seed_npcs(db_session, content, "test-seed")
+        await db_session.flush()
+        await world.seed_npcs(db_session, content, "test-seed")
+        await db_session.flush()
+
+        rows = (await db_session.execute(select(Npc))).scalars().all()
+        assert len(rows) == 1
 
 
 class TestSeedWorld:

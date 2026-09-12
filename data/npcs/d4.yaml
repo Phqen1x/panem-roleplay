@@ -1,0 +1,322 @@
+- id: d4_npc_001
+  district: 4
+  name: Jory Drummond
+  age: 26
+  job_id: d4_clerk
+  home_location_id: residential
+  traits:
+  - cowardly
+  - lazy
+  backstory: Jory Drummond grew up in District Four's back streets, the kind of fish household where everyone
+    pitches in young. These days Jory Drummond works as a Clerk at Justice Building, and has the calluses
+    to prove it. Jory Drummond keeps to the back of any crowd, just in case, and does exactly as much
+    as gets by, and not a step more.
+  appearance: 26 years old, lean and weathered from years of fish work.
+- id: d4_npc_002
+  district: 4
+  name: Elin Thistledown
+  age: 31
+  job_id: d4_netcaster
+  home_location_id: residential
+  traits:
+  - kind
+  - patient
+  backstory: Elin Thistledown's earliest memory is the smell of fish work -- District Four doesn't let
+    you forget what feeds it. These days Elin Thistledown works as a Netcaster at The Docks, and has the
+    calluses to prove it. Elin Thistledown will give away a meal they can't spare without a second thought,
+    and can outwait anyone, on anything.
+  appearance: 31 years old, lean and weathered from years of fish work.
+- id: d4_npc_003
+  district: 4
+  name: Cass Juniper
+  age: 33
+  job_id: d4_smoker
+  home_location_id: residential
+  traits:
+  - stoic
+  - witty
+  backstory: Cass Juniper grew up in District Four's back streets, the kind of fish household where everyone
+    pitches in young. These days Cass Juniper works as a Fish Smoker at The Docks, and has the calluses
+    to prove it. Cass Juniper doesn't say much, and what little they do say tends to be the truth, and
+    has a line ready for every occasion, wanted or not.
+  appearance: A 33-year-old with fish-worn hands and tired eyes.
+- id: d4_npc_004
+  district: 4
+  name: Sable Oakes
+  age: 29
+  job_id: d4_smoker
+  home_location_id: residential
+  traits:
+  - cautious
+  - proud
+  backstory: Sable Oakes came up in a sun-worn corner of District Four, one of the many faces the fish
+    trade never seems to run short of. Sable Oakes spends most days as a Fish Smoker, putting in hours
+    at The Docks like everyone else on the block. Sable Oakes weighs every decision twice before making
+    it once, and won't ask for help even when they plainly need it.
+  appearance: A 29-year-old who still moves like someone half that age.
+- id: d4_npc_005
+  district: 4
+  name: Ines Nettle
+  age: 40
+  job_id: d4_netcaster
+  home_location_id: residential
+  traits:
+  - bitter
+  - cheerful
+  backstory: Ines Nettle was born and raised right here in District Four, independent like most of the
+    fish families around them. These days Ines Nettle works as a Netcaster at The Docks, and has the calluses
+    to prove it. Ines Nettle carries an old grudge like it happened yesterday, and somehow keeps smiling
+    no matter how the week's gone.
+  appearance: Looks older than 40 -- District Four does that to people.
+- id: d4_npc_006
+  district: 4
+  name: Nash Rowntree
+  age: 61
+  job_id: d4_netcaster
+  home_location_id: residential
+  traits:
+  - kind
+  - lazy
+  backstory: Nash Rowntree came up in a independent corner of District Four, one of the many faces the
+    fish trade never seems to run short of. These days Nash Rowntree works as a Netcaster at The Docks,
+    and has the calluses to prove it. Nash Rowntree will give away a meal they can't spare without a second
+    thought, and does exactly as much as gets by, and not a step more.
+  appearance: Looks older than 61 -- District Four does that to people.
+- id: d4_npc_007
+  district: 4
+  name: Noor Ashford
+  age: 55
+  job_id: d4_netcaster
+  home_location_id: residential
+  traits:
+  - gossipy
+  - reckless
+  backstory: Noor Ashford was born and raised right here in District Four, salty like most of the fish
+    families around them. Noor Ashford spends most days as a Netcaster, putting in hours at The Docks
+    like everyone else on the block. Noor Ashford knows everyone's business before they've finished telling
+    it, and takes chances that make their neighbors wince.
+  appearance: A 55-year-old with fish-worn hands and tired eyes.
+- id: d4_npc_008
+  district: 4
+  name: Xiomara Kestner
+  age: 44
+  job_id: d4_netcaster
+  home_location_id: residential
+  traits:
+  - bitter
+  - paranoid
+  backstory: Xiomara Kestner came up in a independent corner of District Four, one of the many faces the
+    fish trade never seems to run short of. Xiomara Kestner spends most days as a Netcaster, putting in
+    hours at The Docks like everyone else on the block. Xiomara Kestner carries an old grudge like it
+    happened yesterday, and checks over their shoulder more than anyone should have to.
+  appearance: Looks older than 44 -- District Four does that to people.
+- id: d4_npc_009
+  district: 4
+  name: Kellan Blackwell
+  age: 48
+  job_id: d4_smoker
+  home_location_id: residential
+  traits:
+  - cowardly
+  - reckless
+  backstory: Kellan Blackwell came up in a independent corner of District Four, one of the many faces
+    the fish trade never seems to run short of. These days Kellan Blackwell works as a Fish Smoker at
+    The Docks, and has the calluses to prove it. Kellan Blackwell keeps to the back of any crowd, just
+    in case, and takes chances that make their neighbors wince.
+  appearance: 48 years old, lean and weathered from years of fish work.
+- id: d4_npc_010
+  district: 4
+  name: Sable Loamfield
+  age: 35
+  job_id: d4_netcaster
+  home_location_id: residential
+  traits:
+  - ambitious
+  - lazy
+  backstory: Sable Loamfield grew up in District Four's back streets, the kind of fish household where
+    everyone pitches in young. These days Sable Loamfield works as a Netcaster at The Docks, and has the
+    calluses to prove it. Sable Loamfield is always angling for something better than this, and does exactly
+    as much as gets by, and not a step more.
+  appearance: A 35-year-old who still moves like someone half that age.
+- id: d4_npc_011
+  district: 4
+  name: Lyra Briarwood
+  age: 19
+  job_id: d4_clerk
+  home_location_id: residential
+  traits:
+  - lazy
+  - witty
+  backstory: Lyra Briarwood grew up in District Four's back streets, the kind of fish household where
+    everyone pitches in young. These days Lyra Briarwood works as a Clerk at Justice Building, and has
+    the calluses to prove it. Lyra Briarwood does exactly as much as gets by, and not a step more, and
+    has a line ready for every occasion, wanted or not.
+  appearance: A 19-year-old with fish-worn hands and tired eyes.
+- id: d4_npc_012
+  district: 4
+  name: Kellan Osgood
+  age: 62
+  job_id: d4_netcaster
+  home_location_id: residential
+  traits:
+  - paranoid
+  - witty
+  backstory: Nobody in Kellan Osgood's family has ever left District Four; the fish work runs in the blood,
+    generation after generation. These days Kellan Osgood works as a Netcaster at The Docks, and has the
+    calluses to prove it. Kellan Osgood checks over their shoulder more than anyone should have to, and
+    has a line ready for every occasion, wanted or not.
+  appearance: A 62-year-old with fish-worn hands and tired eyes.
+- id: d4_npc_013
+  district: 4
+  name: Emrys Nettle
+  age: 64
+  job_id: d4_netcaster
+  home_location_id: residential
+  traits:
+  - boastful
+  - paranoid
+  backstory: Emrys Nettle grew up in District Four's back streets, the kind of fish household where everyone
+    pitches in young. Emrys Nettle took up work as a Netcaster at The Docks -- steady enough, if nothing
+    to brag about. Emrys Nettle never tells a story without making themself the hero of it, and checks
+    over their shoulder more than anyone should have to.
+  appearance: A 64-year-old who still moves like someone half that age.
+- id: d4_npc_014
+  district: 4
+  name: Wren Underhill
+  age: 56
+  job_id: d4_netcaster
+  home_location_id: residential
+  traits:
+  - gossipy
+  - reckless
+  backstory: Wren Underhill grew up in District Four's back streets, the kind of fish household where
+    everyone pitches in young. Wren Underhill spends most days as a Netcaster, putting in hours at The
+    Docks like everyone else on the block. Wren Underhill knows everyone's business before they've finished
+    telling it, and takes chances that make their neighbors wince.
+  appearance: A 56-year-old who still moves like someone half that age.
+- id: d4_npc_015
+  district: 4
+  name: Dara Wilder
+  age: 52
+  job_id: d4_smoker
+  home_location_id: residential
+  traits:
+  - sharp-tongued
+  - witty
+  backstory: Nobody in Dara Wilder's family has ever left District Four; the fish work runs in the blood,
+    generation after generation. Dara Wilder spends most days as a Fish Smoker, putting in hours at The
+    Docks like everyone else on the block. Dara Wilder has a tongue sharper than most peacekeepers' patience,
+    and has a line ready for every occasion, wanted or not.
+  appearance: A 52-year-old who still moves like someone half that age.
+- id: d4_npc_016
+  district: 4
+  name: Ivo Ironside
+  age: 43
+  job_id: d4_clerk
+  home_location_id: residential
+  traits:
+  - patient
+  - reckless
+  backstory: Ivo Ironside grew up in District Four's back streets, the kind of fish household where everyone
+    pitches in young. These days Ivo Ironside works as a Clerk at Justice Building, and has the calluses
+    to prove it. Ivo Ironside can outwait anyone, on anything, and takes chances that make their neighbors
+    wince.
+  appearance: A 43-year-old who still moves like someone half that age.
+- id: d4_npc_017
+  district: 4
+  name: Cass Fenwick
+  age: 55
+  job_id: d4_netcaster
+  home_location_id: residential
+  traits:
+  - bitter
+  - shy
+  backstory: Cass Fenwick grew up in District Four's back streets, the kind of fish household where everyone
+    pitches in young. Cass Fenwick took up work as a Netcaster at The Docks -- steady enough, if nothing
+    to brag about. Cass Fenwick carries an old grudge like it happened yesterday, and goes quiet the moment
+    a stranger's in the room.
+  appearance: Looks older than 55 -- District Four does that to people.
+- id: d4_npc_018
+  district: 4
+  name: Rosalind Blackwell
+  age: 36
+  job_id: d4_netcaster
+  home_location_id: residential
+  traits:
+  - kind
+  - witty
+  backstory: Nobody in Rosalind Blackwell's family has ever left District Four; the fish work runs in
+    the blood, generation after generation. These days Rosalind Blackwell works as a Netcaster at The
+    Docks, and has the calluses to prove it. Rosalind Blackwell will give away a meal they can't spare
+    without a second thought, and has a line ready for every occasion, wanted or not.
+  appearance: Looks older than 36 -- District Four does that to people.
+- id: d4_npc_019
+  district: 4
+  name: Greta Larke
+  age: 25
+  job_id: d4_netcaster
+  home_location_id: residential
+  traits:
+  - reckless
+  - vengeful
+  backstory: Greta Larke was born and raised right here in District Four, independent like most of the
+    fish families around them. Greta Larke spends most days as a Netcaster, putting in hours at The Docks
+    like everyone else on the block. Greta Larke takes chances that make their neighbors wince, and doesn't
+    forget a wrong, and doesn't forgive one either.
+  appearance: Looks older than 25 -- District Four does that to people.
+- id: d4_npc_020
+  district: 4
+  name: Fenn Yarrow
+  age: 39
+  job_id: d4_smoker
+  home_location_id: residential
+  traits:
+  - cautious
+  - suspicious
+  backstory: Fenn Yarrow grew up in District Four's back streets, the kind of fish household where everyone
+    pitches in young. These days Fenn Yarrow works as a Fish Smoker at The Docks, and has the calluses
+    to prove it. Fenn Yarrow weighs every decision twice before making it once, and trusts almost no one,
+    and says so plainly.
+  appearance: A 39-year-old with fish-worn hands and tired eyes.
+- id: d4_npc_021
+  district: 4
+  name: Ines Fenwick
+  age: 44
+  job_id: d4_netcaster
+  home_location_id: residential
+  traits:
+  - brave
+  - cheerful
+  backstory: Ines Fenwick grew up in District Four's back streets, the kind of fish household where everyone
+    pitches in young. Ines Fenwick spends most days as a Netcaster, putting in hours at The Docks like
+    everyone else on the block. Ines Fenwick walks toward trouble other people walk away from, and somehow
+    keeps smiling no matter how the week's gone.
+  appearance: A 44-year-old with fish-worn hands and tired eyes.
+- id: d4_npc_022
+  district: 4
+  name: Arlo Sedgwick
+  age: 21
+  job_id: d4_netcaster
+  home_location_id: residential
+  traits:
+  - humble
+  - vengeful
+  backstory: Arlo Sedgwick grew up in District Four's back streets, the kind of fish household where everyone
+    pitches in young. Arlo Sedgwick took up work as a Netcaster at The Docks -- steady enough, if nothing
+    to brag about. Arlo Sedgwick shrugs off compliments like they don't quite fit, and doesn't forget
+    a wrong, and doesn't forgive one either.
+  appearance: A 21-year-old who still moves like someone half that age.
+- id: d4_npc_023
+  district: 4
+  name: Briar Oakes
+  age: 54
+  job_id: d4_netcaster
+  home_location_id: residential
+  traits:
+  - cheerful
+  - gossipy
+  backstory: Briar Oakes was born and raised right here in District Four, independent like most of the
+    fish families around them. Briar Oakes spends most days as a Netcaster, putting in hours at The Docks
+    like everyone else on the block. Briar Oakes somehow keeps smiling no matter how the week's gone,
+    and knows everyone's business before they've finished telling it.
+  appearance: A 54-year-old with fish-worn hands and tired eyes.

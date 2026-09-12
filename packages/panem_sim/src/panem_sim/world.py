@@ -5,16 +5,14 @@ Seeding is idempotent and per-district: a district already holding
 `district_state`/`npcs` rows is left untouched, so re-running this against
 a world that's already been ticking is always safe.
 
-No real NPC content exists yet (`data/npcs/*.yaml` -- traits, speech,
-relationships, backstory -- is Phase 3 content, per the Plan's own §11
-authoring table and `scripts/npc_generate.py`'s docstring). Phase 1/2's
-movement, needs, jobs, and shopkeeper mechanics need NPC bodies with a
-name and (mostly) a job -- both cheap to synthesize from a name pool and
-each district's own job list -- so residents read naturally in narration
-and `/resident`, and the job-shift systems have something to act on. This
-still stops well short of Phase 3: no traits/speech/dialogue/personality,
-just identity. The `Npc` table already has every column Phase 3 needs;
-nothing here blocks it.
+`data/npcs/*.yaml` (real, authored NPC content -- name, age, job,
+traits, backstory; see `panem_shared.content.schemas.NpcContent` and
+`scripts/npc_generate.py`) is optional per district: `seed_npcs` prefers
+it when present (`_seed_authored_npcs`), and falls back to a fully
+synthetic population (`_seed_synthetic_npcs`) for any district with none
+-- so a fresh checkout with an empty `data/npcs/` directory still boots a
+complete, playable world, and authoring content for one district at a
+time never blocks the rest.
 """
 
 from __future__ import annotations
@@ -28,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from panem_shared import constants
 from panem_shared.content.loader import ContentBundle, load_content
 from panem_shared.content.names import sample_names
-from panem_shared.content.schemas import District, Job, Location
+from panem_shared.content.schemas import District, Job, Location, NpcContent
 from panem_shared.content.traits import sample_traits, speech_tone
 from panem_shared.db.models import DistrictState, Npc, NpcSchedule
 from panem_shared.enums import DayPhase, LocationKind
@@ -119,6 +117,92 @@ def _home_location(district: District, rng: random.Random) -> Location:
     return rng.choice(pool)
 
 
+def _add_npc_with_schedule(
+    session: AsyncSession,
+    district: District,
+    *,
+    npc_id: str,
+    name: str,
+    age: int,
+    job_id: str | None,
+    job: Job | None,
+    home_location_id: str,
+    traits: list[str],
+) -> None:
+    npc = Npc(
+        id=npc_id,
+        district_id=district.id,
+        name=name,
+        age=age,
+        job_id=job_id,
+        home_location_id=home_location_id,
+        location_id=home_location_id,
+        float_target=(
+            constants.SHOPKEEPER_FLOAT_TARGET
+            if job is not None and is_shopkeeper_job(job, district)
+            else 0.0
+        ),
+        traits=traits,
+        speech_style={"tone": speech_tone(traits)},
+    )
+    session.add(npc)
+
+    schedule = _schedule_for_npc(district, home_location_id, job)
+    for phase, weights in schedule.items():
+        for loc_id, weight in weights.items():
+            session.add(
+                NpcSchedule(npc_id=npc_id, phase=phase.value, location_id=loc_id, weight=weight)
+            )
+
+
+def _seed_authored_npcs(
+    session: AsyncSession, content: ContentBundle, district: District, authored: list[NpcContent]
+) -> None:
+    """Real, content-authored residents (`data/npcs/*.yaml`, either
+    hand-edited or written by `scripts/npc_generate.py`) -- preferred
+    over `_seed_synthetic_npcs` whenever a district has any."""
+    for entry in authored:
+        job = content.jobs.get(entry.job_id) if entry.job_id else None
+        _add_npc_with_schedule(
+            session,
+            district,
+            npc_id=entry.id,
+            name=entry.name,
+            age=entry.age,
+            job_id=entry.job_id,
+            job=job,
+            home_location_id=entry.home_location_id,
+            traits=entry.traits,
+        )
+
+
+def _seed_synthetic_npcs(
+    session: AsyncSession, content: ContentBundle, district: District, world_seed: str
+) -> None:
+    """The fully-synthetic fallback (see this module's docstring) for any
+    district with no authored `data/npcs/*.yaml` content yet."""
+    rng = seed_rng(world_seed, f"npcs:{district.id}")
+    district_jobs = [job for job in content.jobs.values() if job.district == district.id]
+    names = sample_names(rng, constants.SYNTHETIC_NPCS_PER_DISTRICT)
+    for n in range(1, constants.SYNTHETIC_NPCS_PER_DISTRICT + 1):
+        home = _home_location(district, rng)
+        age = rng.randint(18, 65)
+        job_id = _assign_job(rng, district_jobs)
+        job = next((j for j in district_jobs if j.id == job_id), None)
+        traits = sample_traits(rng)
+        _add_npc_with_schedule(
+            session,
+            district,
+            npc_id=f"d{district.id}_npc_{n:03d}",
+            name=names[n - 1],
+            age=age,
+            job_id=job_id,
+            job=job,
+            home_location_id=home.id,
+            traits=traits,
+        )
+
+
 async def seed_npcs(session: AsyncSession, content: ContentBundle, world_seed: str) -> None:
     existing_districts = set(
         (await session.execute(select(Npc.district_id).distinct())).scalars().all()
@@ -126,42 +210,11 @@ async def seed_npcs(session: AsyncSession, content: ContentBundle, world_seed: s
     for district in content.districts.values():
         if district.id in existing_districts:
             continue
-        rng = seed_rng(world_seed, f"npcs:{district.id}")
-        district_jobs = [job for job in content.jobs.values() if job.district == district.id]
-        names = sample_names(rng, constants.SYNTHETIC_NPCS_PER_DISTRICT)
-        for n in range(1, constants.SYNTHETIC_NPCS_PER_DISTRICT + 1):
-            npc_id = f"d{district.id}_npc_{n:03d}"
-            home = _home_location(district, rng)
-            age = rng.randint(18, 65)
-            job_id = _assign_job(rng, district_jobs)
-            job = next((j for j in district_jobs if j.id == job_id), None)
-            traits = sample_traits(rng)
-            npc = Npc(
-                id=npc_id,
-                district_id=district.id,
-                name=names[n - 1],
-                age=age,
-                job_id=job_id,
-                home_location_id=home.id,
-                location_id=home.id,
-                float_target=(
-                    constants.SHOPKEEPER_FLOAT_TARGET
-                    if job is not None and is_shopkeeper_job(job, district)
-                    else 0.0
-                ),
-                traits=traits,
-                speech_style={"tone": speech_tone(traits)},
-            )
-            session.add(npc)
-
-            schedule = _schedule_for_npc(district, home.id, job)
-            for phase, weights in schedule.items():
-                for loc_id, weight in weights.items():
-                    session.add(
-                        NpcSchedule(
-                            npc_id=npc_id, phase=phase.value, location_id=loc_id, weight=weight
-                        )
-                    )
+        authored = content.npcs_for_district(district.id)
+        if authored:
+            _seed_authored_npcs(session, content, district, authored)
+        else:
+            _seed_synthetic_npcs(session, content, district, world_seed)
 
 
 async def seed_world(session: AsyncSession, content: ContentBundle, world_seed: str) -> None:

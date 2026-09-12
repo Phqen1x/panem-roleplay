@@ -1,0 +1,322 @@
+- id: d9_npc_001
+  district: 9
+  name: Emrys Pryce
+  age: 39
+  job_id: d9_miller
+  home_location_id: residential
+  traits:
+  - lazy
+  - suspicious
+  backstory: Nobody in Emrys Pryce's family has ever left District Nine; the grain work runs in the blood,
+    generation after generation. Emrys Pryce took up work as a Miller at The Granary -- steady enough,
+    if nothing to brag about. Emrys Pryce does exactly as much as gets by, and not a step more, and trusts
+    almost no one, and says so plainly.
+  appearance: Looks older than 39 -- District Nine does that to people.
+- id: d9_npc_002
+  district: 9
+  name: Ivo Underhill
+  age: 63
+  job_id: d9_thresher
+  home_location_id: residential
+  traits:
+  - bitter
+  - hot-tempered
+  backstory: Ivo Underhill came up in a dusty corner of District Nine, one of the many faces the grain
+    trade never seems to run short of. These days Ivo Underhill works as a Thresher at The Granary, and
+    has the calluses to prove it. Ivo Underhill carries an old grudge like it happened yesterday, and
+    has a short fuse that's gotten them in trouble more than once.
+  appearance: A 63-year-old with grain-worn hands and tired eyes.
+- id: d9_npc_003
+  district: 9
+  name: Halcyon Kestner
+  age: 57
+  job_id: d9_thresher
+  home_location_id: residential
+  traits:
+  - kind
+  - reckless
+  backstory: Halcyon Kestner came up in a dusty corner of District Nine, one of the many faces the grain
+    trade never seems to run short of. These days Halcyon Kestner works as a Thresher at The Granary,
+    and has the calluses to prove it. Halcyon Kestner will give away a meal they can't spare without a
+    second thought, and takes chances that make their neighbors wince.
+  appearance: 57 years old, lean and weathered from years of grain work.
+- id: d9_npc_004
+  district: 9
+  name: Rosalind Fenwick
+  age: 29
+  job_id: d9_thresher
+  home_location_id: residential
+  traits:
+  - kind
+  - shy
+  backstory: Rosalind Fenwick's earliest memory is the smell of grain work -- District Nine doesn't let
+    you forget what feeds it. Rosalind Fenwick spends most days as a Thresher, putting in hours at The
+    Granary like everyone else on the block. Rosalind Fenwick will give away a meal they can't spare without
+    a second thought, and goes quiet the moment a stranger's in the room.
+  appearance: A 29-year-old with grain-worn hands and tired eyes.
+- id: d9_npc_005
+  district: 9
+  name: Delphine Rowntree
+  age: 25
+  job_id: d9_thresher
+  home_location_id: residential
+  traits:
+  - cautious
+  - witty
+  backstory: Nobody in Delphine Rowntree's family has ever left District Nine; the grain work runs in
+    the blood, generation after generation. Delphine Rowntree took up work as a Thresher at The Granary
+    -- steady enough, if nothing to brag about. Delphine Rowntree weighs every decision twice before making
+    it once, and has a line ready for every occasion, wanted or not.
+  appearance: A 25-year-old who still moves like someone half that age.
+- id: d9_npc_006
+  district: 9
+  name: Emrys Elmhurst
+  age: 35
+  job_id: d9_thresher
+  home_location_id: residential
+  traits:
+  - proud
+  - stoic
+  backstory: Emrys Elmhurst was born and raised right here in District Nine, practical like most of the
+    grain families around them. Emrys Elmhurst took up work as a Thresher at The Granary -- steady enough,
+    if nothing to brag about. Emrys Elmhurst won't ask for help even when they plainly need it, and doesn't
+    say much, and what little they do say tends to be the truth.
+  appearance: A 35-year-old who still moves like someone half that age.
+- id: d9_npc_007
+  district: 9
+  name: Zinnia Graystone
+  age: 51
+  job_id: d9_thresher
+  home_location_id: residential
+  traits:
+  - gossipy
+  - vengeful
+  backstory: Zinnia Graystone's earliest memory is the smell of grain work -- District Nine doesn't let
+    you forget what feeds it. Zinnia Graystone spends most days as a Thresher, putting in hours at The
+    Granary like everyone else on the block. Zinnia Graystone knows everyone's business before they've
+    finished telling it, and doesn't forget a wrong, and doesn't forgive one either.
+  appearance: A 51-year-old with grain-worn hands and tired eyes.
+- id: d9_npc_008
+  district: 9
+  name: Ursa Drummond
+  age: 61
+  job_id: d9_thresher
+  home_location_id: residential
+  traits:
+  - ambitious
+  - vengeful
+  backstory: Ursa Drummond grew up in District Nine's back streets, the kind of grain household where
+    everyone pitches in young. Ursa Drummond took up work as a Thresher at The Granary -- steady enough,
+    if nothing to brag about. Ursa Drummond is always angling for something better than this, and doesn't
+    forget a wrong, and doesn't forgive one either.
+  appearance: A 61-year-old who still moves like someone half that age.
+- id: d9_npc_009
+  district: 9
+  name: Odalys Quarrie
+  age: 58
+  job_id: d9_miller
+  home_location_id: residential
+  traits:
+  - boastful
+  - gossipy
+  backstory: Odalys Quarrie was born and raised right here in District Nine, practical like most of the
+    grain families around them. Odalys Quarrie took up work as a Miller at The Granary -- steady enough,
+    if nothing to brag about. Odalys Quarrie never tells a story without making themself the hero of it,
+    and knows everyone's business before they've finished telling it.
+  appearance: A 58-year-old who still moves like someone half that age.
+- id: d9_npc_010
+  district: 9
+  name: Quill Pryce
+  age: 23
+  job_id: d9_clerk
+  home_location_id: residential
+  traits:
+  - loyal
+  - witty
+  backstory: Quill Pryce grew up in District Nine's back streets, the kind of grain household where everyone
+    pitches in young. These days Quill Pryce works as a Clerk at Justice Building, and has the calluses
+    to prove it. Quill Pryce would stand by a friend even when it costs them, and has a line ready for
+    every occasion, wanted or not.
+  appearance: A 23-year-old who still moves like someone half that age.
+- id: d9_npc_011
+  district: 9
+  name: Xiomara Graystone
+  age: 32
+  job_id: d9_thresher
+  home_location_id: residential
+  traits:
+  - kind
+  - lazy
+  backstory: Xiomara Graystone was born and raised right here in District Nine, dusty like most of the
+    grain families around them. Xiomara Graystone took up work as a Thresher at The Granary -- steady
+    enough, if nothing to brag about. Xiomara Graystone will give away a meal they can't spare without
+    a second thought, and does exactly as much as gets by, and not a step more.
+  appearance: 32 years old, lean and weathered from years of grain work.
+- id: d9_npc_012
+  district: 9
+  name: Hollis Ivorine
+  age: 63
+  job_id: d9_thresher
+  home_location_id: residential
+  traits:
+  - cheerful
+  - cowardly
+  backstory: Hollis Ivorine's earliest memory is the smell of grain work -- District Nine doesn't let
+    you forget what feeds it. These days Hollis Ivorine works as a Thresher at The Granary, and has the
+    calluses to prove it. Hollis Ivorine somehow keeps smiling no matter how the week's gone, and keeps
+    to the back of any crowd, just in case.
+  appearance: 63 years old, lean and weathered from years of grain work.
+- id: d9_npc_013
+  district: 9
+  name: Merrick Nettle
+  age: 38
+  job_id: d9_thresher
+  home_location_id: residential
+  traits:
+  - loyal
+  - vengeful
+  backstory: Merrick Nettle's earliest memory is the smell of grain work -- District Nine doesn't let
+    you forget what feeds it. Merrick Nettle took up work as a Thresher at The Granary -- steady enough,
+    if nothing to brag about. Merrick Nettle would stand by a friend even when it costs them, and doesn't
+    forget a wrong, and doesn't forgive one either.
+  appearance: Looks older than 38 -- District Nine does that to people.
+- id: d9_npc_014
+  district: 9
+  name: Greta Ironside
+  age: 50
+  job_id: d9_miller
+  home_location_id: residential
+  traits:
+  - sharp-tongued
+  - stoic
+  backstory: Greta Ironside's earliest memory is the smell of grain work -- District Nine doesn't let
+    you forget what feeds it. These days Greta Ironside works as a Miller at The Granary, and has the
+    calluses to prove it. Greta Ironside has a tongue sharper than most peacekeepers' patience, and doesn't
+    say much, and what little they do say tends to be the truth.
+  appearance: Looks older than 50 -- District Nine does that to people.
+- id: d9_npc_015
+  district: 9
+  name: Petra Blackwell
+  age: 19
+  job_id: d9_miller
+  home_location_id: residential
+  traits:
+  - bitter
+  - reckless
+  backstory: Petra Blackwell was born and raised right here in District Nine, practical like most of the
+    grain families around them. These days Petra Blackwell works as a Miller at The Granary, and has the
+    calluses to prove it. Petra Blackwell carries an old grudge like it happened yesterday, and takes
+    chances that make their neighbors wince.
+  appearance: A 19-year-old with grain-worn hands and tired eyes.
+- id: d9_npc_016
+  district: 9
+  name: Ada Hollow
+  age: 44
+  job_id: d9_thresher
+  home_location_id: residential
+  traits:
+  - boastful
+  - patient
+  backstory: Ada Hollow's earliest memory is the smell of grain work -- District Nine doesn't let you
+    forget what feeds it. These days Ada Hollow works as a Thresher at The Granary, and has the calluses
+    to prove it. Ada Hollow never tells a story without making themself the hero of it, and can outwait
+    anyone, on anything.
+  appearance: A 44-year-old with grain-worn hands and tired eyes.
+- id: d9_npc_017
+  district: 9
+  name: Sable Mossgrove
+  age: 29
+  job_id: d9_thresher
+  home_location_id: residential
+  traits:
+  - bitter
+  - boastful
+  backstory: Sable Mossgrove's earliest memory is the smell of grain work -- District Nine doesn't let
+    you forget what feeds it. Sable Mossgrove took up work as a Thresher at The Granary -- steady enough,
+    if nothing to brag about. Sable Mossgrove carries an old grudge like it happened yesterday, and never
+    tells a story without making themself the hero of it.
+  appearance: 29 years old, lean and weathered from years of grain work.
+- id: d9_npc_018
+  district: 9
+  name: Vesper Ivorine
+  age: 57
+  job_id: d9_miller
+  home_location_id: residential
+  traits:
+  - cautious
+  - stoic
+  backstory: Vesper Ivorine came up in a dusty corner of District Nine, one of the many faces the grain
+    trade never seems to run short of. Vesper Ivorine spends most days as a Miller, putting in hours at
+    The Granary like everyone else on the block. Vesper Ivorine weighs every decision twice before making
+    it once, and doesn't say much, and what little they do say tends to be the truth.
+  appearance: A 57-year-old with grain-worn hands and tired eyes.
+- id: d9_npc_019
+  district: 9
+  name: Rosalind Drummond
+  age: 47
+  job_id: d9_miller
+  home_location_id: residential
+  traits:
+  - proud
+  - reckless
+  backstory: Nobody in Rosalind Drummond's family has ever left District Nine; the grain work runs in
+    the blood, generation after generation. Rosalind Drummond took up work as a Miller at The Granary
+    -- steady enough, if nothing to brag about. Rosalind Drummond won't ask for help even when they plainly
+    need it, and takes chances that make their neighbors wince.
+  appearance: A 47-year-old who still moves like someone half that age.
+- id: d9_npc_020
+  district: 9
+  name: Zinnia Elmhurst
+  age: 47
+  job_id: d9_thresher
+  home_location_id: residential
+  traits:
+  - brave
+  - shy
+  backstory: Nobody in Zinnia Elmhurst's family has ever left District Nine; the grain work runs in the
+    blood, generation after generation. These days Zinnia Elmhurst works as a Thresher at The Granary,
+    and has the calluses to prove it. Zinnia Elmhurst walks toward trouble other people walk away from,
+    and goes quiet the moment a stranger's in the room.
+  appearance: 47 years old, lean and weathered from years of grain work.
+- id: d9_npc_021
+  district: 9
+  name: Greta Everhart
+  age: 54
+  job_id: d9_thresher
+  home_location_id: residential
+  traits:
+  - lazy
+  - proud
+  backstory: Greta Everhart grew up in District Nine's back streets, the kind of grain household where
+    everyone pitches in young. Greta Everhart took up work as a Thresher at The Granary -- steady enough,
+    if nothing to brag about. Greta Everhart does exactly as much as gets by, and not a step more, and
+    won't ask for help even when they plainly need it.
+  appearance: A 54-year-old who still moves like someone half that age.
+- id: d9_npc_022
+  district: 9
+  name: Ines Dunmore
+  age: 26
+  job_id: d9_thresher
+  home_location_id: residential
+  traits:
+  - paranoid
+  - stoic
+  backstory: Nobody in Ines Dunmore's family has ever left District Nine; the grain work runs in the blood,
+    generation after generation. These days Ines Dunmore works as a Thresher at The Granary, and has the
+    calluses to prove it. Ines Dunmore checks over their shoulder more than anyone should have to, and
+    doesn't say much, and what little they do say tends to be the truth.
+  appearance: A 26-year-old with grain-worn hands and tired eyes.
+- id: d9_npc_023
+  district: 9
+  name: Tobias Hargrove
+  age: 62
+  job_id: d9_thresher
+  home_location_id: residential
+  traits:
+  - cautious
+  - witty
+  backstory: Tobias Hargrove's earliest memory is the smell of grain work -- District Nine doesn't let
+    you forget what feeds it. Tobias Hargrove took up work as a Thresher at The Granary -- steady enough,
+    if nothing to brag about. Tobias Hargrove weighs every decision twice before making it once, and has
+    a line ready for every occasion, wanted or not.
+  appearance: A 62-year-old who still moves like someone half that age.

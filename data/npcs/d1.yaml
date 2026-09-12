@@ -1,0 +1,322 @@
+- id: d1_npc_001
+  district: 1
+  name: Zinnia Grimshaw
+  age: 36
+  job_id: d1_jeweler
+  home_location_id: residential
+  traits:
+  - cheerful
+  - stoic
+  backstory: Nobody in Zinnia Grimshaw's family has ever left District One; the luxury goods work runs
+    in the blood, generation after generation. Zinnia Grimshaw took up work as a Jeweler at The Jewelers'
+    Workshop -- steady enough, if nothing to brag about. Zinnia Grimshaw somehow keeps smiling no matter
+    how the week's gone, and doesn't say much, and what little they do say tends to be the truth.
+  appearance: A 36-year-old who still moves like someone half that age.
+- id: d1_npc_002
+  district: 1
+  name: Lyra Hollow
+  age: 31
+  job_id: d1_clerk
+  home_location_id: residential
+  traits:
+  - cowardly
+  - reckless
+  backstory: Lyra Hollow's earliest memory is the smell of luxury goods work -- District One doesn't let
+    you forget what feeds it. Lyra Hollow spends most days as a Clerk, putting in hours at Justice Building
+    like everyone else on the block. Lyra Hollow keeps to the back of any crowd, just in case, and takes
+    chances that make their neighbors wince.
+  appearance: A 31-year-old who still moves like someone half that age.
+- id: d1_npc_003
+  district: 1
+  name: Ines Mossgrove
+  age: 62
+  job_id: d1_jeweler
+  home_location_id: residential
+  traits:
+  - ambitious
+  - shy
+  backstory: Nobody in Ines Mossgrove's family has ever left District One; the luxury goods work runs
+    in the blood, generation after generation. Ines Mossgrove spends most days as a Jeweler, putting in
+    hours at The Jewelers' Workshop like everyone else on the block. Ines Mossgrove is always angling
+    for something better than this, and goes quiet the moment a stranger's in the room.
+  appearance: A 62-year-old who still moves like someone half that age.
+- id: d1_npc_004
+  district: 1
+  name: Zinnia Quarrie
+  age: 44
+  job_id: d1_jeweler
+  home_location_id: residential
+  traits:
+  - brave
+  - gossipy
+  backstory: Nobody in Zinnia Quarrie's family has ever left District One; the luxury goods work runs
+    in the blood, generation after generation. These days Zinnia Quarrie works as a Jeweler at The Jewelers'
+    Workshop, and has the calluses to prove it. Zinnia Quarrie walks toward trouble other people walk
+    away from, and knows everyone's business before they've finished telling it.
+  appearance: A 44-year-old who still moves like someone half that age.
+- id: d1_npc_005
+  district: 1
+  name: Sable Vane
+  age: 40
+  job_id: d1_polisher
+  home_location_id: residential
+  traits:
+  - cautious
+  - loyal
+  backstory: Sable Vane grew up in District One's back streets, the kind of luxury goods household where
+    everyone pitches in young. Sable Vane took up work as a Polisher at The Jewelers' Workshop -- steady
+    enough, if nothing to brag about. Sable Vane weighs every decision twice before making it once, and
+    would stand by a friend even when it costs them.
+  appearance: A 40-year-old who still moves like someone half that age.
+- id: d1_npc_006
+  district: 1
+  name: Nash Mossgrove
+  age: 60
+  job_id: d1_jeweler
+  home_location_id: residential
+  traits:
+  - lazy
+  - shy
+  backstory: Nobody in Nash Mossgrove's family has ever left District One; the luxury goods work runs
+    in the blood, generation after generation. Nash Mossgrove spends most days as a Jeweler, putting in
+    hours at The Jewelers' Workshop like everyone else on the block. Nash Mossgrove does exactly as much
+    as gets by, and not a step more, and goes quiet the moment a stranger's in the room.
+  appearance: A 60-year-old with luxury goods-worn hands and tired eyes.
+- id: d1_npc_007
+  district: 1
+  name: Ada Fenwick
+  age: 46
+  job_id: d1_jeweler
+  home_location_id: residential
+  traits:
+  - ambitious
+  - witty
+  backstory: Ada Fenwick came up in a proud corner of District One, one of the many faces the luxury goods
+    trade never seems to run short of. Ada Fenwick took up work as a Jeweler at The Jewelers' Workshop
+    -- steady enough, if nothing to brag about. Ada Fenwick is always angling for something better than
+    this, and has a line ready for every occasion, wanted or not.
+  appearance: A 46-year-old who still moves like someone half that age.
+- id: d1_npc_008
+  district: 1
+  name: Delphine Kestner
+  age: 38
+  job_id: d1_polisher
+  home_location_id: residential
+  traits:
+  - bitter
+  - loyal
+  backstory: Delphine Kestner grew up in District One's back streets, the kind of luxury goods household
+    where everyone pitches in young. Delphine Kestner took up work as a Polisher at The Jewelers' Workshop
+    -- steady enough, if nothing to brag about. Delphine Kestner carries an old grudge like it happened
+    yesterday, and would stand by a friend even when it costs them.
+  appearance: A 38-year-old who still moves like someone half that age.
+- id: d1_npc_009
+  district: 1
+  name: Junia Blackwell
+  age: 21
+  job_id: d1_academy_trainer
+  home_location_id: residential
+  traits:
+  - bitter
+  - loyal
+  backstory: Junia Blackwell's earliest memory is the smell of luxury goods work -- District One doesn't
+    let you forget what feeds it. Junia Blackwell spends most days as an Academy Trainer, putting in hours
+    at The Academy like everyone else on the block. Junia Blackwell carries an old grudge like it happened
+    yesterday, and would stand by a friend even when it costs them.
+  appearance: 21 years old, lean and weathered from years of luxury goods work.
+- id: d1_npc_010
+  district: 1
+  name: Petra Larke
+  age: 19
+  job_id: d1_polisher
+  home_location_id: residential
+  traits:
+  - ambitious
+  - cautious
+  backstory: Nobody in Petra Larke's family has ever left District One; the luxury goods work runs in
+    the blood, generation after generation. Petra Larke took up work as a Polisher at The Jewelers' Workshop
+    -- steady enough, if nothing to brag about. Petra Larke is always angling for something better than
+    this, and weighs every decision twice before making it once.
+  appearance: A 19-year-old with luxury goods-worn hands and tired eyes.
+- id: d1_npc_011
+  district: 1
+  name: Wren Larke
+  age: 50
+  job_id: d1_jeweler
+  home_location_id: residential
+  traits:
+  - gossipy
+  - kind
+  backstory: Wren Larke's earliest memory is the smell of luxury goods work -- District One doesn't let
+    you forget what feeds it. Wren Larke spends most days as a Jeweler, putting in hours at The Jewelers'
+    Workshop like everyone else on the block. Wren Larke knows everyone's business before they've finished
+    telling it, and will give away a meal they can't spare without a second thought.
+  appearance: A 50-year-old with luxury goods-worn hands and tired eyes.
+- id: d1_npc_012
+  district: 1
+  name: Xiomara Kestner
+  age: 24
+  job_id: d1_jeweler
+  home_location_id: residential
+  traits:
+  - brave
+  - gentle
+  backstory: Nobody in Xiomara Kestner's family has ever left District One; the luxury goods work runs
+    in the blood, generation after generation. Xiomara Kestner took up work as a Jeweler at The Jewelers'
+    Workshop -- steady enough, if nothing to brag about. Xiomara Kestner walks toward trouble other people
+    walk away from, and handles even strangers like something breakable.
+  appearance: A 24-year-old who still moves like someone half that age.
+- id: d1_npc_013
+  district: 1
+  name: Noor Quarrie
+  age: 61
+  job_id: d1_jeweler
+  home_location_id: residential
+  traits:
+  - shy
+  - vengeful
+  backstory: Nobody in Noor Quarrie's family has ever left District One; the luxury goods work runs in
+    the blood, generation after generation. Noor Quarrie spends most days as a Jeweler, putting in hours
+    at The Jewelers' Workshop like everyone else on the block. Noor Quarrie goes quiet the moment a stranger's
+    in the room, and doesn't forget a wrong, and doesn't forgive one either.
+  appearance: Looks older than 61 -- District One does that to people.
+- id: d1_npc_014
+  district: 1
+  name: Hollis Hargrove
+  age: 56
+  job_id: d1_academy_trainer
+  home_location_id: residential
+  traits:
+  - gentle
+  - patient
+  backstory: Hollis Hargrove came up in a proud corner of District One, one of the many faces the luxury
+    goods trade never seems to run short of. Hollis Hargrove took up work as an Academy Trainer at The
+    Academy -- steady enough, if nothing to brag about. Hollis Hargrove handles even strangers like something
+    breakable, and can outwait anyone, on anything.
+  appearance: 56 years old, lean and weathered from years of luxury goods work.
+- id: d1_npc_015
+  district: 1
+  name: Kellan Yarrow
+  age: 34
+  job_id: d1_polisher
+  home_location_id: residential
+  traits:
+  - humble
+  - patient
+  backstory: Kellan Yarrow's earliest memory is the smell of luxury goods work -- District One doesn't
+    let you forget what feeds it. These days Kellan Yarrow works as a Polisher at The Jewelers' Workshop,
+    and has the calluses to prove it. Kellan Yarrow shrugs off compliments like they don't quite fit,
+    and can outwait anyone, on anything.
+  appearance: Looks older than 34 -- District One does that to people.
+- id: d1_npc_016
+  district: 1
+  name: Lior Ironside
+  age: 22
+  job_id: d1_clerk
+  home_location_id: residential
+  traits:
+  - boastful
+  - proud
+  backstory: Lior Ironside was born and raised right here in District One, polished like most of the luxury
+    goods families around them. Lior Ironside took up work as a Clerk at Justice Building -- steady enough,
+    if nothing to brag about. Lior Ironside never tells a story without making themself the hero of it,
+    and won't ask for help even when they plainly need it.
+  appearance: A 22-year-old with luxury goods-worn hands and tired eyes.
+- id: d1_npc_017
+  district: 1
+  name: Ada Hollow
+  age: 34
+  job_id: d1_clerk
+  home_location_id: residential
+  traits:
+  - boastful
+  - witty
+  backstory: Ada Hollow grew up in District One's back streets, the kind of luxury goods household where
+    everyone pitches in young. Ada Hollow spends most days as a Clerk, putting in hours at Justice Building
+    like everyone else on the block. Ada Hollow never tells a story without making themself the hero of
+    it, and has a line ready for every occasion, wanted or not.
+  appearance: A 34-year-old who still moves like someone half that age.
+- id: d1_npc_018
+  district: 1
+  name: Beatrix Hargrove
+  age: 59
+  job_id: d1_jeweler
+  home_location_id: residential
+  traits:
+  - lazy
+  - paranoid
+  backstory: Beatrix Hargrove's earliest memory is the smell of luxury goods work -- District One doesn't
+    let you forget what feeds it. Beatrix Hargrove spends most days as a Jeweler, putting in hours at
+    The Jewelers' Workshop like everyone else on the block. Beatrix Hargrove does exactly as much as gets
+    by, and not a step more, and checks over their shoulder more than anyone should have to.
+  appearance: 59 years old, lean and weathered from years of luxury goods work.
+- id: d1_npc_019
+  district: 1
+  name: Nash Rowntree
+  age: 57
+  job_id: d1_jeweler
+  home_location_id: residential
+  traits:
+  - reckless
+  - stoic
+  backstory: Nash Rowntree was born and raised right here in District One, proud like most of the luxury
+    goods families around them. These days Nash Rowntree works as a Jeweler at The Jewelers' Workshop,
+    and has the calluses to prove it. Nash Rowntree takes chances that make their neighbors wince, and
+    doesn't say much, and what little they do say tends to be the truth.
+  appearance: 57 years old, lean and weathered from years of luxury goods work.
+- id: d1_npc_020
+  district: 1
+  name: Cass Blackwell
+  age: 35
+  job_id: d1_polisher
+  home_location_id: residential
+  traits:
+  - cautious
+  - cheerful
+  backstory: Cass Blackwell was born and raised right here in District One, polished like most of the
+    luxury goods families around them. Cass Blackwell spends most days as a Polisher, putting in hours
+    at The Jewelers' Workshop like everyone else on the block. Cass Blackwell weighs every decision twice
+    before making it once, and somehow keeps smiling no matter how the week's gone.
+  appearance: A 35-year-old with luxury goods-worn hands and tired eyes.
+- id: d1_npc_021
+  district: 1
+  name: Hollis Sedgwick
+  age: 34
+  job_id: d1_polisher
+  home_location_id: residential
+  traits:
+  - cautious
+  - kind
+  backstory: Hollis Sedgwick grew up in District One's back streets, the kind of luxury goods household
+    where everyone pitches in young. These days Hollis Sedgwick works as a Polisher at The Jewelers' Workshop,
+    and has the calluses to prove it. Hollis Sedgwick weighs every decision twice before making it once,
+    and will give away a meal they can't spare without a second thought.
+  appearance: Looks older than 34 -- District One does that to people.
+- id: d1_npc_022
+  district: 1
+  name: Vesper Dunmore
+  age: 54
+  job_id: d1_jeweler
+  home_location_id: residential
+  traits:
+  - lazy
+  - loyal
+  backstory: Nobody in Vesper Dunmore's family has ever left District One; the luxury goods work runs
+    in the blood, generation after generation. Vesper Dunmore spends most days as a Jeweler, putting in
+    hours at The Jewelers' Workshop like everyone else on the block. Vesper Dunmore does exactly as much
+    as gets by, and not a step more, and would stand by a friend even when it costs them.
+  appearance: Looks older than 54 -- District One does that to people.
+- id: d1_npc_023
+  district: 1
+  name: Wren Quarrie
+  age: 42
+  job_id: d1_jeweler
+  home_location_id: residential
+  traits:
+  - ambitious
+  - stoic
+  backstory: Wren Quarrie came up in a proud corner of District One, one of the many faces the luxury
+    goods trade never seems to run short of. These days Wren Quarrie works as a Jeweler at The Jewelers'
+    Workshop, and has the calluses to prove it. Wren Quarrie is always angling for something better than
+    this, and doesn't say much, and what little they do say tends to be the truth.
+  appearance: A 42-year-old with luxury goods-worn hands and tired eyes.
