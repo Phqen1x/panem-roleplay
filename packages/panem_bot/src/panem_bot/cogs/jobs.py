@@ -1,5 +1,4 @@
-"""`/work`, `/job list|apply|quit`, `/tesserae claim` (Spec FR-JOB, FR-ECO-7,
-CMD-16/17/18/19/24)."""
+"""`/work`, `/job list|apply|quit` (Spec FR-JOB, CMD-16/17/18/19)."""
 
 from __future__ import annotations
 
@@ -11,14 +10,13 @@ from discord.ext import commands
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from panem_bot import autocomplete, redis_keys
+from panem_bot import autocomplete
 from panem_bot.errors import ServiceError
 from panem_bot.services import characters as characters_svc
 from panem_bot.services import jobs as jobs_svc
 from panem_bot.services import shifts as shifts_svc
 from panem_bot.strings import t
 from panem_bot.views import WorkOptionView
-from panem_shared import constants
 from panem_shared.content.schemas import Job
 from panem_shared.db.models import Character, JobHistory, Shift, WorldClock
 
@@ -231,45 +229,6 @@ class JobsCog(commands.Cog):
             name = char.name
 
         await interaction.response.send_message(t("job_quit", name=name), ephemeral=True)
-
-    # ------------------------------------------------------------- /tesserae
-
-    tesserae_group = app_commands.Group(name="tesserae", description="Claim tesserae")
-
-    @tesserae_group.command(name="claim", description="Claim today's tesserae")
-    @app_commands.describe(character="Character name")
-    @app_commands.autocomplete(character=autocomplete.own_approved)
-    async def tesserae_claim(self, interaction: discord.Interaction, character: str) -> None:
-        async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await self._get_character(session, interaction.user.id, character)
-            if char is None:
-                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
-                return
-            if char.district_id == constants.CAPITOL_DISTRICT_ID:
-                await interaction.response.send_message(t("tesserae_not_eligible"), ephemeral=True)
-                return
-            char_id, name = char.id, char.name
-
-        claim_key = redis_keys.tesserae_key(char_id)
-        already_claimed = await self.bot.redis.get(claim_key)  # type: ignore[attr-defined]
-        if already_claimed is not None:
-            await interaction.response.send_message(
-                t("tesserae_already_claimed", name=name), ephemeral=True
-            )
-            return
-
-        async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await session.get(Character, char_id)
-            assert char is not None
-            char.tesserae_count += 1
-            char.money += constants.TICKET_BASE
-            count = char.tesserae_count
-
-        await self.bot.redis.set(claim_key, "1", ex=redis_keys.TESSERAE_TTL_S)  # type: ignore[attr-defined]
-        await interaction.response.send_message(
-            t("tesserae_claimed", name=name, amount=constants.TICKET_BASE, count=count),
-            ephemeral=True,
-        )
 
 
 async def setup(bot: commands.Bot) -> None:

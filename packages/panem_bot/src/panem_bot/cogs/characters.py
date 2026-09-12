@@ -105,9 +105,10 @@ class CharacterCog(commands.Cog):
             age_str: str,
             appearance: str,
             backstory: str,
+            avatar_url: str,
         ) -> None:
             await self._prompt_job(
-                modal_interaction, district_id, name, age_str, appearance, backstory
+                modal_interaction, district_id, name, age_str, appearance, backstory, avatar_url
             )
 
         max_age = characters_svc.max_age_for_district(district_id)
@@ -124,6 +125,7 @@ class CharacterCog(commands.Cog):
         age_str: str,
         appearance: str,
         backstory: str,
+        avatar_url: str,
     ) -> None:
         try:
             age = int(age_str)
@@ -141,6 +143,8 @@ class CharacterCog(commands.Cog):
                 appearance=appearance,
                 backstory=backstory,
             )
+            if avatar_url:
+                characters_svc.validate_avatar_url(avatar_url)
         except ValidationFailed as exc:
             await interaction.response.send_message(t(exc.reason_key, **exc.fmt), ephemeral=True)
             return
@@ -157,7 +161,7 @@ class CharacterCog(commands.Cog):
 
         async def on_job_chosen(job_interaction: discord.Interaction, job_id: str | None) -> None:
             await self._finish_create(
-                job_interaction, district_id, name, age, appearance, backstory, job_id
+                job_interaction, district_id, name, age, appearance, backstory, avatar_url, job_id
             )
 
         await interaction.response.send_message(
@@ -190,6 +194,7 @@ class CharacterCog(commands.Cog):
         age: int,
         appearance: str,
         backstory: str,
+        avatar_url: str,
         job_id: str | None,
     ) -> None:
         async with self.bot.db() as session:
@@ -203,6 +208,7 @@ class CharacterCog(commands.Cog):
                     age=age,
                     appearance=appearance,
                     backstory=backstory,
+                    avatar_url=avatar_url or None,
                     desired_job_id=job_id,
                     max_characters=characters_svc.effective_max_characters(user, self.bot.settings),
                 )
@@ -243,6 +249,8 @@ class CharacterCog(commands.Cog):
             embed.add_field(
                 name="Backstory", value=_field_value(character.backstory or "-"), inline=False
             )
+            if character.avatar_url:
+                embed.set_thumbnail(url=character.avatar_url)
             embed.set_footer(text=f"{CHAR_ID_FOOTER_PREFIX}{character.id}")
 
         await channel.send(embed=embed, view=self.approval_view)
@@ -396,6 +404,7 @@ class CharacterCog(commands.Cog):
                 "age": str(row.age),
                 "appearance": row.appearance,
                 "backstory": row.backstory,
+                "avatar": row.avatar_url or "",
             }
 
         from panem_bot.modals import CharacterDetailsModal
@@ -406,9 +415,17 @@ class CharacterCog(commands.Cog):
             age_str: str,
             appearance: str,
             backstory: str,
+            avatar_url: str,
         ) -> None:
             await self._handle_edit_submit(
-                modal_interaction, character_id, district_id, name, age_str, appearance, backstory
+                modal_interaction,
+                character_id,
+                district_id,
+                name,
+                age_str,
+                appearance,
+                backstory,
+                avatar_url,
             )
 
         max_age = characters_svc.max_age_for_district(district_id)
@@ -426,6 +443,7 @@ class CharacterCog(commands.Cog):
         age_str: str,
         appearance: str,
         backstory: str,
+        avatar_url: str,
     ) -> None:
         try:
             age = int(age_str)
@@ -443,6 +461,8 @@ class CharacterCog(commands.Cog):
                 appearance=appearance,
                 backstory=backstory,
             )
+            if avatar_url:
+                characters_svc.validate_avatar_url(avatar_url)
         except ValidationFailed as exc:
             await interaction.response.send_message(t(exc.reason_key, **exc.fmt), ephemeral=True)
             return
@@ -465,6 +485,7 @@ class CharacterCog(commands.Cog):
             row.age = age
             row.appearance = appearance
             row.backstory = backstory
+            row.avatar_url = avatar_url or None
 
         await interaction.response.send_message(
             f"**{name}** updated and resubmitted for approval.", ephemeral=True
@@ -554,7 +575,6 @@ class CharacterCog(commands.Cog):
         embed.add_field(name="Location", value=location_name)
         embed.add_field(name="Reputation", value=f"{row.reputation:.1f}")
         embed.add_field(name="Jailed", value="Yes" if row.jailed_until_tick else "No")
-        embed.add_field(name="Tesserae", value=str(row.tesserae_count))
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @group.command(name="avatar", description="Set a character's avatar image")

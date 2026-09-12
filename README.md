@@ -10,7 +10,7 @@ staff approval, Discord Forum-based scenes, and character proxying),
 **Phase 1 — World Simulation** (Plan §4: a deterministic tick loop, NPC
 movement, ambient narration, intra-district `/travel`/`/where`), and the
 first half of **Phase 2 — Economy** (Plan §5.1–§5.3: nightly hunger/health,
-job shifts, `/work`, `/job list|apply|quit`, `/tesserae claim`). Markets,
+job shifts, `/work`, `/job list|apply|quit`). Markets,
 shopkeepers, quotas, and cross-district travel (Plan §5.4–§5.6) don't have
 runtime logic yet, though their schema and content do. Phases 3-6 (NPC
 minds, crises, the Activity, and LLM dialogue) are scaffolded as empty
@@ -176,6 +176,14 @@ runs inside a rolled-back savepoint.
   the character row entirely — a rejected application never became a real
   character, so nothing about it stays in `characters` (and its name is
   immediately reusable).
+- **Avatar is now part of `/character create` and `/character edit`**, as
+  a 5th (optional) field on `CharacterDetailsModal` -- Discord's modal
+  input cap, so this is the most it can hold without a second step. A URL
+  set there goes to staff with the rest of the application (shown as the
+  approval embed's thumbnail) instead of bypassing review the way setting
+  it via `/character avatar` after approval still does; only a URL is
+  accepted here (a modal can't take a file upload) -- uploading an image
+  still requires `/character avatar` post-approval.
 
 ## Notes on this Phase 1 build
 
@@ -275,11 +283,9 @@ runs inside a rolled-back savepoint.
   no `min_reputation` in its requirement is always eligible once it has
   `ladder_next` set. Shown as a note after `/work`, not a separate
   accept/decline flow.
-- **Tesserae (`/tesserae claim`, FR-ECO-7)** is once per real day (a
-  Redis key with a 24h TTL, not tied to the sim's tick clock — a player
-  action, not a game-time one) and refuses Capitol characters
-  (`CAPITOL_DISTRICT_ID`); the payout (`TICKET_BASE` money, `+1`
-  `tesserae_count`) is the existing spec-sourced tunable, not a guess.
+- **Tesserae (FR-ECO-7) is not implemented.** This RPG's rules don't use
+  it, so `/tesserae claim`, `Character.tesserae_count`, and the Redis
+  claim-tracking key were removed rather than built out further.
 - **`/time`** shows an actual 12-hour clock (e.g. `12:00 PM`) and phase,
   plus a real-seconds countdown to the next tick, instead of raw tick
   numbers — `panem_shared.simtime.clock_string` scales against

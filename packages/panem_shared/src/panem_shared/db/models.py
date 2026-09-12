@@ -95,7 +95,6 @@ class Character(TimestampMixin, Base):
     health: Mapped[float] = mapped_column(Float, nullable=False, default=100.0)
     hunger: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     hospitalized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    tesserae_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     jailed_until_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
     in_games: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

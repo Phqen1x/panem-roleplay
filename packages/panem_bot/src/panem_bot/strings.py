@@ -82,10 +82,6 @@ STRINGS: dict[str, str] = {
     "no_residents_in_district": "No residents are seeded for that district yet.",
     "resident_not_found": "No resident by that name in this district.",
     "resident_where_ok": "**{name}** ({job}) is currently at **{location}**.",
-    # Tesserae (FR-ECO-7)
-    "tesserae_claimed": "**{name}** claims tesserae: +{amount} money, {count} claimed total.",
-    "tesserae_already_claimed": "**{name}** already claimed tesserae today.",
-    "tesserae_not_eligible": "Only District characters can claim tesserae.",
     # Generic
     "world_paused": "The world is paused.",
     "unexpected_error": "Something went wrong (ref `{ref}`).",

@@ -128,6 +128,7 @@ async def create_character(
     backstory: str,
     desired_job_id: str | None,
     max_characters: int,
+    avatar_url: str | None = None,
 ) -> Character:
     if user.banned_at is not None:
         raise NotAllowed("banned")
@@ -135,6 +136,8 @@ async def create_character(
     validate_character_fields(
         district_id=district_id, name=name, age=age, appearance=appearance, backstory=backstory
     )
+    if avatar_url:
+        validate_avatar_url(avatar_url)
     await ensure_name_available(session, name)
 
     if await _active_character_count(session, user.id) >= max_characters:
@@ -148,6 +151,7 @@ async def create_character(
         age=age,
         appearance=appearance,
         backstory=backstory,
+        avatar_url=avatar_url or None,
         status=CharacterStatus.PENDING.value,
         job_id=desired_job_id,
     )

@@ -234,6 +234,53 @@ class TestCreateCharacter:
                 max_characters=3,
             )
 
+    async def test_avatar_url_is_stored_when_provided(self, db_session):
+        user = await make_user(db_session)
+        character = await characters_svc.create_character(
+            db_session,
+            user=user,
+            district_id=12,
+            name="Katniss",
+            age=16,
+            appearance="",
+            backstory="",
+            desired_job_id=None,
+            max_characters=3,
+            avatar_url="https://example.com/avatar.png",
+        )
+        assert character.avatar_url == "https://example.com/avatar.png"
+
+    async def test_no_avatar_url_leaves_it_unset(self, db_session):
+        user = await make_user(db_session)
+        character = await characters_svc.create_character(
+            db_session,
+            user=user,
+            district_id=12,
+            name="Katniss",
+            age=16,
+            appearance="",
+            backstory="",
+            desired_job_id=None,
+            max_characters=3,
+        )
+        assert character.avatar_url is None
+
+    async def test_invalid_avatar_url_raises_before_insert(self, db_session):
+        user = await make_user(db_session)
+        with pytest.raises(ValidationFailed):
+            await characters_svc.create_character(
+                db_session,
+                user=user,
+                district_id=12,
+                name="Katniss",
+                age=16,
+                appearance="",
+                backstory="",
+                desired_job_id=None,
+                max_characters=3,
+                avatar_url="not-a-url",
+            )
+
 
 class TestNameUniqueness:
     async def test_duplicate_name_same_user_refused(self, db_session):
