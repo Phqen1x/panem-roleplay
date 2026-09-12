@@ -90,6 +90,8 @@ def make_district_row(district_id: int, **overrides: object) -> DistrictState:
         quota_progress=0.0,
         quota_target=0.0,
         capitol_favor=0.0,
+        unrest=0.0,
+        peacekeeper_pressure=0.3,
     )
     defaults.update(overrides)
     return DistrictState(**defaults)  # type: ignore[arg-type]

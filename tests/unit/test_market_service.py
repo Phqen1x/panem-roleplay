@@ -13,7 +13,7 @@ from panem_shared.content.schemas import (
     Good,
     Location,
 )
-from panem_shared.db.models import Character, Inventory, MarketOrder, MarketPrice
+from panem_shared.db.models import Character, DistrictState, Inventory, MarketOrder, MarketPrice
 from panem_shared.enums import CharacterStatus, OwnerKind
 
 
@@ -175,6 +175,9 @@ class TestBuy:
     async def test_illicit_market_detection_applies_consequence(self, db_session):
         district = make_district(illicit_market=True)
         character = make_character(money=100, jailed_until_tick=None)
+        db_session.add(DistrictState(district_id=district.id, peacekeeper_pressure=0.3))
+        await db_session.flush()
+
         result = await market_svc.buy(
             db_session,
             character=character,
@@ -188,6 +191,25 @@ class TestBuy:
         assert result.caught is True
         assert character.money == max(0, 100 - 4 - constants.MARKET_ILLICIT_FINE)
         assert character.jailed_until_tick == constants.MARKET_ILLICIT_JAIL_TICKS
+
+        district_row = await db_session.get(DistrictState, district.id)
+        assert district_row.peacekeeper_pressure == 0.3 + market_svc.ILLICIT_PRESSURE_DELTA
+
+    async def test_illicit_catch_without_a_district_state_row_does_not_raise(self, db_session):
+        district = make_district(illicit_market=True)
+        character = make_character(money=100, jailed_until_tick=None)
+
+        result = await market_svc.buy(
+            db_session,
+            character=character,
+            district=district,
+            goods=make_goods(),
+            good_id="coal",
+            qty=1,
+            tick=10,
+            rng=FixedRng(0.0),
+        )
+        assert result.caught is True  # no DistrictState row seeded -- consequence still applies
 
     async def test_legal_market_never_triggers_detection(self, db_session):
         district = make_district(illicit_market=False)

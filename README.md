@@ -22,9 +22,17 @@ builds real `RelationshipRow`s from shared-location proximity, `memory.py`
 forms and prunes `Memory` rows from notable events, and `/resident
 profile` surfaces a resident's personality and their stance toward a
 character. Real hand-authored NPC content (`data/npcs/*.yaml`) still
-doesn't exist -- see the Milestone F notes below. Phases 4-6 (crises, the
-Activity, and LLM dialogue) remain scaffolded as empty packages/stubs and
-land in that order — see the Plan for the full roadmap.
+doesn't exist -- see the Milestone F notes below.
+
+**Phase 4 — Crises** (Plan §7) is underway too:
+`panem_sim/systems/crisis.py` tracks each district's unrest (fed by
+chronic hunger and missed quotas) and peacekeeper pressure (fed by
+illicit-market catches), escalating/recovering through `CRISIS_THRESHOLDS`
+and announcing a level change as a `Bulletin`; `/staff district <id>`
+shows the raw numbers. See the Milestone G notes below for what's a
+placeholder pending the real Spec §7 text. Phases 5-6 (the Activity and
+LLM dialogue) remain scaffolded as empty packages/stubs — see the Plan
+for the full roadmap.
 
 ## Layout
 
@@ -513,6 +521,50 @@ fade unless important) is the part meant to be right.
   top-`RETRIEVAL_K` query a future Phase 6 dialogue prompt would call;
   nothing in the tick loop or bot calls it yet -- `/resident profile`
   shows current stance directly rather than a memory summary.
+
+## Notes on this Milestone G (Phase 4: crises) build
+
+Plan §7. `panem-long-year-spec.md` §7 wasn't available in this session's
+context either, so -- same as Milestone F -- every numeric weight below
+is a placeholder; `CRISIS_THRESHOLDS`/`CRISIS_RECOVERY_DAYS` are the only
+Phase 4 constants that already existed before this milestone.
+
+- **`DistrictState.unrest` (0.0-1.0) has exactly two inputs today**: a
+  chronic-hunger fraction computed fresh each day in `crisis.py` itself
+  (the same `HEALTH_DECAY_HUNGER_THRESHOLD` cutoff `needs.py` already
+  uses), and a flat bump from `economy.py::_evaluate_quotas` on a missed
+  quota -- added directly to the same `DistrictState` row `economy.py`
+  already had open, rather than inventing a new event-passing path for
+  one number. Absent new pushes, unrest relaxes by `1/CRISIS_RECOVERY_DAYS`
+  of its current value every day; `crisis_level` (0-4) is just how many
+  of `CRISIS_THRESHOLDS`'s four cut points it's cleared, and `crisis_kind`
+  is a single placeholder label (`"unrest"`) rather than a real
+  taxonomy -- Spec §7's actual crisis categories weren't available
+  either. A `Bulletin` fires only when a district's level actually
+  changes, not every day it's evaluated.
+- **`DistrictState.peacekeeper_pressure` is bumped bot-side, not by the
+  tick loop.** An illicit-market catch (`panem_bot/services/market.py`)
+  is a live trade action, not something that should wait for the next
+  tick to have a consequence, so `_apply_illicit_consequence` now also
+  nudges that district's `peacekeeper_pressure` directly in the same
+  transaction as the fine/jail -- closing the exact gap the Milestone D
+  notes flagged ("needs the still-stubbed crisis.py... out of scope
+  here"). `crisis.py` relaxes it back toward its own column default
+  (0.3) the same way it relaxes unrest, once a day.
+- **`/staff district <id>`** (new, staff-only) shows a district's raw
+  numbers -- crisis level/kind, unrest, peacekeeper pressure, morale,
+  capitol favor, quota progress, treasury -- for GMing/debugging. Players
+  get the in-fiction version instead: the `Bulletin` narration on a level
+  change, same as any other district-wide notice.
+- **Found live, not by unit tests: a 2-day starve-one-district smoke run
+  moved unrest exactly as the formula predicts** (0.0 → 0.05 → 0.0833,
+  matching `HUNGER_UNREST_WEIGHT`/`CRISIS_RECOVERY_DAYS` by hand), with
+  the unaffected district staying at 0.0 -- confirms per-district
+  isolation and the decay math both work end-to-end, though 2 days
+  wasn't enough starvation to actually cross `CRISIS_THRESHOLDS[0]` and
+  fire a `Bulletin`; that path is covered by the unit tests instead,
+  which force `unrest` directly rather than starving a population for
+  dozens of simulated days.
 
 ## Upgrading past duplicate character names
 

@@ -22,7 +22,6 @@ from panem_shared.enums import DayPhase
 from panem_sim import tick as tick_module
 from panem_sim.systems import (
     FIXED_ORDER,
-    crisis,
     games,
     schedule,
     time,
@@ -92,7 +91,7 @@ class TestFixedOrder:
         ]
 
     def test_every_remaining_stub_returns_no_events(self):
-        for module in (crisis, games):
+        for module in (games,):
             assert module.run(None, None) == []  # type: ignore[arg-type]
 
 

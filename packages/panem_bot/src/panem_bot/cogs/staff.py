@@ -18,7 +18,7 @@ from panem_bot.services import characters as characters_svc
 from panem_bot.services import jobs as jobs_svc
 from panem_bot.services.staff import log_staff_action
 from panem_bot.strings import t
-from panem_shared.db.models import Character, Scene, User
+from panem_shared.db.models import Character, DistrictState, Scene, User
 from panem_shared.enums import CharacterStatus, DayPhase, SceneStatus
 
 MESSAGE_LINK_RE = re.compile(r"/channels/(\d+)/(\d+)/(\d+)$")
@@ -69,6 +69,33 @@ class StaffCog(commands.Cog):
         await interaction.response.send_message(
             f"<@{user_id_str}> playing **{name}**", ephemeral=True
         )
+
+    @group.command(name="district", description="See a district's crisis/economy state (Phase 4)")
+    @app_commands.describe(district="District number (0 = The Capitol)")
+    @app_commands.check(_is_staff)
+    async def district(
+        self, interaction: discord.Interaction, district: app_commands.Range[int, 0, 12]
+    ) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            row = await session.get(DistrictState, district)
+        if row is None:
+            await interaction.response.send_message(
+                "No district_state row yet -- the sim hasn't seeded it.", ephemeral=True
+            )
+            return
+
+        district_name = self.bot.content.district(district).name  # type: ignore[attr-defined]
+        embed = discord.Embed(title=f"{district_name} -- district state")
+        embed.add_field(
+            name="Crisis level", value=f"{row.crisis_level} ({row.crisis_kind or 'calm'})"
+        )
+        embed.add_field(name="Unrest", value=f"{row.unrest:.2f}")
+        embed.add_field(name="Peacekeeper pressure", value=f"{row.peacekeeper_pressure:.2f}")
+        embed.add_field(name="Morale", value=f"{row.morale:.0f}")
+        embed.add_field(name="Capitol favor", value=f"{row.capitol_favor:+.1f}")
+        embed.add_field(name="Quota", value=f"{row.quota_progress:.0f} / {row.quota_target:.0f}")
+        embed.add_field(name="Treasury", value=f"{row.treasury:.0f}")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @group.command(name="ban", description="Ban a user from the bot")
     @app_commands.describe(user="User to ban")

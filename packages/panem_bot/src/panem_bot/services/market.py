@@ -18,8 +18,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from panem_bot.errors import NotAllowed, NotFound
 from panem_shared import constants
 from panem_shared.content.schemas import District, Good, Location
-from panem_shared.db.models import Character, Inventory, MarketOrder, MarketPrice
+from panem_shared.db.models import Character, DistrictState, Inventory, MarketOrder, MarketPrice
 from panem_shared.enums import CharacterStatus, LocationKind, OwnerKind
+
+ILLICIT_PRESSURE_DELTA = 0.05
+"""Placeholder bump to `DistrictState.peacekeeper_pressure` per illicit-
+market catch -- `panem_sim.systems.crisis` decays it back toward
+baseline over `CRISIS_RECOVERY_DAYS`. Spec §7's real weighting wasn't
+available in this session's context."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,10 +97,18 @@ def _roll_illicit_detection(location: Location, rng: random.Random) -> bool:
     return location.illicit and rng.random() < constants.MARKET_ILLICIT_DETECTION_PROB
 
 
-def _apply_illicit_consequence(character: Character) -> None:
+async def _apply_illicit_consequence(
+    session: AsyncSession, character: Character, district_id: int
+) -> None:
     character.money = max(0, character.money - constants.MARKET_ILLICIT_FINE)
     base_tick = character.jailed_until_tick or 0
     character.jailed_until_tick = base_tick + constants.MARKET_ILLICIT_JAIL_TICKS
+
+    district_row = await session.get(DistrictState, district_id)
+    if district_row is not None:
+        district_row.peacekeeper_pressure = min(
+            1.0, district_row.peacekeeper_pressure + ILLICIT_PRESSURE_DELTA
+        )
 
 
 async def buy(
@@ -133,7 +147,7 @@ async def buy(
 
     caught = _roll_illicit_detection(location, rng)
     if caught:
-        _apply_illicit_consequence(character)
+        await _apply_illicit_consequence(session, character, district.id)
     return TradeResult(qty=qty, unit_price=price, total=total, caught=caught)
 
 
@@ -171,7 +185,7 @@ async def sell(
 
     caught = _roll_illicit_detection(location, rng)
     if caught:
-        _apply_illicit_consequence(character)
+        await _apply_illicit_consequence(session, character, district.id)
     return TradeResult(qty=qty, unit_price=price, total=total, caught=caught)
 
 

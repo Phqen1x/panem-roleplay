@@ -57,6 +57,10 @@ from panem_sim.state import TickContext, WorldState
 
 Supply = dict[int, dict[str, float]]
 
+QUOTA_MISSED_UNREST_DELTA = 0.1
+"""Placeholder unrest bump for `crisis.py` on a missed quota -- Spec §7's
+real weighting wasn't available in this session's context."""
+
 
 def _add_supply(supply: Supply, district_id: int, good_id: str, qty: float) -> None:
     bucket = supply.setdefault(district_id, {})
@@ -196,6 +200,10 @@ def _evaluate_quotas(state: WorldState, ctx: TickContext, quota_exports: dict[in
             district_row.capitol_favor += (
                 constants.QUOTA_MET_FAVOR_DELTA if met else -constants.QUOTA_MISSED_FAVOR_DELTA
             )
+            if not met:
+                # Feeds crisis.py's unrest score the same tick -- crisis
+                # runs later in FIXED_ORDER, off this same DistrictState row.
+                district_row.unrest = min(1.0, district_row.unrest + QUOTA_MISSED_UNREST_DELTA)
             district_row.quota_progress = 0.0
 
 
