@@ -80,8 +80,13 @@ class PanemBot(commands.Bot):
         if self.settings.discord_guild_id:
             guild = discord.Object(id=self.settings.discord_guild_id)
             self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-            logger.info("commands_synced", guild_id=self.settings.discord_guild_id)
+            if self.settings.discord_sync_commands:
+                await self.tree.sync(guild=guild)
+                logger.info("commands_synced", guild_id=self.settings.discord_guild_id)
+            else:
+                logger.info(
+                    "commands_sync_skipped_by_setting", guild_id=self.settings.discord_guild_id
+                )
         else:
             logger.warning("no_guild_id_configured_skipping_command_sync")
 

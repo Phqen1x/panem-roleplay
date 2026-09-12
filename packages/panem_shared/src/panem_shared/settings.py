@@ -31,6 +31,13 @@ class Settings(BaseSettings):
     discord_token: str = ""
     discord_client_id: str = ""
     discord_guild_id: DiscordId = 0
+    # Every command sync is one call to Discord's (tightly rate-limited)
+    # guild command-overwrite endpoint. Restarting the bot repeatedly during
+    # local dev re-syncs every time even though the commands haven't
+    # changed, which can trip that rate limit. Set this to false after your
+    # first successful sync and flip it back only when you've actually
+    # changed a command's signature.
+    discord_sync_commands: bool = True
 
     database_url: str = "postgresql+asyncpg://panem:panem@localhost:5432/panem"
     redis_url: str = "redis://localhost:6379/0"
