@@ -41,7 +41,14 @@ MAX_WORDS_REPLY = 90
 
 TICKET_BASE = 20
 TRANSIT_TICKS = 4
-AWAY_GRACE_DAYS = 3
+AWAY_GRACE_DAYS = 18
+"""In sim-days, not real ones -- at the default `TICK_INTERVAL_SECONDS`
+(600s) and `TICKS_PER_DAY` (24), one sim-day is 4 real hours, so 18
+sim-days is ~3 real days of grace before a missed shift while traveling
+starts counting again. The original value of 3 sim-days (~12 real
+hours) was too tight for asynchronous Discord play -- a player who logs
+back in the next day would already have lost their job. Re-tune if your
+`TICK_INTERVAL_SECONDS` differs from the default."""
 
 TREASURY_BASE = 4000
 
