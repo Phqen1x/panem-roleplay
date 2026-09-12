@@ -565,6 +565,11 @@ class CharacterCog(commands.Cog):
                 shift_value = f"No shift open -- works {phase_time_range(job.shift_phase)}"
             else:
                 shift_value = "No job"
+
+            district_value = self._district_status_value(row)
+            jailed_value = (
+                f"Until {clock_string(row.jailed_until_tick)}" if row.jailed_until_tick else "No"
+            )
         embed = discord.Embed(title=row.name)
         embed.add_field(name="Status", value=row.status)
         embed.add_field(name="Money", value=str(row.money))
@@ -572,10 +577,30 @@ class CharacterCog(commands.Cog):
         embed.add_field(name="Health", value=str(row.health))
         embed.add_field(name="Job", value=job_name)
         embed.add_field(name="Shift", value=shift_value)
+        embed.add_field(name="District", value=district_value)
         embed.add_field(name="Location", value=location_name)
         embed.add_field(name="Reputation", value=f"{row.reputation:.1f}")
-        embed.add_field(name="Jailed", value="Yes" if row.jailed_until_tick else "No")
+        embed.add_field(name="Jailed", value=jailed_value)
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    def _district_status_value(self, character: Character) -> str:
+        """FR-LOC-9: distinguishes "on a train," "visiting away from
+        home," and "home" -- `/travel`'s "already on a train, check
+        `/character status`" refusal specifically promises this exists."""
+        current_district = self.bot.content.district(character.current_district_id)  # type: ignore[attr-defined]
+        if character.in_transit_until_tick is not None:
+            destination_name = "?"
+            if character.transit_destination_id is not None:
+                destination = self.bot.content.district(  # type: ignore[attr-defined]
+                    character.transit_destination_id
+                )
+                destination_name = destination.name
+            eta = clock_string(character.in_transit_until_tick)
+            return f"On a train to **{destination_name}** -- arriving by {eta}"
+        if character.current_district_id != character.district_id:
+            home_district = self.bot.content.district(character.district_id)  # type: ignore[attr-defined]
+            return f"Visiting **{current_district.name}** (home: {home_district.name})"
+        return current_district.name
 
     @group.command(name="avatar", description="Set a character's avatar image")
     @app_commands.describe(

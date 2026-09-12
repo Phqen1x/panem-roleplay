@@ -109,6 +109,7 @@ STRINGS: dict[str, str] = {
     "world_paused": "The world is paused.",
     "unexpected_error": "Something went wrong (ref `{ref}`).",
     "staff_only": "Staff only.",
+    "staff_good_not_found": "Not a valid good id.",
 }
 
 

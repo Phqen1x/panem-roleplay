@@ -11,6 +11,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from panem_bot import autocomplete, redis_keys
 from panem_bot.errors import ServiceError
@@ -18,8 +19,8 @@ from panem_bot.services import characters as characters_svc
 from panem_bot.services import jobs as jobs_svc
 from panem_bot.services.staff import log_staff_action
 from panem_bot.strings import t
-from panem_shared.db.models import Character, DistrictState, Scene, User
-from panem_shared.enums import CharacterStatus, DayPhase, SceneStatus
+from panem_shared.db.models import Character, DistrictState, Inventory, Scene, User
+from panem_shared.enums import CharacterStatus, DayPhase, OwnerKind, SceneStatus
 
 MESSAGE_LINK_RE = re.compile(r"/channels/(\d+)/(\d+)/(\d+)$")
 
@@ -44,6 +45,9 @@ class StaffCog(commands.Cog):
     )
     job_group = app_commands.Group(
         name="job", description="Edit jobs per district without touching code", parent=group
+    )
+    give_group = app_commands.Group(
+        name="give", description="Grant money or items to a character", parent=group
     )
 
     @group.command(name="whois", description="Look up who a proxied message belongs to")
@@ -504,6 +508,97 @@ class StaffCog(commands.Cog):
             return
         lines = [f"**{j.id}** - {j.title} @ {j.workplace} ({j.slots} slots)" for j in jobs]
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+    async def _find_character(self, session: AsyncSession, name: str) -> Character | None:
+        return (
+            await session.execute(select(Character).where(Character.name == name))
+        ).scalar_one_or_none()
+
+    @give_group.command(name="money", description="Grant (or deduct) a character's money")
+    @app_commands.describe(
+        character="Character name", amount="Amount to add -- use a negative number to deduct"
+    )
+    @app_commands.autocomplete(character=autocomplete.any_approved)
+    @app_commands.check(_is_staff)
+    async def give_money(
+        self, interaction: discord.Interaction, character: str, amount: int
+    ) -> None:
+        async with self.bot.db() as session:
+            row = await self._find_character(session, character)
+            if row is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            row.money = max(0, row.money + amount)
+            await log_staff_action(
+                session,
+                staff_discord_id=interaction.user.id,
+                action="give_money",
+                target=str(row.id),
+                payload={"amount": amount},
+            )
+            new_balance = row.money
+        await interaction.response.send_message(
+            f"**{character}** now has {new_balance} money.", ephemeral=True
+        )
+
+    @give_group.command(name="item", description="Grant (or remove) an inventory item")
+    @app_commands.describe(
+        character="Character name",
+        good="Good id",
+        qty="Quantity to add -- use a negative number to remove",
+    )
+    @app_commands.autocomplete(character=autocomplete.any_approved)
+    @app_commands.check(_is_staff)
+    async def give_item(
+        self, interaction: discord.Interaction, character: str, good: str, qty: int
+    ) -> None:
+        if good not in self.bot.content.goods:  # type: ignore[attr-defined]
+            await interaction.response.send_message(t("staff_good_not_found"), ephemeral=True)
+            return
+        async with self.bot.db() as session:
+            row = await self._find_character(session, character)
+            if row is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            owner_id = str(row.id)
+            inv = await session.get(Inventory, (OwnerKind.CHARACTER.value, owner_id, good))
+            current = inv.qty if inv is not None else 0
+            new_qty = max(0, current + qty)
+            if inv is None:
+                inv = Inventory(
+                    owner_kind=OwnerKind.CHARACTER.value,
+                    owner_id=owner_id,
+                    good_id=good,
+                    qty=new_qty,
+                )
+                session.add(inv)
+            else:
+                inv.qty = new_qty
+            await log_staff_action(
+                session,
+                staff_discord_id=interaction.user.id,
+                action="give_item",
+                target=str(row.id),
+                payload={"good": good, "qty": qty},
+            )
+        await interaction.response.send_message(
+            f"**{character}** now has {new_qty}x **{good}**.", ephemeral=True
+        )
+
+    @give_item.autocomplete("good")
+    async def give_item_good_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        current_lower = current.lower()
+        matches = [
+            good
+            for good in self.bot.content.goods.values()  # type: ignore[attr-defined]
+            if current_lower in good.id.lower() or current_lower in good.name.lower()
+        ]
+        return [
+            app_commands.Choice(name=f"{good.name} ({good.id})", value=good.id)
+            for good in matches[:25]
+        ]
 
 
 async def setup(bot: commands.Bot) -> None:
