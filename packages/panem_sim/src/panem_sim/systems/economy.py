@@ -1,11 +1,262 @@
-"""Market pricing, quotas, exports, shopkeepers (Spec FR-ECO-1/2/5/6/8/9).
-Stub for Milestone A -- real logic lands in Milestone D (Phase 2)."""
+"""District economy: supply/demand pricing, quotas, exports, shopkeeper
+top-up, and a daily bulletin (Spec FR-ECO-1/2/5/6/8/9).
+
+Runs once per day (the same `ctx.tick % TICKS_PER_DAY == 0` gate as
+`needs.py`), after `jobs.py` has opened/resolved the day's shifts:
+
+1. **Supply** (FR-ECO-1) comes from two places: real completed player
+   shifts (`state.completed_shifts`, a trailing-24-tick window loaded by
+   `tick.py` -- see its docstring) and *expected* NPC production
+   (`job.produces * NPC_JOB_COMPLETION_PROB` for every NPC holding that
+   job), not each NPC's actual stochastic roll from `jobs.py`. The two
+   systems intentionally don't share bookkeeping: `jobs.py` still pays
+   each NPC individually and stochastically for flavor, while this only
+   needs an aggregate, deterministic supply figure for pricing.
+2. **Demand** (FR-ECO-1) is a flat per-capita rate against
+   `District.population_base` for every good the district produces or
+   imports -- there's no real per-good consumption model (nothing tracks
+   a character/NPC actually eating bread or burning coal), so this is a
+   much cruder placeholder than the supply side gets. See
+   `constants.MARKET_DEMAND_PER_CAPITA`.
+3. **Exports** (FR-ECO-6) move goods along `routes.yaml` from their
+   `from_` district, capped by each route's `capacity` and by the
+   district's remaining supply of that route's good (several routes can
+   share a `(from, good)` pair -- e.g. District 12's coal ships to five
+   different destinations -- so they're processed together against one
+   shared remaining-supply pool, in file order). Exporting reduces the
+   *local* supply used for that district's own price update (an exported
+   unit isn't for sale at home) and pays the exporting district's
+   treasury at that good's last-known local price. The Plan mentions
+   exports being "scaled by D6/D5 ratios"; that formula wasn't available
+   in this session's context, so this uses plain capacity/supply capping
+   instead -- revisit against the real spec.
+4. **Quota progress** (FR-ECO-5) is *not* total production -- it's
+   specifically what a district exports to the Capitol (district 0) of
+   its own quota good, matching every district's `routes.yaml` entry
+   (each ships exactly its quota good to district 0). Evaluated at the
+   first tick of a new month: `capitol_favor` moves up or down depending
+   on whether the month's cumulative progress met `quota_target`, then
+   `quota_progress` resets for the new month.
+5. **Shopkeeper top-up** (FR-ECO-9): an NPC whose job's `workplace` is a
+   `LocationKind.MARKET` location is treated as that market's shopkeeper.
+   If their cash (`Npc.money`) is below their `float_target`, the
+   district treasury tops them up (capped by what the treasury actually
+   has) -- this is the cash a player's `/market sell` gets paid from.
+6. **Daily bulletin** (FR-ECO-8): one `Bulletin` per district summarizing
+   today's prices for its own produced/imported goods.
+"""
 
 from __future__ import annotations
 
-from panem_shared.events import AnyWorldEvent
+from panem_shared import constants
+from panem_shared.content.schemas import District, Job
+from panem_shared.db.models import MarketPrice
+from panem_shared.enums import LocationKind
+from panem_shared.events import AnyWorldEvent, Bulletin
 from panem_sim.state import TickContext, WorldState
+
+Supply = dict[int, dict[str, float]]
+
+
+def _add_supply(supply: Supply, district_id: int, good_id: str, qty: float) -> None:
+    bucket = supply.setdefault(district_id, {})
+    bucket[good_id] = bucket.get(good_id, 0.0) + qty
+
+
+def _player_supply(state: WorldState, ctx: TickContext) -> Supply:
+    """FR-ECO-1: real production from shifts a player actually completed,
+    attributed to the job's own district (not wherever the character
+    currently is -- a shift is tied to a workplace, not a person)."""
+    supply: Supply = {}
+    for shift in state.completed_shifts:
+        job = ctx.content.jobs.get(shift.job_id)
+        if job is None:
+            continue
+        for good_id, qty in (shift.output or {}).items():
+            _add_supply(supply, job.district, good_id, qty)
+    return supply
+
+
+def _npc_supply(state: WorldState, ctx: TickContext) -> Supply:
+    """FR-ECO-1: expected production from every NPC holding a job, using
+    `NPC_JOB_COMPLETION_PROB` as an expected value rather than replaying
+    `jobs.py`'s per-NPC roll (see module docstring)."""
+    supply: Supply = {}
+    for npc in state.npcs.values():
+        if not npc.job_id:
+            continue
+        job = ctx.content.jobs.get(npc.job_id)
+        if job is None:
+            continue
+        for good_id, qty in job.produces.items():
+            _add_supply(supply, job.district, good_id, qty * constants.NPC_JOB_COMPLETION_PROB)
+    return supply
+
+
+def _combine_supply(*supplies: Supply) -> Supply:
+    combined: Supply = {}
+    for supply in supplies:
+        for district_id, goods in supply.items():
+            for good_id, qty in goods.items():
+                _add_supply(combined, district_id, good_id, qty)
+    return combined
+
+
+def _traded_goods(district: District) -> set[str]:
+    """Goods this district's market deals in -- what it makes plus what
+    it brings in from elsewhere (Spec §1: `produces`/`imports`)."""
+    return set(district.produces) | set(district.imports)
+
+
+def _current_price(state: WorldState, district_id: int, good_id: str, ctx: TickContext) -> float:
+    row = state.market_prices.get((district_id, good_id))
+    if row is not None:
+        return row.price
+    good = ctx.content.goods.get(good_id)
+    return good.base_price if good is not None else 1.0
+
+
+def _run_exports(state: WorldState, ctx: TickContext, supply: Supply) -> dict[int, float]:
+    """Mutates `supply` in place (exported units leave the local market)
+    and pays exporting districts' treasuries. Returns each district's
+    total export to the Capitol of its *own* quota good, for FR-ECO-5."""
+    quota_exports: dict[int, float] = {}
+    for route in ctx.content.routes:
+        available = supply.get(route.from_, {}).get(route.good, 0.0)
+        if available <= 0:
+            continue
+        exported = min(route.capacity, available)
+        supply[route.from_][route.good] = available - exported
+
+        price = _current_price(state, route.from_, route.good, ctx)
+        district_row = state.districts.get(route.from_)
+        if district_row is not None:
+            district_row.treasury += exported * price
+
+        district_content = ctx.content.districts.get(route.from_)
+        quota = district_content.quota if district_content is not None else None
+        if (
+            route.to == constants.CAPITOL_DISTRICT_ID
+            and quota is not None
+            and quota.good == route.good
+        ):
+            quota_exports[route.from_] = quota_exports.get(route.from_, 0.0) + exported
+    return quota_exports
+
+
+def _update_prices(state: WorldState, ctx: TickContext, supply: Supply) -> None:
+    """FR-ECO-2: EMA toward a target price derived from the demand/supply
+    ratio, clamped to `[PRICE_CLAMP_MIN, PRICE_CLAMP_MAX] * base_price`."""
+    for district in ctx.content.districts.values():
+        district_supply = supply.get(district.id, {})
+        for good_id in _traded_goods(district):
+            good = ctx.content.goods.get(good_id)
+            if good is None:
+                continue
+            qty_supplied = max(district_supply.get(good_id, 0.0), constants.MARKET_SUPPLY_FLOOR)
+            demand = district.population_base * constants.MARKET_DEMAND_PER_CAPITA
+            ratio = demand / qty_supplied
+            clamped = min(
+                max(ratio**constants.PRICE_EXPONENT, constants.PRICE_CLAMP_MIN),
+                constants.PRICE_CLAMP_MAX,
+            )
+            target_price = good.base_price * clamped
+
+            row = state.market_prices.get((district.id, good_id))
+            if row is None:
+                row = MarketPrice(
+                    district_id=district.id,
+                    good_id=good_id,
+                    price=good.base_price,
+                    tick=ctx.tick,
+                )
+                state.market_prices[(district.id, good_id)] = row
+                state.new_market_prices.append(row)
+
+            row.price += (target_price - row.price) * constants.PRICE_EMA_ALPHA
+            row.supply = qty_supplied
+            row.demand = demand
+            row.tick = ctx.tick
+
+
+def _evaluate_quotas(state: WorldState, ctx: TickContext, quota_exports: dict[int, float]) -> None:
+    """FR-ECO-5: accumulate today's quota-good exports, then (only on the
+    first day of a new month) compare the month's total against
+    `quota_target` and move `capitol_favor` accordingly."""
+    for district in ctx.content.districts.values():
+        if district.quota is None:
+            continue
+        district_row = state.districts.get(district.id)
+        if district_row is None:
+            continue
+        district_row.quota_progress += quota_exports.get(district.id, 0.0)
+
+        if ctx.day == 1:
+            met = district_row.quota_progress >= district_row.quota_target
+            district_row.capitol_favor += (
+                constants.QUOTA_MET_FAVOR_DELTA if met else -constants.QUOTA_MISSED_FAVOR_DELTA
+            )
+            district_row.quota_progress = 0.0
+
+
+def is_shopkeeper_job(job: Job, district: District) -> bool:
+    """A job whose workplace is a `LocationKind.MARKET` location is treated
+    as that market's shopkeeper role (FR-ECO-9) -- also used by
+    `panem_sim.world` at seed time to give these NPCs a real
+    `float_target` (otherwise 0, same as everyone else, and this system
+    would never have anything to top up)."""
+    location = next((loc for loc in district.locations if loc.id == job.workplace), None)
+    return location is not None and location.kind == LocationKind.MARKET
+
+
+def _restock_shopkeepers(state: WorldState, ctx: TickContext) -> None:
+    """FR-ECO-9: top up a shopkeeper NPC's cash from their district's
+    treasury, capped by what the treasury actually has."""
+    for npc in state.npcs.values():
+        if not npc.job_id:
+            continue
+        job = ctx.content.jobs.get(npc.job_id)
+        if job is None:
+            continue
+        district = ctx.content.districts.get(job.district)
+        if district is None or not is_shopkeeper_job(job, district):
+            continue
+        shortfall = npc.float_target - npc.money
+        if shortfall <= 0:
+            continue
+        district_row = state.districts.get(job.district)
+        if district_row is None:
+            continue
+        top_up = min(shortfall, district_row.treasury)
+        district_row.treasury -= top_up
+        npc.money += top_up
+
+
+def _daily_bulletin(ctx: TickContext, district: District) -> Bulletin | None:
+    goods = sorted(_traded_goods(district))
+    if not goods:
+        return None
+    prices = ", ".join(
+        f"{ctx.content.goods[g].name} {ctx.content.goods[g].base_price:.0f}"
+        for g in goods
+        if g in ctx.content.goods
+    )
+    return Bulletin(tick=ctx.tick, district_id=district.id, text=f"Today's market: {prices}.")
 
 
 def run(state: WorldState, ctx: TickContext) -> list[AnyWorldEvent]:
-    return []
+    if ctx.tick % constants.TICKS_PER_DAY != 0:
+        return []
+
+    supply = _combine_supply(_player_supply(state, ctx), _npc_supply(state, ctx))
+    quota_exports = _run_exports(state, ctx, supply)
+    _update_prices(state, ctx, supply)
+    _evaluate_quotas(state, ctx, quota_exports)
+    _restock_shopkeepers(state, ctx)
+
+    events: list[AnyWorldEvent] = []
+    for district in ctx.content.districts.values():
+        bulletin = _daily_bulletin(ctx, district)
+        if bulletin is not None:
+            events.append(bulletin)
+    return events

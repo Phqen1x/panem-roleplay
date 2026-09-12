@@ -82,6 +82,19 @@ STRINGS: dict[str, str] = {
     "no_residents_in_district": "No residents are seeded for that district yet.",
     "resident_not_found": "No resident by that name in this district.",
     "resident_where_ok": "**{name}** ({job}) is currently at **{location}**.",
+    # Market (FR-ECO-3/4)
+    "market_invalid_qty": "Quantity must be a positive number.",
+    "market_not_at_market": "**{name}** needs to be at a market location to trade.",
+    "market_good_not_traded": "That good isn't bought or sold in this district.",
+    "market_insufficient_funds": "**{name}** can't afford that.",
+    "market_insufficient_inventory": "**{name}** doesn't have that many to sell.",
+    "market_no_goods_traded": "Nothing is bought or sold in this district yet.",
+    "market_bought_ok": "**{name}** buys {qty}x {good} for {total} money.",
+    "market_sold_ok": "**{name}** sells {qty}x {good} for {total} money.",
+    "market_caught_illicit": (
+        " A peacekeeper notices -- fined {fine} money and held for {jail_ticks} ticks."
+    ),
+    "inventory_empty": "**{name}** isn't carrying anything.",
     # Generic
     "world_paused": "The world is paused.",
     "unexpected_error": "Something went wrong (ref `{ref}`).",

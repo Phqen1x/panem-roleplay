@@ -32,6 +32,7 @@ from panem_shared.content.schemas import District, Job, Location
 from panem_shared.db.models import DistrictState, Npc, NpcSchedule
 from panem_shared.enums import DayPhase, LocationKind
 from panem_sim.rng import seed_rng
+from panem_sim.systems.economy import is_shopkeeper_job
 
 
 def load_world(data_dir: Path) -> ContentBundle:
@@ -132,6 +133,7 @@ async def seed_npcs(session: AsyncSession, content: ContentBundle, world_seed: s
             home = _home_location(district, rng)
             age = rng.randint(18, 65)
             job_id = _assign_job(rng, district_jobs)
+            job = next((j for j in district_jobs if j.id == job_id), None)
             npc = Npc(
                 id=npc_id,
                 district_id=district.id,
@@ -140,10 +142,14 @@ async def seed_npcs(session: AsyncSession, content: ContentBundle, world_seed: s
                 job_id=job_id,
                 home_location_id=home.id,
                 location_id=home.id,
+                float_target=(
+                    constants.SHOPKEEPER_FLOAT_TARGET
+                    if job is not None and is_shopkeeper_job(job, district)
+                    else 0.0
+                ),
             )
             session.add(npc)
 
-            job = next((j for j in district_jobs if j.id == job_id), None)
             schedule = _schedule_for_npc(district, home.id, job)
             for phase, weights in schedule.items():
                 for loc_id, weight in weights.items():

@@ -19,7 +19,15 @@ import random
 from dataclasses import dataclass, field
 
 from panem_shared.content.loader import ContentBundle
-from panem_shared.db.models import Character, DistrictState, JobHistory, Npc, NpcSchedule, Shift
+from panem_shared.db.models import (
+    Character,
+    DistrictState,
+    JobHistory,
+    MarketPrice,
+    Npc,
+    NpcSchedule,
+    Shift,
+)
 from panem_shared.enums import DayPhase
 
 
@@ -54,3 +62,14 @@ class WorldState:
     new_job_history: list[JobHistory] = field(default_factory=list)
     """`JobHistory` rows `jobs.py` creates this tick (e.g. on firing);
     persisted by `tick.py` the same way as `new_shifts`."""
+    completed_shifts: list[Shift] = field(default_factory=list)
+    """`Shift` rows completed in the trailing `TICKS_PER_DAY` window (a
+    fixed lookback, not a "since last aggregation" marker -- simpler than
+    adding an aggregated flag, and `economy.py` only reads this on a day
+    boundary anyway). `economy.py`'s supply side sums `.output` from these
+    for player-driven production."""
+    market_prices: dict[tuple[int, str], MarketPrice] = field(default_factory=dict)
+    """Existing `MarketPrice` rows, keyed by `(district_id, good_id)`."""
+    new_market_prices: list[MarketPrice] = field(default_factory=list)
+    """`MarketPrice` rows `economy.py` creates this tick for a district/good
+    with no prior price row; persisted by `tick.py` like `new_shifts`."""

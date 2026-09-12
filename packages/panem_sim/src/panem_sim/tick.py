@@ -24,10 +24,20 @@ import redis.asyncio as redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from panem_shared import constants
 from panem_shared.content.loader import ContentBundle
-from panem_shared.db.models import Character, DistrictState, Npc, NpcSchedule, Shift, WorldClock
+from panem_shared.db.models import (
+    Character,
+    DistrictState,
+    MarketPrice,
+    Npc,
+    NpcSchedule,
+    Shift,
+    WorldClock,
+)
 from panem_shared.db.models import WorldEvent as WorldEventRow
 from panem_shared.db.session import session_scope
+from panem_shared.enums import ShiftResult
 from panem_shared.events import AnyWorldEvent, parse_event, publish
 from panem_shared.logging import get_logger
 from panem_sim.rng import tick_rng
@@ -58,6 +68,21 @@ async def _load_state(session: AsyncSession) -> tuple[WorldState, WorldClock]:
     open_shifts = list(
         (await session.execute(select(Shift).where(Shift.result.is_(None)))).scalars()
     )
+    completed_shifts = list(
+        (
+            await session.execute(
+                select(Shift).where(
+                    Shift.result == ShiftResult.COMPLETED.value,
+                    Shift.completed_at.is_not(None),
+                    Shift.completed_at > clock.tick - constants.TICKS_PER_DAY,
+                )
+            )
+        ).scalars()
+    )
+    market_prices = {
+        (row.district_id, row.good_id): row
+        for row in (await session.execute(select(MarketPrice))).scalars()
+    }
 
     state = WorldState(
         districts=districts,
@@ -65,6 +90,8 @@ async def _load_state(session: AsyncSession) -> tuple[WorldState, WorldClock]:
         npc_schedules=schedules,
         characters=characters,
         open_shifts=open_shifts,
+        completed_shifts=completed_shifts,
+        market_prices=market_prices,
     )
     return state, clock
 
@@ -110,6 +137,8 @@ async def _run_tick_once(
             session.add(shift)
         for history_row in state.new_job_history:
             session.add(history_row)
+        for price_row in state.new_market_prices:
+            session.add(price_row)
 
     return events
 

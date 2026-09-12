@@ -113,3 +113,40 @@ NPC_JOB_COMPLETION_PROB = 0.85
 RP_CREDIT_MIN_CHARS = 120
 """FR-PRX-7: a proxied message at least this long, in a scene tagged for
 the job's workplace, completes an open shift as if `/work` picked option 0."""
+
+# Phase 2 Milestone D (markets/quotas/exports, FR-ECO-1/2/5/6/8/9) additions.
+# Same caveat as the Milestone C tunables above: `panem-long-year-spec.md`
+# §10 wasn't available in the session that built this, so these are
+# reasonable placeholders, not the spec's real numbers -- revalidate before
+# relying on them. There's also no real per-good consumption model (nothing
+# tracks a character/NPC eating bread or burning coal), so demand is a flat
+# per-capita rate against `District.population_base`, not derived from
+# actual need -- a much cruder stand-in for FR-ECO-1's demand side than the
+# supply side (real completed-shift/NPC-job output) gets.
+MARKET_DEMAND_PER_CAPITA = 0.01
+"""Daily demand for each good a district produces or imports, per person
+of `population_base` -- e.g. 8000 population -> 80 units/day baseline."""
+MARKET_SUPPLY_FLOOR = 0.01
+"""Supply is clamped to at least this before dividing by it in the price
+formula, so a district producing literally nothing today doesn't divide
+by zero -- reads as "effectively empty shelves", not an error."""
+QUOTA_MET_FAVOR_DELTA = 2.0
+QUOTA_MISSED_FAVOR_DELTA = 3.0
+"""`capitol_favor` change at month-end (FR-ECO-5); missing costs more
+favor than meeting it gains, matching the Capitol's asymmetric leverage
+over districts -- the exact numbers are still a guess pending the spec."""
+SHOPKEEPER_FLOAT_TARGET = 200.0
+"""Seeded onto a shopkeeper NPC's `Npc.float_target` at world-seed time
+(Milestone D's shopkeeper jobs, e.g. `hob_trader`) -- otherwise every NPC
+defaults to a 0 float and `economy.py`'s nightly top-up would never have
+anything to actually top up."""
+
+# Phase 2 Milestone D (illicit markets, FR-ECO-4) addition. `Location.illicit`
+# already existed in the content schema (e.g. District 12's "hob") but was
+# unused until this milestone wires it up. Full escalation (feeding a
+# district-wide peacekeeper crackdown) needs the crisis system, which is
+# still a no-op stub -- this only applies a per-transaction consequence to
+# whoever got caught, not to the district at large.
+MARKET_ILLICIT_DETECTION_PROB = 0.1
+MARKET_ILLICIT_FINE = 30
+MARKET_ILLICIT_JAIL_TICKS = 12

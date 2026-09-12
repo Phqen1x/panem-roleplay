@@ -8,13 +8,16 @@ disagreement with the Plan).
 This repository implements **Phase 0 — Foundation** (character creation and
 staff approval, Discord Forum-based scenes, and character proxying),
 **Phase 1 — World Simulation** (Plan §4: a deterministic tick loop, NPC
-movement, ambient narration, intra-district `/travel`/`/where`), and the
-first half of **Phase 2 — Economy** (Plan §5.1–§5.3: nightly hunger/health,
-job shifts, `/work`, `/job list|apply|quit`). Markets,
-shopkeepers, quotas, and cross-district travel (Plan §5.4–§5.6) don't have
-runtime logic yet, though their schema and content do. Phases 3-6 (NPC
-minds, crises, the Activity, and LLM dialogue) are scaffolded as empty
-packages and land in that order — see the Plan for the full roadmap.
+movement, ambient narration, intra-district `/travel`/`/where`), and
+**Phase 2 — Economy** (Plan §5.1–§5.4/5.6: nightly hunger/health, job
+shifts, `/work`, `/job list|apply|quit`, and now district-level supply/
+demand pricing, exports, quotas, shopkeeper restocking, and `/market
+prices|buy|sell`/`/inventory`). Cross-district travel (Plan §5.5,
+`/travel district:<id>`, tickets/transit/visitor roles) and
+`scripts/calibrate.py`'s real implementation are the one piece of Phase 2
+still outstanding. Phases 3-6 (NPC minds, crises, the Activity, and LLM
+dialogue) are scaffolded as empty packages and land in that order — see
+the Plan for the full roadmap.
 
 ## Layout
 
@@ -22,7 +25,7 @@ packages and land in that order — see the Plan for the full roadmap.
 packages/
   panem_shared/   data model (SQLAlchemy), content YAML schemas/loaders, settings, enums, world event types
   panem_bot/      the discord.py process: commands, proxying, scenes, staff tools, narration, travel, jobs
-  panem_sim/      world tick loop, NPC movement (Phase 1), needs/jobs (Phase 2 partial); markets land later
+  panem_sim/      world tick loop, NPC movement (Phase 1), needs/jobs/economy (Phase 2); cross-district travel lands later
   panem_api/      FastAPI REST/WebSocket bridge for the Activity (Phase 5+, not yet implemented)
 data/             districts, goods, jobs, routes (content YAML, validated at boot)
 migrations/       Alembic migrations
@@ -240,14 +243,15 @@ runs inside a rolled-back savepoint.
   character." Both are intra-district only; cross-district travel
   (tickets, transit ticks, visitor roles — FR-LOC-7/8/9) is Phase 2 scope.
 
-## Notes on this Phase 2 (partial) build
+## Notes on this Phase 2 build
 
-- **Only Plan §5.1–§5.3 (needs, jobs, shifts) — not the whole of Phase 2.**
-  `panem_sim/systems/economy.py`, `crisis.py`, `social.py`, and `memory.py`
-  are still no-op stubs; markets, shopkeepers, quotas/exports, and
-  cross-district travel (`/travel district:<id>`, tickets, transit) aren't
-  built. `scripts/calibrate.py` (the 12-month headless economy check) is
-  still the stub that raises "not implemented".
+- **Needs, jobs, shifts, and now the economy (markets/quotas/exports/
+  shopkeepers) are built — cross-district travel is the one piece left.**
+  `panem_sim/systems/crisis.py`, `social.py`, and `memory.py` are still
+  no-op stubs (Phase 3+ scope); `/travel district:<id>` (tickets, transit,
+  visitor roles, FR-LOC-7/8/9) isn't built yet, and `scripts/calibrate.py`
+  (the 12-month headless economy check) is still the stub that raises
+  "not implemented" — see the Milestone D notes below for what *is* built.
 - **The hunger/health tunables in `constants.py` are placeholders, not
   the spec's real numbers.** `panem-long-year-spec.md` §10 wasn't
   available in the session that built this (only the Plan's
@@ -261,10 +265,10 @@ runs inside a rolled-back savepoint.
 - **NPCs never get a `Shift` row or miss-tracking** — `shifts.character_id`
   is a FK to `characters`, not `npcs`, and there's no player to notify
   either way. An NPC with a matching job instead just probabilistically
-  "completes" it in place each phase boundary
-  (`NPC_JOB_COMPLETION_PROB`, also a placeholder), feeding `Npc.money`
-  only — no district production yet, since that's the economy system's
-  job (Milestone D).
+  "completes" it in place each phase boundary (`NPC_JOB_COMPLETION_PROB`,
+  also a placeholder), feeding `Npc.money`. `economy.py`'s supply side
+  doesn't replay that same roll for district production, though -- see
+  the Milestone D notes below.
 - **A missed shift or firing is a pure DB-state change, not a push
   notification.** There's no DM when a character is warned or fired;
   they find out via `/job list`/`/work` failing next time. A proper
@@ -311,6 +315,66 @@ runs inside a rolled-back savepoint.
   a player finds a district's residents (name + job) and looks up a
   specific one's current location, since narration no longer covers most
   of their movement.
+
+## Notes on this Milestone D (markets/quotas/exports/shopkeepers) build
+
+- **Supply is real for players, expected-value for NPCs.**
+  `panem_sim/systems/economy.py` sums actual completed `Shift.output`
+  for player production, but for NPCs it computes
+  `job.produces * NPC_JOB_COMPLETION_PROB` per NPC holding that job
+  rather than replaying `jobs.py`'s own per-NPC stochastic roll --
+  the two systems don't share bookkeeping on purpose (see the module
+  docstring): `jobs.py` still pays each NPC individually and randomly for
+  flavor, while pricing only needs an aggregate, deterministic number.
+- **Demand has no real consumption model behind it.** Nothing tracks a
+  character or NPC actually eating bread or burning coal, so demand is a
+  flat `MARKET_DEMAND_PER_CAPITA` rate against `District.population_base`
+  for every good the district produces or imports -- a much cruder
+  placeholder than the supply side gets, and one of the numbers most
+  worth revisiting against the real spec.
+- **Exports are capacity/supply-capped, not "scaled by D6/D5 ratios."**
+  The Plan mentions that phrase for FR-ECO-6; its formula wasn't
+  available in this session's context, so `_run_exports` just ships
+  `min(route.capacity, remaining supply)` along each `routes.yaml` route,
+  in file order, with several routes sharing one `(from, good)` remaining
+  pool when a district has multiple export destinations for the same
+  good (District 12's coal, five ways). One real consequence worth
+  knowing: several districts' route capacity for their specialty good
+  comfortably exceeds their daily production, so nearly everything gets
+  exported and the *local* price for that good sits near
+  `PRICE_CLAMP_MAX` most of the time -- a direct, correct result of the
+  model as built, not a bug, but worth knowing before treating local
+  specialty-good prices as meaningful in play.
+- **Quota progress is specifically exports to the Capitol of a district's
+  own quota good** (matching every district's `routes.yaml` entry, which
+  ships exactly that good to district 0) -- not total production.
+  Evaluated at the first tick of a new month: `capitol_favor` moves by
+  `QUOTA_MET_FAVOR_DELTA`/`-QUOTA_MISSED_FAVOR_DELTA` (both placeholders)
+  and `quota_progress` resets.
+- **A "shopkeeper" is any NPC whose job's `workplace` resolves to a
+  `LocationKind.MARKET` location** (`economy.is_shopkeeper_job`) --
+  already true of real content (District 12's `hob_trader`). World-seed
+  time now gives such an NPC a non-zero `float_target`
+  (`SHOPKEEPER_FLOAT_TARGET`); without that fix -- found by an actual
+  seed-and-simulate smoke test, not just unit tests -- every NPC's
+  `float_target` defaulted to 0 and the nightly treasury top-up in
+  `_restock_shopkeepers` never had anything to do.
+- **Illicit markets (`Location.illicit`, e.g. District 12's "hob") apply
+  a per-transaction consequence, not district-wide escalation.** A
+  `/market buy`/`sell` at an illicit location rolls
+  `MARKET_ILLICIT_DETECTION_PROB`; on detection the character is fined
+  `MARKET_ILLICIT_FINE` and jailed `MARKET_ILLICIT_JAIL_TICKS`. Feeding a
+  district-wide peacekeeper crackdown (raising `peacekeeper_pressure`, a
+  crisis event) needs the still-stubbed `crisis.py` and is out of scope
+  here.
+- **`/market buy|sell` require the character to be physically at a
+  market-kind location** in their current district (`Character.location_id`,
+  set by `/travel`) -- trading isn't available district-wide from
+  anywhere, since which specific market you're at is what determines
+  whether `Location.illicit` even applies.
+- **Cross-district travel (`/travel district:<id>`, FR-LOC-7/8/9) and
+  `scripts/calibrate.py`'s real implementation are not built in this
+  pass** -- the remaining pieces of Plan §5.5/5.6 to complete Phase 2.
 
 ## Upgrading past duplicate character names
 

@@ -63,6 +63,15 @@ class DialogueProviderName(enum.StrEnum):
     TEMPLATE_FALLBACK = "template_fallback"
 
 
+class OwnerKind(enum.StrEnum):
+    """Values for `Inventory.owner_kind`/`MarketOrder.owner_kind` (Milestone D,
+    FR-ECO-3/4). Only characters hold player-facing inventory today; `npc` is
+    here for shopkeeper-side bookkeeping symmetry, not currently written."""
+
+    CHARACTER = "character"
+    NPC = "npc"
+
+
 class LocationKind(enum.StrEnum):
     PUBLIC = "public"
     MARKET = "market"

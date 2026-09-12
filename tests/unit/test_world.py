@@ -226,6 +226,26 @@ class TestSeedNpcs:
         npcs = (await db_session.execute(select(Npc))).scalars().all()
         assert all(npc.job_id is None for npc in npcs)
 
+    async def test_shopkeeper_npc_gets_a_float_target(self, db_session):
+        job = make_job(id="hob_trader", district=1, workplace="market")
+        content = make_content(make_district(1), jobs=(job,))
+
+        await world.seed_npcs(db_session, content, "test-seed")
+        await db_session.flush()
+
+        npcs = (await db_session.execute(select(Npc))).scalars().all()
+        assert all(npc.float_target == constants.SHOPKEEPER_FLOAT_TARGET for npc in npcs)
+
+    async def test_non_shopkeeper_npc_has_no_float_target(self, db_session):
+        job = make_job(id="miner", district=1, workplace="square")
+        content = make_content(make_district(1), jobs=(job,))
+
+        await world.seed_npcs(db_session, content, "test-seed")
+        await db_session.flush()
+
+        npcs = (await db_session.execute(select(Npc))).scalars().all()
+        assert all(npc.float_target == 0.0 for npc in npcs)
+
     async def test_employed_npc_schedule_favors_workplace_during_shift_phase(self, db_session):
         job = make_job(id="only_job", district=1, workplace="market", shift_phase="morning")
         content = make_content(make_district(1), jobs=(job,))

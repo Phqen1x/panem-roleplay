@@ -23,7 +23,6 @@ from panem_sim import tick as tick_module
 from panem_sim.systems import (
     FIXED_ORDER,
     crisis,
-    economy,
     games,
     memory,
     schedule,
@@ -95,7 +94,7 @@ class TestFixedOrder:
         ]
 
     def test_every_remaining_stub_returns_no_events(self):
-        for module in (economy, social, memory, crisis, games):
+        for module in (social, memory, crisis, games):
             assert module.run(None, None) == []  # type: ignore[arg-type]
 
 
