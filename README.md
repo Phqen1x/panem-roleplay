@@ -21,8 +21,10 @@ packages/
   panem_api/      FastAPI REST/WebSocket bridge for the Activity (Phase 5+, not yet implemented)
 data/             districts, goods, jobs, routes (content YAML, validated at boot)
 migrations/       Alembic migrations
-scripts/          setup_guild.py (Phase 0) plus stubs for later-phase scripts
-deploy/           docker-compose, Dockerfile, systemd unit
+scripts/          setup_guild.py (Phase 0), lemonade_omni.py, plus stubs for later-phase scripts
+lemonade/         the Panem OmniModel: prompt template, generated collection files, embedded config
+deploy/           docker-compose (incl. Lemonade), Dockerfile, systemd unit
+snap/             snapcraft scaffold bundling the bot with Embeddable Lemonade
 tests/            pytest (service-layer unit tests; no live Discord needed)
 ```
 
@@ -55,6 +57,21 @@ Note the `APPROVAL_CHANNEL_ID` / `LOG_CHANNEL_ID` it prints and add them to
 ```bash
 uv run python -m panem_bot.main
 ```
+
+## Local AI (Lemonade OmniModel)
+
+NPC dialogue, narration, portraits, transcription and broadcasts run locally
+through [Lemonade](https://github.com/lemonade-sdk/lemonade) as a custom omni
+model, `user.Panem-Omni-Lite` / `-Halo`, whose system prompt is generated from
+this repo's `data/` so it always knows the real districts, places and jobs.
+
+```bash
+uv run python scripts/lemonade_omni.py install   # register the OmniModel + download components
+uv run python scripts/lemonade_omni.py smoke     # talk to Old Ferro at the Hob
+```
+
+See [`lemonade/README.md`](lemonade/README.md) for profiles, the request
+contract, and running Embeddable Lemonade (also as a snap).
 
 ## Development
 

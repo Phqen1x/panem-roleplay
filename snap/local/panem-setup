@@ -1,0 +1,4 @@
+#!/bin/sh
+# Registers the Panem OmniModel on the snap's lemond and downloads its components.
+set -eu
+exec "$SNAP/bin/panem-python" scripts/lemonade_omni.py install "$@"

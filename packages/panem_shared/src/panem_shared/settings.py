@@ -47,6 +47,13 @@ class Settings(BaseSettings):
     llm_json_mode: bool = False
     llm_daily_token_budget: int = 0
 
+    # Lemonade OmniModel (lemonade/README.md). `lemonade_home` is only needed
+    # when running Embeddable Lemonade from this checkout / a package; a
+    # system-wide lemonade-server is reached through llm_base_url alone.
+    lemonade_profile: str = "lite"
+    lemonade_home: str = ""
+    lemonade_embeddable_version: str = "11.9.0"
+
     staff_role_id: DiscordId = 0
     approval_channel_id: DiscordId = 0
     log_channel_id: DiscordId = 0

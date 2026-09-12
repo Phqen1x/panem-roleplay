@@ -1,0 +1,21 @@
+#!/bin/sh
+# Runs the snap's private Embeddable Lemonade. Persistent state lives in
+# $SNAP_COMMON/lemonade (config.json, user_models.json, backends, models).
+set -eu
+
+DATA="$SNAP_COMMON/lemonade"
+mkdir -p "$DATA"
+[ -f "$DATA/config.json" ] || cp "$SNAP/app/lemonade/embedded/config.json" "$DATA/config.json"
+
+# Optional operator-provided environment (LEMONADE_API_KEY, LEMONADE_PORT, HF_TOKEN).
+if [ -f "$SNAP_DATA/panem.env" ]; then
+  set -a
+  . "$SNAP_DATA/panem.env"
+  set +a
+fi
+export HF_HOME="${HF_HOME:-$DATA/hf}"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-$SNAP_COMMON/run}"
+mkdir -p "$XDG_RUNTIME_DIR"
+
+cd "$DATA"
+exec "$SNAP/lemonade/lemond" "$DATA" "$DATA" --port "${LEMONADE_PORT:-13305}" --no-broadcast

@@ -1,0 +1,17 @@
+#!/bin/sh
+# Shared launcher: the uv-managed interpreter plus the workspace venv's
+# site-packages, without depending on the venv's build-time absolute paths.
+set -eu
+PY="$(ls -d "$SNAP"/python/*/bin/python3.14 | head -n 1)"
+SITE="$(ls -d "$SNAP"/venv/lib/python3.14/site-packages | head -n 1)"
+export PYTHONPATH="$SITE:$SNAP/app/packages/panem_shared/src:$SNAP/app/packages/panem_bot/src:$SNAP/app/packages/panem_sim/src:$SNAP/app/packages/panem_api/src${PYTHONPATH:+:$PYTHONPATH}"
+if [ -f "$SNAP_DATA/panem.env" ]; then
+  set -a
+  . "$SNAP_DATA/panem.env"
+  set +a
+fi
+export LLM_BASE_URL="${LLM_BASE_URL:-http://127.0.0.1:${LEMONADE_PORT:-13305}/v1}"
+export LLM_API_KEY="${LLM_API_KEY:-${LEMONADE_API_KEY:-}}"
+export LEMONADE_HOME="$SNAP/lemonade"
+cd "$SNAP/app"
+exec "$PY" "$@"

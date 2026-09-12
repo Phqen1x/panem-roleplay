@@ -1,0 +1,96 @@
+# Snap packaging for Panem: The Long Year with Embeddable Lemonade inside.
+#
+# Status: scaffold. It is wired so that `snapcraft` produces a strictly
+# confined snap with two daemons -- a private `lemond` (Embeddable Lemonade,
+# serving the Panem OmniModel) and the Discord bot -- but it has not been
+# built on a real snapcraft host yet; expect to iterate on stage-packages and
+# plugs (Vulkan/ROCm device access in particular). See lemonade/README.md.
+#
+# Runtime layout (strict confinement):
+#   $SNAP/lemonade/                 lemond + lemonade CLI + resources/ (read-only)
+#   $SNAP_COMMON/lemonade/          lemond data dir: config.json, user_models.json,
+#                                   recipe_options.json, bin/ (backends), models/
+#   $SNAP_DATA/panem.env            the bot's .env (DISCORD_TOKEN, DATABASE_URL, ...)
+#
+# First run: `sudo snap set panem-roleplay ...` is not wired; drop a panem.env
+# into $SNAP_DATA, then `panem-roleplay.setup` registers the OmniModel and
+# downloads its components into $SNAP_COMMON/lemonade/models.
+
+name: panem-roleplay
+base: core24
+adopt-info: panem
+summary: Panem, The Long Year - NPC-driven Discord roleplay world with private local AI
+description: |
+  A persistent, NPC-driven Discord roleplay world set in Panem between Hunger
+  Games sessions. Ships its own Embeddable Lemonade instance so NPC dialogue,
+  portraits, transcription and broadcasts run on the host's GPU/NPU/CPU with
+  no cloud dependency.
+grade: devel
+confinement: strict
+
+apps:
+  lemond:
+    command: bin/lemond-wrapper
+    daemon: simple
+    restart-condition: on-failure
+    plugs: [network, network-bind, opengl, hardware-observe]
+  bot:
+    command: bin/panem-bot
+    daemon: simple
+    restart-condition: on-failure
+    after: [lemond]
+    plugs: [network, network-bind]
+  setup:
+    command: bin/panem-setup
+    plugs: [network]
+  lemonade:
+    command: bin/lemonade-cli
+    plugs: [network]
+
+parts:
+  lemonade-embeddable:
+    plugin: dump
+    # Keep in sync with LEMONADE_EMBEDDABLE_VERSION (.env.example) and
+    # lemonade/components.json's _lemonade_version.
+    source: https://github.com/lemonade-sdk/lemonade/releases/download/v11.9.0/lemonade-embeddable-11.9.0-ubuntu-x64.tar.gz
+    source-checksum: sha256/a18beaf78b5e30996087d1387683a6a5b4207cdd50f0a8ed7d7dc88823eb204d
+    organize:
+      lemonade-embeddable-11.9.0-ubuntu-x64: lemonade
+    stage-packages:
+      - libdrm-amdgpu1
+      - libdrm2
+      - libssl3t64
+      - libzstd1
+      - zlib1g
+      - libvulkan1
+      - mesa-vulkan-drivers
+      - libgomp1
+      - libatomic1
+      - curl
+
+  panem:
+    plugin: nil
+    source: .
+    build-snaps: [astral-uv]
+    override-pull: |
+      craftctl default
+      craftctl set version="$(git describe --tags --always 2>/dev/null || echo 0.1.0)"
+    override-build: |
+      export UV_PYTHON_INSTALL_DIR="$CRAFT_PART_INSTALL/python"
+      export UV_PROJECT_ENVIRONMENT="$CRAFT_PART_INSTALL/venv"
+      export UV_PYTHON_PREFERENCE=only-managed
+      uv python install 3.14
+      uv sync --frozen --no-dev --package panem-bot --package panem-shared
+      mkdir -p "$CRAFT_PART_INSTALL/app"
+      cp -r data lemonade scripts alembic.ini migrations pyproject.toml uv.lock "$CRAFT_PART_INSTALL/app/"
+      cp -r packages "$CRAFT_PART_INSTALL/app/"
+    stage:
+      - app
+      - python
+      - venv
+
+  wrappers:
+    plugin: dump
+    source: snap/local
+    organize:
+      "*": bin/

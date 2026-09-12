@@ -1,0 +1,10 @@
+#!/bin/sh
+# `panem-roleplay.lemonade list|pull|status ...` against the snap's private lemond.
+set -eu
+if [ -f "$SNAP_DATA/panem.env" ]; then
+  set -a
+  . "$SNAP_DATA/panem.env"
+  set +a
+fi
+export LEMONADE_PORT="${LEMONADE_PORT:-13305}"
+exec "$SNAP/lemonade/lemonade" --no-discovery "$@"
