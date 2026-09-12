@@ -261,6 +261,13 @@ class WorldClock(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     tick: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: dt.datetime.now(dt.UTC)
+    )
+    """Wall-clock time this row's `tick` was committed; lets a display
+    (e.g. `/time`) compute real seconds remaining until the next tick from
+    `tick_interval_seconds`, without the bot needing to talk to the sim
+    process directly."""
 
 
 class Shift(Base):

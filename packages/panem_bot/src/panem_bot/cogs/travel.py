@@ -15,8 +15,8 @@ from panem_bot.services import characters as characters_svc
 from panem_bot.services import travel as travel_svc
 from panem_bot.strings import t
 from panem_shared.db.models import Character, WorldClock
+from panem_shared.simtime import clock_string, seconds_until_next_tick
 from panem_shared.simtime import current as current_sim_time
-from panem_shared.simtime import ticks_until_next_phase
 
 
 class TravelCog(commands.Cog):
@@ -112,23 +112,28 @@ class TravelCog(commands.Cog):
             ephemeral=True,
         )
 
-    @app_commands.command(name="time", description="Show the current in-world day, phase, and tick")
+    @app_commands.command(name="time", description="Show the current in-world day and time")
     async def time(self, interaction: discord.Interaction) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
             clock = await session.get(WorldClock, 1)
             persisted_tick = clock.tick if clock is not None else 0
+            updated_at = clock.updated_at if clock is not None else None
 
         tick, phase, day, month = current_sim_time(persisted_tick)
-        until_next = ticks_until_next_phase(tick)
+        remaining = "unknown"
+        if updated_at is not None:
+            seconds = seconds_until_next_tick(
+                updated_at,
+                self.bot.settings.tick_interval_seconds,  # type: ignore[attr-defined]
+            )
+            remaining = "any moment now" if seconds <= 0 else f"{round(seconds)}s"
+
         embed = discord.Embed(title="The Long Year")
         embed.add_field(name="Month", value=str(month))
         embed.add_field(name="Day", value=str(day))
+        embed.add_field(name="Time", value=clock_string(tick))
         embed.add_field(name="Phase", value=phase.value.capitalize())
-        embed.add_field(name="Tick", value=str(tick))
-        embed.add_field(
-            name="Next phase in",
-            value="now" if until_next == 0 else f"{until_next} tick(s)",
-        )
+        embed.add_field(name="Time changes in", value=remaining)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 

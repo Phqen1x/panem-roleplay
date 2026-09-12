@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+import datetime as dt
+
 from panem_shared import constants
 from panem_shared.enums import DayPhase
-from panem_shared.simtime import advance, current, is_phase_boundary, ticks_until_next_phase
+from panem_shared.simtime import (
+    advance,
+    clock_string,
+    current,
+    is_phase_boundary,
+    seconds_until_next_tick,
+    ticks_until_next_phase,
+)
 
 PHASE_TICKS = constants.TICKS_PER_DAY // 4  # 6
 
@@ -54,3 +63,35 @@ class TestTicksUntilNextPhase:
     def test_counts_down_toward_the_next_boundary(self):
         assert ticks_until_next_phase(PHASE_TICKS - 1) == 1
         assert ticks_until_next_phase(PHASE_TICKS + 1) == PHASE_TICKS - 1
+
+
+class TestClockString:
+    def test_midnight(self):
+        assert clock_string(0) == "12:00 AM"
+
+    def test_noon(self):
+        assert clock_string(12) == "12:00 PM"
+
+    def test_morning_and_evening(self):
+        assert clock_string(6) == "6:00 AM"
+        assert clock_string(18) == "6:00 PM"
+
+    def test_wraps_across_days(self):
+        assert clock_string(constants.TICKS_PER_DAY) == "12:00 AM"
+        assert clock_string(constants.TICKS_PER_DAY + 13) == "1:00 PM"
+
+
+class TestSecondsUntilNextTick:
+    def test_full_interval_remains_right_after_a_tick(self):
+        now = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
+        assert seconds_until_next_tick(now, 600, now=now) == 600.0
+
+    def test_counts_down_as_time_passes(self):
+        updated_at = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
+        now = updated_at + dt.timedelta(seconds=200)
+        assert seconds_until_next_tick(updated_at, 600, now=now) == 400.0
+
+    def test_clamped_to_zero_when_overdue(self):
+        updated_at = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
+        now = updated_at + dt.timedelta(seconds=900)
+        assert seconds_until_next_tick(updated_at, 600, now=now) == 0.0

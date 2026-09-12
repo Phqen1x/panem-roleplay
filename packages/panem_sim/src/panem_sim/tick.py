@@ -17,6 +17,7 @@ tick); a second failure pauses the loop and raises an alert on
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import uuid
 
 import redis.asyncio as redis
@@ -102,6 +103,7 @@ async def _run_tick_once(
             events.extend(system(state, ctx))
 
         clock.tick = tick
+        clock.updated_at = dt.datetime.now(dt.UTC)
         for event in events:
             session.add(_event_row(event))
         for shift in state.new_shifts:

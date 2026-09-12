@@ -8,6 +8,8 @@ reason `events.py` lives here rather than in `panem_sim`.
 
 from __future__ import annotations
 
+import datetime as dt
+
 from panem_shared import constants
 from panem_shared.enums import DayPhase
 
@@ -50,3 +52,28 @@ def ticks_until_next_phase(tick: int) -> int:
     """How many more ticks until the phase after `tick`'s begins -- 0 if
     `tick` itself is a boundary."""
     return (-tick) % _TICKS_PER_PHASE
+
+
+def clock_string(tick: int) -> str:
+    """A 12-hour wall-clock string (e.g. `"12:00 PM"`) for `tick`'s
+    position within its in-world day. Scales by `TICKS_PER_DAY` rather
+    than assuming a tick is exactly an hour, so a `tuning.yaml` override
+    of that constant still produces a sensible (if coarser/finer) time."""
+    hour_of_day = tick % constants.TICKS_PER_DAY
+    total_minutes = hour_of_day * (24 * 60) // constants.TICKS_PER_DAY
+    hour24, minute = divmod(total_minutes, 60)
+    period = "AM" if hour24 < 12 else "PM"
+    hour12 = hour24 % 12 or 12
+    return f"{hour12}:{minute:02d} {period}"
+
+
+def seconds_until_next_tick(
+    updated_at: dt.datetime, tick_interval_seconds: int, *, now: dt.datetime | None = None
+) -> float:
+    """Real-world seconds remaining until the next tick commits, given
+    when the current tick was persisted (`WorldClock.updated_at`) and the
+    sim's configured `tick_interval_seconds`. Clamped to zero -- the sim
+    may be running behind (a slow tick, or simply not running)."""
+    now = now if now is not None else dt.datetime.now(dt.UTC)
+    elapsed = (now - updated_at).total_seconds()
+    return max(0.0, tick_interval_seconds - elapsed)
