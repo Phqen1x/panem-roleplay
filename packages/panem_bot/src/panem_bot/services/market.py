@@ -42,7 +42,7 @@ def resolve_market_location(character: Character, district: District) -> Locatio
         None,
     )
     if location is None or location.kind != LocationKind.MARKET:
-        raise NotAllowed("market_not_at_market")
+        raise NotAllowed("market_not_at_market", name=character.name)
     return location
 
 
@@ -66,17 +66,17 @@ async def get_price(session: AsyncSession, district_id: int, good: Good) -> floa
 
 
 async def _adjust_inventory(
-    session: AsyncSession, character_id: int, good_id: str, delta: int
+    session: AsyncSession, character: Character, good_id: str, delta: int
 ) -> int:
     """Applies `delta` to a character's `good_id` stock, creating the row
     if needed. Raises `NotAllowed` if a negative delta would go below
     zero (selling more than owned). Returns the new quantity."""
-    owner_id = str(character_id)
+    owner_id = str(character.id)
     row = await session.get(Inventory, (OwnerKind.CHARACTER.value, owner_id, good_id))
     current = row.qty if row is not None else 0
     new_qty = current + delta
     if new_qty < 0:
-        raise NotAllowed("market_insufficient_inventory")
+        raise NotAllowed("market_insufficient_inventory", name=character.name)
     if row is None:
         row = Inventory(
             owner_kind=OwnerKind.CHARACTER.value, owner_id=owner_id, good_id=good_id, qty=new_qty
@@ -114,10 +114,10 @@ async def buy(
     price = await get_price(session, district.id, good)
     total = round(qty * price)
     if character.money < total:
-        raise NotAllowed("market_insufficient_funds")
+        raise NotAllowed("market_insufficient_funds", name=character.name)
 
     character.money -= total
-    await _adjust_inventory(session, character.id, good_id, qty)
+    await _adjust_inventory(session, character, good_id, qty)
     session.add(
         MarketOrder(
             district_id=district.id,
@@ -154,7 +154,7 @@ async def sell(
     price = await get_price(session, district.id, good) * constants.SELL_DISCOUNT
     total = round(qty * price)
 
-    await _adjust_inventory(session, character.id, good_id, -qty)
+    await _adjust_inventory(session, character, good_id, -qty)
     character.money += total
     session.add(
         MarketOrder(

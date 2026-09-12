@@ -4,6 +4,7 @@ import pytest
 
 from panem_bot.errors import NotAllowed, NotFound
 from panem_bot.services import market as market_svc
+from panem_bot.strings import t
 from panem_shared import constants
 from panem_shared.content.schemas import (
     District,
@@ -84,6 +85,10 @@ class TestResolveMarketLocation:
         with pytest.raises(NotAllowed) as exc_info:
             market_svc.resolve_market_location(character, district)
         assert exc_info.value.reason_key == "market_not_at_market"
+        # Regression: the raised fmt kwargs must actually satisfy the
+        # string template, or t() raises KeyError instead of showing the
+        # player a real message (this is exactly how it broke before).
+        assert "Test" in t(exc_info.value.reason_key, **exc_info.value.fmt)
 
 
 class TestCheckCanTrade:
@@ -165,6 +170,7 @@ class TestBuy:
             )
         assert exc_info.value.reason_key == "market_insufficient_funds"
         assert character.money == 1
+        assert "Test" in t(exc_info.value.reason_key, **exc_info.value.fmt)
 
     async def test_illicit_market_detection_applies_consequence(self, db_session):
         district = make_district(illicit_market=True)
@@ -249,6 +255,7 @@ class TestSell:
         assert character.money == 50
         inv = await db_session.get(Inventory, (OwnerKind.CHARACTER.value, "1", "coal"))
         assert inv.qty == 2
+        assert "Test" in t(exc_info.value.reason_key, **exc_info.value.fmt)
 
 
 class TestListInventory:
