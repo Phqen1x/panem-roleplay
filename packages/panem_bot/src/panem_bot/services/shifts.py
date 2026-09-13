@@ -42,16 +42,22 @@ def start_shift_game(shift: Shift, tick: int) -> None:
         shift.started_at_tick = tick
 
 
-def open_adhoc_shift_for_gamemaker(character: Character, tick: int) -> Shift | None:
+def open_adhoc_shift_override(
+    character: Character, tick: int, *, is_staff: bool = False
+) -> Shift | None:
     """A Gamemaker can `/work` at any time, in any place -- not just when
     `panem_sim` has already opened a shift for their job's `shift_phase`,
     and not only when physically at its `workplace` (see
-    `can_earn_rp_credit_anywhere`). Synthesizes a fresh `Shift` on the spot
-    instead of refusing with "no open shift"; `None` if `character` isn't
-    a Gamemaker or has no job to work at all."""
+    `can_earn_rp_credit_anywhere`). `is_staff` extends the same "no open
+    shift needed" privilege to real (Discord-role) staff working their own
+    characters, regardless of the character's in-fiction `Position` --
+    staff shouldn't have to wait on the shift schedule to test or
+    demonstrate a job. Synthesizes a fresh `Shift` on the spot instead of
+    refusing with "no open shift"; `None` if `character` has no job to work
+    at all, or neither privilege applies."""
     if character.job_id is None:
         return None
-    if Position.GAMEMAKER.value not in character.positions:
+    if not is_staff and Position.GAMEMAKER.value not in character.positions:
         return None
     return Shift(
         character_id=character.id,
@@ -64,7 +70,7 @@ def open_adhoc_shift_for_gamemaker(character: Character, tick: int) -> Shift | N
 def can_earn_rp_credit_anywhere(character: Character) -> bool:
     """A Gamemaker's RP-credit shift completion (FR-PRX-7) isn't tied to
     being physically in the job's `workplace` scene -- the same "any
-    place" privilege `open_adhoc_shift_for_gamemaker` gives `/work`
+    place" privilege `open_adhoc_shift_override` gives `/work`
     itself."""
     return Position.GAMEMAKER.value in character.positions
 

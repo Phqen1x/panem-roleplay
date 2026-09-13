@@ -112,8 +112,12 @@ class JobsCog(commands.Cog):
                 )
             ).scalar_one_or_none()
             if open_shift is None:
-                open_shift = shifts_svc.open_adhoc_shift_for_gamemaker(
-                    char, await self._current_tick(session)
+                member = interaction.user
+                is_staff = isinstance(member, discord.Member) and await self.bot.is_staff(  # type: ignore[attr-defined]
+                    member
+                )
+                open_shift = shifts_svc.open_adhoc_shift_override(
+                    char, await self._current_tick(session), is_staff=is_staff
                 )
                 if open_shift is None:
                     await interaction.response.send_message(

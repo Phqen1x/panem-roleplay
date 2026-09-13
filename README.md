@@ -960,7 +960,7 @@ Gamemaker/Victor conveniences on top.
   job can work it at any time, not just when `panem_sim` has already
   opened a shift for its `shift_phase` -- `/work` synthesizes a fresh
   `Shift` on the spot instead of refusing with "no open shift"
-  (`shifts_svc.open_adhoc_shift_for_gamemaker`) -- and the RP-credit
+  (`shifts_svc.open_adhoc_shift_override`) -- and the RP-credit
   shortcut (a long-enough proxied message auto-completing an open shift,
   FR-PRX-7) no longer requires them to be physically at the job's
   `workplace` scene either (`shifts_svc.can_earn_rp_credit_anywhere`).
@@ -969,6 +969,15 @@ Gamemaker/Victor conveniences on top.
   cooldown or cap on the ad-hoc path beyond what `/work`'s minigame grace
   window already implies; this trusts whoever holds the Gamemaker
   position the same way its other privileges already do.
+- **Real (Discord-role) staff get the same "no open shift needed" override
+  on their own characters**, regardless of the character's in-fiction
+  `Position` -- `/work` checks `bot.is_staff(interaction.user)` (the same
+  role check `/staff ...` commands use) and passes it as
+  `shifts_svc.open_adhoc_shift_override(..., is_staff=True)`. This only
+  affects whether `/work` needs a pre-opened shift to run at all; it
+  doesn't extend the RP-credit-anywhere shortcut above, which stays
+  Gamemaker-only. Still requires an actual job -- staff with no job has
+  nothing to synthesize a shift for either.
 
 ## Notes on this Milestone L (`/work`'s Minesweeper minigame) build
 

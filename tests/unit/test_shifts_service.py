@@ -133,25 +133,37 @@ class TestStartShiftGame:
         assert shift.started_at_tick == 3
 
 
-class TestOpenAdhocShiftForGamemaker:
+class TestOpenAdhocShiftOverride:
     def test_none_without_a_job(self):
         character = make_character(job_id=None, positions=["gamemaker"])
-        assert shifts_svc.open_adhoc_shift_for_gamemaker(character, 10) is None
+        assert shifts_svc.open_adhoc_shift_override(character, 10) is None
 
-    def test_none_without_the_gamemaker_position(self):
+    def test_none_without_the_gamemaker_position_or_staff_override(self):
         character = make_character(job_id="miner", positions=[])
-        assert shifts_svc.open_adhoc_shift_for_gamemaker(character, 10) is None
+        assert shifts_svc.open_adhoc_shift_override(character, 10) is None
 
     def test_synthesizes_a_shift_for_a_gamemaker_with_a_job(self):
         character = make_character(job_id="miner", positions=["gamemaker"])
         character.id = 7
-        shift = shifts_svc.open_adhoc_shift_for_gamemaker(character, 10)
+        shift = shifts_svc.open_adhoc_shift_override(character, 10)
         assert shift is not None
         assert shift.character_id == 7
         assert shift.job_id == "miner"
         assert shift.tick_opened == 10
         assert shift.tick_due == 10 + shifts_svc.constants.SHIFT_DURATION_TICKS
         assert shift.result is None
+
+    def test_none_for_staff_override_without_a_job(self):
+        character = make_character(job_id=None, positions=[])
+        assert shifts_svc.open_adhoc_shift_override(character, 10, is_staff=True) is None
+
+    def test_synthesizes_a_shift_for_staff_without_the_gamemaker_position(self):
+        character = make_character(job_id="miner", positions=[])
+        character.id = 9
+        shift = shifts_svc.open_adhoc_shift_override(character, 10, is_staff=True)
+        assert shift is not None
+        assert shift.character_id == 9
+        assert shift.job_id == "miner"
 
 
 class TestCanEarnRpCreditAnywhere:
