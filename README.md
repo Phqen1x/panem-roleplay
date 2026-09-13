@@ -1365,3 +1365,94 @@ an owned one; "auction" covers both a voluntary sale and the automatic foreclosu
 fallback. Sleep restores fatigue instantly for the ticks requested rather than literally
 pausing the bot for real time, mirroring how `/travel district` already abstracts
 transit time.
+
+## Notes on NPC engagements
+
+A feature request: let players roleplay with NPCs the same persistent, multi-party way
+they already RP with each other, rather than through `/talk`'s old one-shot ephemeral
+reply. Built in five milestones on top of scaffolding that turned out to already be
+sitting in the schema unused -- `Scene.participants` (a `JSONB` column with no reader or
+writer anywhere in the codebase), `SceneMessage`, and `DialogueLog` were all migrated in
+the original Phase 0 baseline and never touched again, as if provisioned for exactly
+this.
+
+**An engagement is a `Scene`** (`SceneKind.ENGAGEMENT`), not a new parallel table.
+`Scene.participants` gets a documented shape: `{"characters": [...], "pending_characters":
+[...], "npcs": [...]}` -- joined players, players invited but not yet accepted, and
+joined NPCs. Because `panem_bot.cogs.proxy`'s `on_message` already looks up `Scene`
+generically by `thread_id` without special-casing `SceneKind.PLAYER`, an engagement
+thread gets RP-credit, location pinning, and webhook proxying for free the moment it's
+just another `Scene` row.
+
+- **`/engage start location:<id> participants:<comma-separated names>`** resolves each
+  name against NPCs first, then against characters physically at that location, and
+  opens a forum thread exactly like `/scene start`'s own flow. A named NPC not currently
+  working their shift or asleep (`panem_bot.services.engagements.npc_is_busy`, reusing
+  `panem_sim.systems.schedule`'s own arrival predicate rather than a second copy of it)
+  is relocated there immediately (`Npc.location_id`/`x`/`y` overwritten, the same
+  instant-arrival model `schedule.py` already uses every tick) and gets a new
+  `Npc.engagement_id` set, which `schedule.py` checks each tick to skip movement for
+  them entirely -- "NPCs won't leave until the engagement ends." A busy NPC is left out
+  of the thread, and the starter is told ephemerally where to find them instead. A named
+  *character* belonging to another player is added to `participants.pending_characters`
+  and must accept an invite (two buttons on a message only that player can press) before
+  joining for real, per the user's own answer -- physical presence at the location is
+  never enough on its own for someone else's character.
+- **Who replies in a group.** In a strict one-on-one engagement (one character, one NPC)
+  every qualifying message gets a reply, same as `/talk` always worked. With more than
+  one participant, an NPC only replies to a message that contains their first or last
+  name (`engagements_svc.name_mentioned`, a whole-word match so a short name doesn't
+  fire inside an unrelated word) -- per the user's explicit answer, not every line in a
+  crowded thread is addressed to every NPC in it.
+- **`/talk` is folded into this system** rather than kept as a second NPC-dialogue path:
+  it now finds-or-opens a one-NPC engagement between exactly this character and this NPC
+  at their shared location, posts the player's line into it via webhook, and triggers the
+  NPC's reply through the same `ProxyCog.post_engagement_replies` method the group flow
+  uses -- non-ephemeral, in a real visible thread, indistinguishable from typing the same
+  message there directly. The only ephemeral reply left is housekeeping ("thread
+  created", "that NPC's at work, try the Hob instead").
+- **Multi-turn history** now actually flows into the LLM call. `omni.build_messages`
+  already accepted a full list of prior turns; `dialogue_svc.generate_reply` just never
+  passed more than the newest message before this feature. NPC replies build `history`
+  from the engagement's own `SceneMessage` rows (capped at `MAX_ENGAGEMENT_HISTORY_TURNS`)
+  and a `present` list of everyone else in the scene, both new parameters threaded
+  through `build_request_context`/`generate_llm_reply`. Every reply is also logged to
+  `DialogueLog` -- the first real use of that table.
+- **`Scene.last_message_at` keeps meaning "last *player* message"** (already true before
+  this feature -- only a player's own proxied line ever touched it). NPC replies
+  deliberately never update it, or an engagement full of NPCs replying to each other
+  would never go idle.
+- **Inactivity auto-close** is a `tasks.loop` background task
+  (`EngagementCog.close_idle_engagements`, the same pattern `SceneCog.archive_idle_scenes`
+  already established) that archives any `ENGAGEMENT` scene whose `last_message_at` is
+  older than a **staff-configurable** timeout, per the user's own answer -- a one-row
+  `EngagementSettings` table (mirroring `WorldClock`'s singleton shape) rather than a
+  code constant, tunable live via `/staff engagement set-timeout` with no redeploy.
+  Closing clears `engagement_id` on every participant NPC, letting their normal weighted
+  schedule resume the next tick.
+- **NPC-NPC ambient chatter** happens without any player involved, per "NPCs should also
+  be able to randomly start short engagements with other NPCs, but not players." This is
+  deliberately *not* a `Scene`/thread of its own -- a new low-probability
+  `panem_sim.systems.npc_chatter` system (registered in `FIXED_ORDER` right after
+  `social`) looks each tick for two or more co-located, unengaged NPCs, rolls the odds,
+  and on a hit emits an `NpcChatter` event naming the district, location, and the two
+  NPCs picked. Since `panem_sim` never calls the LLM anywhere in this codebase, the actual
+  lines are generated bot-side: `narrator.py`'s new `_handle_npc_chatter` finds the
+  location's existing pinned `AMBIENT` thread (the same lookup `_handle_narration` already
+  does) and posts a short back-and-forth (`NPC_CHATTER_MIN_LINES`-`NPC_CHATTER_MAX_LINES`,
+  "should only last a few messages... not happen particularly often") through the
+  district forum's webhook **as each NPC** (their own name and avatar), per the user's
+  explicit answer -- the same visual treatment a player's proxied line gets, not posted
+  as "The Narrator." A new `dialogue_svc.generate_npc_to_npc_reply` variant builds the
+  speaker block from the other NPC rather than a player `Character`; the very first line
+  of an exchange uses an OOC stage direction (`"(( You notice each other nearby... ))"`,
+  the same `(( ... ))` convention `lemonade/system_prompt.md` already documents for
+  out-of-character instructions) rather than anything literally said, since nothing
+  prompted the conversation but proximity.
+
+**Interpretation calls**: an engagement's NPC "travel" is an instant relocation, not a
+simulated multi-tick walk -- every other arrival in this codebase (schedule, ambient
+narration) is already instantaneous, and there's no existing intra-district
+travel-over-time model to build on. `/engage start`'s participants are one free-text,
+comma-separated field rather than fixed named slots, since Discord slash commands have
+no true variadic argument and the request was explicitly "1 or more" of either kind.
