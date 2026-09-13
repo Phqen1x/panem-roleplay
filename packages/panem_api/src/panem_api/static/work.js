@@ -1,8 +1,8 @@
-// `/work`'s minigame (Plan §9-adjacent): a small, classic Minesweeper
-// board. No Discord SDK handshake here (unlike app.js) -- this page
-// doesn't read any Discord-scoped data itself, it just needs to know
-// *which shift*, which arrives one of two ways depending on how /work
-// launched this page:
+// `/work`'s minigame (Plan §9-adjacent): a random pick from a small pool
+// of classic minigames (see ./games/*.js). No Discord SDK handshake here
+// (unlike app.js) -- this page doesn't read any Discord-scoped data
+// itself, it just needs to know *which shift*, which arrives one of two
+// ways depending on how /work launched this page:
 //   1. The plain-browser fallback link: `?shift_id=<id>` directly.
 //   2. A real embedded Discord Activity launch (an `embedded_application`
 //      invite): Discord loads this app's one configured root URL,
@@ -10,22 +10,30 @@
 //      ...) -- never a custom `?shift_id=`. `resolveShiftId` falls back to
 //      asking panem_api which shift is pending for that `channel_id`
 //      (`panem_shared.redis_keys.work_pending_key`, written by /work).
-// Winning/losing posts to panem_api's work-result endpoint, which pays
-// the shift the same way panem_bot's classic /work option-select flow
-// does, just with a win/lose wage multiplier instead of a chosen option's
+//
+// Every game module exports `mount(boardEl, { onFinish, setStatus })`,
+// which renders itself into `#board` and calls `onFinish(won)` exactly
+// once when the shift's outcome is decided -- this file doesn't care how
+// a game reaches that decision, only what it reports. Winning/losing
+// posts to panem_api's work-result endpoint, which pays the shift the
+// same way panem_bot's classic /work option-select flow does, just with
+// a win/lose wage multiplier instead of a chosen option's
 // (`panem_shared.shifts.resolve_shift_game`).
 
-const GRID_SIZE = 8;
-const MINE_COUNT = 10;
+import * as coinflip from "./games/coinflip.js";
+import * as connect4 from "./games/connect4.js";
+import * as minesweeper from "./games/minesweeper.js";
+import * as poison from "./games/poison.js";
+import * as snake from "./games/snake.js";
+import * as solitaire from "./games/solitaire.js";
+
+const GAMES = [minesweeper, snake, connect4, coinflip, poison, solitaire];
 
 const statusEl = document.getElementById("status");
 const boardEl = document.getElementById("board");
 const resultEl = document.getElementById("result");
 
 let shiftId = null;
-let cells = []; // flat array of {mine, count, revealed, flagged}
-let firstClick = true;
-let gameOver = false;
 
 function setStatus(text) {
   statusEl.textContent = text;
@@ -40,94 +48,8 @@ async function fetchJson(path, options) {
   return body;
 }
 
-function neighbors(index) {
-  const row = Math.floor(index / GRID_SIZE);
-  const col = index % GRID_SIZE;
-  const out = [];
-  for (let dr = -1; dr <= 1; dr++) {
-    for (let dc = -1; dc <= 1; dc++) {
-      if (dr === 0 && dc === 0) continue;
-      const r = row + dr;
-      const c = col + dc;
-      if (r >= 0 && r < GRID_SIZE && c >= 0 && c < GRID_SIZE) {
-        out.push(r * GRID_SIZE + c);
-      }
-    }
-  }
-  return out;
-}
-
-function placeMines(safeIndex) {
-  const total = GRID_SIZE * GRID_SIZE;
-  cells = Array.from({ length: total }, () => ({
-    mine: false,
-    count: 0,
-    revealed: false,
-    flagged: false,
-  }));
-  const safeZone = new Set([safeIndex, ...neighbors(safeIndex)]);
-  const candidates = [...Array(total).keys()].filter((i) => !safeZone.has(i));
-  for (let i = candidates.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
-  }
-  for (const index of candidates.slice(0, MINE_COUNT)) {
-    cells[index].mine = true;
-  }
-  for (let index = 0; index < total; index++) {
-    if (!cells[index].mine) {
-      cells[index].count = neighbors(index).filter((n) => cells[n].mine).length;
-    }
-  }
-}
-
-function reveal(index) {
-  const cell = cells[index];
-  if (cell.revealed || cell.flagged) return;
-  cell.revealed = true;
-  if (cell.count === 0 && !cell.mine) {
-    for (const n of neighbors(index)) reveal(n);
-  }
-}
-
-function isWon() {
-  return cells.every((cell) => cell.mine || cell.revealed);
-}
-
-function render() {
-  boardEl.style.gridTemplateColumns = `repeat(${GRID_SIZE}, 34px)`;
-  boardEl.innerHTML = "";
-  cells.forEach((cell, index) => {
-    const button = document.createElement("button");
-    button.className = "cell";
-    button.type = "button";
-    if (cell.revealed) {
-      button.classList.add("revealed");
-      if (cell.mine) {
-        button.classList.add("mine");
-        button.textContent = "*";
-      } else if (cell.count > 0) {
-        button.dataset.count = String(cell.count);
-        button.textContent = String(cell.count);
-      }
-    } else if (cell.flagged) {
-      button.classList.add("flagged");
-      button.textContent = "!";
-    }
-    button.disabled = gameOver;
-    button.addEventListener("click", () => onCellClick(index));
-    button.addEventListener("contextmenu", (event) => {
-      event.preventDefault();
-      onCellFlag(index);
-    });
-    boardEl.appendChild(button);
-  });
-}
-
 async function finish(won) {
-  gameOver = true;
-  render();
-  setStatus(won ? "Board cleared!" : "You hit a mine.");
+  setStatus(won ? "Shift cleared!" : "The shift got away from you.");
   try {
     const body = await fetchJson(`/activity/work/${shiftId}/result`, {
       method: "POST",
@@ -145,33 +67,6 @@ async function finish(won) {
     resultEl.className = "lose";
     resultEl.textContent = `Couldn't report the result: ${err.message}`;
   }
-}
-
-function onCellClick(index) {
-  if (gameOver) return;
-  if (firstClick) {
-    placeMines(index);
-    firstClick = false;
-  }
-  const cell = cells[index];
-  if (cell.mine) {
-    cells.forEach((c) => {
-      if (c.mine) c.revealed = true;
-    });
-    render();
-    finish(false);
-    return;
-  }
-  reveal(index);
-  render();
-  if (isWon()) finish(true);
-}
-
-function onCellFlag(index) {
-  if (gameOver || firstClick) return;
-  const cell = cells[index];
-  if (!cell.revealed) cell.flagged = !cell.flagged;
-  render();
 }
 
 async function resolveShiftId() {
@@ -209,15 +104,11 @@ async function main() {
     setStatus(`${info.character_name}'s ${info.job_title} shift is already done.`);
     return;
   }
-  setStatus(`${info.character_name} works as ${info.job_title}. Clear the board (right-click to flag) --`);
-  cells = Array.from({ length: GRID_SIZE * GRID_SIZE }, () => ({
-    mine: false,
-    count: 0,
-    revealed: false,
-    flagged: false,
-  }));
+
+  const game = GAMES[Math.floor(Math.random() * GAMES.length)];
+  setStatus(`${info.character_name} works as ${info.job_title}. ${game.instructions}`);
   boardEl.hidden = false;
-  render();
+  game.mount(boardEl, { onFinish: finish, setStatus });
 }
 
 main();

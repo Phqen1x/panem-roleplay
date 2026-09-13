@@ -1127,6 +1127,38 @@ job, and extends the district economy to react to it.
   cost, not tied to owning any particular good. Both are real follow-up scope, deferred
   the same way housing itself was in the original request.
 
+## Notes on the /character create crash fix and the multi-game /work minigame
+
+**The `/character create` crash fix.** After the job system rework above, creating any
+character crashed Discord-side: `JobTitleModal` (the modal that asks for a free-typed job
+title, opened from inside `CharacterDetailsModal.on_submit` -- i.e. one modal opening
+another in response to that first modal's own submission) got a 400 from Discord
+("In type: Value must be one of {4, 5, 6, 7, 10, 12}"). discord.py 2.7's `send_modal`
+rejects the legacy Action-Row-wrapped `TextInput` schema specifically when the modal being
+sent is itself a response to a `MODAL_SUBMIT` interaction (chaining a second modal off the
+first) -- Discord requires the newer schema for that case, where each field is a
+`discord.ui.Label` wrapping its input rather than a bare `TextInput` with a `label=` kwarg.
+`CharacterDetailsModal` itself doesn't need this (it opens in response to the plain
+district-select component, not a modal submission), so only `JobTitleModal` changed.
+
+**The multi-game `/work` minigame.** `/work`'s Activity-hosted minigame was previously
+always the same Minesweeper board (`work.js`). It's now a random pick, per shift, from six
+small games living in `panem_api/static/games/*.js`: Minesweeper, Snake (eat 8 to clear the
+shift, arrow keys/WASD), Connect 4 against a robot foreman (takes an immediate win, else
+blocks the player's, else plays center-weighted), Coin Flip (call heads or tails, 50/50),
+Pick Your Poison (3 identical bottles, 1 poisoned, 2/3 odds), and a simplified
+click-to-select-click-to-place Klondike Solitaire (only a pile's top card is ever movable;
+a "Give Up" button covers an unwinnable deal since detecting that automatically is out of
+scope here). Every game module exports the same `mount(boardEl, { onFinish, setStatus })`
+contract and calls `onFinish(won)` exactly once -- `work.js` (the coordinator) doesn't care
+how a game reaches its outcome, only what it reports, matching the existing trust model
+documented in `panem_api/app.py` (the work-result endpoint trusts whatever `won` the client
+sends, same as it already did for the single Minesweeper board). `work.js` picks uniformly
+at random from the six modules each time a shift's board loads. No Python changed for this
+part -- verified with a headless Chromium (Playwright) smoke test per game plus a full
+mocked round-trip through the coordinator, not by the pytest suite (there's no JS test
+runner wired into this repo).
+
 ## Upgrading past duplicate character names
 
 The migration that adds the name-uniqueness index (`7116c3213f6e`) will
