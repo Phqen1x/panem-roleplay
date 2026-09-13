@@ -515,12 +515,16 @@ class ProxyCog(commands.Cog):
 
                 npc_job = content_bundle.jobs.get(npc.job_id) if npc.job_id else None
                 npc_content = content_bundle.npcs.get(npc.id)
+                # A staff edit (`/staff npc set-background`) always wins
+                # over the authored content -- a staff-created NPC
+                # (`/staff npc add`) has no authored entry at all.
+                raw_background = npc.backstory_override or (
+                    npc_content.backstory if npc_content is not None else None
+                )
                 npc_background = None
-                if npc_content is not None:
-                    npc_background = npc_content.backstory[
-                        : constants.NPC_BACKGROUND_PROMPT_MAX_LEN
-                    ]
-                    if len(npc_content.backstory) > constants.NPC_BACKGROUND_PROMPT_MAX_LEN:
+                if raw_background:
+                    npc_background = raw_background[: constants.NPC_BACKGROUND_PROMPT_MAX_LEN]
+                    if len(raw_background) > constants.NPC_BACKGROUND_PROMPT_MAX_LEN:
                         npc_background += "…"
 
                 reply = await dialogue_svc.generate_reply(

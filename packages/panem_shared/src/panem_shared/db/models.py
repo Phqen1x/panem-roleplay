@@ -220,6 +220,19 @@ class Npc(TimestampMixin, Base):
     while this is set, which is what keeps them at the engagement's
     location instead of wandering off on their normal weighted schedule."""
 
+    backstory_override: Mapped[str | None] = mapped_column(String(1500), nullable=True)
+    appearance_override: Mapped[str | None] = mapped_column(String(400), nullable=True)
+    """`NpcContent.backstory`/`.appearance` (`data/npcs/*.yaml`) are
+    display-only flavor text with no DB column of their own -- fine for an
+    authored resident, but staff have no way to retroactively correct or
+    flesh one out, and a staff-created NPC (`/staff npc add`, not backed by
+    any authored content at all) needs somewhere to hold it in the first
+    place. `panem_bot.cogs.staff`'s NPC-editing commands set these; every
+    read site (`/resident profile`, dialogue's `npc_background`) prefers
+    the override when set and falls back to the authored content
+    otherwise, mirroring `provider_override`'s own override-a-default
+    shape."""
+
 
 class NpcSchedule(Base):
     __tablename__ = "npc_schedule"

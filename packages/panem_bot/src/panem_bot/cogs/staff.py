@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import re
+import uuid
 
 import discord
 from discord import app_commands
@@ -19,11 +20,13 @@ from panem_bot.services import jobs as jobs_svc
 from panem_bot.services.staff import log_staff_action
 from panem_bot.strings import t
 from panem_shared import constants, job_levels
+from panem_shared.content.traits import speech_tone
 from panem_shared.db.models import (
     Character,
     DistrictState,
     EngagementSettings,
     Inventory,
+    Npc,
     Property,
     Scene,
     User,
@@ -62,6 +65,9 @@ class StaffCog(commands.Cog):
     )
     engagement_group = app_commands.Group(
         name="engagement", description="Tune NPC engagement settings", parent=group
+    )
+    npc_group = app_commands.Group(
+        name="npc", description="Add NPCs and edit their identity retroactively", parent=group
     )
 
     @group.command(name="whois", description="Look up who a proxied message belongs to")
@@ -649,6 +655,263 @@ class StaffCog(commands.Cog):
             f"Engagements now auto-close after **{minutes}** minute(s) of no player message.",
             ephemeral=True,
         )
+
+    # ------------------------------------------------------------------ npc
+
+    async def _find_npc(self, session: AsyncSession, name: str) -> Npc | None:
+        return (await session.execute(select(Npc).where(Npc.name == name))).scalar_one_or_none()
+
+    @npc_group.command(name="rename", description="Rename an NPC")
+    @app_commands.describe(npc="Resident's current name", new_name="New name")
+    @app_commands.autocomplete(npc=autocomplete.any_npc)
+    @app_commands.check(_is_staff)
+    async def npc_rename(self, interaction: discord.Interaction, npc: str, new_name: str) -> None:
+        async with self.bot.db() as session:
+            row = await self._find_npc(session, npc)
+            if row is None:
+                await interaction.response.send_message(t("resident_not_found"), ephemeral=True)
+                return
+            old_name = row.name
+            row.name = new_name
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="npc_rename",
+                target=row.id,
+                payload={"old_name": old_name, "new_name": new_name},
+            )
+        await interaction.response.send_message(
+            f"**{old_name}** is now known as **{new_name}**.", ephemeral=True
+        )
+
+    @npc_group.command(
+        name="set-background", description="Set (or replace) an NPC's backstory, retroactively"
+    )
+    @app_commands.describe(npc="Resident's name", backstory="New backstory text")
+    @app_commands.autocomplete(npc=autocomplete.any_npc)
+    @app_commands.check(_is_staff)
+    async def npc_set_background(
+        self,
+        interaction: discord.Interaction,
+        npc: str,
+        backstory: app_commands.Range[str, 1, 1500],
+    ) -> None:
+        async with self.bot.db() as session:
+            row = await self._find_npc(session, npc)
+            if row is None:
+                await interaction.response.send_message(t("resident_not_found"), ephemeral=True)
+                return
+            row.backstory_override = backstory
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="npc_set_background",
+                target=row.id,
+                payload={"backstory": backstory},
+            )
+        await interaction.response.send_message(
+            f"**{npc}**'s backstory has been updated.", ephemeral=True
+        )
+
+    @npc_group.command(
+        name="set-appearance", description="Set (or replace) an NPC's appearance, retroactively"
+    )
+    @app_commands.describe(npc="Resident's name", appearance="New appearance text")
+    @app_commands.autocomplete(npc=autocomplete.any_npc)
+    @app_commands.check(_is_staff)
+    async def npc_set_appearance(
+        self,
+        interaction: discord.Interaction,
+        npc: str,
+        appearance: app_commands.Range[str, 1, 400],
+    ) -> None:
+        async with self.bot.db() as session:
+            row = await self._find_npc(session, npc)
+            if row is None:
+                await interaction.response.send_message(t("resident_not_found"), ephemeral=True)
+                return
+            row.appearance_override = appearance
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="npc_set_appearance",
+                target=row.id,
+                payload={"appearance": appearance},
+            )
+        await interaction.response.send_message(
+            f"**{npc}**'s appearance has been updated.", ephemeral=True
+        )
+
+    @npc_group.command(name="set-traits", description="Replace an NPC's personality traits")
+    @app_commands.describe(npc="Resident's name", traits="Comma-separated traits")
+    @app_commands.autocomplete(npc=autocomplete.any_npc)
+    @app_commands.check(_is_staff)
+    async def npc_set_traits(self, interaction: discord.Interaction, npc: str, traits: str) -> None:
+        trait_list = [t_.strip() for t_ in traits.split(",") if t_.strip()]
+        if not trait_list:
+            await interaction.response.send_message("Name at least one trait.", ephemeral=True)
+            return
+        async with self.bot.db() as session:
+            row = await self._find_npc(session, npc)
+            if row is None:
+                await interaction.response.send_message(t("resident_not_found"), ephemeral=True)
+                return
+            row.traits = trait_list
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="npc_set_traits",
+                target=row.id,
+                payload={"traits": trait_list},
+            )
+        await interaction.response.send_message(
+            f"**{npc}**'s traits are now: {', '.join(trait_list)}.", ephemeral=True
+        )
+
+    @npc_group.command(name="set-speech", description="Set an NPC's speech tone")
+    @app_commands.describe(npc="Resident's name", tone="e.g. warm, blunt, reserved, plain")
+    @app_commands.autocomplete(npc=autocomplete.any_npc)
+    @app_commands.check(_is_staff)
+    async def npc_set_speech(self, interaction: discord.Interaction, npc: str, tone: str) -> None:
+        async with self.bot.db() as session:
+            row = await self._find_npc(session, npc)
+            if row is None:
+                await interaction.response.send_message(t("resident_not_found"), ephemeral=True)
+                return
+            row.speech_style = {**row.speech_style, "tone": tone}
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="npc_set_speech",
+                target=row.id,
+                payload={"tone": tone},
+            )
+        await interaction.response.send_message(
+            f"**{npc}**'s speech tone is now **{tone}**.", ephemeral=True
+        )
+
+    @npc_group.command(name="add", description="Add a brand new NPC to a district")
+    @app_commands.describe(
+        name="NPC's name",
+        district="District number (0 = The Capitol)",
+        age="Age in years",
+        home_location="Where they live (also where they start)",
+        traits="Comma-separated personality traits",
+        job="Catalog job id (optional -- /staff job list to see options)",
+        backstory="Backstory text (optional)",
+        appearance="Appearance text (optional)",
+    )
+    @app_commands.autocomplete(district=autocomplete.districts)
+    @app_commands.check(_is_staff)
+    async def npc_add(
+        self,
+        interaction: discord.Interaction,
+        name: str,
+        district: int,
+        age: app_commands.Range[int, 1, 120],
+        home_location: str,
+        traits: str,
+        job: str | None = None,
+        backstory: app_commands.Range[str, 0, 1500] | None = None,
+        appearance: app_commands.Range[str, 0, 400] | None = None,
+    ) -> None:
+        content = self.bot.content  # type: ignore[attr-defined]
+        if district not in content.districts:
+            await interaction.response.send_message(
+                f"Unknown district `{district}`.", ephemeral=True
+            )
+            return
+        district_content = content.district(district)
+        location = next(
+            (loc for loc in district_content.locations if loc.id == home_location), None
+        )
+        if location is None:
+            await interaction.response.send_message(
+                f"Unknown location `{home_location}` in district {district}.", ephemeral=True
+            )
+            return
+        trait_list = [t_.strip() for t_ in traits.split(",") if t_.strip()]
+        if not trait_list:
+            await interaction.response.send_message("Name at least one trait.", ephemeral=True)
+            return
+        job_row = content.jobs.get(job) if job else None
+        if job and (job_row is None or job_row.district != district):
+            await interaction.response.send_message(
+                f"`{job}` isn't a job in district {district}.", ephemeral=True
+            )
+            return
+
+        npc_id = f"staff_{district}_{uuid.uuid4().hex[:8]}"
+        async with self.bot.db() as session:
+            row = Npc(
+                id=npc_id,
+                district_id=district,
+                name=name,
+                age=age,
+                job_id=job_row.id if job_row is not None else None,
+                home_location_id=home_location,
+                location_id=home_location,
+                traits=trait_list,
+                speech_style={"tone": speech_tone(trait_list)},
+                backstory_override=backstory,
+                appearance_override=appearance,
+            )
+            session.add(row)
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="npc_add",
+                target=npc_id,
+                payload={"name": name, "district": district, "home_location": home_location},
+            )
+        await interaction.response.send_message(
+            f"**{name}** has joined district {district} at **{location.name}** "
+            f"(id `{npc_id}`). They have no schedule yet, so they'll stay put until "
+            "moved by `/staff` or picked up by a future NPC reseed.",
+            ephemeral=True,
+        )
+
+    @npc_add.autocomplete("home_location")
+    async def npc_add_home_location_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        district_id = getattr(interaction.namespace, "district", None)
+        if district_id is None:
+            return []
+        district_content = self.bot.content.district(district_id)  # type: ignore[attr-defined]
+        current_lower = current.lower()
+        matches = [
+            loc
+            for loc in district_content.locations
+            if current_lower in loc.name.lower() or current_lower in loc.id.lower()
+        ]
+        return [
+            app_commands.Choice(name=f"{loc.name} ({loc.id})", value=loc.id) for loc in matches[:25]
+        ]
+
+    @npc_add.autocomplete("job")
+    async def npc_add_job_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        district_id = getattr(interaction.namespace, "district", None)
+        if district_id is None:
+            return []
+        jobs = [
+            j
+            for j in self.bot.content.jobs.values()  # type: ignore[attr-defined]
+            if j.district == district_id
+        ]
+        current_lower = current.lower()
+        matches = [
+            j for j in jobs if current_lower in j.id.lower() or current_lower in j.title.lower()
+        ]
+        return [app_commands.Choice(name=f"{j.title} ({j.id})", value=j.id) for j in matches[:25]]
 
 
 async def setup(bot: commands.Bot) -> None:

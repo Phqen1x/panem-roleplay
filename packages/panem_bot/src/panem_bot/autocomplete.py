@@ -15,7 +15,7 @@ from discord import app_commands
 from sqlalchemy import select
 
 from panem_bot.services import characters as characters_svc
-from panem_shared.db.models import Character
+from panem_shared.db.models import Character, Npc
 from panem_shared.enums import CharacterStatus
 
 MAX_CHOICES = 25
@@ -78,6 +78,25 @@ async def any_pending(
     return await _characters(
         interaction, current, own_only=False, statuses=[CharacterStatus.PENDING.value]
     )
+
+
+async def any_npc(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    """Any NPC in any district by name -- for staff commands (`/staff npc
+    ...`), which need to reach any resident, not just ones the invoking
+    staff member's own character shares a district with."""
+    bot = interaction.client
+    async with bot.db() as session:  # type: ignore[attr-defined]
+        stmt = select(Npc.name, Npc.district_id)
+        if current:
+            stmt = stmt.where(Npc.name.ilike(f"%{current}%"))
+        rows = (await session.execute(stmt.order_by(Npc.name).limit(MAX_CHOICES))).all()
+    return [
+        app_commands.Choice(
+            name=f"{name} ({bot.content.district(district_id).name})",  # type: ignore[attr-defined]
+            value=name,
+        )
+        for name, district_id in rows
+    ]
 
 
 async def districts(

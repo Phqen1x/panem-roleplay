@@ -1532,3 +1532,35 @@ error when it lost the race -- surfaced to players as a generic "Something went 
 error, and (once patched with a fix that merely adopted the existing row without
 correcting its `kind`) as `/engage end`/`/engage join` claiming the thread wasn't a
 registered engagement. Both commands now upsert the same way `/scene start` does.
+
+## Notes on staff NPC management (`/staff npc ...`)
+
+A feature request: let staff retroactively rename an NPC or edit their background,
+appearance, traits and speech, and add brand new NPCs outright, all without touching code
+or a data file. `NpcContent.backstory`/`.appearance` (`data/npcs/*.yaml`) were designed as
+display-only, never-simulated flavor text with no DB column of their own -- fine for an
+authored resident nobody edits, but that leaves staff no way to correct one after the fact,
+and a wholly new NPC created by a command has no YAML entry to read from in the first place.
+
+- **`Npc.backstory_override`/`.appearance_override`** (new nullable columns, migration
+  `b2d4f7a9c1e6`) hold a staff edit, mirroring `provider_override`'s own
+  override-a-default shape. Every read site -- `/resident profile`'s embed and
+  `ProxyCog.post_engagement_replies`'s `npc_background` for the LLM prompt -- now prefers
+  the override when set and falls back to the authored `NpcContent` otherwise. `name`,
+  `traits` and `speech_style` already lived on the `Npc` row itself (no content-vs-DB split
+  to work around), so renaming and re-tagging traits/tone just update those columns directly.
+- **`/staff npc rename`, `set-background`, `set-appearance`, `set-traits`, `set-speech`**
+  each look the NPC up by name (`autocomplete.any_npc`, a new global-not-district-scoped
+  autocomplete since staff need to reach any resident, not just ones near their own
+  character) and update exactly one thing, mirroring `/staff give money`/`housing
+  set-price`'s single-purpose shape rather than one big edit-everything command.
+- **`/staff npc add`** creates a genuinely new `Npc` row from scratch -- name, district,
+  age, home location (validated against that district's real locations), comma-separated
+  traits (speech tone auto-derived from them via the same `speech_tone` helper synthetic
+  seeding already uses), and optional job/backstory/appearance. The id is a random
+  `staff_<district>_<hex8>` (never collides with seeded `d<district>_npc_<n>` or
+  content-authored ids). Deliberately out of scope: no `NpcSchedule` rows are created, so
+  a staff-added NPC has no weighted movement yet (`panem_sim.systems.schedule.run` simply
+  skips any NPC with no schedule weights for the current phase, the same safe no-op it
+  already does for an NPC that's `engagement_id`-locked) -- they stay exactly where placed
+  until staff moves them or a future NPC-schedule command exists.

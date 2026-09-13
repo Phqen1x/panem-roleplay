@@ -165,16 +165,21 @@ class ResidentCog(commands.Cog):
             traits = ", ".join(npc.traits) if npc.traits else "unknown"
             tone = npc.speech_style.get("tone", "unknown") if npc.speech_style else "unknown"
             authored = content.npcs.get(npc.id)
+            # A staff edit (`/staff npc set-appearance`/`set-background`)
+            # always wins over the authored content -- a staff-created NPC
+            # (`/staff npc add`) has no authored entry at all, so the
+            # override is the only place this can live for them.
+            appearance = npc.appearance_override or (authored.appearance if authored else "")
+            backstory = npc.backstory_override or (authored.backstory if authored else "")
 
         embed = discord.Embed(title=name)
         embed.add_field(name="Job", value=job_name)
         embed.add_field(name="Traits", value=traits.capitalize())
         embed.add_field(name="Speech", value=tone.capitalize())
         embed.add_field(name=f"Opinion of {char.name}", value=stance.capitalize())
-        if authored is not None:
-            if authored.appearance:
-                embed.add_field(name="Appearance", value=authored.appearance, inline=False)
-            backstory = authored.backstory
+        if appearance:
+            embed.add_field(name="Appearance", value=appearance, inline=False)
+        if backstory:
             if len(backstory) > EMBED_FIELD_VALUE_LIMIT:
                 backstory = backstory[: EMBED_FIELD_VALUE_LIMIT - 1] + "…"
             embed.add_field(name="Backstory", value=backstory, inline=False)
