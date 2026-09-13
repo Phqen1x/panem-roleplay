@@ -28,7 +28,7 @@ Source of truth for all of it: `packages/panem_shared/src/panem_shared/lemonade/
 ## Profiles (which models, and why)
 
 lemond picks the **first component labelled `chat`** as the planner, so the LLM
-is always listed first. Roles are matched by label (`tts`, `transcription`,
+is always listed first. Roles are matched by label (`transcription`,
 `vision`, `embeddings`). Image generation is deliberately left out: no
 component carries the `image`/`edit` label, so the OmniRouter never offers
 `generate_image`/`edit_image` and the prompt tells the planner to ignore them
@@ -38,8 +38,17 @@ if one were ever added.
 |------|--------------------|------------------------------------------|----------------------------------------|
 | Planner LLM (`chat`, `tool-calling`, `vision`) | NPC dialogue, narration, broadcasts, staff review; reads player-posted images directly (vision) | `Qwen3.5-4B-MTP-GGUF` | `Qwen3.6-35B-A3B-MTP-GGUF` |
 | Speech-to-text (`transcription`) | Players' Discord voice messages in scenes | `Whisper-Base` | `Whisper-Large-v3-Turbo` |
-| Text-to-speech (`tts`) | Capitol/district broadcasts read aloud (Activity / voice) | `kokoro-v1` | `kokoro-v1` |
 | Embeddings (`embeddings`) | NPC memory retrieval (`MEMORY_CAP_PER_NPC`, `RETRIEVAL_K`) via `/v1/embeddings` | `nomic-embed-text-v1-GGUF` | `Qwen3-Embedding-0.6B-GGUF` |
+
+No text-to-speech component: `kokoro-v1` was dropped from both profiles after
+its archive repeatedly failed to extract on a real machine
+(`model_load_error: Failed to extract archive: .../kokoro_*.tar.gz`), which
+took down the *whole* collection since Lemonade loads every component of an
+omni model together -- one broken component blocked dialogue too, even
+though nothing in `panem_bot` consumes generated speech yet (see the Phase 6
+notes below). Add a `tts`-labelled component back into `PROFILES` in
+`omni.py` and rebuild if you want broadcasts read aloud and can get Kokoro
+(or another `tts` component) to actually download/extract cleanly.
 
 The planner is loaded with `ctx_size` 16k (Lite) / 32k (Halo) and Qwen's
 thinking phase disabled (`--chat-template-kwargs '{"enable_thinking": false}'`)
@@ -80,9 +89,8 @@ never changes when you switch hardware.
    client.chat.completions.create(model="panem-omni", messages=[...])
    ```
 
-   Generated speech comes back embedded in the assistant content as an
-   `<audio>data:audio/mpeg;base64,...</audio>` tag; the bot turns it into a Discord attachment
-   (not built yet -- see the Phase 6 notes in the main README).
+   Neither profile currently ships a `tts` component (see the Profiles section above), so
+   there's no generated speech to receive -- everything comes back as plain text content.
 
 The Lemonade desktop app (see Lemonade's own releases) shows `Panem-Omni-*` under *Lemonade*
 in the chat picker and lets you tweak the components or prompt in *File > New Omni Model*;

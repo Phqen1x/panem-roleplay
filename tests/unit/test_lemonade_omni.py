@@ -105,7 +105,16 @@ class TestProfiles:
     @pytest.mark.parametrize("key", sorted(omni.PROFILES))
     def test_every_panem_role_is_covered(self, key, catalog):
         covered = omni.roles_covered(omni.PROFILES[key], catalog)
-        assert {"planner", "vision", "transcription", "speech", "embeddings"} <= covered
+        assert {"planner", "vision", "transcription", "embeddings"} <= covered
+
+    @pytest.mark.parametrize("key", sorted(omni.PROFILES))
+    def test_no_speech_component(self, key, catalog):
+        """Kokoro is dropped from both profiles: a corrupted/incomplete
+        Kokoro archive download makes Lemonade fail to load the *whole*
+        collection (it's one omni model), which blocked dialogue entirely
+        for no benefit -- nothing in panem_bot consumes generated speech
+        yet (see the README's Phase 6 notes)."""
+        assert "speech" not in omni.roles_covered(omni.PROFILES[key], catalog)
 
     @pytest.mark.parametrize("key", sorted(omni.PROFILES))
     def test_no_image_generation_component(self, key, catalog):

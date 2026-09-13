@@ -902,9 +902,10 @@ today's `data/` rather than copied) and its deploy-file diffs re-adapted by hand
   not as end-to-end proven.
 - **Still just a documented contract, not wired up:** every `RequestMode` besides
   `dialogue` (`narrate`, `broadcast`, `speak`, `describe_image`, `npc_generate`,
-  `review_character`, `staff`) and the vision/transcription/speech/embeddings roles a
-  profile bundles alongside the planner LLM. `/talk` only ever sends text and only ever
-  reads text back.
+  `review_character`, `staff`) and the vision/transcription/embeddings roles a profile
+  bundles alongside the planner LLM. `/talk` only ever sends text and only ever reads
+  text back. (Neither profile bundles a `tts` component at all as of this session --
+  see `lemonade/README.md`'s Profiles section for why.)
 
 ## Notes on RP-location enforcement (district, location, and free travel)
 
