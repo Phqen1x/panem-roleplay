@@ -892,7 +892,29 @@ today's `data/` rather than copied) and its deploy-file diffs re-adapted by hand
   at most one memory per reply only when it actually fits (never the same one twice in a
   conversation) and to answer what was just said rather than returning to a favorite
   topic -- prompt-level guidance alongside the sampling-level fix, since either alone is
-  weaker against a small model's tendency to fixate.
+  weaker against a small model's tendency to fixate. `frequency_penalty`/`presence_penalty`
+  only penalize tokens *within the completion currently being generated* (standard
+  OpenAI-compatible behavior) -- they can't reach across separate LLM calls, so they don't
+  stop an NPC from regenerating a near-copy of a line it spoke several turns ago even
+  though that line is sitting right there in `history`. A follow-up report showed exactly
+  this: an NPC's very last reply in a several-turn engagement was a near-verbatim repeat of
+  its *opening* line. Since sampling parameters can't fix a cross-request repeat, the
+  prompt now says so explicitly -- "check your own earlier lines in this conversation
+  before you answer, and never reuse one... including your own opening line or greeting
+  action."
+- **Actions vs. speech, and no unprompted scene-setting.** The same report showed an NPC
+  writing plain, unwrapped narration ("The bell rings, signaling the start of a long day.
+  I straighten my collar...") instead of the asterisk-wrapped-action/plain-speech split
+  the prompt already asked for -- evidently too abstract an instruction for a small model
+  to reliably follow. "Voicing an NPC" now gives a concrete correct/wrong example pair
+  (`*Nash straightens his collar.* It's not often we get to sit together like this.` vs.
+  the bell/collar line above) and calls out its three separate mistakes: an unwrapped
+  sentence, first-person "I" inside an action (actions are third person, using the NPC's
+  own name or he/she/they), and describing something happening *around* the NPC rather
+  than the NPC's own words or action. A new, separate bullet forbids narrating the
+  surroundings (weather, time of day, a bell, who's nearby) on the NPC's own initiative at
+  all -- that's `[MODE: narrate]`'s job -- except when the NPC is actually remarking on it
+  out loud to whoever they're talking to.
 - **Grounding a reply in more than just stance.** The system prompt has always documented
   `[NPC] ... job or role; ... personality`, `[SCENE] ... crisis level if any`, and
   `[SPEAKER] ... district, job, reputation` header lines, but `build_request_context` never
