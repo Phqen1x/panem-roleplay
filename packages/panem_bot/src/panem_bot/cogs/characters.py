@@ -17,6 +17,7 @@ from panem_bot.views import (
     CHAR_ID_FOOTER_PREFIX,
     SHIFT_PHASE_LABELS,
     ApprovalView,
+    JobTitlePromptView,
     ShiftPhaseSelectView,
 )
 from panem_shared import constants, job_levels
@@ -127,8 +128,6 @@ class CharacterCog(commands.Cog):
         backstory: str,
         avatar_url: str,
     ) -> None:
-        from panem_bot.modals import JobTitleModal
-
         try:
             age = int(age_str)
         except ValueError:
@@ -172,7 +171,13 @@ class CharacterCog(commands.Cog):
                 job_title,
             )
 
-        await interaction.response.send_modal(JobTitleModal(on_submit=on_job_title))
+        # Discord rejects a modal (`JobTitleModal`) sent directly in
+        # response to `CharacterDetailsModal`'s own MODAL_SUBMIT
+        # interaction -- a button click in between supplies the plain
+        # component interaction `send_modal` needs instead.
+        await interaction.response.send_message(
+            t("job_title_prompt"), view=JobTitlePromptView(on_job_title), ephemeral=True
+        )
 
     async def _prompt_shift_phase(
         self,

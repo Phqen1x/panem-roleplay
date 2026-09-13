@@ -68,19 +68,17 @@ class CharacterDetailsModal(discord.ui.Modal, title="New Character"):
 
 
 class JobTitleModal(discord.ui.Modal, title="Desired Job"):
-    # `send_modal` here responds to a MODAL_SUBMIT interaction (this modal
-    # is opened from CharacterDetailsModal.on_submit, chaining a second
-    # modal onto the first) -- Discord rejects that chained response if it
-    # uses the legacy Action-Row-wrapped TextInput a plain `label=` kwarg
-    # produces, so this needs the newer `ui.Label`-wrapped form instead
-    # (discord.py >= 2.6). CharacterDetailsModal itself opens in response
-    # to a plain component interaction, where the legacy form still works.
-    job_title = discord.ui.Label(
-        text="What job does your character want?",
-        component=discord.ui.TextInput(
-            max_length=80,
-            placeholder="e.g. Coal miner, Seamstress, Fisherman's apprentice",
-        ),
+    # Opened from a button click (a component interaction), never chained
+    # directly off another modal's submission -- Discord rejects the
+    # legacy Action-Row-wrapped TextInput schema below when a modal is
+    # sent in response to a MODAL_SUBMIT interaction, so
+    # `panem_bot.cogs.characters._prompt_job_title` inserts a
+    # `JobTitlePromptView` button between `CharacterDetailsModal`'s
+    # submission and this modal's launch specifically to avoid that.
+    job_title = discord.ui.TextInput(
+        label="What job does your character want?",
+        max_length=80,
+        placeholder="e.g. Coal miner, Seamstress, Fisherman's apprentice",
     )
 
     def __init__(
@@ -92,10 +90,7 @@ class JobTitleModal(discord.ui.Modal, title="Desired Job"):
         super().__init__()
         self._on_submit = on_submit
         if prefill:
-            self.job_title.component.default = prefill  # type: ignore[attr-defined]
+            self.job_title.default = prefill
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        await self._on_submit(
-            interaction,
-            str(self.job_title.component.value),  # type: ignore[attr-defined]
-        )
+        await self._on_submit(interaction, str(self.job_title.value))
