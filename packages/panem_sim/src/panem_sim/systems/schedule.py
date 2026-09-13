@@ -90,6 +90,12 @@ def run(state: WorldState, ctx: TickContext) -> list[AnyWorldEvent]:
     locations_by_district: dict[int, dict[str, Location]] = {}
 
     for npc_id, npc in state.npcs.items():
+        if npc.engagement_id is not None:
+            # Pulled into a `panem_bot.services.engagements` engagement --
+            # stays put until the engagement ends and clears this, rather
+            # than wandering off on its normal weighted schedule.
+            continue
+
         weights = {
             row.location_id: row.weight
             for row in state.npc_schedules.get(npc_id, [])

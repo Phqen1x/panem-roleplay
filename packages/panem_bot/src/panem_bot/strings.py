@@ -161,6 +161,28 @@ STRINGS: dict[str, str] = {
     "the start of the morning one.",
     "sleep_ok": "**{name}** sleeps {ticks} tick(s) and restores {restored} fatigue "
     "(now {fatigue}/100).",
+    # NPC engagements (group RP threads with one or more NPCs, plus other players'
+    # characters by invitation)
+    "engagement_no_location": "**{name}** hasn't traveled anywhere yet -- use `/travel`, "
+    "or pass `location`.",
+    "engagement_not_traveled": "**{name}** needs to `/travel` to **{location}** before "
+    "starting an engagement there.",
+    "engagement_needs_participants": "Name at least one NPC or character in `participants`.",
+    "engagement_nobody_available": "Nobody named could join right now.",
+    "engagement_npc_busy_shift": "**{name}** is working right now -- try **{location}** instead.",
+    "engagement_npc_busy_sleep": "**{name}** is asleep for the night.",
+    "engagement_started_ok": "Engagement started: {thread}",
+    "engagement_not_yours": "Only the creator or staff can do that.",
+    "engagement_ended_ok": "Engagement ended.",
+    "engagement_invite_prompt": "{mention}, **{character}** has been invited to join this "
+    "engagement.",
+    "engagement_invite_not_yours": "That invitation isn't for you.",
+    "engagement_invite_accepted": "**{character}** joined the engagement.",
+    "engagement_invite_declined": "**{character}** declined to join.",
+    "engagement_join_not_here": "**{name}** needs to `/travel` to **{location}** first.",
+    "engagement_join_already_in": "**{name}** is already part of this engagement.",
+    "engagement_join_ok": "**{name}** joins the engagement.",
+    "engagement_closing_line": "*The gathering breaks up.*",
     # Generic
     "world_paused": "The world is paused.",
     "unexpected_error": "Something went wrong (ref `{ref}`).",

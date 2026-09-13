@@ -253,6 +253,31 @@ class TestScheduleRun:
         assert events == []
         assert npc.location_id == "home"
 
+    def test_an_engaged_npc_never_moves_even_with_a_weighted_schedule(self):
+        """`panem_bot.services.engagements` sets `Npc.engagement_id` while
+        an NPC is pulled into a group RP thread -- this system must leave
+        them exactly where the engagement placed them until it clears."""
+        district = make_district()
+        content = make_content(district)
+        npc = make_npc("npc1", district.id, "square")
+        npc.engagement_id = 42
+        schedules = {
+            "npc1": [
+                NpcSchedule(
+                    npc_id="npc1", phase=DayPhase.MORNING.value, location_id="market", weight=1.0
+                )
+            ]
+        }
+        state = WorldState(
+            districts={}, npcs={"npc1": npc}, npc_schedules=schedules, characters={}, open_shifts=[]
+        )
+        ctx = make_ctx(content, phase=DayPhase.MORNING)
+
+        events = schedule.run(state, ctx)
+
+        assert events == []
+        assert npc.location_id == "square"
+
     def test_moved_npc_is_placed_within_location_radius(self):
         district = make_district()
         content = make_content(district)
