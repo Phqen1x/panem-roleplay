@@ -1385,25 +1385,38 @@ thread gets RP-credit, location pinning, and webhook proxying for free the momen
 just another `Scene` row.
 
 - **`/engage start location:<id> participant_1:<name> [participant_2 ... participant_5]`**
-  resolves each named `participant_N` against NPCs first, then against characters
-  physically at that location, and opens a forum thread exactly like `/scene start`'s own
-  flow. Discord slash commands have no true variadic argument, so "1 or more" participants
-  are `ENGAGEMENT_MAX_PARTICIPANTS` (5) individually autocompleted slots (`participant_1`
-  required, the rest optional) rather than one free-text field -- each slot's
-  autocomplete suggests NPCs in the character's district and other approved characters
-  at the target location, excluding names already sitting in a different slot. A named NPC
-  not currently
-  working their shift or asleep (`panem_bot.services.engagements.npc_is_busy`, reusing
-  `panem_sim.systems.schedule`'s own arrival predicate rather than a second copy of it)
-  is relocated there immediately (`Npc.location_id`/`x`/`y` overwritten, the same
-  instant-arrival model `schedule.py` already uses every tick) and gets a new
-  `Npc.engagement_id` set, which `schedule.py` checks each tick to skip movement for
-  them entirely -- "NPCs won't leave until the engagement ends." A busy NPC is left out
-  of the thread, and the starter is told ephemerally where to find them instead. A named
-  *character* belonging to another player is added to `participants.pending_characters`
-  and must accept an invite (two buttons on a message only that player can press) before
-  joining for real, per the user's own answer -- physical presence at the location is
-  never enough on its own for someone else's character.
+  resolves each named `participant_N` against NPCs in the character's district first,
+  then against any other approved character eligible to RP there
+  (`proxy_svc.can_rp_in_district` -- their home district, or wherever `/travel
+  district:<id>` last took them; they don't need to already be standing at the location).
+  Discord slash commands have no true variadic argument, so "1 or more" participants are
+  `ENGAGEMENT_MAX_PARTICIPANTS` (5) individually autocompleted slots (`participant_1`
+  required, the rest optional) rather than one free-text field, excluding names already
+  sitting in a different slot. A named NPC not currently working their shift or asleep
+  (`panem_bot.services.engagements.npc_is_busy`, reusing `panem_sim.systems.schedule`'s
+  own arrival predicate rather than a second copy of it) is relocated there immediately
+  (`Npc.location_id`/`x`/`y` overwritten, the same instant-arrival model `schedule.py`
+  already uses every tick) and gets a new `Npc.engagement_id` set, which `schedule.py`
+  checks each tick to skip movement for them entirely -- "NPCs won't leave until the
+  engagement ends." A busy NPC is left out of the thread, and the starter is told
+  ephemerally where to find them instead. A named *character* belonging to another player
+  is added to `participants.pending_characters` and must accept an invite (two buttons on
+  a message only that player can press) before joining for real, per the user's own
+  answer -- physical presence at the location is never enough on its own for someone
+  else's character. On accept, their character is relocated to the engagement's location
+  the same free, instant way `/travel location:<id>` already moves someone within a
+  district (never across districts -- that still costs a ticket and takes real transit
+  time, so an invite never bypasses that economy).
+- **Run `/engage start` or `/talk` from inside a thread that already has a scene
+  registered** (an ambient thread, an open `/scene`, or a prior engagement) and the named
+  NPCs/characters are pulled into *that* conversation instead of a new thread being
+  created -- the player is already there, so that's where the NPC should start talking.
+  Only outside of such a thread does either command fall back to reusing (or creating) a
+  dedicated engagement thread at a location. "Engaged" is decided by a scene's
+  `participants.npcs` being non-empty, not by its `kind` being `ENGAGEMENT` -- an ambient
+  thread or an ordinary `/scene` can have NPCs attached this way without ever becoming a
+  dedicated engagement itself, and stays open (rather than being archived) once released
+  by `/engage end` or the idle timeout.
 - **Who replies in a group.** In a strict one-on-one engagement (one character, one NPC)
   every qualifying message gets a reply, same as `/talk` always worked. With more than
   one participant, an NPC only replies to a message that contains their first or last
@@ -1464,8 +1477,15 @@ autocompleted, optional slots rather than a single free-text field, since Discor
 commands have no true variadic argument; five is comfortably more than any normal
 engagement needs while still fitting Discord's per-command option limit.
 
-`/engage start` also self-heals against a duplicate `Scene.thread_id`: it looks up an
-existing scene for the just-created thread before inserting a new one, and adopts it
-instead of crashing on the database's unique constraint if one is somehow already there
-(observed once in practice; harmless and correct either way, so it's cheap insurance
-regardless of the exact cause).
+**A `Scene.thread_id` race, and its fix.** `forum.create_thread()` dispatches a gateway
+`on_thread_create` event the moment the thread exists on Discord's side; `SceneCog.
+on_thread_create` (which auto-registers any new, tagged forum thread as an ordinary
+`SceneKind.PLAYER` scene, for players who start a thread by hand rather than via
+`/scene start`) can win that race and insert a `Scene` row for the same thread first.
+`/scene start` already handles this with an upsert (`insert ... on conflict do update`)
+so its own data always wins regardless of ordering; `/engage start` and `/talk`
+originally didn't, and a plain insert crashed on the listener's row with a duplicate-key
+error when it lost the race -- surfaced to players as a generic "Something went wrong"
+error, and (once patched with a fix that merely adopted the existing row without
+correcting its `kind`) as `/engage end`/`/engage join` claiming the thread wasn't a
+registered engagement. Both commands now upsert the same way `/scene start` does.
