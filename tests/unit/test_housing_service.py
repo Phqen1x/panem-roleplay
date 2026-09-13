@@ -5,7 +5,7 @@ import pytest
 from panem_bot.errors import NotAllowed, NotFound
 from panem_bot.services import housing as housing_svc
 from panem_shared import constants
-from panem_shared.db.models import ApartmentLease, Character, Property
+from panem_shared.db.models import ApartmentLease, Character, Property, PropertyAuction
 from panem_shared.enums import CharacterStatus, DayPhase, OwnerKind, PropertyKind
 
 
@@ -36,6 +36,10 @@ def make_property(**overrides: object) -> Property:
         owner_kind=OwnerKind.NPC.value,
         for_sale=True,
         suggested_price=500.0,
+        mortgage_principal=0.0,
+        mortgage_payment=0.0,
+        mortgage_next_due_tick=None,
+        mortgage_missed_payments=0,
     )
     defaults.update(overrides)
     property_ = Property(**defaults)  # type: ignore[arg-type]
@@ -256,3 +260,212 @@ class TestCheckCanSleep:
             with pytest.raises(NotAllowed) as exc_info:
                 housing_svc.check_can_sleep(phase)
             assert exc_info.value.reason_key == "sleep_wrong_phase"
+
+
+class TestFinancedPurchaseTerms:
+    def test_down_payment_is_the_configured_percentage(self):
+        terms = housing_svc.financed_purchase_terms(1000.0)
+        assert terms.down_payment == pytest.approx(1000.0 * constants.MORTGAGE_DOWN_PAYMENT_PCT)
+
+    def test_principal_includes_the_origination_surcharge(self):
+        terms = housing_svc.financed_purchase_terms(1000.0)
+        financed_amount = 1000.0 * (1.0 - constants.MORTGAGE_DOWN_PAYMENT_PCT)
+        assert terms.principal == pytest.approx(
+            financed_amount * (1.0 + constants.MORTGAGE_INTEREST_RATE)
+        )
+
+    def test_payment_is_principal_spread_over_the_installments(self):
+        terms = housing_svc.financed_purchase_terms(1000.0)
+        installments = (
+            constants.MORTGAGE_TERM_TICKS_DEFAULT // constants.MORTGAGE_PAYMENT_INTERVAL_TICKS
+        )
+        assert terms.payment == pytest.approx(terms.principal / installments)
+
+
+class TestCheckOwnsProperty:
+    def test_refuses_a_property_owned_by_someone_else(self):
+        character = make_character()
+        property_ = make_property(owner_kind=OwnerKind.CHARACTER.value, owner_id=999)
+        with pytest.raises(NotAllowed) as exc_info:
+            housing_svc.check_owns_property(character=character, property_=property_)
+        assert exc_info.value.reason_key == "housing_not_your_property"
+
+    def test_refuses_an_npc_owned_property(self):
+        character = make_character()
+        property_ = make_property(owner_kind=OwnerKind.NPC.value)
+        with pytest.raises(NotAllowed):
+            housing_svc.check_owns_property(character=character, property_=property_)
+
+    def test_allows_the_actual_owner(self):
+        character = make_character()
+        property_ = make_property(owner_kind=OwnerKind.CHARACTER.value, owner_id=character.id)
+        housing_svc.check_owns_property(character=character, property_=property_)
+
+
+class TestPropertyValueAndRefinance:
+    def test_property_value_uses_asking_price_override(self):
+        property_ = make_property(suggested_price=500.0, asking_price=800.0)
+        assert housing_svc.property_value(property_) == pytest.approx(800.0)
+
+    def test_property_value_falls_back_to_suggested_price(self):
+        property_ = make_property(suggested_price=500.0)
+        assert housing_svc.property_value(property_) == pytest.approx(500.0)
+
+    def test_max_refinance_amount_is_ltv_cap_minus_existing_principal(self):
+        property_ = make_property(suggested_price=1000.0, mortgage_principal=100.0)
+        expected = 1000.0 * constants.MORTGAGE_MAX_LTV - 100.0
+        assert housing_svc.max_refinance_amount(property_) == pytest.approx(expected)
+
+    def test_max_refinance_amount_never_goes_negative(self):
+        property_ = make_property(suggested_price=100.0, mortgage_principal=1_000_000.0)
+        assert housing_svc.max_refinance_amount(property_) == 0.0
+
+    def test_check_can_refinance_refuses_over_the_cap(self):
+        character = make_character()
+        property_ = make_property(
+            suggested_price=1000.0, owner_kind=OwnerKind.CHARACTER.value, owner_id=character.id
+        )
+        too_much = housing_svc.max_refinance_amount(property_) + 1.0
+        with pytest.raises(NotAllowed) as exc_info:
+            housing_svc.check_can_refinance(
+                character=character, property_=property_, amount=too_much
+            )
+        assert exc_info.value.reason_key == "housing_refinance_too_much"
+
+    def test_check_can_refinance_allows_up_to_the_cap(self):
+        character = make_character()
+        property_ = make_property(
+            suggested_price=1000.0, owner_kind=OwnerKind.CHARACTER.value, owner_id=character.id
+        )
+        cap = housing_svc.max_refinance_amount(property_)
+        housing_svc.check_can_refinance(character=character, property_=property_, amount=cap)
+
+    def test_check_can_refinance_refuses_a_non_owner(self):
+        character = make_character()
+        property_ = make_property(owner_kind=OwnerKind.NPC.value, suggested_price=1000.0)
+        with pytest.raises(NotAllowed) as exc_info:
+            housing_svc.check_can_refinance(character=character, property_=property_, amount=1.0)
+        assert exc_info.value.reason_key == "housing_not_your_property"
+
+    def test_apply_refinance_adds_to_principal_and_reamortizes(self):
+        property_ = make_property(
+            suggested_price=1000.0, mortgage_principal=100.0, mortgage_payment=5.0
+        )
+        payment = housing_svc.apply_refinance(property_, 200.0, tick=100)
+        installments = (
+            constants.MORTGAGE_TERM_TICKS_DEFAULT // constants.MORTGAGE_PAYMENT_INTERVAL_TICKS
+        )
+        assert property_.mortgage_principal == pytest.approx(300.0)
+        assert payment == pytest.approx(300.0 / installments)
+        assert property_.mortgage_payment == pytest.approx(payment)
+
+    def test_apply_refinance_sets_a_due_tick_when_there_was_none(self):
+        property_ = make_property(suggested_price=1000.0, mortgage_principal=0.0)
+        housing_svc.apply_refinance(property_, 100.0, tick=50)
+        assert property_.mortgage_next_due_tick == 50 + constants.MORTGAGE_PAYMENT_INTERVAL_TICKS
+
+    def test_apply_refinance_resets_missed_payments(self):
+        property_ = make_property(
+            suggested_price=1000.0, mortgage_principal=100.0, mortgage_missed_payments=2
+        )
+        housing_svc.apply_refinance(property_, 50.0, tick=10)
+        assert property_.mortgage_missed_payments == 0
+
+
+class TestAuctions:
+    def test_check_can_start_auction_refuses_a_non_owner(self):
+        character = make_character()
+        property_ = make_property(owner_kind=OwnerKind.NPC.value)
+        with pytest.raises(NotAllowed) as exc_info:
+            housing_svc.check_can_start_auction(
+                character=character, property_=property_, existing_auction=None
+            )
+        assert exc_info.value.reason_key == "housing_not_your_property"
+
+    def test_check_can_start_auction_refuses_an_already_open_auction(self):
+        character = make_character()
+        property_ = make_property(owner_kind=OwnerKind.CHARACTER.value, owner_id=character.id)
+        auction = PropertyAuction(
+            property_id=1,
+            seller_kind=OwnerKind.CHARACTER.value,
+            seller_id=character.id,
+            minimum_bid=100.0,
+            ends_at_tick=1000,
+            status="open",
+        )
+        with pytest.raises(NotAllowed) as exc_info:
+            housing_svc.check_can_start_auction(
+                character=character, property_=property_, existing_auction=auction
+            )
+        assert exc_info.value.reason_key == "housing_auction_already_open"
+
+    def test_check_can_start_auction_allows_a_closed_prior_auction(self):
+        character = make_character()
+        property_ = make_property(owner_kind=OwnerKind.CHARACTER.value, owner_id=character.id)
+        auction = PropertyAuction(
+            property_id=1,
+            seller_kind=OwnerKind.CHARACTER.value,
+            seller_id=character.id,
+            minimum_bid=100.0,
+            ends_at_tick=1000,
+            status="closed",
+        )
+        housing_svc.check_can_start_auction(
+            character=character, property_=property_, existing_auction=auction
+        )
+
+    def test_check_can_bid_refuses_a_bid_at_or_below_the_floor(self):
+        character = make_character(money=10_000)
+        auction = PropertyAuction(
+            property_id=1,
+            seller_kind="bank",
+            seller_id=None,
+            minimum_bid=100.0,
+            ends_at_tick=1000,
+            status="open",
+        )
+        with pytest.raises(NotAllowed) as exc_info:
+            housing_svc.check_can_bid(character=character, auction=auction, amount=100.0)
+        assert exc_info.value.reason_key == "housing_bid_too_low"
+
+    def test_check_can_bid_refuses_a_bid_below_the_current_bid(self):
+        character = make_character(money=10_000)
+        auction = PropertyAuction(
+            property_id=1,
+            seller_kind="bank",
+            seller_id=None,
+            minimum_bid=100.0,
+            current_bid=200.0,
+            current_bidder_id=999,
+            ends_at_tick=1000,
+            status="open",
+        )
+        with pytest.raises(NotAllowed) as exc_info:
+            housing_svc.check_can_bid(character=character, auction=auction, amount=150.0)
+        assert exc_info.value.reason_key == "housing_bid_too_low"
+
+    def test_check_can_bid_refuses_insufficient_funds(self):
+        character = make_character(money=50)
+        auction = PropertyAuction(
+            property_id=1,
+            seller_kind="bank",
+            seller_id=None,
+            minimum_bid=100.0,
+            ends_at_tick=1000,
+            status="open",
+        )
+        with pytest.raises(NotAllowed) as exc_info:
+            housing_svc.check_can_bid(character=character, auction=auction, amount=150.0)
+        assert exc_info.value.reason_key == "housing_insufficient_funds"
+
+    def test_check_can_bid_allows_a_valid_higher_bid(self):
+        character = make_character(money=10_000)
+        auction = PropertyAuction(
+            property_id=1,
+            seller_kind="bank",
+            seller_id=None,
+            minimum_bid=100.0,
+            ends_at_tick=1000,
+            status="open",
+        )
+        housing_svc.check_can_bid(character=character, auction=auction, amount=150.0)

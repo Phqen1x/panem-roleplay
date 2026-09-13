@@ -136,6 +136,27 @@ STRINGS: dict[str, str] = {
     "housing_status": "**{name}** -- home: {home}; fatigue: {fatigue}/100.",
     "housing_not_an_inn": "That property isn't an inn.",
     "housing_inn_stay_ok": "**{name}** pays {price} money for a night (and a meal) at the inn.",
+    "housing_not_your_property": "**{name}** doesn't own that property.",
+    "housing_down_payment_too_much": "**{name}** can't afford the down payment.",
+    "housing_financed_ok": (
+        "**{name}** buys the {kind} (`#{property_id}`) with {down_payment} down -- "
+        "{payment} money/day for the rest."
+    ),
+    "housing_no_mortgage": "That property doesn't have a mortgage or maintenance balance.",
+    "housing_refinance_too_much": "**{name}** can't borrow that much against that property.",
+    "housing_refinanced_ok": (
+        "**{name}** refinances (`#{property_id}`) for {amount} money -- now {payment} money/day."
+    ),
+    "housing_sold_ok": "**{name}** lists the property (`#{property_id}`) for {price} money.",
+    "housing_delisted_ok": "**{name}** takes the property (`#{property_id}`) off the market.",
+    "housing_rent_out_ok": "**{name}** sets the unit's rent (`#{property_id}`) to {price} money/day.",
+    "housing_auction_already_open": "That property already has an open auction.",
+    "housing_auction_started_ok": (
+        "**{name}** puts the property (`#{property_id}`) up for auction, minimum bid {minimum}."
+    ),
+    "housing_auction_not_found": "No open auction for that property.",
+    "housing_bid_too_low": "That bid isn't higher than the current one.",
+    "housing_bid_ok": "**{name}** bids {amount} on `#{property_id}`.",
     "sleep_wrong_phase": "**{name}** can only sleep between the end of the evening shift and "
     "the start of the morning one.",
     "sleep_ok": "**{name}** sleeps {ticks} tick(s) and restores {restored} fatigue "

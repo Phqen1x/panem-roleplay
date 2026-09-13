@@ -1,7 +1,8 @@
 """`/housing` (buying houses, apartment units/complexes, inn stays,
-renting, moving out) and `/sleep` (the fatigue/rest mechanic housing ties
-into). Mortgages, refinancing, staff price overrides, and auctions are a
-later addition to this same cog.
+renting, moving out, financed purchases, refinancing, listing/auctioning
+a property you own) and `/sleep` (the fatigue/rest mechanic housing ties
+into). Staff price overrides live in `panem_bot.cogs.staff` instead, next
+to the rest of the staff toolkit.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from panem_bot.services import characters as characters_svc
 from panem_bot.services import housing as housing_svc
 from panem_bot.strings import t
 from panem_shared import constants, simtime
-from panem_shared.db.models import ApartmentLease, Character, Property, WorldClock
+from panem_shared.db.models import ApartmentLease, Character, Property, PropertyAuction, WorldClock
 from panem_shared.enums import OwnerKind, PropertyKind
 
 
@@ -94,9 +95,19 @@ class HousingCog(commands.Cog):
         await interaction.response.send_message(text, ephemeral=True)
 
     @group.command(name="buy", description="Buy a house or an inn outright")
-    @app_commands.describe(character="Character name", property_id="Property ID from /housing list")
+    @app_commands.describe(
+        character="Character name",
+        property_id="Property ID from /housing list",
+        financed="Houses only: pay a down payment and finance the rest instead of cash in full",
+    )
     @app_commands.autocomplete(character=autocomplete.own_approved)
-    async def buy(self, interaction: discord.Interaction, character: str, property_id: int) -> None:
+    async def buy(
+        self,
+        interaction: discord.Interaction,
+        character: str,
+        property_id: int,
+        financed: bool = False,
+    ) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
             char = await self._get_character(session, interaction.user.id, character)
             if char is None:
@@ -115,24 +126,68 @@ class HousingCog(commands.Cog):
                 return
 
             price = round(housing_svc.quoted_price(property_, char))
-            if char.money < price:
-                await interaction.response.send_message(
-                    t("housing_insufficient_funds", name=char.name), ephemeral=True
-                )
-                return
+            current_tick = await self._current_tick(session)
+            # Financing only makes sense for a house (a real mortgage) --
+            # an inn's `financed` request is treated as a plain cash buy,
+            # since its `mortgage_*` fields are already spoken for by its
+            # own daily maintenance charge, set further down.
+            is_financed = financed and property_.kind == PropertyKind.HOUSE.value
 
-            char.money -= price
+            if is_financed:
+                terms = housing_svc.financed_purchase_terms(price)
+                down_payment = round(terms.down_payment)
+                if char.money < down_payment:
+                    await interaction.response.send_message(
+                        t("housing_down_payment_too_much", name=char.name), ephemeral=True
+                    )
+                    return
+                char.money -= down_payment
+                property_.mortgage_principal = terms.principal
+                property_.mortgage_payment = terms.payment
+                property_.mortgage_next_due_tick = (
+                    current_tick + constants.MORTGAGE_PAYMENT_INTERVAL_TICKS
+                )
+                property_.mortgage_missed_payments = 0
+            else:
+                if char.money < price:
+                    await interaction.response.send_message(
+                        t("housing_insufficient_funds", name=char.name), ephemeral=True
+                    )
+                    return
+                char.money -= price
+
             property_.owner_kind = OwnerKind.CHARACTER.value
             property_.owner_id = char.id
             property_.for_sale = False
             property_.asking_price = None
             if property_.kind == PropertyKind.HOUSE.value:
                 char.housing_property_id = property_.id
-            name, kind, total = char.name, property_.kind, price
-        await interaction.response.send_message(
-            t("housing_bought_ok", name=name, kind=kind, property_id=property_id, price=total),
-            ephemeral=True,
-        )
+            elif property_.kind == PropertyKind.INN.value:
+                property_.mortgage_payment = constants.INN_DAILY_MAINTENANCE_COST
+                property_.mortgage_next_due_tick = (
+                    current_tick + constants.MORTGAGE_PAYMENT_INTERVAL_TICKS
+                )
+                property_.mortgage_missed_payments = 0
+
+            name, kind = char.name, property_.kind
+            payment = round(property_.mortgage_payment) if is_financed else None
+        if is_financed:
+            await interaction.response.send_message(
+                t(
+                    "housing_financed_ok",
+                    name=name,
+                    kind=kind,
+                    property_id=property_id,
+                    down_payment=down_payment,
+                    payment=payment,
+                ),
+                ephemeral=True,
+            )
+        else:
+            await interaction.response.send_message(
+                t("housing_bought_ok", name=name, kind=kind, property_id=property_id, price=price),
+                ephemeral=True,
+            )
 
     @group.command(name="buy-complex", description="Buy out every unit in an apartment complex")
     @app_commands.describe(
@@ -180,6 +235,246 @@ class HousingCog(commands.Cog):
                 units=unit_count,
                 price=total,
             ),
+            ephemeral=True,
+        )
+
+    @group.command(name="refinance", description="Borrow cash against a property you own")
+    @app_commands.describe(
+        character="Character name",
+        property_id="Property ID you own",
+        amount="How much to borrow",
+    )
+    @app_commands.autocomplete(character=autocomplete.own_approved)
+    async def refinance(
+        self, interaction: discord.Interaction, character: str, property_id: int, amount: float
+    ) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            char = await self._get_character(session, interaction.user.id, character)
+            if char is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            property_ = await session.get(Property, property_id)
+            if property_ is None:
+                await interaction.response.send_message(t("housing_not_found"), ephemeral=True)
+                return
+            try:
+                housing_svc.check_can_refinance(character=char, property_=property_, amount=amount)
+            except ServiceError as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+
+            current_tick = await self._current_tick(session)
+            payment = round(housing_svc.apply_refinance(property_, amount, tick=current_tick))
+            char.money += round(amount)
+            name, total = char.name, round(amount)
+        await interaction.response.send_message(
+            t(
+                "housing_refinanced_ok",
+                name=name,
+                property_id=property_id,
+                amount=total,
+                payment=payment,
+            ),
+            ephemeral=True,
+        )
+
+    @group.command(name="sell", description="List (or delist) a property you own")
+    @app_commands.describe(
+        character="Character name",
+        property_id="Property ID you own",
+        price="Asking price -- omit to take it off the market",
+    )
+    @app_commands.autocomplete(character=autocomplete.own_approved)
+    async def sell(
+        self,
+        interaction: discord.Interaction,
+        character: str,
+        property_id: int,
+        price: float | None = None,
+    ) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            char = await self._get_character(session, interaction.user.id, character)
+            if char is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            property_ = await session.get(Property, property_id)
+            if property_ is None:
+                await interaction.response.send_message(t("housing_not_found"), ephemeral=True)
+                return
+            try:
+                housing_svc.check_owns_property(character=char, property_=property_)
+            except ServiceError as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+
+            if price is None:
+                property_.for_sale = False
+                property_.asking_price = None
+            else:
+                property_.for_sale = True
+                property_.asking_price = price
+            name = char.name
+        if price is None:
+            await interaction.response.send_message(
+                t("housing_delisted_ok", name=name, property_id=property_id), ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                t("housing_sold_ok", name=name, property_id=property_id, price=round(price)),
+                ephemeral=True,
+            )
+
+    @group.command(name="rent-out", description="Reprice a vacant unit you're the landlord of")
+    @app_commands.describe(
+        character="Character name", property_id="Apartment unit ID", price="New daily rent"
+    )
+    @app_commands.autocomplete(character=autocomplete.own_approved)
+    async def rent_out(
+        self, interaction: discord.Interaction, character: str, property_id: int, price: float
+    ) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            char = await self._get_character(session, interaction.user.id, character)
+            if char is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            property_ = await session.get(Property, property_id)
+            if property_ is None or property_.kind != PropertyKind.APARTMENT.value:
+                await interaction.response.send_message(
+                    t("housing_not_an_apartment"), ephemeral=True
+                )
+                return
+            try:
+                housing_svc.check_owns_property(character=char, property_=property_)
+            except ServiceError as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+            existing_lease = (
+                await session.execute(
+                    select(ApartmentLease).where(ApartmentLease.property_id == property_id)
+                )
+            ).scalar_one_or_none()
+            if existing_lease is not None:
+                await interaction.response.send_message(
+                    t("housing_unit_already_leased"), ephemeral=True
+                )
+                return
+
+            property_.asking_price = price
+            name = char.name
+        await interaction.response.send_message(
+            t("housing_rent_out_ok", name=name, property_id=property_id, price=round(price)),
+            ephemeral=True,
+        )
+
+    @group.command(name="auction-start", description="Put a property you own up for auction")
+    @app_commands.describe(
+        character="Character name", property_id="Property ID you own", minimum_bid="Starting bid"
+    )
+    @app_commands.autocomplete(character=autocomplete.own_approved)
+    async def auction_start(
+        self,
+        interaction: discord.Interaction,
+        character: str,
+        property_id: int,
+        minimum_bid: float,
+    ) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            char = await self._get_character(session, interaction.user.id, character)
+            if char is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            property_ = await session.get(Property, property_id)
+            if property_ is None:
+                await interaction.response.send_message(t("housing_not_found"), ephemeral=True)
+                return
+            existing_auction = (
+                await session.execute(
+                    select(PropertyAuction).where(
+                        PropertyAuction.property_id == property_id,
+                        PropertyAuction.status == "open",
+                    )
+                )
+            ).scalar_one_or_none()
+            try:
+                housing_svc.check_can_start_auction(
+                    character=char, property_=property_, existing_auction=existing_auction
+                )
+            except ServiceError as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+
+            current_tick = await self._current_tick(session)
+            session.add(
+                PropertyAuction(
+                    property_id=property_.id,
+                    seller_kind=OwnerKind.CHARACTER.value,
+                    seller_id=char.id,
+                    minimum_bid=minimum_bid,
+                    ends_at_tick=current_tick + constants.AUCTION_DURATION_TICKS_DEFAULT,
+                    status="open",
+                )
+            )
+            property_.for_sale = False
+            name = char.name
+        await interaction.response.send_message(
+            t(
+                "housing_auction_started_ok",
+                name=name,
+                property_id=property_id,
+                minimum=round(minimum_bid),
+            ),
+            ephemeral=True,
+        )
+
+    @group.command(name="auction-bid", description="Bid on an open property auction")
+    @app_commands.describe(
+        character="Character name",
+        property_id="Property ID with an open auction",
+        amount="Your bid",
+    )
+    @app_commands.autocomplete(character=autocomplete.own_approved)
+    async def auction_bid(
+        self, interaction: discord.Interaction, character: str, property_id: int, amount: float
+    ) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            char = await self._get_character(session, interaction.user.id, character)
+            if char is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            auction = (
+                await session.execute(
+                    select(PropertyAuction).where(
+                        PropertyAuction.property_id == property_id,
+                        PropertyAuction.status == "open",
+                    )
+                )
+            ).scalar_one_or_none()
+            if auction is None:
+                await interaction.response.send_message(
+                    t("housing_auction_not_found"), ephemeral=True
+                )
+                return
+            try:
+                housing_svc.check_can_bid(character=char, auction=auction, amount=amount)
+            except ServiceError as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+
+            auction.current_bid = amount
+            auction.current_bidder_id = char.id
+            name = char.name
+        await interaction.response.send_message(
+            t("housing_bid_ok", name=name, property_id=property_id, amount=round(amount)),
             ephemeral=True,
         )
 

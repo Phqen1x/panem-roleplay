@@ -343,3 +343,30 @@ FATIGUE_EXHAUSTION_HEALTH_PENALTY = 2.0
 """If fatigue is still at or below the threshold at the nightly needs
 check, health takes this extra hit -- mirrors `HEALTH_DECAY_PER_NIGHT`'s
 hunger-driven decay in `panem_sim.systems.needs`, same nightly cadence."""
+
+# Housing: mortgages (financed purchases + refinancing against equity),
+# auctions, and foreclosure. Same "no spec, reasonable placeholder" caveat.
+MORTGAGE_DOWN_PAYMENT_PCT = 0.2
+MORTGAGE_INTEREST_RATE = 0.1
+"""A flat surcharge on the financed amount at origination, not compounding
+interest -- the simplest thing still recognizably a mortgage."""
+MORTGAGE_TERM_TICKS_DEFAULT = TICKS_PER_DAY * 90
+"""90 sim-days of installments."""
+MORTGAGE_PAYMENT_INTERVAL_TICKS = TICKS_PER_DAY
+"""One installment/maintenance charge per sim-day."""
+MORTGAGE_MAX_LTV = 0.8
+"""Loan-to-value cap for `/housing refinance` -- total `mortgage_principal`
+can never exceed this fraction of the property's current listed value."""
+MORTGAGE_MISSES_TO_FORECLOSE = 3
+"""Consecutive missed installments (a real mortgage, or an inn's daily
+maintenance -- same field, same loop, see `Property`'s docstring) before
+`panem_sim.systems.housing` repossesses the property and auctions it off."""
+RENT_MISSES_TO_EVICT = 3
+INN_DAILY_MAINTENANCE_COST = 5.0
+"""Set on `Property.mortgage_payment` when a player buys an inn --
+`mortgage_principal` stays `0` for an inn (there's nothing to pay off,
+maintenance recurs forever), only `mortgage_payment`/`mortgage_next_due_
+tick`/`mortgage_missed_payments` are meaningful."""
+AUCTION_DURATION_TICKS_DEFAULT = TICKS_PER_DAY * 3
+"""How long a `PropertyAuction` (voluntary or foreclosure) stays open for
+bids before `panem_sim.systems.housing` resolves it."""

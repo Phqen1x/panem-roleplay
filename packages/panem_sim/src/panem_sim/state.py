@@ -123,6 +123,10 @@ class WorldState:
     `jobs.py` mutates `characters`."""
     apartment_leases: dict[int, ApartmentLease] = field(default_factory=dict)
     """Every `ApartmentLease` row, keyed by id."""
+    deleted_apartment_lease_ids: list[int] = field(default_factory=list)
+    """`ApartmentLease` row ids `housing.py` wants deleted this tick (an
+    eviction past `RENT_MISSES_TO_EVICT`); deleted by `tick.py`, the same
+    pattern as `deleted_memory_ids`."""
     property_auctions: dict[int, PropertyAuction] = field(default_factory=dict)
     """Every open `PropertyAuction` row, keyed by id."""
     new_property_auctions: list[PropertyAuction] = field(default_factory=list)

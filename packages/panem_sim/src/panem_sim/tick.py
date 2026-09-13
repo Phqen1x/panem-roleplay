@@ -172,6 +172,12 @@ async def _run_tick_once(
             session.add(auction_row)
         if state.deleted_memory_ids:
             await session.execute(delete(Memory).where(Memory.id.in_(state.deleted_memory_ids)))
+        if state.deleted_apartment_lease_ids:
+            await session.execute(
+                delete(ApartmentLease).where(
+                    ApartmentLease.id.in_(state.deleted_apartment_lease_ids)
+                )
+            )
 
     return events, state
 

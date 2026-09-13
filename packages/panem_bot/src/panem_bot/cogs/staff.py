@@ -19,7 +19,7 @@ from panem_bot.services import jobs as jobs_svc
 from panem_bot.services.staff import log_staff_action
 from panem_bot.strings import t
 from panem_shared import constants, job_levels
-from panem_shared.db.models import Character, DistrictState, Inventory, Scene, User
+from panem_shared.db.models import Character, DistrictState, Inventory, Property, Scene, User
 from panem_shared.enums import CharacterStatus, DayPhase, JobLevel, OwnerKind, Position, SceneStatus
 
 MESSAGE_LINK_RE = re.compile(r"/channels/(\d+)/(\d+)/(\d+)$")
@@ -48,6 +48,9 @@ class StaffCog(commands.Cog):
     )
     give_group = app_commands.Group(
         name="give", description="Grant money or items to a character", parent=group
+    )
+    housing_group = app_commands.Group(
+        name="housing", description="Override housing prices", parent=group
     )
 
     @group.command(name="whois", description="Look up who a proxied message belongs to")
@@ -571,6 +574,40 @@ class StaffCog(commands.Cog):
             f"**{new_level.value.title()}**.",
             ephemeral=True,
         )
+
+    @housing_group.command(
+        name="set-price", description="Override a property's listed price, staff-only"
+    )
+    @app_commands.describe(
+        property_id="Property ID (from /housing list)",
+        price="New asking price -- omit to clear the override back to the sim's suggestion",
+    )
+    @app_commands.check(_is_staff)
+    async def housing_set_price(
+        self, interaction: discord.Interaction, property_id: int, price: float | None = None
+    ) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            property_ = await session.get(Property, property_id)
+            if property_ is None:
+                await interaction.response.send_message(t("housing_not_found"), ephemeral=True)
+                return
+            property_.asking_price = price
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="housing_set_price",
+                target=str(property_id),
+                payload={"price": price},
+            )
+        if price is None:
+            await interaction.response.send_message(
+                f"Property `#{property_id}` now uses the sim's suggested price.", ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                f"Property `#{property_id}` now asks **{round(price)}** money.", ephemeral=True
+            )
 
 
 async def setup(bot: commands.Bot) -> None:

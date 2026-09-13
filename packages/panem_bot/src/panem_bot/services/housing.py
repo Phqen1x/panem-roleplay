@@ -1,18 +1,28 @@
 """Housing: buying houses/apartment units (or a whole complex), renting a
-unit, sleeping/fatigue, and inn stays.
+unit, sleeping/fatigue, inn stays, financed purchases/refinancing, and
+auctions.
 
 Pure logic, no DB session -- mirrors `panem_bot.services.travel`/`market`:
 takes ORM/content objects as arguments, raises `NotAllowed`/`NotFound` on
 refusal, leaves the actual row mutation and session handling to the cog.
-Mortgages, refinancing, and auctions are a separate module addition
-(the next milestone); this covers cash purchases, rent, and sleep only.
+Payment collection, foreclosure, and auction resolution over time are
+`panem_sim.systems.housing`'s job, not this module's -- this only covers
+the player-initiated actions (buy financed, refinance, list, bid).
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from panem_bot.errors import NotAllowed, NotFound
 from panem_shared import constants, job_levels
-from panem_shared.db.models import ApartmentLease, Character, DistrictState, Property
+from panem_shared.db.models import (
+    ApartmentLease,
+    Character,
+    DistrictState,
+    Property,
+    PropertyAuction,
+)
 from panem_shared.enums import CharacterStatus, DayPhase, JobLevel, OwnerKind, PropertyKind
 
 
@@ -166,3 +176,92 @@ def check_can_sleep(phase: DayPhase) -> None:
     evening) is exactly the night phase."""
     if phase != DayPhase.NIGHT:
         raise NotAllowed("sleep_wrong_phase")
+
+
+# ------------------------------------------------------- mortgages/refinance
+
+
+@dataclass(frozen=True, slots=True)
+class FinancedPurchase:
+    down_payment: float
+    principal: float
+    payment: float
+
+
+def financed_purchase_terms(price: float) -> FinancedPurchase:
+    """A down payment now (`MORTGAGE_DOWN_PAYMENT_PCT` of the price), the
+    rest financed with a flat origination surcharge
+    (`MORTGAGE_INTEREST_RATE`, not compounding) spread evenly across
+    `MORTGAGE_TERM_TICKS_DEFAULT` / `MORTGAGE_PAYMENT_INTERVAL_TICKS`
+    installments."""
+    down_payment = price * constants.MORTGAGE_DOWN_PAYMENT_PCT
+    principal = (price - down_payment) * (1.0 + constants.MORTGAGE_INTEREST_RATE)
+    installments = max(
+        1, constants.MORTGAGE_TERM_TICKS_DEFAULT // constants.MORTGAGE_PAYMENT_INTERVAL_TICKS
+    )
+    payment = principal / installments
+    return FinancedPurchase(down_payment=down_payment, principal=principal, payment=payment)
+
+
+def check_owns_property(*, character: Character, property_: Property) -> None:
+    if property_.owner_kind != OwnerKind.CHARACTER.value or property_.owner_id != character.id:
+        raise NotAllowed("housing_not_your_property", name=character.name)
+
+
+def check_can_refinance(*, character: Character, property_: Property, amount: float) -> None:
+    """`amount` on top of `Property.mortgage_principal` can't push the
+    total past `MORTGAGE_MAX_LTV` of the property's current listed
+    value."""
+    _check_alive_and_approved(character)
+    check_owns_property(character=character, property_=property_)
+    if amount > max_refinance_amount(property_):
+        raise NotAllowed("housing_refinance_too_much", name=character.name)
+
+
+def property_value(property_: Property) -> float:
+    return (
+        property_.asking_price if property_.asking_price is not None else property_.suggested_price
+    )
+
+
+def max_refinance_amount(property_: Property) -> float:
+    cap = property_value(property_) * constants.MORTGAGE_MAX_LTV
+    return max(0.0, cap - property_.mortgage_principal)
+
+
+def apply_refinance(property_: Property, amount: float, *, tick: int) -> float:
+    """Adds `amount` to the property's mortgage principal and
+    re-amortizes the *whole* new balance over a fresh
+    `MORTGAGE_TERM_TICKS_DEFAULT` -- a real refinance resets the term the
+    same way. Returns the new per-installment payment."""
+    new_principal = property_.mortgage_principal + amount
+    installments = max(
+        1, constants.MORTGAGE_TERM_TICKS_DEFAULT // constants.MORTGAGE_PAYMENT_INTERVAL_TICKS
+    )
+    property_.mortgage_principal = new_principal
+    property_.mortgage_payment = new_principal / installments
+    if property_.mortgage_next_due_tick is None:
+        property_.mortgage_next_due_tick = tick + constants.MORTGAGE_PAYMENT_INTERVAL_TICKS
+    property_.mortgage_missed_payments = 0
+    return property_.mortgage_payment
+
+
+# ------------------------------------------------------------------ auctions
+
+
+def check_can_start_auction(
+    *, character: Character, property_: Property, existing_auction: PropertyAuction | None
+) -> None:
+    _check_alive_and_approved(character)
+    check_owns_property(character=character, property_=property_)
+    if existing_auction is not None and existing_auction.status == "open":
+        raise NotAllowed("housing_auction_already_open")
+
+
+def check_can_bid(*, character: Character, auction: PropertyAuction, amount: float) -> None:
+    _check_alive_and_approved(character)
+    floor = auction.current_bid if auction.current_bid is not None else auction.minimum_bid
+    if amount <= floor:
+        raise NotAllowed("housing_bid_too_low")
+    if character.money < amount:
+        raise NotAllowed("housing_insufficient_funds", name=character.name)
