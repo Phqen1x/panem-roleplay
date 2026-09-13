@@ -1277,3 +1277,90 @@ bot's own validation, so it can't create a new collision. Re-run with no
 arguments until it reports none left, then run `uv run alembic upgrade
 head` as usual. Going forward the bot refuses same-name submissions
 itself, so this is a one-time cleanup.
+
+## Notes on reputation and housing
+
+A feature request, built in five milestones: a richer reputation mechanic reacting to
+job performance and NPC relationships, and a full housing economy (houses, apartments,
+inns, mortgages, and auctions) tied to a new fatigue/sleep stat.
+
+**Reputation** was previously touched in exactly one place -- a flat +1 for winning a
+`/work` minigame, 0 for losing or skipping. It now also reacts to:
+- **Streaks.** `Character.consecutive_wins`/`consecutive_losses` (new columns) track
+  minigame results; every `REP_STREAK_LEN` (3) wins in a row adds a `REP_STREAK_BONUS`
+  on top of the usual +1 ("going above and beyond"), and every `REP_STREAK_LEN` losses in
+  a row subtracts `REP_STREAK_PENALTY` ("doing a poor job... over and over"). A single
+  loss stays at 0, same as before -- only a real losing streak costs reputation.
+  Skipping the minigame (`neutral=True`) is streak-blind and reputation-blind in both
+  directions, matching "stay neutral by choosing not to do the game at all."
+- **Missed shifts.** `panem_sim.systems.jobs._resolve_missed_shifts`'s MISSED branch
+  (not EXCUSED, not COMPLETED) now docks `REP_MISS_PENALTY`.
+- **NPC relationships.** A new weekly system, `panem_sim.systems.reputation`, scans every
+  character's relationships (`panem_sim.systems.social`'s existing `affinity` rows) and
+  applies `+REP_RELATIONSHIP_DELTA`/`-REP_RELATIONSHIP_DELTA` per good/bad one, reusing
+  `social.py`'s own `STANCE_THRESHOLDS` rather than inventing a second affinity scale.
+- **Getting caught doing something illicit.** `panem_bot.services.market
+  ._apply_illicit_consequence` (the existing fine+jail+peacekeeper-pressure hook) now
+  also subtracts `REP_ILLICIT_CAUGHT_PENALTY` -- by far the largest single hit, per
+  "reputation plummets."
+
+**Housing** is fully greenfield: three new tables (`Property`, `ApartmentLease`,
+`PropertyAuction`) plus `Character.fatigue`/`housing_property_id`. Properties are
+**procedurally seeded** per district (`panem_sim.world.seed_properties`) rather than
+hand-authored in YAML -- houses at all five job-level tiers, a few apartment complexes
+of rentable units, and an NPC-run inn, the same idempotent pattern as `seed_npcs`. Key
+mechanics:
+- **Buying a house** is gated to the buyer's own district and to a job level *at or
+  below* the house's tier (a Journeyman may buy Novice/Apprentice/Journeyman housing, not
+  Master/Expert -- clarified with the user rather than requiring an exact match).
+  Apartments and inns aren't tier- or district-gated. `/housing buy ... financed:true`
+  finances the purchase instead: a down payment now, the rest amortized into daily
+  installments with a flat origination surcharge (`MORTGAGE_INTEREST_RATE`) rather than
+  compounding interest -- the simplest thing still recognizably a mortgage.
+- **Pricing** (`panem_bot.services.housing.quoted_price`) starts from a listing's
+  `asking_price` override (seller or staff choice) or the sim's daily-refreshed
+  `suggested_price`, then applies a mastery-differential multiplier for every kind (a
+  buyer above the seller's job level pays less, below pays more) and, houses only, a
+  reputation multiplier -- "a better price on houses with better reputation." Both
+  combine and clamp to `[HOUSING_PRICE_MULT_MIN, HOUSING_PRICE_MULT_MAX]` so neither
+  factor alone can zero out or blow up a price. An NPC seller's mastery defaults to the
+  house's own tier (so buying at your matching tier costs the sticker price) or the
+  buyer's own level for tier-less apartments/inns. The daily refresh
+  (`panem_sim.systems.housing`) only ever touches NPC-owned listings, driven by district
+  unrest/capitol favor -- a player's own listing or a staff override always sticks.
+- **Renting** an apartment unit signs an `ApartmentLease`; owning every unit sharing one
+  `complex_id` (buyable outright via `/housing buy-complex` from a fully NPC-owned
+  building) makes a player that building's landlord, collecting rent from tenants.
+- **Fatigue** (`Character.fatigue`, 100 = rested) drains from working
+  (`FATIGUE_COST_PER_WORK`, docked in `apply_shift_outcome`) and from qualifying proxied
+  RP interactions (`FATIGUE_COST_PER_INTERACTION`, same length gate as RP-credit shift
+  completion) -- "based on how many times they work and interact." `/sleep`, allowed only
+  during the night phase (between the evening and morning shifts), restores it instantly
+  for however many ticks are asked (capped to what's left of the night), at full rate
+  with a real bed (an owned house, a leased apartment, or a paid inn stay) or half on the
+  ground, per the request. Running low overnight costs extra health, mirroring the
+  existing hunger-to-health pattern.
+- **Mortgages, rent, and inn maintenance** share one collection loop
+  (`panem_sim.systems.housing`, once per sim-day): a due payment is deducted if
+  affordable, or counts a miss otherwise. An inn's daily maintenance cost reuses the same
+  `mortgage_payment`/`mortgage_next_due_tick` fields as a real mortgage installment,
+  documented inline, rather than adding a second parallel mechanism for "can't afford the
+  payment." Past `MORTGAGE_MISSES_TO_FORECLOSE` a house is repossessed and automatically
+  listed for **auction** (`PropertyAuction(seller_kind="bank", ...)`) rather than
+  silently reverting to NPC stock; past `RENT_MISSES_TO_EVICT` an apartment lease is
+  simply deleted. A player can also voluntarily start an auction on a property they own
+  (`/housing auction-start`) or refinance one for a cash loan against its equity, capped
+  at `MORTGAGE_MAX_LTV` of its current listed value. Auctions resolve at their end tick to
+  the highest still-affording bidder, or relist as NPC stock at the minimum bid if there
+  was no bid or the winner can no longer pay.
+- **Staff** can override any property's listed price directly (`/staff housing
+  set-price`), per "staff should be able to override this in the market if need be."
+
+**Interpretation calls** (flagged for easy review rather than buried in code): the
+tier gate and reputation price modifier apply to houses only, since the request's own
+wording names "houses" specifically for both; apartments/inns price by district and
+mastery differential alone. "Mortgage" covers both financing a purchase and refinancing
+an owned one; "auction" covers both a voluntary sale and the automatic foreclosure
+fallback. Sleep restores fatigue instantly for the ticks requested rather than literally
+pausing the bot for real time, mirroring how `/travel district` already abstracts
+transit time.
