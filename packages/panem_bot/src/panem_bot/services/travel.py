@@ -73,6 +73,19 @@ def is_free_victor_route(character: Character, origin_id: int, destination_id: i
     return origin_id in endpoints and destination_id in endpoints
 
 
+def is_free_route(character: Character, origin_id: int, destination_id: int) -> bool:
+    """Train tickets are round-trip: the leg back to a character's own
+    assigned district is always free, since it's already covered by
+    whatever ticket got them away from home to begin with -- no matter
+    which district they're returning from. A Victor's home<->Capitol
+    route is free outright in both directions (`is_free_victor_route`),
+    which for the outbound (home -> Capitol) leg is the only case this
+    round-trip rule alone wouldn't already cover."""
+    if destination_id == character.district_id:
+        return True
+    return is_free_victor_route(character, origin_id, destination_id)
+
+
 def check_can_travel_district(
     *,
     character: Character,

@@ -124,6 +124,26 @@ class TestIsFreeVictorRoute:
         assert not travel_svc.is_free_victor_route(character, 12, 0)
 
 
+class TestIsFreeRoute:
+    def test_returning_home_is_free_from_anywhere(self):
+        character = make_character(district_id=12, positions=[])
+        assert travel_svc.is_free_route(character, 5, 12)
+        assert travel_svc.is_free_route(character, 0, 12)
+
+    def test_leaving_home_for_an_ordinary_district_still_costs(self):
+        character = make_character(district_id=12, positions=[])
+        assert not travel_svc.is_free_route(character, 12, 5)
+
+    def test_victor_home_to_capitol_is_free(self):
+        character = make_character(district_id=12, positions=["victor"])
+        assert travel_svc.is_free_route(character, 12, 0)
+
+    def test_non_victor_third_district_round_trip_only_home_leg_is_free(self):
+        character = make_character(district_id=12, positions=[])
+        assert not travel_svc.is_free_route(character, 12, 5)
+        assert travel_svc.is_free_route(character, 5, 12)
+
+
 class TestCheckCanTravelDistrict:
     def test_allows_approved_character_at_the_station(self):
         district = make_district()

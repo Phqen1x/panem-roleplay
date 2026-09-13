@@ -20,7 +20,7 @@ from panem_bot.services import proxy as proxy_svc
 from panem_bot.services import shifts as shifts_svc
 from panem_bot.strings import t
 from panem_shared.db.models import Character, DiscordChannel, Scene, Shift, User, WorldClock
-from panem_shared.enums import ChannelKind, CharacterStatus, SceneKind
+from panem_shared.enums import ChannelKind, CharacterStatus
 
 
 class ProxyCog(commands.Cog):
@@ -76,7 +76,7 @@ class ProxyCog(commands.Cog):
             refusal = proxy_svc.check_can_proxy(
                 character=row,
                 district=district,
-                location_id=scene.location_id if scene else None,
+                location_id=proxy_svc.scene_location_id(scene),
                 current_tick=0,
             )
             if refusal is not None:
@@ -235,11 +235,11 @@ class ProxyCog(commands.Cog):
             if character is None:
                 return
 
-            district = self.bot.content.district(character.district_id)
+            district = self.bot.content.district(forum_registered.district_id)
             refusal = proxy_svc.check_can_proxy(
                 character=character,
                 district=district,
-                location_id=scene.location_id if scene else None,
+                location_id=proxy_svc.scene_location_id(scene),
                 current_tick=0,
             )
             if refusal is not None:
@@ -259,8 +259,9 @@ class ProxyCog(commands.Cog):
 
             if scene is not None:
                 scene.last_message_at = dt.datetime.now(dt.UTC)
-                if scene.kind != SceneKind.STAFF.value or scene.pins_location:
-                    character.location_id = scene.location_id
+                pinned_location = proxy_svc.scene_location_id(scene)
+                if pinned_location is not None:
+                    character.location_id = pinned_location
                 await self._apply_rp_credit(session, character, scene, content)
 
         with contextlib.suppress(discord.HTTPException):

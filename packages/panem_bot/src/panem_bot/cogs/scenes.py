@@ -114,11 +114,11 @@ class SceneCog(commands.Cog):
         self, session, *, discord_user_id: int, district_id: int, name: str | None
     ) -> Character | None:
         """Which of this user's characters may start a scene in
-        `district_id`'s forum -- normally that means one of their
-        characters actually assigned to this district, but
-        `proxy_svc.can_rp_in_district` also lets a Gamemaker's character
-        start one anywhere and a Victor's start one in the Capitol, so the
-        filter has to happen in Python rather than in the query."""
+        `district_id`'s forum -- `proxy_svc.can_rp_in_district`: assigned
+        to this district, currently there via `/travel`, or a Gamemaker's
+        (any district, no travel needed). The filter has to happen in
+        Python rather than in the query since it isn't expressible as a
+        single column comparison."""
         user = await characters_svc.get_or_create_user(session, discord_user_id)
         stmt = select(Character).where(
             Character.status == CharacterStatus.APPROVED.value,
@@ -182,6 +182,13 @@ class SceneCog(commands.Cog):
                 await interaction.response.send_message(
                     "Specify `character` — you have more than one approved character here, or none.",
                     ephemeral=True,
+                )
+                return
+
+            if not proxy_svc.can_rp_at_location(char, location):
+                loc_name = next(loc.name for loc in district.locations if loc.id == location)
+                await interaction.response.send_message(
+                    t("scene_not_traveled", name=char.name, location=loc_name), ephemeral=True
                 )
                 return
 

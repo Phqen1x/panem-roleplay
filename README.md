@@ -869,37 +869,57 @@ today's `data/` rather than copied) and its deploy-file diffs re-adapted by hand
   profile bundles alongside the planner LLM. `/talk` only ever sends text and only ever
   reads text back.
 
-## Notes on Gamemaker/Victor RP-location exceptions
+## Notes on RP-location enforcement (district, location, and free travel)
 
-Not a milestone -- two small, targeted exceptions to an existing rule.
+Not a milestone -- tightens an existing rule (which used to only really be
+enforced at scene creation, and only by home district) and adds two
+Gamemaker/Victor conveniences on top.
 
-- **A character may normally only be played in scenes in their assigned
-  `Character.district_id`** (set at creation, from the player's Discord
-  district role) -- unrelated to `current_district_id`, which only tracks
-  where `/travel` has physically taken them. This was already enforced by
-  `/scene start`'s `_caller_character` (and mirrored in its and `/rp`'s
-  character autocompletes), just never given a name; it's now
-  `proxy_svc.can_rp_in_district`, since the exceptions below needed a
-  single place to live rather than duplicating the same two `if`s at each
-  call site.
-- **A Gamemaker's characters may be played in any district's scenes
-  without traveling there** -- Gamemakers are Capitol staff overseeing
-  every Games regardless of district, so requiring them to physically
-  visit a district first (or be assigned to it at all) didn't fit. A
-  Victor's may be played in their own district or the Capitol specifically
-  -- no third district -- matching how Victors keep a foot in both after
-  winning.
-- **A Victor's train ticket between their home district and the Capitol is
-  free in either direction** (`travel_svc.is_free_victor_route`, checked
-  in `/travel district:<id>`'s fare calculation) -- a trip to or from any
-  other district still costs the usual fare, and the trip itself is
-  unchanged otherwise (still two-phase, still takes `TRANSIT_TICKS`). This
-  is deliberately narrower than the RP-location exception above: a Victor
-  still has to make the trip, just not pay for it, whereas a Gamemaker
-  doesn't have to make the trip at all.
-- Both exceptions read `Character.positions` (`Position.GAMEMAKER`/
-  `Position.VICTOR`), the same staff-granted list `/staff give position`
-  already manages -- no new column or command.
+- **A character may now only RP where they actually are: their assigned
+  `Character.district_id`, or wherever `/travel district:<id>` has
+  physically taken them (`current_district_id`) -- never a third district
+  they've never been near** (`proxy_svc.can_rp_in_district`). Previously
+  this was only checked by `/scene start`'s `_caller_character` (and
+  mirrored, inconsistently, in its and `/rp`'s character autocompletes),
+  using home district alone; `/rp` and proxied messages (`on_message`)
+  had no district check at all. Both now call the same
+  `check_can_proxy`, which also fixes a latent bug where `on_message`
+  resolved location-restriction checks against the character's *home*
+  district's locations instead of the scene's actual district -- harmless
+  while RP was implicitly always in your home district, wrong the moment
+  it wasn't.
+- **Within a district they're allowed in, a character also needs to have
+  actually traveled to a scene's specific location**
+  (`proxy_svc.can_rp_at_location`, comparing `Character.location_id` --
+  set by `/travel location:<id>` -- against the scene's location) --
+  posting in a scene no longer silently teleports a character there for
+  free; `/scene start` and every proxied message require it. A staff
+  scene that doesn't pin a location (`Scene.pins_location`, e.g. a roaming
+  Capitol broadcast thread) is exempt from this and the district check
+  both, via `proxy_svc.scene_location_id`, since nobody could ever have
+  "traveled" to a scene with no fixed place.
+- **A Gamemaker's characters are exempt from both of the above** -- they
+  may be played in any district, at any location, without ever traveling
+  there. Gamemakers are Capitol staff overseeing every Games regardless of
+  where it's held, so requiring them to physically visit a district (or
+  even a specific room in it) first didn't fit.
+- **Train tickets are round-trip**: the leg back to a character's own
+  assigned district is always free (`travel_svc.is_free_route`), no
+  matter which district they're returning from -- it's already covered by
+  whatever ticket got them away from home. A Victor's home<->Capitol route
+  is additionally free in *both* directions outright
+  (`travel_svc.is_free_victor_route`), which only actually matters for the
+  outbound (home -> Capitol) leg, since the return leg is already covered
+  by the general round-trip rule. Every other route still costs the usual
+  fare, and a paid trip is otherwise unchanged (still two-phase, still
+  takes `TRANSIT_TICKS`) -- once a Victor's free trip to the Capitol
+  actually lands them there, `current_district_id` updates the same as
+  anyone else's, which is what then lets them RP there at all; there's no
+  separate RP-location exception for Victors anymore; it falls out of the
+  district rule above once they've actually traveled.
+- The Gamemaker exceptions read `Character.positions`
+  (`Position.GAMEMAKER`), the same staff-granted list `/staff give
+  position` already manages -- no new column or command.
 
 ## Upgrading past duplicate character names
 

@@ -43,7 +43,10 @@ STRINGS: dict[str, str] = {
     "proxy_character_dead": "dead",
     "proxy_character_jailed": "jailed",
     "proxy_location_restricted": "no access to this location",
+    "proxy_wrong_district": "not assigned to or currently in this district",
+    "proxy_not_traveled": "hasn't traveled to this location yet",
     # Scenes (FR-SCN)
+    "scene_not_traveled": "**{name}** needs to `/travel` to **{location}** before starting a scene there.",
     "scene_at_cap": "District is at its scene limit.",
     "scene_already_open": "You already have an open scene — close it with `/scene close` before starting another.",
     "scene_needs_tag": "This post needs exactly one location tag. It will be archived in 60s if not fixed.",

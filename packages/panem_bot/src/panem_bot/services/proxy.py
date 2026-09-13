@@ -7,10 +7,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from panem_shared.constants import CAPITOL_DISTRICT_ID, PROXY_MESSAGE_MAX_LEN
+from panem_shared.constants import PROXY_MESSAGE_MAX_LEN
 from panem_shared.content.schemas import District, Location
-from panem_shared.db.models import Character
-from panem_shared.enums import CharacterStatus, Position
+from panem_shared.db.models import Character, Scene
+from panem_shared.enums import CharacterStatus, Position, SceneKind
 
 
 def is_ooc(content: str) -> bool:
@@ -52,24 +52,33 @@ def resolve_proxy_target(
     return None
 
 
+def _is_gamemaker(character: Character) -> bool:
+    return Position.GAMEMAKER.value in character.positions
+
+
 def can_rp_in_district(character: Character, district_id: int) -> bool:
-    """Which district a character may be played in (`/scene start`'s
-    `_caller_character`) -- ordinarily just their assigned `district_id`,
-    the same district a player's Discord role assigns them at creation,
-    regardless of where `/travel` has physically taken them (RP location
-    is a narrative assignment, not simulated movement -- see
-    `Character.current_district_id` for that). A Gamemaker's characters
-    (Capitol staff overseeing every Games, wherever it's held) may be
-    played in any district without traveling there first; a Victor's may
-    be played in their own district or the Capitol, matching how
-    `travel.is_free_victor_route` waives the fare between exactly those
-    two."""
-    if character.district_id == district_id:
+    """Which district a character may be played in -- ordinarily their
+    assigned `district_id` (set at creation from the player's Discord
+    district role) or wherever `/travel district:<id>` has actually taken
+    them (`current_district_id`), never a third district they've never
+    been near. A Gamemaker's characters (Capitol staff overseeing every
+    Games, wherever it's held) may be played in any district without
+    traveling there at all."""
+    if district_id in (character.district_id, character.current_district_id):
         return True
-    positions = set(character.positions)
-    if Position.GAMEMAKER.value in positions:
+    return _is_gamemaker(character)
+
+
+def can_rp_at_location(character: Character, location_id: str) -> bool:
+    """Within a district a character may otherwise RP in, they still need
+    to have actually traveled to this specific location
+    (`Character.location_id`, set by `/travel location:<id>`) -- posting
+    in a scene doesn't teleport them there for free. A Gamemaker's
+    any-district access (`can_rp_in_district`) extends to skipping this
+    too, since they were never going to have traveled there either."""
+    if character.location_id == location_id:
         return True
-    return Position.VICTOR.value in positions and district_id == CAPITOL_DISTRICT_ID
+    return _is_gamemaker(character)
 
 
 def has_location_access(*, job_id: str | None, has_position: bool, location: Location) -> bool:
@@ -88,6 +97,18 @@ def has_location_access(*, job_id: str | None, has_position: bool, location: Loc
     return job_id is not None and job_id in location.access_jobs
 
 
+def scene_location_id(scene: Scene | None) -> str | None:
+    """A scene's location, for both the restricted-location and
+    "have you actually traveled here" checks below -- `None` for a staff
+    scene that doesn't pin location (`Scene.pins_location`), which is
+    deliberately a roaming scene nobody needs to have traveled to."""
+    if scene is None:
+        return None
+    if scene.kind == SceneKind.STAFF.value and not scene.pins_location:
+        return None
+    return scene.location_id
+
+
 @dataclass(frozen=True, slots=True)
 class ProxyRefusal:
     reason_key: str
@@ -96,15 +117,21 @@ class ProxyRefusal:
 def check_can_proxy(
     *, character: Character, district: District, location_id: str | None, current_tick: int
 ) -> ProxyRefusal | None:
-    """FR-PRX-3. Returns the refusal reason, or `None` if proxying may proceed."""
+    """FR-PRX-3. `district` must be the scene's actual district (not
+    necessarily the character's home one -- see `can_rp_in_district`).
+    Returns the refusal reason, or `None` if proxying may proceed."""
     if character.status == CharacterStatus.DEAD.value:
         return ProxyRefusal("character_dead")
     if character.status != CharacterStatus.APPROVED.value:
         return ProxyRefusal("character_not_approved")
     if character.jailed_until_tick is not None and character.jailed_until_tick > current_tick:
         return ProxyRefusal("proxy_character_jailed")
+    if not can_rp_in_district(character, district.id):
+        return ProxyRefusal("proxy_wrong_district")
 
     if location_id is not None:
+        if not can_rp_at_location(character, location_id):
+            return ProxyRefusal("proxy_not_traveled")
         location = next((loc for loc in district.locations if loc.id == location_id), None)
         if location is not None and not has_location_access(
             job_id=character.job_id, has_position=bool(character.positions), location=location
