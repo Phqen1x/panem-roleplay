@@ -20,7 +20,7 @@ from panem_bot.services import jobs as jobs_svc
 from panem_bot.services.staff import log_staff_action
 from panem_bot.strings import t
 from panem_shared.db.models import Character, DistrictState, Inventory, Scene, User
-from panem_shared.enums import CharacterStatus, DayPhase, OwnerKind, SceneStatus
+from panem_shared.enums import CharacterStatus, DayPhase, OwnerKind, Position, SceneStatus
 
 MESSAGE_LINK_RE = re.compile(r"/channels/(\d+)/(\d+)/(\d+)$")
 
@@ -598,6 +598,96 @@ class StaffCog(commands.Cog):
         return [
             app_commands.Choice(name=f"{good.name} ({good.id})", value=good.id)
             for good in matches[:25]
+        ]
+
+    @give_group.command(name="position", description="Grant or revoke a special position")
+    @app_commands.describe(
+        character="Character name",
+        position="Victor, Gamemaker, or Governor",
+        grant="True to grant, false to revoke",
+    )
+    @app_commands.autocomplete(character=autocomplete.any_approved)
+    @app_commands.check(_is_staff)
+    async def give_position(
+        self,
+        interaction: discord.Interaction,
+        character: str,
+        position: Position,
+        grant: bool = True,
+    ) -> None:
+        async with self.bot.db() as session:
+            row = await self._find_character(session, character)
+            if row is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            held = set(row.positions)
+            if grant:
+                held.add(position.value)
+            else:
+                held.discard(position.value)
+            row.positions = sorted(held)
+            await log_staff_action(
+                session,
+                staff_discord_id=interaction.user.id,
+                action="give_position",
+                target=str(row.id),
+                payload={"position": position.value, "grant": grant},
+            )
+            current = row.positions
+        verb = "now holds" if grant else "no longer holds"
+        summary = ", ".join(p.title() for p in current) or "none"
+        await interaction.response.send_message(
+            f"**{character}** {verb} **{position.value.title()}**. Current positions: {summary}.",
+            ephemeral=True,
+        )
+
+    @give_group.command(
+        name="job", description="Assign a job directly, bypassing the normal application checks"
+    )
+    @app_commands.describe(
+        character="Character name",
+        job_id="Job id (any job -- including staff-only ones like a district's mentor slot)",
+    )
+    @app_commands.autocomplete(character=autocomplete.any_approved)
+    @app_commands.check(_is_staff)
+    async def give_job(self, interaction: discord.Interaction, character: str, job_id: str) -> None:
+        async with self.bot.db() as session:
+            job = await jobs_svc.get_job(session, self.bot.content, job_id)  # type: ignore[attr-defined]
+            if job is None:
+                await interaction.response.send_message(t("job_not_found"), ephemeral=True)
+                return
+            row = await self._find_character(session, character)
+            if row is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            row.job_id = job_id
+            row.job_started_tick = None
+            row.consecutive_missed = 0
+            await log_staff_action(
+                session,
+                staff_discord_id=interaction.user.id,
+                action="give_job",
+                target=str(row.id),
+                payload={"job_id": job_id},
+            )
+        await interaction.response.send_message(
+            f"**{character}** is now working as **{job.title}**.", ephemeral=True
+        )
+
+    @give_job.autocomplete("job_id")
+    async def give_job_id_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        content = self.bot.content  # type: ignore[attr-defined]
+        current_lower = current.lower()
+        matches = [
+            job
+            for job in content.jobs.values()
+            if current_lower in job.id.lower() or current_lower in job.title.lower()
+        ]
+        return [
+            app_commands.Choice(name=f"{job.title} ({job.id})", value=job.id)
+            for job in matches[:25]
         ]
 
 

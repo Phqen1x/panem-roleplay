@@ -97,6 +97,8 @@ def check_can_apply(character: Character, job: Job) -> None:
         raise NotAllowed("character_not_approved")
     if character.job_id is not None:
         raise NotAllowed("already_employed")
+    if job.staff_only:
+        raise NotAllowed("job_staff_only")
     if job.min_reputation is not None and character.reputation < job.min_reputation:
         raise NotAllowed("reputation_too_low", min_reputation=job.min_reputation)
 

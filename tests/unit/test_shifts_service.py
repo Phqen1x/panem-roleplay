@@ -169,6 +169,13 @@ class TestCheckCanApply:
             shifts_svc.check_can_apply(character, job)
         assert exc_info.value.reason_key == "reputation_too_low"
 
+    def test_refuses_staff_only_job(self):
+        job = make_job(staff_only=True)
+        character = make_character(job_id=None)
+        with pytest.raises(NotAllowed) as exc_info:
+            shifts_svc.check_can_apply(character, job)
+        assert exc_info.value.reason_key == "job_staff_only"
+
     def test_refuses_non_approved_character(self):
         job = make_job()
         character = make_character(job_id=None, status=CharacterStatus.PENDING.value)

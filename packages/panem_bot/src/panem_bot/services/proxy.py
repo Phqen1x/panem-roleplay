@@ -52,14 +52,18 @@ def resolve_proxy_target(
     return None
 
 
-def has_location_access(*, job_id: str | None, is_victor: bool, location: Location) -> bool:
+def has_location_access(*, job_id: str | None, has_position: bool, location: Location) -> bool:
     """FR-LOC-3. Item-based access (`access_items`) needs inventory, which
     doesn't exist before Phase 2, so it's treated as never satisfied here —
     a restricted item-gated location is inaccessible to everyone until then,
-    which is the safe direction to fail in."""
+    which is the safe direction to fail in.
+
+    `has_position` generalizes what used to be a single `is_victor` check:
+    holding *any* staff-granted `Position` (Victor, Gamemaker, Governor)
+    grants the same restricted-location access a Victor always had."""
     if not location.restricted:
         return True
-    if is_victor:
+    if has_position:
         return True
     return job_id is not None and job_id in location.access_jobs
 
@@ -83,7 +87,7 @@ def check_can_proxy(
     if location_id is not None:
         location = next((loc for loc in district.locations if loc.id == location_id), None)
         if location is not None and not has_location_access(
-            job_id=character.job_id, is_victor=character.is_victor, location=location
+            job_id=character.job_id, has_position=bool(character.positions), location=location
         ):
             return ProxyRefusal("proxy_location_restricted")
 

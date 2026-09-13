@@ -172,7 +172,7 @@ class CharacterCog(commands.Cog):
 
     async def _open_legal_jobs(self, session, district_id: int) -> list[tuple[str, str]]:
         all_district_jobs = await jobs_svc.jobs_for_district(session, self.bot.content, district_id)
-        jobs = [j for j in all_district_jobs if j.legal]
+        jobs = [j for j in all_district_jobs if j.legal and not j.staff_only]
         if not jobs:
             return []
         counts = await session.execute(
@@ -581,6 +581,10 @@ class CharacterCog(commands.Cog):
         embed.add_field(name="Location", value=location_name)
         embed.add_field(name="Reputation", value=f"{row.reputation:.1f}")
         embed.add_field(name="Jailed", value=jailed_value)
+        if row.positions:
+            embed.add_field(
+                name="Positions", value=", ".join(p.title() for p in sorted(row.positions))
+            )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     def _district_status_value(self, character: Character) -> str:

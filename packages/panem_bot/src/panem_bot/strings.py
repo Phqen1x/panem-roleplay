@@ -80,6 +80,7 @@ STRINGS: dict[str, str] = {
     # Jobs and shifts (FR-JOB)
     "already_employed": "That character already has a job — quit it first with `/job quit`.",
     "not_employed": "That character doesn't have a job to quit.",
+    "job_staff_only": "That position can only be assigned by staff.",
     "reputation_too_low": "Reputation too low for that job (needs {min_reputation}).",
     "job_applied": "**{name}** is now working as **{title}**.",
     "job_quit": "**{name}** has left their job.",

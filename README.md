@@ -168,7 +168,9 @@ runs inside a rolled-back savepoint.
   (omit `limit` to reset them back to the default).
 - Item-gated `restricted` locations (`access_items`) always deny access
   for now, since inventories don't exist until Phase 2 — only
-  `access_jobs` and `is_victor` grant access in Phase 0.
+  `access_jobs` and holding any staff-granted `Position` (Victor,
+  Gamemaker, Governor — see the Notes on Positions below) grant access
+  in Phase 0.
 - **Character age**: reaping-eligible districts (1-12) are capped at age 18;
   only The Capitol may create adult characters, up to 80.
 - **Jobs are editable in Discord**, not just in `data/jobs.yaml`: `/staff
@@ -715,6 +717,64 @@ plus a real OAuth exchange for it.
   own** -- unchanged from Milestone H. `/activity/config` returns the
   client id (not a secret; Discord Activities put it in the iframe URL
   already) so the static frontend never has to hardcode it.
+
+## Notes on Positions, staff-grantable jobs, and the /help fix
+
+Four separate asks landed together: a real `/help` bug, a `/help` UX
+redesign, a new Positions concept (Victor/Gamemaker/Governor), and a way
+for staff to hand out special jobs (Mentor) outside the normal apply flow.
+
+- **`/help` was silently dropping most of the game.** It paired a live
+  command-tree walk with a hardcoded category whitelist
+  (`roleplay`/`character`/`scene`/`staff`) -- any top-level command or
+  group whose name wasn't in that list was matched to `None` and
+  skipped entirely. In practice that meant `/job`, `/market`,
+  `/resident`, `/travel`, `/where`, `/time`, `/work`, and `/inventory`
+  never appeared in `/help` at all, even though every one of them was a
+  real, working command. Rewritten to build categories from whatever's
+  actually registered -- every top-level group becomes its own category
+  automatically, every ungrouped command falls into a shared "General"
+  bucket -- so a future command with a name nobody thought to add to a
+  list can't go missing the same way again.
+- **`/help`'s first page is now just General** (the ungrouped commands:
+  `/rp`, `/ooc`, `/where`, `/time`, `/work`, `/inventory`, `/travel`),
+  with a dropdown to switch to any other category. "Staff" only appears
+  in that dropdown for staff members -- everyone else never sees it as
+  an option at all, not just a hidden/disabled one.
+- **Character creation never asked which district to create in** --
+  this was already true before this change, not something added now.
+  `/character create` derives the district entirely from the caller's
+  Discord role (see the Onboarding note above); there is no district
+  picker anywhere in the creation or editing flow, and it stayed that
+  way.
+- **`Character.is_victor` (a single bool) became `Character.positions`
+  (a list)**, generalizing to three staff-grantable titles --
+  `Position.VICTOR` / `GAMEMAKER` / `GOVERNOR` (`panem_shared.enums`).
+  Holding any position grants the same restricted-location access a
+  Victor always had (`proxy.has_location_access`); Gamemaker and
+  Governor don't have any *other* mechanical effect yet -- deliberately
+  scoped to reuse the one real mechanic this codebase already had for
+  "someone with special standing," rather than inventing new unrelated
+  ones with no spec behind them. `/staff give position character:<name>
+  position:<Victor|Gamemaker|Governor> grant:<true|false>` grants or
+  revokes one; `/character status` shows a character's Positions field
+  when they hold any. The migration backfills existing `is_victor=true`
+  rows into `positions=["victor"]` rather than dropping that data.
+- **Jobs gained a `staff_only` flag** (`data/jobs.yaml`): a job with
+  `staff_only: true` is refused by `/job apply` (`job_staff_only`) and
+  filtered out of the character-creation job picker, but is otherwise a
+  completely normal job -- still shown in `/job list`, still has wages/
+  shifts/options like any other. `/staff give job character:<name>
+  job_id:<id>` assigns any job directly, staff-only or not, bypassing
+  every `/job apply` check (already-employed, reputation, staff-only) --
+  the same "staff already knows what they're doing" trust model
+  `/staff give money|item` already used.
+- **A real Mentor job per district** (`mentor_d1`..`mentor_d12`,
+  `staff_only: true`, workplace at each district's residential quarter --
+  `seam` for Twelve, `residential` everywhere else) ships as actual
+  content, not just the capability to add one later, so `/staff give
+  job` has something concrete to grant. No Capitol mentor exists --
+  the Capitol doesn't send tributes.
 
 ## Upgrading past duplicate character names
 

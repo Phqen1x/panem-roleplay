@@ -1518,3 +1518,376 @@
     risk_effect:
       health: -5
   peacekeeper_attention: 0.45
+
+- id: mentor_d1
+  district: 1
+  title: District 1 Mentor
+  workplace: residential
+  wage: 15
+  shift_phase: evening
+  slots: 3
+  legal: true
+  staff_only: true
+  options:
+  - label: Coach a tribute hard
+    output_mult: 1.2
+    risk: 0.1
+    rep_delta: 2
+    wage_mult: 1.0
+    risk_effect:
+      health: -10
+  - label: Offer steady guidance
+    output_mult: 1.0
+    risk: 0.03
+    rep_delta: 1
+    wage_mult: 1.0
+    risk_effect:
+      health: -3
+  - label: Work the Capitol sponsors
+    output_mult: 0.9
+    risk: 0.05
+    rep_delta: 3
+    wage_mult: 0.85
+    risk_effect:
+      health: -5
+- id: mentor_d2
+  district: 2
+  title: District 2 Mentor
+  workplace: residential
+  wage: 15
+  shift_phase: evening
+  slots: 3
+  legal: true
+  staff_only: true
+  options:
+  - label: Coach a tribute hard
+    output_mult: 1.2
+    risk: 0.1
+    rep_delta: 2
+    wage_mult: 1.0
+    risk_effect:
+      health: -10
+  - label: Offer steady guidance
+    output_mult: 1.0
+    risk: 0.03
+    rep_delta: 1
+    wage_mult: 1.0
+    risk_effect:
+      health: -3
+  - label: Work the Capitol sponsors
+    output_mult: 0.9
+    risk: 0.05
+    rep_delta: 3
+    wage_mult: 0.85
+    risk_effect:
+      health: -5
+- id: mentor_d3
+  district: 3
+  title: District 3 Mentor
+  workplace: residential
+  wage: 15
+  shift_phase: evening
+  slots: 3
+  legal: true
+  staff_only: true
+  options:
+  - label: Coach a tribute hard
+    output_mult: 1.2
+    risk: 0.1
+    rep_delta: 2
+    wage_mult: 1.0
+    risk_effect:
+      health: -10
+  - label: Offer steady guidance
+    output_mult: 1.0
+    risk: 0.03
+    rep_delta: 1
+    wage_mult: 1.0
+    risk_effect:
+      health: -3
+  - label: Work the Capitol sponsors
+    output_mult: 0.9
+    risk: 0.05
+    rep_delta: 3
+    wage_mult: 0.85
+    risk_effect:
+      health: -5
+- id: mentor_d4
+  district: 4
+  title: District 4 Mentor
+  workplace: residential
+  wage: 15
+  shift_phase: evening
+  slots: 3
+  legal: true
+  staff_only: true
+  options:
+  - label: Coach a tribute hard
+    output_mult: 1.2
+    risk: 0.1
+    rep_delta: 2
+    wage_mult: 1.0
+    risk_effect:
+      health: -10
+  - label: Offer steady guidance
+    output_mult: 1.0
+    risk: 0.03
+    rep_delta: 1
+    wage_mult: 1.0
+    risk_effect:
+      health: -3
+  - label: Work the Capitol sponsors
+    output_mult: 0.9
+    risk: 0.05
+    rep_delta: 3
+    wage_mult: 0.85
+    risk_effect:
+      health: -5
+- id: mentor_d5
+  district: 5
+  title: District 5 Mentor
+  workplace: residential
+  wage: 15
+  shift_phase: evening
+  slots: 3
+  legal: true
+  staff_only: true
+  options:
+  - label: Coach a tribute hard
+    output_mult: 1.2
+    risk: 0.1
+    rep_delta: 2
+    wage_mult: 1.0
+    risk_effect:
+      health: -10
+  - label: Offer steady guidance
+    output_mult: 1.0
+    risk: 0.03
+    rep_delta: 1
+    wage_mult: 1.0
+    risk_effect:
+      health: -3
+  - label: Work the Capitol sponsors
+    output_mult: 0.9
+    risk: 0.05
+    rep_delta: 3
+    wage_mult: 0.85
+    risk_effect:
+      health: -5
+- id: mentor_d6
+  district: 6
+  title: District 6 Mentor
+  workplace: residential
+  wage: 15
+  shift_phase: evening
+  slots: 3
+  legal: true
+  staff_only: true
+  options:
+  - label: Coach a tribute hard
+    output_mult: 1.2
+    risk: 0.1
+    rep_delta: 2
+    wage_mult: 1.0
+    risk_effect:
+      health: -10
+  - label: Offer steady guidance
+    output_mult: 1.0
+    risk: 0.03
+    rep_delta: 1
+    wage_mult: 1.0
+    risk_effect:
+      health: -3
+  - label: Work the Capitol sponsors
+    output_mult: 0.9
+    risk: 0.05
+    rep_delta: 3
+    wage_mult: 0.85
+    risk_effect:
+      health: -5
+- id: mentor_d7
+  district: 7
+  title: District 7 Mentor
+  workplace: residential
+  wage: 15
+  shift_phase: evening
+  slots: 3
+  legal: true
+  staff_only: true
+  options:
+  - label: Coach a tribute hard
+    output_mult: 1.2
+    risk: 0.1
+    rep_delta: 2
+    wage_mult: 1.0
+    risk_effect:
+      health: -10
+  - label: Offer steady guidance
+    output_mult: 1.0
+    risk: 0.03
+    rep_delta: 1
+    wage_mult: 1.0
+    risk_effect:
+      health: -3
+  - label: Work the Capitol sponsors
+    output_mult: 0.9
+    risk: 0.05
+    rep_delta: 3
+    wage_mult: 0.85
+    risk_effect:
+      health: -5
+- id: mentor_d8
+  district: 8
+  title: District 8 Mentor
+  workplace: residential
+  wage: 15
+  shift_phase: evening
+  slots: 3
+  legal: true
+  staff_only: true
+  options:
+  - label: Coach a tribute hard
+    output_mult: 1.2
+    risk: 0.1
+    rep_delta: 2
+    wage_mult: 1.0
+    risk_effect:
+      health: -10
+  - label: Offer steady guidance
+    output_mult: 1.0
+    risk: 0.03
+    rep_delta: 1
+    wage_mult: 1.0
+    risk_effect:
+      health: -3
+  - label: Work the Capitol sponsors
+    output_mult: 0.9
+    risk: 0.05
+    rep_delta: 3
+    wage_mult: 0.85
+    risk_effect:
+      health: -5
+- id: mentor_d9
+  district: 9
+  title: District 9 Mentor
+  workplace: residential
+  wage: 15
+  shift_phase: evening
+  slots: 3
+  legal: true
+  staff_only: true
+  options:
+  - label: Coach a tribute hard
+    output_mult: 1.2
+    risk: 0.1
+    rep_delta: 2
+    wage_mult: 1.0
+    risk_effect:
+      health: -10
+  - label: Offer steady guidance
+    output_mult: 1.0
+    risk: 0.03
+    rep_delta: 1
+    wage_mult: 1.0
+    risk_effect:
+      health: -3
+  - label: Work the Capitol sponsors
+    output_mult: 0.9
+    risk: 0.05
+    rep_delta: 3
+    wage_mult: 0.85
+    risk_effect:
+      health: -5
+- id: mentor_d10
+  district: 10
+  title: District 10 Mentor
+  workplace: residential
+  wage: 15
+  shift_phase: evening
+  slots: 3
+  legal: true
+  staff_only: true
+  options:
+  - label: Coach a tribute hard
+    output_mult: 1.2
+    risk: 0.1
+    rep_delta: 2
+    wage_mult: 1.0
+    risk_effect:
+      health: -10
+  - label: Offer steady guidance
+    output_mult: 1.0
+    risk: 0.03
+    rep_delta: 1
+    wage_mult: 1.0
+    risk_effect:
+      health: -3
+  - label: Work the Capitol sponsors
+    output_mult: 0.9
+    risk: 0.05
+    rep_delta: 3
+    wage_mult: 0.85
+    risk_effect:
+      health: -5
+- id: mentor_d11
+  district: 11
+  title: District 11 Mentor
+  workplace: residential
+  wage: 15
+  shift_phase: evening
+  slots: 3
+  legal: true
+  staff_only: true
+  options:
+  - label: Coach a tribute hard
+    output_mult: 1.2
+    risk: 0.1
+    rep_delta: 2
+    wage_mult: 1.0
+    risk_effect:
+      health: -10
+  - label: Offer steady guidance
+    output_mult: 1.0
+    risk: 0.03
+    rep_delta: 1
+    wage_mult: 1.0
+    risk_effect:
+      health: -3
+  - label: Work the Capitol sponsors
+    output_mult: 0.9
+    risk: 0.05
+    rep_delta: 3
+    wage_mult: 0.85
+    risk_effect:
+      health: -5
+- id: mentor_d12
+  district: 12
+  title: District 12 Mentor
+  workplace: seam
+  wage: 15
+  shift_phase: evening
+  slots: 3
+  legal: true
+  staff_only: true
+  options:
+  - label: Coach a tribute hard
+    output_mult: 1.2
+    risk: 0.1
+    rep_delta: 2
+    wage_mult: 1.0
+    risk_effect:
+      health: -10
+  - label: Offer steady guidance
+    output_mult: 1.0
+    risk: 0.03
+    rep_delta: 1
+    wage_mult: 1.0
+    risk_effect:
+      health: -3
+  - label: Work the Capitol sponsors
+    output_mult: 0.9
+    risk: 0.05
+    rep_delta: 3
+    wage_mult: 0.85
+    risk_effect:
+      health: -5

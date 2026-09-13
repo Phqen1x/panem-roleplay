@@ -98,7 +98,11 @@ class Character(TimestampMixin, Base):
 
     jailed_until_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
     in_games: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    is_victor: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    positions: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    """`Position` enum values (Victor/Gamemaker/Governor), staff-granted via
+    `/staff give position` -- not content-authored or applied for like a
+    `Job`. Was a single `is_victor` bool; a list since a character can hold
+    more than one."""
 
     in_transit_until_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
     transit_destination_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

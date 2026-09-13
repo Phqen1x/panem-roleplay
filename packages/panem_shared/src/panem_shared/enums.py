@@ -80,3 +80,17 @@ class LocationKind(enum.StrEnum):
     RESIDENTIAL = "residential"
     OUTSKIRTS = "outskirts"
     STATION = "station"
+
+
+class Position(enum.StrEnum):
+    """Special standing a character can hold, held in `Character.positions`
+    (a list, not a single value -- nothing stops a character from being
+    both a Victor and a Governor). Unlike a `Job`, a Position isn't
+    content-authored or applied for: staff grant and revoke these directly
+    (`/staff give position`), and holding any of them grants the same
+    location-access privilege Victors always had (`proxy.has_location_access`),
+    generalized from what used to be a single `Character.is_victor` bool."""
+
+    VICTOR = "victor"
+    GAMEMAKER = "gamemaker"
+    GOVERNOR = "governor"

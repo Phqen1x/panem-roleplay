@@ -153,6 +153,9 @@ class Job(BaseModel):
     shift_phase: DayPhase
     slots: int = Field(gt=0)
     legal: bool = True
+    staff_only: bool = False
+    """A job players can't reach via `/job apply` (e.g. a district's mentor
+    slot) -- only staff can assign it, via `/staff give job`."""
     min_reputation: float | None = None
     ladder_next: str | None = None
     ladder_requirement: dict[str, Any] | None = None

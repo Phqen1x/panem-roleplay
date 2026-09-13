@@ -27,7 +27,7 @@ def check_can_travel(*, character: Character, location: Location) -> None:
     if character.status != CharacterStatus.APPROVED.value:
         raise NotAllowed("character_not_approved")
     if not has_location_access(
-        job_id=character.job_id, is_victor=character.is_victor, location=location
+        job_id=character.job_id, has_position=bool(character.positions), location=location
     ):
         raise NotAllowed("location_restricted")
 

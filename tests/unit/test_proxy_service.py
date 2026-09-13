@@ -19,7 +19,7 @@ def make_character(**overrides) -> Character:
         age=16,
         status=CharacterStatus.APPROVED.value,
         job_id=None,
-        is_victor=False,
+        positions=[],
         jailed_until_tick=None,
     )
     defaults.update(overrides)
@@ -89,23 +89,23 @@ class TestStripTagPrefix:
 class TestHasLocationAccess:
     def test_unrestricted_always_true(self):
         loc = Location(id="square", name="The Square", kind="public")
-        assert proxy_svc.has_location_access(job_id=None, is_victor=False, location=loc)
+        assert proxy_svc.has_location_access(job_id=None, has_position=False, location=loc)
 
-    def test_restricted_victor_true(self):
+    def test_restricted_with_a_position_true(self):
         loc = Location(id="village", name="Victor's Village", kind="residential", restricted=True)
-        assert proxy_svc.has_location_access(job_id=None, is_victor=True, location=loc)
+        assert proxy_svc.has_location_access(job_id=None, has_position=True, location=loc)
 
     def test_restricted_job_match_true(self):
         loc = Location(
             id="mine", name="Mine", kind="workplace", restricted=True, access_jobs=["miner"]
         )
-        assert proxy_svc.has_location_access(job_id="miner", is_victor=False, location=loc)
+        assert proxy_svc.has_location_access(job_id="miner", has_position=False, location=loc)
 
     def test_restricted_no_access_false(self):
         loc = Location(
             id="mine", name="Mine", kind="workplace", restricted=True, access_jobs=["miner"]
         )
-        assert not proxy_svc.has_location_access(job_id="baker", is_victor=False, location=loc)
+        assert not proxy_svc.has_location_access(job_id="baker", has_position=False, location=loc)
 
 
 class TestCheckCanProxy:
