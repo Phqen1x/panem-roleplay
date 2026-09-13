@@ -43,6 +43,7 @@ def make_character(**overrides: object) -> Character:
         reputation=0.0,
         health=100.0,
         consecutive_missed=0,
+        positions=[],
     )
     defaults.update(overrides)
     return Character(**defaults)  # type: ignore[arg-type]
@@ -130,6 +131,37 @@ class TestStartShiftGame:
         shifts_svc.start_shift_game(shift, 3)
         shifts_svc.start_shift_game(shift, 10)
         assert shift.started_at_tick == 3
+
+
+class TestOpenAdhocShiftForGamemaker:
+    def test_none_without_a_job(self):
+        character = make_character(job_id=None, positions=["gamemaker"])
+        assert shifts_svc.open_adhoc_shift_for_gamemaker(character, 10) is None
+
+    def test_none_without_the_gamemaker_position(self):
+        character = make_character(job_id="miner", positions=[])
+        assert shifts_svc.open_adhoc_shift_for_gamemaker(character, 10) is None
+
+    def test_synthesizes_a_shift_for_a_gamemaker_with_a_job(self):
+        character = make_character(job_id="miner", positions=["gamemaker"])
+        character.id = 7
+        shift = shifts_svc.open_adhoc_shift_for_gamemaker(character, 10)
+        assert shift is not None
+        assert shift.character_id == 7
+        assert shift.job_id == "miner"
+        assert shift.tick_opened == 10
+        assert shift.tick_due == 10 + shifts_svc.constants.SHIFT_DURATION_TICKS
+        assert shift.result is None
+
+
+class TestCanEarnRpCreditAnywhere:
+    def test_true_for_a_gamemaker(self):
+        character = make_character(positions=["gamemaker"])
+        assert shifts_svc.can_earn_rp_credit_anywhere(character)
+
+    def test_false_without_the_position(self):
+        character = make_character(positions=["victor"])
+        assert not shifts_svc.can_earn_rp_credit_anywhere(character)
 
 
 class TestApplyShiftOutcome:

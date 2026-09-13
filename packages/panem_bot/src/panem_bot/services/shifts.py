@@ -19,7 +19,7 @@ from panem_bot.errors import NotAllowed
 from panem_shared import constants
 from panem_shared.content.schemas import Job
 from panem_shared.db.models import Character, Shift
-from panem_shared.enums import CharacterStatus
+from panem_shared.enums import CharacterStatus, Position
 from panem_shared.shifts import (
     ShiftOutcome as ShiftOutcome,
 )
@@ -40,6 +40,33 @@ def start_shift_game(shift: Shift, tick: int) -> None:
     `WORK_GAME_GRACE_TICKS` window."""
     if shift.started_at_tick is None:
         shift.started_at_tick = tick
+
+
+def open_adhoc_shift_for_gamemaker(character: Character, tick: int) -> Shift | None:
+    """A Gamemaker can `/work` at any time, in any place -- not just when
+    `panem_sim` has already opened a shift for their job's `shift_phase`,
+    and not only when physically at its `workplace` (see
+    `can_earn_rp_credit_anywhere`). Synthesizes a fresh `Shift` on the spot
+    instead of refusing with "no open shift"; `None` if `character` isn't
+    a Gamemaker or has no job to work at all."""
+    if character.job_id is None:
+        return None
+    if Position.GAMEMAKER.value not in character.positions:
+        return None
+    return Shift(
+        character_id=character.id,
+        job_id=character.job_id,
+        tick_opened=tick,
+        tick_due=tick + constants.SHIFT_DURATION_TICKS,
+    )
+
+
+def can_earn_rp_credit_anywhere(character: Character) -> bool:
+    """A Gamemaker's RP-credit shift completion (FR-PRX-7) isn't tied to
+    being physically in the job's `workplace` scene -- the same "any
+    place" privilege `open_adhoc_shift_for_gamemaker` gives `/work`
+    itself."""
+    return Position.GAMEMAKER.value in character.positions
 
 
 def meets_rp_credit(content: str) -> bool:

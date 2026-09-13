@@ -920,6 +920,19 @@ Gamemaker/Victor conveniences on top.
 - The Gamemaker exceptions read `Character.positions`
   (`Position.GAMEMAKER`), the same staff-granted list `/staff give
   position` already manages -- no new column or command.
+- **The same Gamemaker exception extends to `/work`**: a Gamemaker with a
+  job can work it at any time, not just when `panem_sim` has already
+  opened a shift for its `shift_phase` -- `/work` synthesizes a fresh
+  `Shift` on the spot instead of refusing with "no open shift"
+  (`shifts_svc.open_adhoc_shift_for_gamemaker`) -- and the RP-credit
+  shortcut (a long-enough proxied message auto-completing an open shift,
+  FR-PRX-7) no longer requires them to be physically at the job's
+  `workplace` scene either (`shifts_svc.can_earn_rp_credit_anywhere`).
+  Still requires an actual job (`/staff give job`/`/job apply`) --
+  a Gamemaker with no job has nothing to synthesize a shift for. No
+  cooldown or cap on the ad-hoc path beyond what `/work`'s minigame grace
+  window already implies; this trusts whoever holds the Gamemaker
+  position the same way its other privileges already do.
 
 ## Notes on this Milestone L (`/work`'s Minesweeper minigame) build
 

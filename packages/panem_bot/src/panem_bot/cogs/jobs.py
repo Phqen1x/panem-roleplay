@@ -57,10 +57,16 @@ class JobsCog(commands.Cog):
                 )
             ).scalar_one_or_none()
             if open_shift is None:
-                await interaction.response.send_message(
-                    t("job_no_open_shift", name=char.name), ephemeral=True
+                open_shift = shifts_svc.open_adhoc_shift_for_gamemaker(
+                    char, await self._current_tick(session)
                 )
-                return
+                if open_shift is None:
+                    await interaction.response.send_message(
+                        t("job_no_open_shift", name=char.name), ephemeral=True
+                    )
+                    return
+                session.add(open_shift)
+                await session.flush()
 
             job = await jobs_svc.get_job(session, self.bot.content, open_shift.job_id)  # type: ignore[attr-defined]
             if job is None:

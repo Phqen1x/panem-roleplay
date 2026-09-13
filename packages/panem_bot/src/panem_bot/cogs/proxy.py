@@ -150,7 +150,11 @@ class ProxyCog(commands.Cog):
             return
 
         job = await jobs_svc.get_job(session, self.bot.content, open_shift.job_id)  # type: ignore[attr-defined]
-        if job is None or scene.location_id != job.workplace:
+        if job is None:
+            return
+        if scene.location_id != job.workplace and not shifts_svc.can_earn_rp_credit_anywhere(
+            character
+        ):
             return
         if not shifts_svc.meets_rp_credit(content):
             return
