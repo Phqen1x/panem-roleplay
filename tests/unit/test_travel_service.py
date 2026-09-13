@@ -106,6 +106,24 @@ class TestTicketGoodId:
         assert travel_svc.ticket_good_id(12) == "train_ticket_d12"
 
 
+class TestIsFreeVictorRoute:
+    def test_victor_home_to_capitol_is_free(self):
+        character = make_character(district_id=12, positions=["victor"])
+        assert travel_svc.is_free_victor_route(character, 12, 0)
+
+    def test_victor_capitol_to_home_is_free(self):
+        character = make_character(district_id=12, positions=["victor"])
+        assert travel_svc.is_free_victor_route(character, 0, 12)
+
+    def test_victor_to_a_third_district_is_not_free(self):
+        character = make_character(district_id=12, positions=["victor"])
+        assert not travel_svc.is_free_victor_route(character, 12, 5)
+
+    def test_non_victor_never_free(self):
+        character = make_character(district_id=12, positions=[])
+        assert not travel_svc.is_free_victor_route(character, 12, 0)
+
+
 class TestCheckCanTravelDistrict:
     def test_allows_approved_character_at_the_station(self):
         district = make_district()

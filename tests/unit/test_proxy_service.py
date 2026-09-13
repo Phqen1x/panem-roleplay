@@ -86,6 +86,34 @@ class TestStripTagPrefix:
         assert proxy_svc.strip_tag_prefix("hello there", "md") == "hello there"
 
 
+class TestCanRpInDistrict:
+    def test_home_district_always_allowed(self):
+        char = make_character(district_id=12, positions=[])
+        assert proxy_svc.can_rp_in_district(char, 12)
+
+    def test_other_district_denied_without_a_position(self):
+        char = make_character(district_id=12, positions=[])
+        assert not proxy_svc.can_rp_in_district(char, 5)
+
+    def test_gamemaker_allowed_anywhere(self):
+        char = make_character(district_id=12, positions=["gamemaker"])
+        assert proxy_svc.can_rp_in_district(char, 5)
+        assert proxy_svc.can_rp_in_district(char, 0)
+
+    def test_victor_allowed_in_the_capitol(self):
+        char = make_character(district_id=12, positions=["victor"])
+        assert proxy_svc.can_rp_in_district(char, 0)
+
+    def test_victor_denied_in_a_third_district(self):
+        char = make_character(district_id=12, positions=["victor"])
+        assert not proxy_svc.can_rp_in_district(char, 5)
+
+    def test_governor_gets_no_extra_access(self):
+        char = make_character(district_id=12, positions=["governor"])
+        assert not proxy_svc.can_rp_in_district(char, 5)
+        assert not proxy_svc.can_rp_in_district(char, 0)
+
+
 class TestHasLocationAccess:
     def test_unrestricted_always_true(self):
         loc = Location(id="square", name="The Square", kind="public")

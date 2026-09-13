@@ -7,10 +7,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from panem_shared.constants import PROXY_MESSAGE_MAX_LEN
+from panem_shared.constants import CAPITOL_DISTRICT_ID, PROXY_MESSAGE_MAX_LEN
 from panem_shared.content.schemas import District, Location
 from panem_shared.db.models import Character
-from panem_shared.enums import CharacterStatus
+from panem_shared.enums import CharacterStatus, Position
 
 
 def is_ooc(content: str) -> bool:
@@ -50,6 +50,26 @@ def resolve_proxy_target(
         if content.startswith(f"{tag}:"):
             return ProxyTarget(character_id=character_id, via_tag=True)
     return None
+
+
+def can_rp_in_district(character: Character, district_id: int) -> bool:
+    """Which district a character may be played in (`/scene start`'s
+    `_caller_character`) -- ordinarily just their assigned `district_id`,
+    the same district a player's Discord role assigns them at creation,
+    regardless of where `/travel` has physically taken them (RP location
+    is a narrative assignment, not simulated movement -- see
+    `Character.current_district_id` for that). A Gamemaker's characters
+    (Capitol staff overseeing every Games, wherever it's held) may be
+    played in any district without traveling there first; a Victor's may
+    be played in their own district or the Capitol, matching how
+    `travel.is_free_victor_route` waives the fare between exactly those
+    two."""
+    if character.district_id == district_id:
+        return True
+    positions = set(character.positions)
+    if Position.GAMEMAKER.value in positions:
+        return True
+    return Position.VICTOR.value in positions and district_id == CAPITOL_DISTRICT_ID
 
 
 def has_location_access(*, job_id: str | None, has_position: bool, location: Location) -> bool:

@@ -111,14 +111,18 @@ class ProxyCog(commands.Cog):
             if forum_registered is None:
                 return []
             user = await characters_svc.get_or_create_user(session, interaction.user.id)
-            stmt = select(Character.name).where(
+            stmt = select(Character).where(
                 Character.user_id == user.id,
-                Character.district_id == forum_registered.district_id,
                 Character.status == CharacterStatus.APPROVED.value,
             )
             if current:
                 stmt = stmt.where(Character.name.ilike(f"%{current}%"))
-            names = (await session.execute(stmt.limit(25))).scalars().all()
+            rows = (await session.execute(stmt)).scalars().all()
+            names = [
+                c.name
+                for c in rows
+                if proxy_svc.can_rp_in_district(c, forum_registered.district_id)
+            ][:25]
         return [app_commands.Choice(name=name, value=name) for name in names]
 
     @app_commands.command(name="ooc", description="Clear your active character for this scene")

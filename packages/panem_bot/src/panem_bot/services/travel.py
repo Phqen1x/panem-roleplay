@@ -8,9 +8,10 @@ import random
 
 from panem_bot.errors import NotAllowed, NotFound
 from panem_bot.services.proxy import has_location_access
+from panem_shared.constants import CAPITOL_DISTRICT_ID
 from panem_shared.content.schemas import District, Location
 from panem_shared.db.models import Character
-from panem_shared.enums import CharacterStatus, LocationKind
+from panem_shared.enums import CharacterStatus, LocationKind, Position
 
 
 def resolve_location(district: District, location_id: str) -> Location:
@@ -57,6 +58,19 @@ def resolve_station(district: District) -> Location:
 
 def ticket_good_id(destination_id: int) -> str:
     return f"train_ticket_d{destination_id}"
+
+
+def is_free_victor_route(character: Character, origin_id: int, destination_id: int) -> bool:
+    """A Victor's ticket between their home district and the Capitol is
+    free in either direction -- Victors are expected to move between the
+    two regularly (mentoring duties, Capitol appearances) without it
+    costing them anything, unlike an ordinary cross-district trip. Any
+    other route (e.g. a Victor visiting a third district) still costs the
+    usual fare."""
+    if Position.VICTOR.value not in character.positions:
+        return False
+    endpoints = {character.district_id, CAPITOL_DISTRICT_ID}
+    return origin_id in endpoints and destination_id in endpoints
 
 
 def check_can_travel_district(

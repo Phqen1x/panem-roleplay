@@ -869,6 +869,38 @@ today's `data/` rather than copied) and its deploy-file diffs re-adapted by hand
   profile bundles alongside the planner LLM. `/talk` only ever sends text and only ever
   reads text back.
 
+## Notes on Gamemaker/Victor RP-location exceptions
+
+Not a milestone -- two small, targeted exceptions to an existing rule.
+
+- **A character may normally only be played in scenes in their assigned
+  `Character.district_id`** (set at creation, from the player's Discord
+  district role) -- unrelated to `current_district_id`, which only tracks
+  where `/travel` has physically taken them. This was already enforced by
+  `/scene start`'s `_caller_character` (and mirrored in its and `/rp`'s
+  character autocompletes), just never given a name; it's now
+  `proxy_svc.can_rp_in_district`, since the exceptions below needed a
+  single place to live rather than duplicating the same two `if`s at each
+  call site.
+- **A Gamemaker's characters may be played in any district's scenes
+  without traveling there** -- Gamemakers are Capitol staff overseeing
+  every Games regardless of district, so requiring them to physically
+  visit a district first (or be assigned to it at all) didn't fit. A
+  Victor's may be played in their own district or the Capitol specifically
+  -- no third district -- matching how Victors keep a foot in both after
+  winning.
+- **A Victor's train ticket between their home district and the Capitol is
+  free in either direction** (`travel_svc.is_free_victor_route`, checked
+  in `/travel district:<id>`'s fare calculation) -- a trip to or from any
+  other district still costs the usual fare, and the trip itself is
+  unchanged otherwise (still two-phase, still takes `TRANSIT_TICKS`). This
+  is deliberately narrower than the RP-location exception above: a Victor
+  still has to make the trip, just not pay for it, whereas a Gamemaker
+  doesn't have to make the trip at all.
+- Both exceptions read `Character.positions` (`Position.GAMEMAKER`/
+  `Position.VICTOR`), the same staff-granted list `/staff give position`
+  already manages -- no new column or command.
+
 ## Upgrading past duplicate character names
 
 The migration that adds the name-uniqueness index (`7116c3213f6e`) will

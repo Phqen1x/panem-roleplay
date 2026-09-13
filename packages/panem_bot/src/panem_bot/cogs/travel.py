@@ -113,6 +113,8 @@ class TravelCog(commands.Cog):
                 if good is None:
                     raise NotFound("travel_no_route")
                 price = round(good.base_price)
+                if travel_svc.is_free_victor_route(char, origin_district.id, destination_id):
+                    price = 0
                 if char.money < price:
                     raise NotAllowed("travel_insufficient_funds", name=char.name, price=price)
             except (NotFound, NotAllowed) as exc:
