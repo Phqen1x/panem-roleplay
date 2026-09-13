@@ -27,9 +27,10 @@
 // new ones (a plain server restart doesn't invalidate anything a client
 // already fetched by URL). Bump ASSET_VERSION any time work.js or any
 // file under games/ changes, and update the matching `?v=` on work.html's
-// own <script> tag to match -- changing the URL is what actually forces
-// every cache layer to refetch, restarting the server does not.
-const ASSET_VERSION = "1";
+// <script> tag (and its /work.css?v= link, for CSS-only changes like the
+// games/*.js modules use) to match -- changing the URL is what actually
+// forces every cache layer to refetch, restarting the server does not.
+const ASSET_VERSION = "2";
 
 const [coinflip, connect4, minesweeper, poison, snake, solitaire] = await Promise.all([
   import(`./games/coinflip.js?v=${ASSET_VERSION}`),

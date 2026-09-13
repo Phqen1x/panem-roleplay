@@ -263,6 +263,7 @@ main {
 }
 
 .pile {
+  position: relative;
   width: 52px;
   height: 74px;
   border: 1px dashed var(--border);
