@@ -1214,6 +1214,42 @@ or a win score is. Verified with headless-Chromium checks confirming the pool ac
 excludes Coin Flip/Pick Your Poison past Apprentice, and that Minesweeper's cell count and
 Snake's on-screen win target match the expected value at all five levels.
 
+## Notes on working a shift multiple times per tick
+
+Previously a `Shift` closed (`result = COMPLETED`) the instant it was worked once --
+`/work` (or the Activity minigame's result endpoint) was a one-and-done action for the
+whole shift. Now a shift stays open for its entire `tick_opened`..`tick_due` window (six
+ticks, `SHIFT_DURATION_TICKS`) so a player can come back and work it again on a later
+tick, capped at one resolution per tick (`Shift.last_worked_tick`,
+`panem_shared.shifts.already_worked_this_tick`). `panem_sim.systems.jobs
+._resolve_missed_shifts` is what finally closes a worked shift as COMPLETED once
+`tick_due` passes -- the same way it already closed an unworked one as MISSED --
+rather than `apply_shift_outcome` closing it immediately on the first work.
+
+`Character.shifts_completed` (the counter driving job-level progression,
+`panem_shared.job_levels`) only increments the *first* time a given shift is worked, not
+once per `/work` call -- it counts shifts worked, not work actions. Wage, reputation, and
+output are still applied on every resolution (`shift.output` now accumulates across every
+work this shift gets, rather than being overwritten, so `panem_sim.systems.economy`'s
+supply side still sees every unit produced), and `consecutive_missed` still resets on
+every resolution, same as before.
+
+The once-per-tick cap is enforced everywhere a shift can be resolved: `/work`'s command
+handler refuses up front if the open shift was already worked this tick,
+`JobsCog._finish_shift` (shared by the no-Activity coin-flip path and the minigame-launch
+message's Skip button) checks it before resolving, and `panem_api`'s
+`/activity/work/{shift_id}/result` returns a 409 if the client tries to resolve a shift
+already worked this tick. `WorkShiftStatus` gained an `already_worked_this_tick` field so
+`work.js` can refuse before mounting a whole game the result endpoint would reject anyway
+(`already_resolved` alone can't answer this now that a shift stays open across many
+ticks). New migration `c3f8a1d5e6b7` adds `shifts.last_worked_tick`.
+
+This also changes the staff/Gamemaker `open_adhoc_shift_override` behavior: since a shift
+no longer closes on its first work, staff working an ad-hoc shift are now subject to the
+same once-per-tick cap as anyone else, and reworking it on a later tick continues the
+*same* shift rather than synthesizing a fresh one each time (a fresh one is only
+synthesized when there's truly no open shift for that character).
+
 ## Upgrading past duplicate character names
 
 The migration that adds the name-uniqueness index (`7116c3213f6e`) will

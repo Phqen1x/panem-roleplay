@@ -225,6 +225,62 @@ class TestMissedShifts:
         assert state.notable_events[0].kind == "fired"
 
 
+class TestWorkedShiftsCloseAsCompleted:
+    """A shift stays open across every `/work` tick now (`panem_shared.
+    shifts.apply_shift_outcome` no longer closes it on the first work) --
+    once `tick_due` passes, it should close as COMPLETED, not MISSED, if
+    it was worked at least once."""
+
+    def test_worked_shift_closes_as_completed_at_tick_due(self):
+        content = make_content()
+        character = make_character(
+            1, job_title="Miner", shift_phase="morning", consecutive_missed=2
+        )
+        shift = Shift(character_id=1, job_id="Miner", tick_opened=0, tick_due=6, last_worked_tick=3)
+        state = WorldState(
+            districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[shift]
+        )
+
+        jobs.run(state, make_ctx(content, tick=6, phase=DayPhase.AFTERNOON))
+
+        assert shift.result == ShiftResult.COMPLETED.value
+        assert shift.completed_at == 6
+        assert state.open_shifts == []
+
+    def test_worked_shift_leaves_consecutive_missed_untouched(self):
+        content = make_content()
+        character = make_character(
+            1, job_title="Miner", shift_phase="morning", consecutive_missed=2
+        )
+        shift = Shift(character_id=1, job_id="Miner", tick_opened=0, tick_due=6, last_worked_tick=3)
+        state = WorldState(
+            districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[shift]
+        )
+
+        jobs.run(state, make_ctx(content, tick=6, phase=DayPhase.AFTERNOON))
+
+        # apply_shift_outcome already reset this at the moment of work;
+        # closing the shift later shouldn't touch it either way.
+        assert character.consecutive_missed == 2
+
+    def test_unworked_shift_still_misses_normally(self):
+        content = make_content()
+        character = make_character(
+            1, job_title="Miner", shift_phase="morning", consecutive_missed=0
+        )
+        shift = Shift(
+            character_id=1, job_id="Miner", tick_opened=0, tick_due=6, last_worked_tick=None
+        )
+        state = WorldState(
+            districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[shift]
+        )
+
+        jobs.run(state, make_ctx(content, tick=6, phase=DayPhase.AFTERNOON))
+
+        assert shift.result == ShiftResult.MISSED.value
+        assert character.consecutive_missed == 1
+
+
 class TestWorkGameGraceExcusesMissedShifts:
     """`/work`'s minigame: a shift whose game was started before it was due
     stays open, not missed, until WORK_GAME_GRACE_TICKS past tick_due."""
@@ -415,14 +471,19 @@ class TestT22ScriptedLifecycle:
             districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
         )
 
-        # Day 1: shift opens, gets completed (e.g. via /work or RP credit)
-        # before its due tick -- breaking any prior miss streak.
+        # Day 1: shift opens, gets worked (e.g. via /work or RP credit)
+        # before its due tick -- breaking any prior miss streak -- and the
+        # tick loop closes it as completed (not missed) once tick_due
+        # passes, since it stays open rather than closing on that one work.
         jobs.run(state, make_ctx(content, tick=PHASE_TICKS, phase=DayPhase.MORNING))
         shift = state.open_shifts[0]
         outcome = resolve_shift_game(character, district, won=True)
         apply_shift_outcome(shift, character, outcome, tick=PHASE_TICKS)
-        state.open_shifts = [s for s in state.open_shifts if s.result is None]
         assert character.consecutive_missed == 0
+
+        jobs.run(state, make_ctx(content, tick=shift.tick_due, phase=DayPhase.AFTERNOON))
+        assert shift.result == ShiftResult.COMPLETED.value
+        assert state.open_shifts == []
 
         # Days 2-6: the shift opens and is never resolved -- five straight
         # misses fires the character.

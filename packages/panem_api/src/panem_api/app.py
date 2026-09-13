@@ -46,7 +46,12 @@ from panem_shared.db.session import session_scope
 from panem_shared.job_levels import job_level_for_shifts
 from panem_shared.logging import get_logger
 from panem_shared.redis_keys import positions_key, work_pending_key
-from panem_shared.shifts import apply_shift_outcome, market_wage_multiplier, resolve_shift_game
+from panem_shared.shifts import (
+    already_worked_this_tick,
+    apply_shift_outcome,
+    market_wage_multiplier,
+    resolve_shift_game,
+)
 
 logger = get_logger(component="api")
 
@@ -105,6 +110,10 @@ class WorkShiftStatus(BaseModel):
     job_title: str
     character_name: str
     already_resolved: bool
+    # A shift stays open across many ticks now (see apply_shift_outcome),
+    # but only one resolution per tick counts -- this tells work.js to
+    # refuse before mounting a game the result endpoint would reject anyway.
+    already_worked_this_tick: bool
     # The character's current JobLevel value (apprentice..expert) --
     # work.js uses this to pick which minigames are available and how
     # hard the harder ones are (Snake's win score, Minesweeper's grid).
@@ -293,7 +302,13 @@ def create_app(
         minigame accordingly (`work.js`'s `LEVELS` array). Jobs are
         free-typed (`Character.job_title`) rather than a catalog entry
         now, so this reads the character directly instead of joining
-        through `content.jobs`."""
+        through `content.jobs`.
+
+        `already_worked_this_tick` lets `work.html` refuse up front
+        (`already_resolved` alone can't -- a shift now stays open across
+        its whole `tick_opened`..`tick_due` window instead of closing on
+        its first `/work`) rather than making the player play a whole
+        minigame only to have the result endpoint reject it."""
         if session_factory is None:
             raise HTTPException(status_code=503, detail="The work minigame isn't configured")
         async with session_scope(session_factory) as session:
@@ -301,10 +316,13 @@ def create_app(
             character = await session.get(Character, shift.character_id) if shift else None
             if shift is None or character is None or character.job_title is None:
                 raise HTTPException(status_code=404, detail="No such shift")
+            clock = await session.get(WorldClock, 1)
+            tick = clock.tick if clock is not None else 0
             return WorkShiftStatus(
                 job_title=character.job_title,
                 character_name=character.name,
                 already_resolved=shift.result is not None,
+                already_worked_this_tick=already_worked_this_tick(shift, tick),
                 level=job_level_for_shifts(character.shifts_completed).value,
             )
 
@@ -317,9 +335,12 @@ def create_app(
         level, win/lose, and the home district's current market price for
         its quota good all factor into the wage. `neutral` skips the
         lose-wage penalty for a loss the player had no way to avoid
-        (Solitaire's "Give Up", for an unwinnable deal). Trusts the
-        client's `won`/`neutral` outright -- see this module's
-        docstring."""
+        (Solitaire's "Give Up", for an unwinnable deal). A shift can only
+        be resolved once per in-game tick (`already_worked_this_tick`) --
+        it otherwise stays open past this call for the rest of its
+        `tick_opened`..`tick_due` window, so the player can come back and
+        work it again next tick. Trusts the client's `won`/`neutral`
+        outright -- see this module's docstring."""
         if session_factory is None:
             raise HTTPException(status_code=503, detail="The work minigame isn't configured")
         async with session_scope(session_factory) as session:
@@ -333,6 +354,8 @@ def create_app(
                 raise HTTPException(status_code=404, detail="No such shift")
             clock = await session.get(WorldClock, 1)
             tick = clock.tick if clock is not None else 0
+            if already_worked_this_tick(shift, tick):
+                raise HTTPException(status_code=409, detail="Already worked this shift this tick")
             district = content.district(character.district_id)
             market_multiplier = await _market_multiplier(session, content, district)
             before_level = job_level_for_shifts(character.shifts_completed)

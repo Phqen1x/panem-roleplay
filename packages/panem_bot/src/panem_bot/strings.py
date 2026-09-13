@@ -81,6 +81,9 @@ STRINGS: dict[str, str] = {
     "`/staff give job`.",
     "job_no_open_shift": "**{name}** doesn't have a shift open right now.",
     "shift_no_longer_open": "That shift is no longer open.",
+    "shift_already_worked_this_tick": (
+        "**{name}** already worked this shift this tick -- try again next tick."
+    ),
     "work_ok": "**{name}** {outcome}: +{wage} money, {rep_delta:+d} reputation.",
     "work_game_ready": "**{name}** clocks in for **{title}**. Play the shift's minigame below "
     "(opens in your browser) -- you're paid based on how it goes, even if you finish after "

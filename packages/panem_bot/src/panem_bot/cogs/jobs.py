@@ -180,10 +180,16 @@ class JobsCog(commands.Cog):
                 session.add(open_shift)
                 await session.flush()
 
+            current_tick = await self._current_tick(session)
+            if shifts_svc.already_worked_this_tick(open_shift, current_tick):
+                await interaction.response.send_message(
+                    t("shift_already_worked_this_tick", name=char.name), ephemeral=True
+                )
+                return
+
             activity_url = self.bot.settings.activity_public_url  # type: ignore[attr-defined]
             char_id, shift_id, char_name = char.id, open_shift.id, char.name
             if activity_url:
-                current_tick = await self._current_tick(session)
                 shifts_svc.start_shift_game(open_shift, current_tick)
                 job_title = char.job_title
 
@@ -235,8 +241,12 @@ class JobsCog(commands.Cog):
         text, including a level-up line if this shift's completion crosses
         one of `panem_shared.job_levels`' thresholds. Shared by the
         no-Activity coin-flip path and the minigame-launch message's Skip
-        button above."""
+        button above -- both call this straight from `/work`, so the
+        once-per-tick check lives here rather than duplicated in each
+        caller."""
         current_tick = await self._current_tick(session)
+        if shifts_svc.already_worked_this_tick(shift, current_tick):
+            return t("shift_already_worked_this_tick", name=char.name)
         content = self.bot.content  # type: ignore[attr-defined]
         district = content.district(char.district_id)
         market_multiplier = await shifts_svc.market_multiplier_for_district(

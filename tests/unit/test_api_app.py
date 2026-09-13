@@ -351,10 +351,11 @@ class TestWorkShiftStatus:
             "job_title": "Miner",
             "character_name": "Wren",
             "already_resolved": False,
+            "already_worked_this_tick": False,
             "level": "apprentice",
         }
 
-    async def test_already_resolved_is_true_once_the_shift_is_worked(
+    async def test_shift_stays_open_once_worked_since_it_spans_many_ticks(
         self, work_app, db_session_factory
     ):
         shift_id = await seed_shift(db_session_factory)
@@ -362,7 +363,17 @@ class TestWorkShiftStatus:
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             await client.post(f"/activity/work/{shift_id}/result", json={"won": True})
             response = await client.get(f"/activity/work/{shift_id}")
-        assert response.json()["already_resolved"] is True
+        assert response.json()["already_resolved"] is False
+
+    async def test_already_worked_this_tick_is_true_right_after_working(
+        self, work_app, db_session_factory
+    ):
+        shift_id = await seed_shift(db_session_factory)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            await client.post(f"/activity/work/{shift_id}/result", json={"won": True})
+            response = await client.get(f"/activity/work/{shift_id}")
+        assert response.json()["already_worked_this_tick"] is True
 
     async def test_level_reflects_the_characters_shifts_completed(
         self, work_app, db_session_factory
@@ -422,16 +433,56 @@ class TestWorkShiftResult:
         assert response.json()["leveled_up"] is True
         assert response.json()["level"] == "novice"
 
-    async def test_409s_if_already_resolved(self, work_app, db_session_factory):
+    async def test_409s_if_already_worked_this_tick(self, work_app, db_session_factory):
         shift_id = await seed_shift(db_session_factory)
         transport = httpx.ASGITransport(app=work_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             await client.post(f"/activity/work/{shift_id}/result", json={"won": True})
             response = await client.post(f"/activity/work/{shift_id}/result", json={"won": True})
         assert response.status_code == 409
+        assert "tick" in response.json()["detail"]
 
     async def test_404s_for_an_unknown_shift(self, work_app):
         transport = httpx.ASGITransport(app=work_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post("/activity/work/999999/result", json={"won": True})
         assert response.status_code == 404
+
+    async def test_can_work_the_same_shift_again_on_a_later_tick(
+        self, work_app, db_session_factory
+    ):
+        from panem_shared.db.models import WorldClock
+
+        shift_id = await seed_shift(db_session_factory)
+        async with db_session_factory() as session, session.begin():
+            session.add(WorldClock(id=1, tick=0))
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            first = await client.post(f"/activity/work/{shift_id}/result", json={"won": True})
+            async with db_session_factory() as session, session.begin():
+                clock = await session.get(WorldClock, 1)
+                clock.tick = 1
+            second = await client.post(f"/activity/work/{shift_id}/result", json={"won": True})
+        assert first.status_code == 200
+        assert second.status_code == 200
+
+    async def test_shifts_completed_only_counts_once_across_multiple_ticks_worked(
+        self, work_app, db_session_factory
+    ):
+        from panem_shared.db.models import WorldClock
+
+        shift_id = await seed_shift(db_session_factory)
+        async with db_session_factory() as session, session.begin():
+            session.add(WorldClock(id=1, tick=0))
+            shift = await session.get(Shift, shift_id)
+            character_id = shift.character_id
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            await client.post(f"/activity/work/{shift_id}/result", json={"won": True})
+            async with db_session_factory() as session, session.begin():
+                clock = await session.get(WorldClock, 1)
+                clock.tick = 1
+            await client.post(f"/activity/work/{shift_id}/result", json={"won": True})
+        async with db_session_factory() as session:
+            character = await session.get(Character, character_id)
+            assert character.shifts_completed == 1

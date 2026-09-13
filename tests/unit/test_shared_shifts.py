@@ -20,7 +20,7 @@ from panem_shared.content.schemas import (
     Location,
 )
 from panem_shared.db.models import Character, Shift
-from panem_shared.enums import CharacterStatus, JobLevel, ShiftResult
+from panem_shared.enums import CharacterStatus, JobLevel
 
 
 def make_district(*, quota_good: str | None = "coal") -> District:
@@ -154,21 +154,22 @@ class TestMarketWageMultiplier:
 
 
 class TestApplyShiftOutcome:
-    def test_completes_shift_and_updates_character(self):
+    def test_records_the_work_but_leaves_the_shift_open(self):
         character = make_character(money=0, reputation=0.0, consecutive_missed=4)
         district = make_district()
         outcome = shared_shifts.resolve_shift_game(character, district, won=True)
         shift = Shift(character_id=1, job_id="Miner", tick_opened=1, tick_due=7)
 
-        shared_shifts.apply_shift_outcome(shift, character, outcome, tick=7)
+        shared_shifts.apply_shift_outcome(shift, character, outcome, tick=3)
 
-        assert shift.result == ShiftResult.COMPLETED.value
-        assert shift.completed_at == 7
+        assert shift.result is None
+        assert shift.completed_at is None
+        assert shift.last_worked_tick == 3
         assert shift.output == outcome.output
         assert character.money == round(outcome.wage)
         assert character.reputation == outcome.rep_delta
         assert character.consecutive_missed == 0
-        assert character.last_active_tick == 7
+        assert character.last_active_tick == 3
 
     def test_increments_shifts_completed(self):
         character = make_character(shifts_completed=5)
@@ -191,3 +192,61 @@ class TestApplyShiftOutcome:
         shared_shifts.apply_shift_outcome(shift, character, outcome, tick=7)
 
         assert job_levels.job_level_for_shifts(character.shifts_completed) == JobLevel.NOVICE
+
+    def test_reworking_the_same_shift_on_a_later_tick_does_not_double_count(self):
+        character = make_character(shifts_completed=5)
+        district = make_district()
+        shift = Shift(character_id=1, job_id="Miner", tick_opened=1, tick_due=13)
+
+        shared_shifts.apply_shift_outcome(
+            shift,
+            character,
+            shared_shifts.resolve_shift_game(character, district, won=True),
+            tick=2,
+        )
+        shared_shifts.apply_shift_outcome(
+            shift,
+            character,
+            shared_shifts.resolve_shift_game(character, district, won=True),
+            tick=3,
+        )
+
+        assert character.shifts_completed == 6
+
+    def test_output_accumulates_across_multiple_works_in_the_same_shift(self):
+        character = make_character()
+        district = make_district(quota_good="coal")
+        shift = Shift(character_id=1, job_id="Miner", tick_opened=1, tick_due=13)
+        outcome = shared_shifts.resolve_shift_game(character, district, won=True)
+
+        shared_shifts.apply_shift_outcome(shift, character, outcome, tick=2)
+        shared_shifts.apply_shift_outcome(shift, character, outcome, tick=3)
+
+        assert shift.output == {"coal": constants.PLAYER_SHIFT_OUTPUT_QTY * 2}
+
+    def test_last_worked_tick_tracks_the_most_recent_work(self):
+        character = make_character()
+        district = make_district()
+        shift = Shift(character_id=1, job_id="Miner", tick_opened=1, tick_due=13)
+        outcome = shared_shifts.resolve_shift_game(character, district, won=True)
+
+        shared_shifts.apply_shift_outcome(shift, character, outcome, tick=2)
+        shared_shifts.apply_shift_outcome(shift, character, outcome, tick=5)
+
+        assert shift.last_worked_tick == 5
+
+
+class TestAlreadyWorkedThisTick:
+    def test_false_before_any_work(self):
+        shift = Shift(character_id=1, job_id="Miner", tick_opened=1, tick_due=7)
+        assert shared_shifts.already_worked_this_tick(shift, 3) is False
+
+    def test_true_for_the_tick_it_was_just_worked(self):
+        shift = Shift(character_id=1, job_id="Miner", tick_opened=1, tick_due=7)
+        shift.last_worked_tick = 3
+        assert shared_shifts.already_worked_this_tick(shift, 3) is True
+
+    def test_false_once_the_tick_has_moved_on(self):
+        shift = Shift(character_id=1, job_id="Miner", tick_opened=1, tick_due=7)
+        shift.last_worked_tick = 3
+        assert shared_shifts.already_worked_this_tick(shift, 4) is False

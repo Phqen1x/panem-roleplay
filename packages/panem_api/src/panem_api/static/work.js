@@ -23,6 +23,13 @@
 // start) skips the lose-wage penalty a real misplay/bad-luck loss in any
 // other game still carries.
 //
+// A shift now stays open for its whole multi-tick window rather than
+// closing after one game -- the player can come back and play again on a
+// later tick, capped at one resolution per tick
+// (`already_worked_this_tick`). `already_worked_this_tick` on the status
+// response lets this page refuse up front, before mounting a whole game
+// the result endpoint would just reject anyway.
+//
 // `levelIndex` (0 = Apprentice .. 4 = Expert, from the shift status's
 // `level`) scales difficulty with job mastery: Minesweeper's grid grows
 // and Snake's win score climbs (each module's own `instructions(levelIndex)`
@@ -42,7 +49,7 @@
 // <script> tag (and its /work.css?v= link, for CSS-only changes like the
 // games/*.js modules use) to match -- changing the URL is what actually
 // forces every cache layer to refetch, restarting the server does not.
-const ASSET_VERSION = "5";
+const ASSET_VERSION = "6";
 
 const [coinflip, connect4, minesweeper, poison, snake, solitaire] = await Promise.all([
   import(`./games/coinflip.js?v=${ASSET_VERSION}`),
@@ -135,6 +142,10 @@ async function main() {
   }
   if (info.already_resolved) {
     setStatus(`${info.character_name}'s ${info.job_title} shift is already done.`);
+    return;
+  }
+  if (info.already_worked_this_tick) {
+    setStatus(`${info.character_name} already worked this shift this tick -- try again next tick.`);
     return;
   }
 

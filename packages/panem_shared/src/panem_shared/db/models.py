@@ -319,6 +319,18 @@ class Shift(Base):
     won't mark a shift missed while this is set and it's still within
     `WORK_GAME_GRACE_TICKS` of `tick_due`, giving the player time to
     actually finish the game after the shift's nominal deadline."""
+    last_worked_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """The tick of this shift's most recent resolved `/work` action.
+    `panem_shared.shifts.apply_shift_outcome` no longer closes a shift the
+    instant it's worked -- a shift stays open (`result IS NULL`) for its
+    whole `tick_opened`..`tick_due` window so a player can work it again on
+    a later tick, capped at one resolution per tick by comparing the
+    current tick against this column. It also marks whether the shift has
+    ever been worked at all (`None` = never), which is what
+    `apply_shift_outcome` checks to only credit `shifts_completed` once per
+    shift no matter how many ticks it was worked, and what
+    `panem_sim.systems.jobs._resolve_missed_shifts` checks to close a
+    worked shift as COMPLETED rather than MISSED once `tick_due` passes."""
 
 
 class JobHistory(Base):

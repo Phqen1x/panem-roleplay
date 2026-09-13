@@ -25,7 +25,6 @@ from dataclasses import dataclass
 from panem_shared import constants, job_levels
 from panem_shared.content.schemas import District
 from panem_shared.db.models import Character, Shift
-from panem_shared.enums import ShiftResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,21 +86,51 @@ def resolve_shift_game(
     return ShiftOutcome(wage=wage, output=output, rep_delta=1 if won else 0)
 
 
+def already_worked_this_tick(shift: Shift, tick: int) -> bool:
+    """A shift can be worked at most once per in-game tick -- a player
+    still gets multiple goes at it across its `tick_opened`..`tick_due`
+    window (unlike the old one-and-done shift), just not more than one per
+    tick. `panem_bot`'s `/work` and `panem_api`'s minigame-result endpoint
+    both check this before resolving an outcome."""
+    return shift.last_worked_tick == tick
+
+
 def apply_shift_outcome(
     shift: Shift, character: Character, outcome: ShiftOutcome, *, tick: int
 ) -> None:
-    """Marks `shift` completed and applies its outcome to `character`.
-    Resets `consecutive_missed` -- any completion, however the shift was
+    """Applies `outcome` to `character` for one `/work` resolution during
+    `shift`. Doesn't close `shift` (`result` stays `None`) -- a shift now
+    stays open for its whole `tick_opened`..`tick_due` window so it can be
+    worked again on a later tick (capped at one resolution per tick by
+    `already_worked_this_tick`); `panem_sim.systems.jobs.
+    _resolve_missed_shifts` is what finally marks it COMPLETED once
+    `tick_due` passes, the same way it already marks an unworked shift
+    MISSED. `output` accumulates across every resolution this shift gets
+    (each one is real work done), not just the last one, so `panem_sim.
+    systems.economy`'s supply side still sees every unit produced.
+
+    Resets `consecutive_missed` -- any resolution, however the shift was
     resolved, breaks the miss streak `jobs.py` tracks. Increments
-    `shifts_completed`, which is what actually drives job-level
-    progression (`panem_shared.job_levels`) -- the *next* shift's wage
-    uses the level this produces, not this one's."""
-    shift.result = ShiftResult.COMPLETED.value
-    shift.completed_at = tick
-    shift.output = outcome.output
+    `shifts_completed` only the *first* time this shift is worked --
+    that's what actually drives job-level progression (`panem_shared.
+    job_levels`), and it counts shifts worked, not `/work` calls, so
+    reworking the same still-open shift on a later tick doesn't count
+    again."""
+    is_first_work_this_shift = shift.last_worked_tick is None
+    shift.last_worked_tick = tick
+
+    # `shift.output`'s column default only applies once SQLAlchemy actually
+    # inserts the row -- a freshly constructed, not-yet-flushed `Shift`
+    # (every unit test, and `open_adhoc_shift_override`'s shift before
+    # `session.add`) still has it as `None`.
+    new_output = dict(shift.output) if shift.output else {}
+    for good, qty in outcome.output.items():
+        new_output[good] = new_output.get(good, 0) + qty
+    shift.output = new_output
 
     character.money += round(outcome.wage)
     character.reputation += outcome.rep_delta
     character.consecutive_missed = 0
-    character.shifts_completed += 1
+    if is_first_work_this_shift:
+        character.shifts_completed += 1
     character.last_active_tick = tick

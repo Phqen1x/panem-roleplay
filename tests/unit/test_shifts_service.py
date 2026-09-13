@@ -113,6 +113,14 @@ class TestOpenAdhocShiftOverride:
         assert shift.job_id == "Miner"
 
 
+class TestAlreadyWorkedThisTick:
+    def test_reexported_from_shared(self):
+        shift = Shift(character_id=1, job_id="Miner", tick_opened=0, tick_due=6)
+        assert shifts_svc.already_worked_this_tick(shift, 3) is False
+        shift.last_worked_tick = 3
+        assert shifts_svc.already_worked_this_tick(shift, 3) is True
+
+
 class TestCanEarnRpCreditAnywhere:
     def test_true_for_a_gamemaker(self):
         character = make_character(positions=["gamemaker"])

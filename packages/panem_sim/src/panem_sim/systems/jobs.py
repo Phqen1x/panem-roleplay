@@ -80,6 +80,15 @@ def _resolve_missed_shifts(state: WorldState, ctx: TickContext) -> None:
         if _is_within_work_game_grace(shift, ctx):
             still_open.append(shift)
             continue
+        if shift.last_worked_tick is not None:
+            # Worked at least once (`panem_shared.shifts.apply_shift_outcome`
+            # no longer closes a shift on its first `/work` -- it stays open
+            # for the whole shift so it can be worked again on a later
+            # tick), so its deadline passing closes it as done rather than
+            # missed. `consecutive_missed` was already reset at that work.
+            shift.result = ShiftResult.COMPLETED.value
+            shift.completed_at = ctx.tick
+            continue
 
         character = state.characters.get(shift.character_id)
         if character is not None and _is_within_travel_grace(character, ctx):
