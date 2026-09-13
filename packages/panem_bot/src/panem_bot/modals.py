@@ -68,10 +68,19 @@ class CharacterDetailsModal(discord.ui.Modal, title="New Character"):
 
 
 class JobTitleModal(discord.ui.Modal, title="Desired Job"):
-    job_title = discord.ui.TextInput(
-        label="What job does your character want?",
-        max_length=80,
-        placeholder="e.g. Coal miner, Seamstress, Fisherman's apprentice",
+    # `send_modal` here responds to a MODAL_SUBMIT interaction (this modal
+    # is opened from CharacterDetailsModal.on_submit, chaining a second
+    # modal onto the first) -- Discord rejects that chained response if it
+    # uses the legacy Action-Row-wrapped TextInput a plain `label=` kwarg
+    # produces, so this needs the newer `ui.Label`-wrapped form instead
+    # (discord.py >= 2.6). CharacterDetailsModal itself opens in response
+    # to a plain component interaction, where the legacy form still works.
+    job_title = discord.ui.Label(
+        text="What job does your character want?",
+        component=discord.ui.TextInput(
+            max_length=80,
+            placeholder="e.g. Coal miner, Seamstress, Fisherman's apprentice",
+        ),
     )
 
     def __init__(
@@ -83,7 +92,10 @@ class JobTitleModal(discord.ui.Modal, title="Desired Job"):
         super().__init__()
         self._on_submit = on_submit
         if prefill:
-            self.job_title.default = prefill
+            self.job_title.component.default = prefill  # type: ignore[attr-defined]
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        await self._on_submit(interaction, str(self.job_title.value))
+        await self._on_submit(
+            interaction,
+            str(self.job_title.component.value),  # type: ignore[attr-defined]
+        )
