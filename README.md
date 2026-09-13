@@ -1162,12 +1162,18 @@ Pick Your Poison (3 identical bottles, 1 poisoned, 2/3 odds), and a simplified
 click-to-select-click-to-place Klondike Solitaire (only a pile's top card is ever movable;
 a "Give Up" button covers an unwinnable deal since detecting that automatically is out of
 scope here). Every game module exports the same `mount(boardEl, { onFinish, setStatus })`
-contract and calls `onFinish(won)` exactly once -- `work.js` (the coordinator) doesn't care
-how a game reaches its outcome, only what it reports, matching the existing trust model
-documented in `panem_api/app.py` (the work-result endpoint trusts whatever `won` the client
-sends, same as it already did for the single Minesweeper board). `work.js` picks uniformly
-at random from the six modules each time a shift's board loads. No Python changed for this
-part -- verified with a headless Chromium (Playwright) smoke test per game plus a full
+contract and calls `onFinish(won, options?)` exactly once -- `work.js` (the coordinator)
+doesn't care how a game reaches its outcome, only what it reports, matching the existing
+trust model documented in `panem_api/app.py` (the work-result endpoint trusts whatever
+`won`/`neutral` the client sends, same as it already did for the single Minesweeper board's
+`won`). `options.neutral` (`resolve_shift_game`'s new `neutral` param) skips the lose-wage
+penalty -- only Solitaire's "Give Up" button sends it, since some Klondike deals are
+unwinnable from the very first deal and that loss isn't a misplay the way every other
+game's loss is; reputation still doesn't move either way. `work.js` picks uniformly
+at random from the six modules each time a shift's board loads. The game selection and
+UI are pure frontend; `resolve_shift_game`'s `neutral` param (and its `WorkResultRequest`
+plumbing) is the one bit of this feature with real Python and pytest coverage -- the rest
+was verified with a headless Chromium (Playwright) smoke test per game plus a full
 mocked round-trip through the coordinator, not by the pytest suite (there's no JS test
 runner wired into this repo).
 

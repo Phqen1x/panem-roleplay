@@ -109,6 +109,11 @@ class WorkShiftStatus(BaseModel):
 
 class WorkResultRequest(BaseModel):
     won: bool
+    # Set by Solitaire's "Give Up" button: some Klondike deals are
+    # unwinnable from the start, so that loss shouldn't carry the usual
+    # lose-wage penalty (`panem_shared.shifts.resolve_shift_game`'s
+    # `neutral` param). Every other game always sends the default `False`.
+    neutral: bool = False
 
 
 class WorkResultResponse(BaseModel):
@@ -299,12 +304,15 @@ def create_app(
     @app.post("/activity/work/{shift_id}/result", response_model=WorkResultResponse)
     async def work_shift_result(shift_id: int, body: WorkResultRequest) -> WorkResultResponse:
         """The only DB write in this process: `work.html` reports whether
-        its Minesweeper board was won or lost once the player finishes,
-        and this resolves the shift the same way `panem_bot`'s `/work`
-        does (`panem_shared.shifts.resolve_shift_game`) -- job level,
-        win/lose, and the home district's current market price for its
-        quota good all factor into the wage. Trusts the client's `won`
-        outright -- see this module's docstring."""
+        its randomly-picked minigame was won or lost once the player
+        finishes, and this resolves the shift the same way `panem_bot`'s
+        `/work` does (`panem_shared.shifts.resolve_shift_game`) -- job
+        level, win/lose, and the home district's current market price for
+        its quota good all factor into the wage. `neutral` skips the
+        lose-wage penalty for a loss the player had no way to avoid
+        (Solitaire's "Give Up", for an unwinnable deal). Trusts the
+        client's `won`/`neutral` outright -- see this module's
+        docstring."""
         if session_factory is None:
             raise HTTPException(status_code=503, detail="The work minigame isn't configured")
         async with session_scope(session_factory) as session:
@@ -322,7 +330,11 @@ def create_app(
             market_multiplier = await _market_multiplier(session, content, district)
             before_level = job_level_for_shifts(character.shifts_completed)
             outcome = resolve_shift_game(
-                character, district, won=body.won, market_multiplier=market_multiplier
+                character,
+                district,
+                won=body.won,
+                market_multiplier=market_multiplier,
+                neutral=body.neutral,
             )
             apply_shift_outcome(shift, character, outcome, tick=tick)
             after_level = job_level_for_shifts(character.shifts_completed)

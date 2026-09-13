@@ -48,7 +48,12 @@ def market_wage_multiplier(price: float, base_price: float) -> float:
 
 
 def resolve_shift_game(
-    character: Character, district: District, *, won: bool, market_multiplier: float = 1.0
+    character: Character,
+    district: District,
+    *,
+    won: bool,
+    market_multiplier: float = 1.0,
+    neutral: bool = False,
 ) -> ShiftOutcome:
     """FR-JOB-3/4 (reworked): `PLAYER_JOB_BASE_WAGE` scaled by the
     character's job-level multiplier, the minigame's win/lose multiplier,
@@ -58,10 +63,25 @@ def resolve_shift_game(
     Output is one unit of the district's own quota good per completed
     shift (win or lose -- they still did the work), feeding
     `panem_sim.systems.economy`'s supply the way `Job.produces` used to;
-    a district with no `quota` (the Capitol) produces nothing."""
+    a district with no `quota` (the Capitol) produces nothing.
+
+    `neutral=True` (always paired with `won=False`) skips the lose
+    penalty and pays the unmodified level/market wage instead -- for a
+    shift a player couldn't have won no matter how they played, unlike
+    every other outcome here, which does reflect something in the
+    player's control (a real misplay, unlucky odds they still faced).
+    Solitaire's "Give Up" is the one place this applies: some Klondike
+    deals are unwinnable from the very first deal, so losing there isn't
+    a skill failure the way hitting a Minesweeper mine or a Connect 4
+    loss is. Reputation still doesn't move (same as any other loss)."""
     level = job_levels.job_level_for_shifts(character.shifts_completed)
     level_mult = job_levels.wage_multiplier_for_level(level)
-    outcome_mult = constants.WORK_GAME_WIN_WAGE_MULT if won else constants.WORK_GAME_LOSE_WAGE_MULT
+    if neutral:
+        outcome_mult = 1.0
+    else:
+        outcome_mult = (
+            constants.WORK_GAME_WIN_WAGE_MULT if won else constants.WORK_GAME_LOSE_WAGE_MULT
+        )
     wage = constants.PLAYER_JOB_BASE_WAGE * level_mult * outcome_mult * market_multiplier
     output = {district.quota.good: constants.PLAYER_SHIFT_OUTPUT_QTY} if district.quota else {}
     return ShiftOutcome(wage=wage, output=output, rep_delta=1 if won else 0)

@@ -109,6 +109,35 @@ class TestResolveShiftGame:
         assert shared_shifts.resolve_shift_game(character, district, won=True).rep_delta == 1
         assert shared_shifts.resolve_shift_game(character, district, won=False).rep_delta == 0
 
+    def test_neutral_loss_pays_the_unmodified_wage_not_the_lose_penalty(self):
+        character = make_character()
+        district = make_district()
+        neutral = shared_shifts.resolve_shift_game(character, district, won=False, neutral=True)
+        assert neutral.wage == constants.PLAYER_JOB_BASE_WAGE
+
+    def test_neutral_loss_pays_more_than_a_regular_loss(self):
+        character = make_character()
+        district = make_district()
+        regular_loss = shared_shifts.resolve_shift_game(character, district, won=False)
+        neutral_loss = shared_shifts.resolve_shift_game(
+            character, district, won=False, neutral=True
+        )
+        assert neutral_loss.wage > regular_loss.wage
+
+    def test_neutral_loss_still_gives_no_reputation(self):
+        character = make_character()
+        district = make_district()
+        outcome = shared_shifts.resolve_shift_game(character, district, won=False, neutral=True)
+        assert outcome.rep_delta == 0
+
+    def test_neutral_loss_still_scales_with_job_level_and_market(self):
+        district = make_district()
+        expert = make_character(shifts_completed=constants.JOB_LEVEL_SHIFT_THRESHOLDS["expert"])
+        outcome = shared_shifts.resolve_shift_game(
+            expert, district, won=False, neutral=True, market_multiplier=2.0
+        )
+        assert outcome.wage == constants.PLAYER_JOB_BASE_WAGE * 3.0 * 2.0
+
 
 class TestMarketWageMultiplier:
     def test_price_at_base_gives_unit_multiplier(self):

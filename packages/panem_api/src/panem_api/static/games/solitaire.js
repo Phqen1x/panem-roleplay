@@ -6,7 +6,9 @@
 //
 // Win: all four foundations completed (Ace..King). Lose: the player gives
 // up (a genuinely unwinnable Klondike deal can happen, and detecting that
-// automatically is out of scope here) via the "Give Up" button.
+// automatically is out of scope here) via the "Give Up" button -- reported
+// as `{ neutral: true }` since, unlike every other game's loss, this one
+// isn't necessarily the player's own misplay or bad luck.
 
 const SUITS = ["S", "H", "D", "C"];
 const SUIT_SYMBOL = { S: "♠", H: "♥", D: "♦", C: "♣" };
@@ -226,7 +228,7 @@ export function mount(boardEl, { onFinish }) {
     giveUpButton.addEventListener("click", () => {
       if (gameOver) return;
       gameOver = true;
-      onFinish(false);
+      onFinish(false, { neutral: true });
     });
     boardEl.appendChild(giveUpButton);
   }

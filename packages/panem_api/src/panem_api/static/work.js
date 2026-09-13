@@ -12,13 +12,16 @@
 //      (`panem_shared.redis_keys.work_pending_key`, written by /work).
 //
 // Every game module exports `mount(boardEl, { onFinish, setStatus })`,
-// which renders itself into `#board` and calls `onFinish(won)` exactly
-// once when the shift's outcome is decided -- this file doesn't care how
-// a game reaches that decision, only what it reports. Winning/losing
-// posts to panem_api's work-result endpoint, which pays the shift the
-// same way panem_bot's classic /work option-select flow does, just with
-// a win/lose wage multiplier instead of a chosen option's
-// (`panem_shared.shifts.resolve_shift_game`).
+// which renders itself into `#board` and calls `onFinish(won, options?)`
+// exactly once when the shift's outcome is decided -- this file doesn't
+// care how a game reaches that decision, only what it reports. Winning/
+// losing posts to panem_api's work-result endpoint, which pays the shift
+// the same way panem_bot's classic /work option-select flow does, just
+// with a win/lose wage multiplier instead of a chosen option's
+// (`panem_shared.shifts.resolve_shift_game`). `options.neutral` (only
+// Solitaire's "Give Up" uses it, for a deal that was unwinnable from the
+// start) skips the lose-wage penalty a real misplay/bad-luck loss in any
+// other game still carries.
 //
 // `?v=` cache-busting: there's no build step here (matching
 // index.html/app.js's existing no-build pattern), so browsers and --
@@ -30,7 +33,7 @@
 // <script> tag (and its /work.css?v= link, for CSS-only changes like the
 // games/*.js modules use) to match -- changing the URL is what actually
 // forces every cache layer to refetch, restarting the server does not.
-const ASSET_VERSION = "3";
+const ASSET_VERSION = "4";
 
 const [coinflip, connect4, minesweeper, poison, snake, solitaire] = await Promise.all([
   import(`./games/coinflip.js?v=${ASSET_VERSION}`),
@@ -62,13 +65,13 @@ async function fetchJson(path, options) {
   return body;
 }
 
-async function finish(won) {
+async function finish(won, { neutral = false } = {}) {
   setStatus(won ? "Shift cleared!" : "The shift got away from you.");
   try {
     const body = await fetchJson(`/activity/work/${shiftId}/result`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ won }),
+      body: JSON.stringify({ won, neutral }),
     });
     resultEl.hidden = false;
     resultEl.className = won ? "win" : "lose";
