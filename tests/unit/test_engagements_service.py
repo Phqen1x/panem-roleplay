@@ -86,6 +86,21 @@ class TestNpcIsBusy:
         npc = make_npc(location_id="mine", home_location_id="seam", job_id="job")
         assert engagements_svc.npc_is_busy(npc, job, DayPhase.EVENING) is None
 
+    def test_working_a_shift_is_available_when_engaging_at_the_workplace_itself(self):
+        job = make_job(workplace="mine", shift_phase="morning")
+        npc = make_npc(location_id="mine", home_location_id="seam", job_id="job")
+        assert (
+            engagements_svc.npc_is_busy(npc, job, DayPhase.MORNING, at_location_id="mine") is None
+        )
+
+    def test_working_a_shift_is_still_busy_toward_a_different_location(self):
+        job = make_job(workplace="mine", shift_phase="morning")
+        npc = make_npc(location_id="mine", home_location_id="seam", job_id="job")
+        assert (
+            engagements_svc.npc_is_busy(npc, job, DayPhase.MORNING, at_location_id="square")
+            == "shift"
+        )
+
     def test_asleep_at_home_at_night_is_busy(self):
         npc = make_npc(location_id="seam", home_location_id="seam", job_id=None)
         assert engagements_svc.npc_is_busy(npc, None, DayPhase.NIGHT) == "sleep"

@@ -331,7 +331,7 @@ class EngagementCog(commands.Cog):
                     )
                     continue
                 job = content.jobs.get(npc.job_id) if npc.job_id else None
-                reason = engagements_svc.npc_is_busy(npc, job, phase)
+                reason = engagements_svc.npc_is_busy(npc, job, phase, at_location_id=loc_id)
                 if reason is None:
                     free_npc_ids.append(npc.id)
                 elif reason == "shift" and job is not None:

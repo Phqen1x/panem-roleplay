@@ -1426,7 +1426,11 @@ just another `Scene` row.
   already uses every tick) and gets a new `Npc.engagement_id` set, which `schedule.py`
   checks each tick to skip movement for them entirely -- "NPCs won't leave until the
   engagement ends." A busy NPC is left out of the thread, and the starter is told
-  ephemerally where to find them instead. A named *character* belonging to another player
+  ephemerally where to find them instead -- *unless* the engagement's own location is
+  that NPC's workplace (`npc_is_busy`'s `at_location_id` parameter): walking up to a
+  shopkeeper or clerk at their own counter while they're on shift is exactly how you'd
+  talk to them, not something that needs them to step away, so working a shift is only
+  "busy" toward starting an engagement somewhere else. A named *character* belonging to another player
   is added to `participants.pending_characters` and must accept an invite (two buttons on
   a message only that player can press) before joining for real, per the user's own
   answer -- physical presence at the location is never enough on its own for someone

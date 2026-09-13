@@ -26,7 +26,9 @@ from panem_shared.db.models import Character, Npc, Scene
 from panem_shared.enums import CharacterStatus, DayPhase, SceneStatus
 
 
-def npc_is_busy(npc: Npc, job: Job | None, phase: DayPhase) -> str | None:
+def npc_is_busy(
+    npc: Npc, job: Job | None, phase: DayPhase, *, at_location_id: str | None = None
+) -> str | None:
     """Whether `npc` can be pulled into an engagement right now, reusing
     exactly the predicate `panem_sim.systems.schedule._arrival_reason`
     already uses to decide whether an arrival is narration-worthy: at
@@ -34,8 +36,16 @@ def npc_is_busy(npc: Npc, job: Job | None, phase: DayPhase) -> str | None:
     home during the night phase (`"sleep"`). Checked against the NPC's
     *current* actual location, not the schedule's weights -- an NPC who
     happens not to be at either place right now is free even if their
-    schedule would usually put them there."""
+    schedule would usually put them there.
+
+    `at_location_id` is the engagement's own target location -- an NPC
+    working their shift is only "busy" toward starting an engagement
+    *elsewhere*; walking up to them at their own counter while they're on
+    the job is exactly how you'd actually talk to a shopkeeper or clerk,
+    not something that needs them to step away."""
     if job is not None and npc.location_id == job.workplace and phase == job.shift_phase:
+        if at_location_id == job.workplace:
+            return None
         return "shift"
     if npc.location_id == npc.home_location_id and phase == DayPhase.NIGHT:
         return "sleep"
