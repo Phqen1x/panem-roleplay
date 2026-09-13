@@ -72,18 +72,41 @@ def resolve_shift_game(
     Solitaire's "Give Up" is the one place this applies: some Klondike
     deals are unwinnable from the very first deal, so losing there isn't
     a skill failure the way hitting a Minesweeper mine or a Connect 4
-    loss is. Reputation still doesn't move (same as any other loss)."""
+    loss is.
+
+    `rep_delta` reads (but doesn't mutate -- `apply_shift_outcome` does
+    that) `character.consecutive_wins`/`consecutive_losses` to decide a
+    streak bonus/penalty on top of the flat win/+1: a win always pays at
+    least `+1`, plus `constants.REP_STREAK_BONUS` once the streak this win
+    would extend to reaches a multiple of `constants.REP_STREAK_LEN`. A
+    loss stays reputation-neutral (an occasional bad game doesn't hurt)
+    until a real losing streak forms, at which point every
+    `REP_STREAK_LEN`th loss in the streak costs `REP_STREAK_PENALTY`. A
+    `neutral` outcome never moves reputation and doesn't consult either
+    streak -- "stay neutral by choosing not to do the game" is meant
+    literally."""
     level = job_levels.job_level_for_shifts(character.shifts_completed)
     level_mult = job_levels.wage_multiplier_for_level(level)
     if neutral:
         outcome_mult = 1.0
+        rep_delta = 0
     else:
         outcome_mult = (
             constants.WORK_GAME_WIN_WAGE_MULT if won else constants.WORK_GAME_LOSE_WAGE_MULT
         )
+        if won:
+            new_streak = character.consecutive_wins + 1
+            rep_delta = 1
+            if new_streak % constants.REP_STREAK_LEN == 0:
+                rep_delta += constants.REP_STREAK_BONUS
+        else:
+            new_streak = character.consecutive_losses + 1
+            rep_delta = 0
+            if new_streak % constants.REP_STREAK_LEN == 0:
+                rep_delta -= constants.REP_STREAK_PENALTY
     wage = constants.PLAYER_JOB_BASE_WAGE * level_mult * outcome_mult * market_multiplier
     output = {district.quota.good: constants.PLAYER_SHIFT_OUTPUT_QTY} if district.quota else {}
-    return ShiftOutcome(wage=wage, output=output, rep_delta=1 if won else 0)
+    return ShiftOutcome(wage=wage, output=output, rep_delta=rep_delta)
 
 
 def already_worked_this_tick(shift: Shift, tick: int) -> bool:
@@ -96,7 +119,13 @@ def already_worked_this_tick(shift: Shift, tick: int) -> bool:
 
 
 def apply_shift_outcome(
-    shift: Shift, character: Character, outcome: ShiftOutcome, *, tick: int
+    shift: Shift,
+    character: Character,
+    outcome: ShiftOutcome,
+    *,
+    won: bool,
+    neutral: bool = False,
+    tick: int,
 ) -> None:
     """Applies `outcome` to `character` for one `/work` resolution during
     `shift`. Doesn't close `shift` (`result` stays `None`) -- a shift now
@@ -108,6 +137,17 @@ def apply_shift_outcome(
     MISSED. `output` accumulates across every resolution this shift gets
     (each one is real work done), not just the last one, so `panem_sim.
     systems.economy`'s supply side still sees every unit produced.
+
+    `won`/`neutral` are the same values already passed to
+    `resolve_shift_game` to build `outcome` -- repeated here (rather than
+    inferred from `outcome.rep_delta`, which is `0` for both a neutral skip
+    and a non-streak loss, indistinguishable after the fact) purely to
+    update the win/loss streak counters
+    (`character.consecutive_wins`/`consecutive_losses`) that
+    `resolve_shift_game` reads on the *next* call: a win extends the win
+    streak and resets the loss streak, a real loss the reverse, and a
+    `neutral` skip leaves both alone -- "stay neutral by choosing not to
+    do the game" means the streaks don't move either way.
 
     Resets `consecutive_missed` -- any resolution, however the shift was
     resolved, breaks the miss streak `jobs.py` tracks. Increments
@@ -131,6 +171,13 @@ def apply_shift_outcome(
     character.money += round(outcome.wage)
     character.reputation += outcome.rep_delta
     character.consecutive_missed = 0
+    if not neutral:
+        if won:
+            character.consecutive_wins += 1
+            character.consecutive_losses = 0
+        else:
+            character.consecutive_losses += 1
+            character.consecutive_wins = 0
     if is_first_work_this_shift:
         character.shifts_completed += 1
     character.last_active_tick = tick

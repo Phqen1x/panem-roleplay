@@ -167,7 +167,7 @@ class ProxyCog(commands.Cog):
         outcome = shifts_svc.resolve_shift_game(
             character, district, won=True, market_multiplier=market_multiplier
         )
-        shifts_svc.apply_shift_outcome(open_shift, character, outcome, tick=current_tick)
+        shifts_svc.apply_shift_outcome(open_shift, character, outcome, won=True, tick=current_tick)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:

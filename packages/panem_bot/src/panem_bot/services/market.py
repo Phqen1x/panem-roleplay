@@ -103,6 +103,7 @@ async def _apply_illicit_consequence(
     character.money = max(0, character.money - constants.MARKET_ILLICIT_FINE)
     base_tick = character.jailed_until_tick or 0
     character.jailed_until_tick = base_tick + constants.MARKET_ILLICIT_JAIL_TICKS
+    character.reputation -= constants.REP_ILLICIT_CAUGHT_PENALTY
 
     district_row = await session.get(DistrictState, district_id)
     if district_row is not None:

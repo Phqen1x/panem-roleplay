@@ -256,7 +256,9 @@ class JobsCog(commands.Cog):
         outcome = shifts_svc.resolve_shift_game(
             char, district, won=won, market_multiplier=market_multiplier, neutral=neutral
         )
-        shifts_svc.apply_shift_outcome(shift, char, outcome, tick=current_tick)
+        shifts_svc.apply_shift_outcome(
+            shift, char, outcome, won=won, neutral=neutral, tick=current_tick
+        )
         after_level = job_levels.job_level_for_shifts(char.shifts_completed)
 
         if neutral:

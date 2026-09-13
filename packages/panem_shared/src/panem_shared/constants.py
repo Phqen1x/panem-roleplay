@@ -235,3 +235,36 @@ anything to actually top up."""
 MARKET_ILLICIT_DETECTION_PROB = 0.1
 MARKET_ILLICIT_FINE = 30
 MARKET_ILLICIT_JAIL_TICKS = 12
+
+# Reputation system extension: reputation used to move only from `/work`'s
+# win/lose result (`+1`/`0`). These add a miss penalty, win/loss-streak
+# bonuses/penalties, a periodic relationship-based nudge, and an
+# illicit-market-catch penalty. No spec document defines these numbers --
+# they're reasonable placeholders, same caveat as the Milestone C/D blocks
+# above.
+REP_MISS_PENALTY = 2
+"""Reputation lost when a shift is marked MISSED (never worked, not
+excused) -- `panem_sim.systems.jobs._resolve_missed_shifts`. EXCUSED and
+COMPLETED shifts don't touch reputation at all."""
+REP_STREAK_LEN = 3
+"""How many `/work` wins (or losses) in a row before the streak
+bonus/penalty below kicks in, and again every further multiple of this
+many -- an occasional loss stays reputation-neutral (matching the
+request), but a real losing streak starts costing reputation, and a real
+winning streak starts paying extra on top of the flat +1/win."""
+REP_STREAK_BONUS = 1
+REP_STREAK_PENALTY = 1
+REP_RELATIONSHIP_CHECK_INTERVAL_DAYS = 7
+"""How often (in sim-days) `panem_sim.systems.reputation` re-scores a
+character's reputation from their NPC relationships -- weekly, not every
+tick, so a single good/bad interaction doesn't spike reputation."""
+REP_RELATIONSHIP_DELTA = 1.0
+"""Reputation change per relationship classified "good" (affinity at or
+above `STANCE_THRESHOLDS`' likes cutoff) or "bad" (at or below the
+dislikes cutoff) at each periodic check -- reuses the same thresholds
+`social.py` already classifies `Stance` with, rather than inventing a
+second affinity scale."""
+REP_ILLICIT_CAUGHT_PENALTY = 15
+"""Reputation lost on top of the existing fine/jail/peacekeeper-pressure
+consequence when an illicit-market trade gets caught
+(`panem_bot.services.market._apply_illicit_consequence`)."""

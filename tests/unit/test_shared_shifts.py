@@ -53,6 +53,8 @@ def make_character(**overrides: object) -> Character:
         reputation=0.0,
         health=100.0,
         consecutive_missed=0,
+        consecutive_wins=0,
+        consecutive_losses=0,
         shifts_completed=0,
         positions=[],
     )
@@ -109,6 +111,36 @@ class TestResolveShiftGame:
         assert shared_shifts.resolve_shift_game(character, district, won=True).rep_delta == 1
         assert shared_shifts.resolve_shift_game(character, district, won=False).rep_delta == 0
 
+    def test_win_streak_pays_a_bonus_on_the_streak_length_multiple(self):
+        character = make_character(consecutive_wins=constants.REP_STREAK_LEN - 1)
+        district = make_district()
+        outcome = shared_shifts.resolve_shift_game(character, district, won=True)
+        assert outcome.rep_delta == 1 + constants.REP_STREAK_BONUS
+
+    def test_win_streak_bonus_only_lands_on_the_streak_length_multiple(self):
+        character = make_character(consecutive_wins=1)
+        district = make_district()
+        outcome = shared_shifts.resolve_shift_game(character, district, won=True)
+        assert outcome.rep_delta == 1
+
+    def test_occasional_loss_stays_reputation_neutral(self):
+        character = make_character(consecutive_losses=0)
+        district = make_district()
+        outcome = shared_shifts.resolve_shift_game(character, district, won=False)
+        assert outcome.rep_delta == 0
+
+    def test_loss_streak_costs_reputation_on_the_streak_length_multiple(self):
+        character = make_character(consecutive_losses=constants.REP_STREAK_LEN - 1)
+        district = make_district()
+        outcome = shared_shifts.resolve_shift_game(character, district, won=False)
+        assert outcome.rep_delta == -constants.REP_STREAK_PENALTY
+
+    def test_neutral_ignores_the_loss_streak_entirely(self):
+        character = make_character(consecutive_losses=constants.REP_STREAK_LEN - 1)
+        district = make_district()
+        outcome = shared_shifts.resolve_shift_game(character, district, won=False, neutral=True)
+        assert outcome.rep_delta == 0
+
     def test_neutral_loss_pays_the_unmodified_wage_not_the_lose_penalty(self):
         character = make_character()
         district = make_district()
@@ -160,7 +192,7 @@ class TestApplyShiftOutcome:
         outcome = shared_shifts.resolve_shift_game(character, district, won=True)
         shift = Shift(character_id=1, job_id="Miner", tick_opened=1, tick_due=7)
 
-        shared_shifts.apply_shift_outcome(shift, character, outcome, tick=3)
+        shared_shifts.apply_shift_outcome(shift, character, outcome, won=True, tick=3)
 
         assert shift.result is None
         assert shift.completed_at is None
@@ -177,7 +209,7 @@ class TestApplyShiftOutcome:
         outcome = shared_shifts.resolve_shift_game(character, district, won=True)
         shift = Shift(character_id=1, job_id="Miner", tick_opened=1, tick_due=7)
 
-        shared_shifts.apply_shift_outcome(shift, character, outcome, tick=7)
+        shared_shifts.apply_shift_outcome(shift, character, outcome, won=True, tick=7)
 
         assert character.shifts_completed == 6
 
@@ -189,7 +221,7 @@ class TestApplyShiftOutcome:
         outcome = shared_shifts.resolve_shift_game(character, district, won=True)
         shift = Shift(character_id=1, job_id="Miner", tick_opened=1, tick_due=7)
 
-        shared_shifts.apply_shift_outcome(shift, character, outcome, tick=7)
+        shared_shifts.apply_shift_outcome(shift, character, outcome, won=True, tick=7)
 
         assert job_levels.job_level_for_shifts(character.shifts_completed) == JobLevel.NOVICE
 
@@ -202,12 +234,14 @@ class TestApplyShiftOutcome:
             shift,
             character,
             shared_shifts.resolve_shift_game(character, district, won=True),
+            won=True,
             tick=2,
         )
         shared_shifts.apply_shift_outcome(
             shift,
             character,
             shared_shifts.resolve_shift_game(character, district, won=True),
+            won=True,
             tick=3,
         )
 
@@ -219,8 +253,8 @@ class TestApplyShiftOutcome:
         shift = Shift(character_id=1, job_id="Miner", tick_opened=1, tick_due=13)
         outcome = shared_shifts.resolve_shift_game(character, district, won=True)
 
-        shared_shifts.apply_shift_outcome(shift, character, outcome, tick=2)
-        shared_shifts.apply_shift_outcome(shift, character, outcome, tick=3)
+        shared_shifts.apply_shift_outcome(shift, character, outcome, won=True, tick=2)
+        shared_shifts.apply_shift_outcome(shift, character, outcome, won=True, tick=3)
 
         assert shift.output == {"coal": constants.PLAYER_SHIFT_OUTPUT_QTY * 2}
 
@@ -230,10 +264,45 @@ class TestApplyShiftOutcome:
         shift = Shift(character_id=1, job_id="Miner", tick_opened=1, tick_due=13)
         outcome = shared_shifts.resolve_shift_game(character, district, won=True)
 
-        shared_shifts.apply_shift_outcome(shift, character, outcome, tick=2)
-        shared_shifts.apply_shift_outcome(shift, character, outcome, tick=5)
+        shared_shifts.apply_shift_outcome(shift, character, outcome, won=True, tick=2)
+        shared_shifts.apply_shift_outcome(shift, character, outcome, won=True, tick=5)
 
         assert shift.last_worked_tick == 5
+
+    def test_win_extends_win_streak_and_resets_loss_streak(self):
+        character = make_character(consecutive_wins=1, consecutive_losses=2)
+        district = make_district()
+        outcome = shared_shifts.resolve_shift_game(character, district, won=True)
+        shift = Shift(character_id=1, job_id="Miner", tick_opened=1, tick_due=7)
+
+        shared_shifts.apply_shift_outcome(shift, character, outcome, won=True, tick=3)
+
+        assert character.consecutive_wins == 2
+        assert character.consecutive_losses == 0
+
+    def test_loss_extends_loss_streak_and_resets_win_streak(self):
+        character = make_character(consecutive_wins=2, consecutive_losses=1)
+        district = make_district()
+        outcome = shared_shifts.resolve_shift_game(character, district, won=False)
+        shift = Shift(character_id=1, job_id="Miner", tick_opened=1, tick_due=7)
+
+        shared_shifts.apply_shift_outcome(shift, character, outcome, won=False, tick=3)
+
+        assert character.consecutive_losses == 2
+        assert character.consecutive_wins == 0
+
+    def test_neutral_leaves_both_streaks_untouched(self):
+        character = make_character(consecutive_wins=2, consecutive_losses=1)
+        district = make_district()
+        outcome = shared_shifts.resolve_shift_game(character, district, won=False, neutral=True)
+        shift = Shift(character_id=1, job_id="Miner", tick_opened=1, tick_due=7)
+
+        shared_shifts.apply_shift_outcome(
+            shift, character, outcome, won=False, neutral=True, tick=3
+        )
+
+        assert character.consecutive_wins == 2
+        assert character.consecutive_losses == 1
 
 
 class TestAlreadyWorkedThisTick:

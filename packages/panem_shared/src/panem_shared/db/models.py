@@ -92,6 +92,14 @@ class Character(TimestampMixin, Base):
     which replaced the old per-job ladder (`Job.ladder_next`)."""
     job_started_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
     consecutive_missed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    consecutive_wins: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    consecutive_losses: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    """Separate from `consecutive_missed` (attendance) -- these track the
+    `/work` minigame's own win/lose streak, which
+    `panem_shared.shifts.resolve_shift_game` reads to decide a reputation
+    streak bonus/penalty. A `neutral` resolution (skipping the minigame)
+    leaves both alone rather than resetting them, since it's neither a win
+    nor a loss."""
     last_active_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
     """Last tick this character did something active (`/work`, a proxied
     message) -- drives the district economy's active-player demand model

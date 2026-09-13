@@ -100,6 +100,7 @@ def _resolve_missed_shifts(state: WorldState, ctx: TickContext) -> None:
         if character is None:
             continue
         character.consecutive_missed += 1
+        character.reputation -= constants.REP_MISS_PENALTY
         if character.consecutive_missed >= constants.MISSES_TO_FIRE:
             _fire(state, character, shift.job_id, ctx)
 

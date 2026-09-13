@@ -11,7 +11,18 @@ from collections.abc import Callable
 
 from panem_shared.events import AnyWorldEvent
 from panem_sim.state import TickContext, WorldState
-from panem_sim.systems import crisis, economy, games, jobs, memory, needs, schedule, social, time
+from panem_sim.systems import (
+    crisis,
+    economy,
+    games,
+    jobs,
+    memory,
+    needs,
+    reputation,
+    schedule,
+    social,
+    time,
+)
 
 SystemFn = Callable[[WorldState, TickContext], list[AnyWorldEvent]]
 
@@ -22,6 +33,7 @@ FIXED_ORDER: list[SystemFn] = [
     jobs.run,
     economy.run,
     social.run,
+    reputation.run,
     memory.run,
     crisis.run,
     games.run,

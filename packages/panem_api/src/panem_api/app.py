@@ -366,7 +366,9 @@ def create_app(
                 market_multiplier=market_multiplier,
                 neutral=body.neutral,
             )
-            apply_shift_outcome(shift, character, outcome, tick=tick)
+            apply_shift_outcome(
+                shift, character, outcome, won=body.won, neutral=body.neutral, tick=tick
+            )
             after_level = job_level_for_shifts(character.shifts_completed)
             wage, character_name = round(outcome.wage), character.name
         logger.info("work_game_resolved", shift_id=shift_id, won=body.won, wage=wage)

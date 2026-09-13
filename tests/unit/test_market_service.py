@@ -64,6 +64,7 @@ def make_character(**overrides: object) -> Character:
         age=20,
         status=CharacterStatus.APPROVED.value,
         money=100,
+        reputation=0.0,
         location_id="market",
     )
     defaults.update(overrides)
@@ -191,6 +192,7 @@ class TestBuy:
         assert result.caught is True
         assert character.money == max(0, 100 - 4 - constants.MARKET_ILLICIT_FINE)
         assert character.jailed_until_tick == constants.MARKET_ILLICIT_JAIL_TICKS
+        assert character.reputation == -constants.REP_ILLICIT_CAUGHT_PENALTY
 
         district_row = await db_session.get(DistrictState, district.id)
         assert district_row.peacekeeper_pressure == 0.3 + market_svc.ILLICIT_PRESSURE_DELTA

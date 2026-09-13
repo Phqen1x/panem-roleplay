@@ -91,6 +91,7 @@ class TestFixedOrder:
             "jobs",
             "economy",
             "social",
+            "reputation",
             "memory",
             "crisis",
             "games",

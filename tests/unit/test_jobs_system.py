@@ -69,6 +69,8 @@ def make_character(id_: int, **overrides: object) -> Character:
         age=20,
         status=CharacterStatus.APPROVED.value,
         consecutive_missed=0,
+        consecutive_wins=0,
+        consecutive_losses=0,
         money=0,
         reputation=0.0,
         health=100.0,
@@ -478,7 +480,7 @@ class TestT22ScriptedLifecycle:
         jobs.run(state, make_ctx(content, tick=PHASE_TICKS, phase=DayPhase.MORNING))
         shift = state.open_shifts[0]
         outcome = resolve_shift_game(character, district, won=True)
-        apply_shift_outcome(shift, character, outcome, tick=PHASE_TICKS)
+        apply_shift_outcome(shift, character, outcome, won=True, tick=PHASE_TICKS)
         assert character.consecutive_missed == 0
 
         jobs.run(state, make_ctx(content, tick=shift.tick_due, phase=DayPhase.AFTERNOON))
