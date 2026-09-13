@@ -75,6 +75,7 @@ def make_character(id_: int, **overrides: object) -> Character:
         reputation=0.0,
         health=100.0,
         hunger=0.0,
+        fatigue=100.0,
         shifts_completed=0,
     )
     defaults.update(overrides)

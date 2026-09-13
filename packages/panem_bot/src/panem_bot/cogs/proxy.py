@@ -14,9 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from panem_bot import redis_keys
 from panem_bot.outbound import OutboundMessage, SendPriority
 from panem_bot.services import characters as characters_svc
+from panem_bot.services import housing as housing_svc
 from panem_bot.services import proxy as proxy_svc
 from panem_bot.services import shifts as shifts_svc
 from panem_bot.strings import t
+from panem_shared import constants
 from panem_shared.db.models import Character, DiscordChannel, Scene, Shift, User, WorldClock
 from panem_shared.enums import ChannelKind, CharacterStatus
 
@@ -144,10 +146,22 @@ class ProxyCog(commands.Cog):
         gave Gamemakers before the rework. Also touches `last_active_tick`
         (the district economy's active-player signal) regardless of
         whether there's an open shift to credit -- proxying at all counts
-        as "active"."""
+        as "active".
+
+        A qualifying message also docks `FATIGUE_COST_PER_INTERACTION`
+        regardless of whether there's an open shift to credit -- fatigue
+        "goes down... based on how many times they work and interact with
+        other players and NPCs," and RP is the interaction signal this
+        codebase already has a length gate for (`meets_rp_credit`), so it
+        doubles as the fatigue-interaction gate too rather than inventing
+        a second threshold."""
         clock = await session.get(WorldClock, 1)
         current_tick = clock.tick if clock is not None else 0
         character.last_active_tick = current_tick
+
+        qualifies = shifts_svc.meets_rp_credit(content)
+        if qualifies:
+            housing_svc.dock_fatigue(character, constants.FATIGUE_COST_PER_INTERACTION)
 
         open_shift = (
             await session.execute(
@@ -156,7 +170,7 @@ class ProxyCog(commands.Cog):
         ).scalar_one_or_none()
         if open_shift is None:
             return
-        if not shifts_svc.meets_rp_credit(content):
+        if not qualifies:
             return
 
         bot_content = self.bot.content  # type: ignore[attr-defined]

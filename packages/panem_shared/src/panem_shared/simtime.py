@@ -14,7 +14,7 @@ from panem_shared import constants
 from panem_shared.enums import DayPhase
 
 _PHASE_ORDER = (DayPhase.NIGHT, DayPhase.MORNING, DayPhase.AFTERNOON, DayPhase.EVENING)
-_TICKS_PER_PHASE = constants.TICKS_PER_DAY // len(_PHASE_ORDER)
+TICKS_PER_PHASE = constants.TICKS_PER_DAY // len(_PHASE_ORDER)
 
 
 def advance(previous_tick: int) -> tuple[int, DayPhase, int, int]:
@@ -23,7 +23,7 @@ def advance(previous_tick: int) -> tuple[int, DayPhase, int, int]:
     `month` is 1-indexed within a 12-month year (Spec §1.1: 30-day months)."""
     tick = previous_tick + 1
     hour_of_day = tick % constants.TICKS_PER_DAY
-    phase = _PHASE_ORDER[hour_of_day // _TICKS_PER_PHASE]
+    phase = _PHASE_ORDER[hour_of_day // TICKS_PER_PHASE]
     day_index = tick // constants.TICKS_PER_DAY
     day = (day_index % constants.DAYS_PER_MONTH) + 1
     month = (day_index // constants.DAYS_PER_MONTH) % 12 + 1
@@ -42,16 +42,25 @@ def current(persisted_tick: int) -> tuple[int, DayPhase, int, int]:
 def is_phase_boundary(tick: int) -> bool:
     """True on the exact tick a day phase begins (Spec §1.3's 4 phases
     divide `TICKS_PER_DAY` evenly, so this is phase-agnostic: every
-    `_TICKS_PER_PHASE`-th tick starts *some* phase). Used by `jobs.py` to
+    `TICKS_PER_PHASE`-th tick starts *some* phase). Used by `jobs.py` to
     open a shift/run NPC job completion once per phase window, not once
     per tick within it."""
-    return tick % _TICKS_PER_PHASE == 0
+    return tick % TICKS_PER_PHASE == 0
 
 
 def ticks_until_next_phase(tick: int) -> int:
     """How many more ticks until the phase after `tick`'s begins -- 0 if
     `tick` itself is a boundary."""
-    return (-tick) % _TICKS_PER_PHASE
+    return (-tick) % TICKS_PER_PHASE
+
+
+def ticks_remaining_in_phase(tick: int) -> int:
+    """How many ticks, including `tick` itself, are left before `tick`'s
+    *own* phase ends -- `TICKS_PER_PHASE` right at that phase's first
+    tick, down to `1` on its last. Used by `/sleep` to cap how many ticks
+    a character can spend sleeping without spilling into the next day
+    phase."""
+    return TICKS_PER_PHASE - (tick % TICKS_PER_PHASE)
 
 
 def clock_string(tick: int) -> str:
@@ -72,8 +81,8 @@ def phase_time_range(phase: DayPhase) -> str:
     `DayPhase.MORNING` -- used wherever a player needs to know *when* a
     phase-gated thing (like a job's shift) happens, not just its name."""
     index = _PHASE_ORDER.index(phase)
-    start_tick = index * _TICKS_PER_PHASE
-    end_tick = (start_tick + _TICKS_PER_PHASE) % constants.TICKS_PER_DAY
+    start_tick = index * TICKS_PER_PHASE
+    end_tick = (start_tick + TICKS_PER_PHASE) % constants.TICKS_PER_DAY
     return f"{clock_string(start_tick)} - {clock_string(end_tick)}"
 
 

@@ -34,6 +34,13 @@ def wage_multiplier_for_level(level: JobLevel) -> float:
     return constants.JOB_LEVEL_WAGE_MULTIPLIERS[level.value]
 
 
+def level_index(level: JobLevel) -> int:
+    """0 (Apprentice) .. 4 (Expert) -- `panem_bot.services.housing` uses
+    this both to gate a house purchase to a buyer's level and to measure
+    the buyer/seller mastery gap that adjusts a listing's price."""
+    return _ORDERED_LEVELS.index(level)
+
+
 def shifts_to_next_level(shifts_completed: int) -> int | None:
     """How many more completed shifts until the next level up; `None` at
     `JobLevel.EXPERT`, the top of the ladder."""

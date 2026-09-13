@@ -52,6 +52,7 @@ def make_character(**overrides: object) -> Character:
         money=0,
         reputation=0.0,
         health=100.0,
+        fatigue=100.0,
         consecutive_missed=0,
         consecutive_wins=0,
         consecutive_losses=0,
@@ -268,6 +269,38 @@ class TestApplyShiftOutcome:
         shared_shifts.apply_shift_outcome(shift, character, outcome, won=True, tick=5)
 
         assert shift.last_worked_tick == 5
+
+    def test_docks_fatigue_per_work_resolution(self):
+        character = make_character(fatigue=100.0)
+        district = make_district()
+        outcome = shared_shifts.resolve_shift_game(character, district, won=True)
+        shift = Shift(character_id=1, job_id="Miner", tick_opened=1, tick_due=7)
+
+        shared_shifts.apply_shift_outcome(shift, character, outcome, won=True, tick=3)
+
+        assert character.fatigue == 100.0 - constants.FATIGUE_COST_PER_WORK
+
+    def test_neutral_still_docks_fatigue(self):
+        character = make_character(fatigue=100.0)
+        district = make_district()
+        outcome = shared_shifts.resolve_shift_game(character, district, won=False, neutral=True)
+        shift = Shift(character_id=1, job_id="Miner", tick_opened=1, tick_due=7)
+
+        shared_shifts.apply_shift_outcome(
+            shift, character, outcome, won=False, neutral=True, tick=3
+        )
+
+        assert character.fatigue == 100.0 - constants.FATIGUE_COST_PER_WORK
+
+    def test_fatigue_is_floored_at_min(self):
+        character = make_character(fatigue=1.0)
+        district = make_district()
+        outcome = shared_shifts.resolve_shift_game(character, district, won=True)
+        shift = Shift(character_id=1, job_id="Miner", tick_opened=1, tick_due=7)
+
+        shared_shifts.apply_shift_outcome(shift, character, outcome, won=True, tick=3)
+
+        assert character.fatigue == constants.FATIGUE_MIN
 
     def test_win_extends_win_streak_and_resets_loss_streak(self):
         character = make_character(consecutive_wins=1, consecutive_losses=2)

@@ -21,6 +21,7 @@ def make_character(**overrides: object) -> Character:
         money=0,
         hunger=0.0,
         health=100.0,
+        fatigue=100.0,
     )
     defaults.update(overrides)
     return Character(**defaults)  # type: ignore[arg-type]
@@ -116,6 +117,57 @@ class TestCharacterNeeds:
         needs.run(state, make_ctx(tick=constants.TICKS_PER_DAY))
 
         assert character.hunger == constants.HUNGER_MAX
+        assert character.health == constants.HEALTH_MIN
+
+
+class TestFatigueExhaustion:
+    def test_exhausted_fatigue_costs_extra_health_on_top_of_hunger(self):
+        character = make_character(
+            money=constants.NIGHTLY_LIVING_COST * 2,
+            hunger=0.0,
+            health=90.0,
+            fatigue=constants.FATIGUE_EXHAUSTION_THRESHOLD,
+        )
+        state = WorldState(
+            districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
+        )
+
+        needs.run(state, make_ctx(tick=constants.TICKS_PER_DAY))
+
+        # Hunger is paid off this same tick (health recovers from that),
+        # but exhaustion still docks its own separate penalty.
+        assert character.health == pytest.approx(
+            90.0 + constants.HEALTH_RECOVERY_PER_NIGHT - constants.FATIGUE_EXHAUSTION_HEALTH_PENALTY
+        )
+
+    def test_rested_fatigue_costs_no_extra_health(self):
+        character = make_character(
+            money=constants.NIGHTLY_LIVING_COST * 2,
+            hunger=0.0,
+            health=90.0,
+            fatigue=constants.FATIGUE_EXHAUSTION_THRESHOLD + 1,
+        )
+        state = WorldState(
+            districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
+        )
+
+        needs.run(state, make_ctx(tick=constants.TICKS_PER_DAY))
+
+        assert character.health == pytest.approx(90.0 + constants.HEALTH_RECOVERY_PER_NIGHT)
+
+    def test_exhaustion_penalty_is_clamped_to_health_min(self):
+        character = make_character(
+            money=0,
+            hunger=constants.HEALTH_DECAY_HUNGER_THRESHOLD,
+            health=constants.HEALTH_MIN,
+            fatigue=0.0,
+        )
+        state = WorldState(
+            districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
+        )
+
+        needs.run(state, make_ctx(tick=constants.TICKS_PER_DAY))
+
         assert character.health == constants.HEALTH_MIN
 
 

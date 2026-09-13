@@ -113,6 +113,33 @@ STRINGS: dict[str, str] = {
         " A peacekeeper notices -- fined {fine} money and held for {jail_ticks} ticks."
     ),
     "inventory_empty": "**{name}** isn't carrying anything.",
+    # Housing (buying/renting houses/apartments/inns, fatigue, sleep)
+    "housing_not_found": "No property by that id.",
+    "housing_nothing_available": "Nothing is available in this district right now.",
+    "housing_not_for_sale": "That property isn't for sale.",
+    "housing_already_owned": "Someone already owns that property.",
+    "housing_wrong_district": "**{name}** can only buy a house in their own district.",
+    "housing_tier_too_low": "**{name}** isn't a high enough job level yet -- that house needs at least {tier}.",
+    "housing_insufficient_funds": "**{name}** can't afford that.",
+    "housing_bought_ok": "**{name}** buys the {kind} (`#{property_id}`) for {price} money.",
+    "housing_not_an_apartment": "That property isn't an apartment unit.",
+    "housing_unit_already_leased": "That unit is already leased.",
+    "housing_rented_ok": "**{name}** signs a lease (`#{property_id}`) for {price} money/day rent.",
+    "housing_complex_not_found": "No apartment complex by that id.",
+    "housing_complex_partially_owned": "Someone already owns part of that complex.",
+    "housing_complex_bought_ok": (
+        "**{name}** buys out the whole complex (`{complex_id}`, {units} units) for {price} money."
+    ),
+    "housing_no_home": "**{name}** doesn't have a fixed home right now.",
+    "housing_not_a_tenant": "**{name}** owns their home outright -- there's no lease to end.",
+    "housing_moved_out_ok": "**{name}** moves out.",
+    "housing_status": "**{name}** -- home: {home}; fatigue: {fatigue}/100.",
+    "housing_not_an_inn": "That property isn't an inn.",
+    "housing_inn_stay_ok": "**{name}** pays {price} money for a night (and a meal) at the inn.",
+    "sleep_wrong_phase": "**{name}** can only sleep between the end of the evening shift and "
+    "the start of the morning one.",
+    "sleep_ok": "**{name}** sleeps {ticks} tick(s) and restores {restored} fatigue "
+    "(now {fatigue}/100).",
     # Generic
     "world_paused": "The world is paused.",
     "unexpected_error": "Something went wrong (ref `{ref}`).",

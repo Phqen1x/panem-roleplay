@@ -121,17 +121,34 @@ class Character(TimestampMixin, Base):
     fear: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     health: Mapped[float] = mapped_column(Float, nullable=False, default=100.0)
     hunger: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    fatigue: Mapped[float] = mapped_column(Float, nullable=False, default=100.0)
+    """100 = fully rested. Drained by working a shift
+    (`panem_shared.shifts.apply_shift_outcome`) and by proxied RP
+    (`panem_bot.cogs.proxy`); restored by `/sleep` (full rate in a bed --
+    an owned house, a leased apartment, or an inn stay -- half on the bare
+    ground) or by paying for a night at an inn. `panem_sim.systems.needs`
+    docks health on a night it ends too low, mirroring the existing
+    hunger->health pattern."""
     hospitalized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     jailed_until_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
     in_games: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     housing_property_id: Mapped[int | None] = mapped_column(
-        ForeignKey("properties.id"), nullable=True
+        ForeignKey("properties.id", use_alter=True, name="fk_characters_housing_property_id"),
+        nullable=True,
     )
     """The character's home -- an owned `HOUSE`, or the `Property` behind
     their current `ApartmentLease`. `None` means no fixed home: sleeping
     (`/sleep`) falls back to the ground's reduced fatigue restoration and
-    an inn stay is a one-off nightly transaction, not a lasting home."""
+    an inn stay is a one-off nightly transaction, not a lasting home.
+
+    `use_alter=True` (+ an explicit `name=`, matching the migration's own
+    `op.create_foreign_key` name): `Property.owner_id` points back at
+    `characters.id`, so without it `Base.metadata.create_all`/`drop_all`
+    (every test's DB fixture) can't topologically sort the two tables --
+    this marks the constraint as addable/droppable via a separate `ALTER
+    TABLE`, breaking the cycle for DDL ordering purposes only. Postgres
+    needs a constraint name to `DROP CONSTRAINT` it, hence the name."""
     positions: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     """`Position` enum values (Victor/Gamemaker/Governor), staff-granted via
     `/staff give position` -- not content-authored or applied for like a

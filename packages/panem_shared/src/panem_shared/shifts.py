@@ -149,6 +149,12 @@ def apply_shift_outcome(
     `neutral` skip leaves both alone -- "stay neutral by choosing not to
     do the game" means the streaks don't move either way.
 
+    Docks `FATIGUE_COST_PER_WORK` from `character.fatigue` on every
+    resolution (including `neutral` -- skipping the minigame still means
+    a shift was worked) -- fatigue "goes down... based on how many times
+    they work," and a shift's multiple resolutions across ticks (the
+    once-per-tick multi-work feature) each cost fatigue independently.
+
     Resets `consecutive_missed` -- any resolution, however the shift was
     resolved, breaks the miss streak `jobs.py` tracks. Increments
     `shifts_completed` only the *first* time this shift is worked --
@@ -170,6 +176,9 @@ def apply_shift_outcome(
 
     character.money += round(outcome.wage)
     character.reputation += outcome.rep_delta
+    character.fatigue = max(
+        constants.FATIGUE_MIN, character.fatigue - constants.FATIGUE_COST_PER_WORK
+    )
     character.consecutive_missed = 0
     if not neutral:
         if won:

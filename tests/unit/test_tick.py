@@ -90,6 +90,7 @@ class TestFixedOrder:
             "needs",
             "jobs",
             "economy",
+            "housing",
             "social",
             "reputation",
             "memory",

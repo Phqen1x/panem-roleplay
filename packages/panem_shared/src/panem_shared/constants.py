@@ -295,3 +295,51 @@ HOUSES_PER_TIER_PER_DISTRICT = 3
 APARTMENT_COMPLEXES_PER_DISTRICT = 2
 APARTMENT_UNITS_PER_COMPLEX = 6
 INNS_PER_DISTRICT = 1
+
+HOUSING_MASTERY_PRICE_STEP = 0.05
+"""A listing's price shifts by this fraction per job-level difference
+between buyer and seller -- a buyer two levels above the seller pays
+`1 - 2*0.05 = 0.9`x, one two levels below pays `1.1`x. Applies to houses,
+apartment-complex buyouts, and inns alike (`panem_bot.services.housing.
+quoted_price`) -- an NPC seller's level defaults to a house's own tier
+(parity at a matched buy), or the buyer's own level for untiered
+apartments/inns (parity always, until a real player-to-player resale
+introduces a genuine gap)."""
+HOUSING_REPUTATION_PRICE_STEP = 0.002
+"""Houses only, on top of the mastery step: `1 - reputation *
+HOUSING_REPUTATION_PRICE_STEP`, clamped to `HOUSING_PRICE_MULT_*` --
+"better price on houses with better reputation in your district.\""""
+HOUSING_PRICE_MULT_MIN = 0.5
+HOUSING_PRICE_MULT_MAX = 2.0
+"""Clamp on the combined mastery/reputation/district price multiplier --
+keeps a very high reputation or a very lopsided mastery gap from making a
+listing free or absurdly expensive."""
+HOUSING_DISTRICT_UNREST_PRICE_WEIGHT = 0.3
+HOUSING_DISTRICT_FAVOR_PRICE_WEIGHT = 0.02
+"""How much a district's `unrest` (depresses prices) and `capitol_favor`
+(raises them) shift `Property.suggested_price` in the daily refresh
+(`panem_sim.systems.housing`) -- "the sim suggests prices that balance
+with the economy," reusing `DistrictState` fields already tracked for
+other systems rather than a new housing-specific economic indicator."""
+
+FATIGUE_MAX = 100.0
+FATIGUE_MIN = 0.0
+FATIGUE_COST_PER_WORK = 8.0
+"""Docked per `/work` resolution (`panem_shared.shifts.
+apply_shift_outcome`) -- working a shift multiple times in one day (the
+once-per-tick multi-work feature) drains fatigue proportionally more."""
+FATIGUE_COST_PER_INTERACTION = 3.0
+"""Docked per qualifying proxied RP message (`panem_bot.cogs.proxy`,
+gated on the same length check as RP-credit shift completion so a
+one-word message doesn't drain it)."""
+FATIGUE_RESTORE_PER_TICK = 15.0
+"""Base fatigue restored per tick slept (`/sleep`), before the location
+multiplier below."""
+FATIGUE_GROUND_SLEEP_MULT = 0.5
+"""Sleeping with no bed at all -- no owned house, no leased apartment, no
+inn stay -- restores fatigue at half the rate of a real bed."""
+FATIGUE_EXHAUSTION_THRESHOLD = 20.0
+FATIGUE_EXHAUSTION_HEALTH_PENALTY = 2.0
+"""If fatigue is still at or below the threshold at the nightly needs
+check, health takes this extra hit -- mirrors `HEALTH_DECAY_PER_NIGHT`'s
+hunger-driven decay in `panem_sim.systems.needs`, same nightly cadence."""

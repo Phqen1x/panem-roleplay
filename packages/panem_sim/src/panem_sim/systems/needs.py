@@ -38,6 +38,14 @@ def _apply_character_needs(character: Character) -> None:
             constants.HEALTH_MAX, character.health + constants.HEALTH_RECOVERY_PER_NIGHT
         )
 
+    if character.fatigue <= constants.FATIGUE_EXHAUSTION_THRESHOLD:
+        # Never made it to a real sleep (`/sleep`) before the night ended
+        # too exhausted -- same shape as the hunger check above, just a
+        # second, independent need with its own threshold and penalty.
+        character.health = max(
+            constants.HEALTH_MIN, character.health - constants.FATIGUE_EXHAUSTION_HEALTH_PENALTY
+        )
+
 
 def _apply_npc_needs(npc: Npc) -> None:
     if npc.money >= constants.NIGHTLY_LIVING_COST_NPC:
