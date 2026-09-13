@@ -670,7 +670,7 @@ class StaffCog(commands.Cog):
         character="Character name",
         job_id="Job id (any job -- including staff-only ones like a district's mentor slot)",
     )
-    @app_commands.autocomplete(character=autocomplete.any_approved)
+    @app_commands.autocomplete(character=autocomplete.any_approved, job_id=autocomplete.job_ids)
     @app_commands.check(_is_staff)
     async def give_job(self, interaction: discord.Interaction, character: str, job_id: str) -> None:
         async with self.bot.db() as session:
@@ -696,22 +696,6 @@ class StaffCog(commands.Cog):
         await interaction.response.send_message(
             f"**{character}** is now working as **{job.title}**.", ephemeral=True
         )
-
-    @give_job.autocomplete("job_id")
-    async def give_job_id_autocomplete(
-        self, interaction: discord.Interaction, current: str
-    ) -> list[app_commands.Choice[str]]:
-        content = self.bot.content  # type: ignore[attr-defined]
-        current_lower = current.lower()
-        matches = [
-            job
-            for job in content.jobs.values()
-            if current_lower in job.id.lower() or current_lower in job.title.lower()
-        ]
-        return [
-            app_commands.Choice(name=f"{job.title} ({job.id})", value=job.id)
-            for job in matches[:25]
-        ]
 
 
 async def setup(bot: commands.Bot) -> None:
