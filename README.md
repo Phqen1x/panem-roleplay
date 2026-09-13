@@ -49,9 +49,18 @@ inside a Discord Activity iframe, and falls back to an unauthenticated
 tested end-to-end in this session (no live Discord Activity install was
 available to verify the real OAuth path against -- see the Milestone J
 notes for exactly what is and isn't verified). The data endpoints
-(`/districts*`) still enforce no auth of their own. Phase 6 (LLM
-dialogue) remains scaffolded as stubs — see the Plan for the full
-roadmap.
+(`/districts*`) still enforce no auth of their own.
+
+**Phase 6 — LLM Dialogue** (Plan §9) has a first real slice working: `/talk
+character:<name> resident:<name> message:<text>` lets a character speak to an NPC at
+their location and get a reply, via `panem_bot/services/dialogue.py` calling a local
+Lemonade OmniModel server (`lemonade/`, ported from
+[PR #4](https://github.com/Phqen1x/panem-roleplay/pull/4)) when `DIALOGUE_PROVIDER` (or a
+specific NPC's override) says to, with a free, no-server template fallback otherwise and
+on any LLM failure. See the Milestone K notes below for exactly what's wired up, what's
+still just a documented contract (narration/broadcast/speech modes), and what's verified
+against a mocked HTTP transport vs. a real Lemonade server (not available in this
+sandbox).
 
 ## Layout
 
@@ -538,10 +547,12 @@ fade unless important) is the part meant to be right.
   each owner back to `MEMORY_CAP_PER_NPC` by dropping the least
   important/oldest first -- every tick, over already-loaded
   `WorldState.memories`, not just for owners who got something new.
-- **`memory.retrieve()` is exposed but unused today.** It's the pure
-  top-`RETRIEVAL_K` query a future Phase 6 dialogue prompt would call;
-  nothing in the tick loop or bot calls it yet -- `/resident profile`
-  shows current stance directly rather than a memory summary.
+- **Retrieval lives in `panem_shared.memory.retrieve()`, not here.** It's
+  the pure top-`RETRIEVAL_K` query a Phase 6 dialogue prompt calls; it's
+  in `panem_shared` (not `panem_sim.systems.memory`, which only owns
+  formation/pruning) so `panem_bot` can call it without depending on
+  `panem_sim`. `/resident profile` still shows current stance directly
+  rather than a memory summary.
 
 ## Notes on this Milestone G (Phase 4: crises) build
 
@@ -804,6 +815,59 @@ Two support fixes, not a milestone.
   failures to a new `POST /activity/debug` (logged server-side as
   `activity_client_error`) since a real Discord Activity's devtools can
   be genuinely hard to reach to read the browser console directly.
+
+## Notes on this Milestone K (Phase 6: LLM-driven NPC dialogue) build
+
+Ports and builds on the groundwork from
+[PR #4](https://github.com/Phqen1x/panem-roleplay/pull/4), which added the Lemonade
+OmniModel plumbing (`panem_shared/lemonade/omni.py`, `lemonade/system_prompt.md`,
+`lemonade/components.json`, `scripts/lemonade_omni.py`) but stopped short of any code
+actually calling it -- that PR predates Phases 1-5 and its `docker-compose.yml`/
+`Dockerfile`/`README.md` diffs assumed `panem_sim`/`panem_api` didn't exist yet, so
+rather than merge it as-is, its self-contained modules were ported file-by-file onto the
+current, much-evolved tree (the Lemonade collection JSON files were rebuilt fresh against
+today's `data/` rather than copied) and its deploy-file diffs re-adapted by hand. Its
+`snap/` packaging was left out as out of scope for this pass.
+
+- **`panem_bot/services/dialogue.py` + `/talk` (`cogs/dialogue.py`) are the new, real
+  functionality** -- the first code that actually calls the OmniModel contract PR #4 only
+  documented. `/talk character:<name> resident:<name> message:<text>` requires the
+  character be at the same location as the NPC (`talk_not_here` otherwise), spends one
+  unit of a per-NPC, per-in-world-hour "talk stamina" (`TALK_STAMINA_PER_HOUR`, counted in
+  Redis rather than a DB column since it's disposable state that naturally expires with
+  the tick it was spent in), and replies with an embed.
+- **`Settings.dialogue_provider` (`"template"` by default) picks the reply path;
+  `Npc.provider_override` lets one NPC override it** -- e.g. a named Mentor forced onto
+  the LLM while the rest of a district's residents stay on the free, no-server-required
+  template path. Any LLM failure (timeout, connection error, malformed response) silently
+  falls back to the template reply rather than erroring the command out -- an
+  immersion-breaking canned line beats a visible stack trace for a roleplay bot.
+- **The template path is genuinely new too**, not a pre-existing fallback -- nothing
+  called `dialogue_provider` before this milestone. It's a small, deterministic (seeded by
+  the NPC + message text) set of canned lines varied by `speech_tone`
+  (`panem_shared.content.traits.speech_tone`, itself a Phase 3 "starting hint" this
+  milestone is the first to actually consume) and the character's `RelationshipRow`
+  stance with that NPC.
+- **`panem_shared.memory.retrieve()` moved out of `panem_sim.systems.memory`** into
+  `panem_shared` (new, not part of PR #4) so `panem_bot`'s dialogue service can pull an
+  NPC's top memories into the request context without depending on `panem_sim` --
+  matching the same writer/reader split every other cross-process shared piece in this
+  codebase already follows. `/talk` only *reads* `Memory`/`RelationshipRow` rows; it
+  writes neither -- those stay sim-owned, formed only when `panem_sim`'s own systems
+  decide a moment was notable, the same as every other NPC-facing interaction.
+- **What's verified vs. not.** `uv run pytest` covers the full template-reply path, the
+  stamina counter, provider resolution, request-context construction, and
+  `generate_llm_reply`'s request/response handling against a mocked HTTP transport
+  (`httpx.MockTransport`) -- all passing. What is *not* verified in this session: an actual
+  Lemonade server serving a real OmniModel collection, since no such server was reachable
+  from this sandbox (same caveat `lemonade/README.md` already carries for `serve`/
+  `bundle`). Treat the LLM path as code-complete and unit-tested against its own contract,
+  not as end-to-end proven.
+- **Still just a documented contract, not wired up:** every `RequestMode` besides
+  `dialogue` (`narrate`, `broadcast`, `speak`, `describe_image`, `npc_generate`,
+  `review_character`, `staff`) and the vision/transcription/speech/embeddings roles a
+  profile bundles alongside the planner LLM. `/talk` only ever sends text and only ever
+  reads text back.
 
 ## Upgrading past duplicate character names
 

@@ -173,33 +173,3 @@ class TestPruning:
         memory.run(state, make_ctx(tick=10))
 
         assert state.deleted_memory_ids == [1]
-
-
-class TestRetrieve:
-    def test_returns_only_the_requested_owners_memories(self):
-        rows = [
-            make_memory_row(1, owner_id="npc1", importance=1, tick=1),
-            make_memory_row(2, owner_id="npc2", importance=5, tick=1),
-        ]
-
-        result = memory.retrieve(rows, "npc", "npc1")
-
-        assert [m.id for m in result] == [1]
-
-    def test_orders_by_importance_then_recency(self):
-        rows = [
-            make_memory_row(1, owner_id="npc1", importance=1, tick=100),
-            make_memory_row(2, owner_id="npc1", importance=5, tick=1),
-            make_memory_row(3, owner_id="npc1", importance=5, tick=50),
-        ]
-
-        result = memory.retrieve(rows, "npc", "npc1")
-
-        assert [m.id for m in result] == [3, 2, 1]
-
-    def test_respects_k(self):
-        rows = [make_memory_row(i, owner_id="npc1") for i in range(1, 10)]
-
-        result = memory.retrieve(rows, "npc", "npc1", k=3)
-
-        assert len(result) == 3

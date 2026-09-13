@@ -30,6 +30,52 @@ services:
       timeout: 5s
       retries: 10
 
+  # Local AI: Lemonade serves the Panem OmniModel (lemonade/README.md).
+  # Opt-in -- `bot`/`sim` work fine without it (DIALOGUE_PROVIDER defaults to
+  # "template", which never calls this), so nothing else `depends_on` it;
+  # bring it up and flip DIALOGUE_PROVIDER to "llm"/"hybrid" when you want
+  # real NPC dialogue. CPU by default; for an AMD GPU uncomment the
+  # devices/group_add block and put {"llamacpp": {"backend": "rocm"}} in the
+  # lemonade_config volume's config.json (see Lemonade's Docker guide).
+  lemonade:
+    image: ghcr.io/lemonade-sdk/lemonade-server:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:13305:13305"
+    environment:
+      LEMONADE_API_KEY: ${LLM_API_KEY:-}
+    volumes:
+      - lemonade_cache:/opt/lemonade/.cache/huggingface
+      - lemonade_llama:/opt/lemonade/llama
+      - lemonade_data:/opt/lemonade/.cache/lemonade
+      - lemonade_config:/opt/lemonade/.config/lemonade
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:13305/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    # devices:
+    #   - /dev/kfd:/dev/kfd
+    #   - /dev/dri:/dev/dri
+    # group_add:
+    #   - video
+    #   - render
+
+  # One-shot: registers user.Panem-Omni-<profile> and downloads its
+  # components into the lemonade volumes. Re-run after changing data/ or the
+  # prompt: `docker compose run --rm lemonade-setup`.
+  lemonade-setup:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["uv", "run", "python", "scripts/lemonade_omni.py", "install"]
+    env_file: ../.env
+    environment:
+      LLM_BASE_URL: http://lemonade:13305/v1
+    depends_on:
+      lemonade:
+        condition: service_healthy
+
   migrate:
     build:
       context: ..
@@ -52,6 +98,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://panem:panem@postgres:5432/panem
       REDIS_URL: redis://redis:6379/0
+      LLM_BASE_URL: http://lemonade:13305/v1
     volumes:
       - ../data:/app/data:ro
     depends_on:
@@ -112,3 +159,7 @@ services:
 
 volumes:
   panem_pg_data:
+  lemonade_cache:
+  lemonade_llama:
+  lemonade_data:
+  lemonade_config:

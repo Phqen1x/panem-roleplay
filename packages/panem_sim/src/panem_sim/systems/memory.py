@@ -11,16 +11,14 @@ every tick over `state.memories` (loaded once per tick, no extra
 queries) rather than only for owners touched this tick, since expiry
 shouldn't wait on that owner doing something else memorable first.
 
-`RETRIEVAL_K` names how many memories a *consumer* should pull per
-query -- `retrieve()` below is that pure query helper, exposed for a
-future Phase 6 dialogue prompt to call; nothing in the tick loop itself
-calls it.
+Retrieval (`RETRIEVAL_K`, the *consumer*-side query) lives in
+`panem_shared.memory.retrieve` instead of here, since `panem_bot`'s
+dialogue service needs it without depending on `panem_sim`.
 """
 
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from collections.abc import Iterable
 
 from panem_shared import constants
 from panem_shared.db.models import Memory
@@ -78,16 +76,6 @@ def _prune(state: WorldState, ctx: TickContext) -> None:
             alive.sort(key=lambda m: (m.importance, m.tick))
             for row in alive[:overflow]:
                 state.deleted_memory_ids.append(row.id)
-
-
-def retrieve(
-    memories: Iterable[Memory], owner_kind: str, owner_id: str, k: int = constants.RETRIEVAL_K
-) -> list[Memory]:
-    """The `k` most relevant memories for one owner -- highest importance
-    first, most recent as the tiebreak."""
-    candidates = [m for m in memories if m.owner_kind == owner_kind and m.owner_id == owner_id]
-    candidates.sort(key=lambda m: (-m.importance, -m.tick))
-    return candidates[:k]
 
 
 def run(state: WorldState, ctx: TickContext) -> list[AnyWorldEvent]:

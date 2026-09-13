@@ -959,6 +959,7 @@ version = "0.1.0"
 source = { editable = "packages/panem_bot" }
 dependencies = [
     { name = "discord-py" },
+    { name = "httpx" },
     { name = "panem-shared" },
     { name = "redis" },
 ]
@@ -966,6 +967,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "discord-py", specifier = ">=2.4" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "panem-shared", editable = "packages/panem_shared" },
     { name = "redis", specifier = ">=5.1" },
 ]

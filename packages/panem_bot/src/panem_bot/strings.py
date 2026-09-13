@@ -93,6 +93,10 @@ STRINGS: dict[str, str] = {
     "no_residents_in_district": "No residents are seeded for that district yet.",
     "resident_not_found": "No resident by that name in this district.",
     "resident_where_ok": "**{name}** ({job}) is currently at **{location}**.",
+    # Dialogue (Phase 6, LLM-driven NPC talk)
+    "talk_not_here": "**{name}** isn't at your location right now -- use `/resident where` to "
+    "find them, or `/travel` to meet them.",
+    "npc_needs_a_moment": "**{name}** needs a moment before talking more this hour.",
     # Market (FR-ECO-3/4)
     "market_invalid_qty": "Quantity must be a positive number.",
     "market_not_at_market": "**{name}** needs to be at a market location to trade.",
