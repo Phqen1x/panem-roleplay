@@ -19,13 +19,26 @@
 // same way panem_bot's classic /work option-select flow does, just with
 // a win/lose wage multiplier instead of a chosen option's
 // (`panem_shared.shifts.resolve_shift_game`).
+//
+// `?v=` cache-busting: there's no build step here (matching
+// index.html/app.js's existing no-build pattern), so browsers and --
+// worse -- Discord's own Activity CDN can go on serving a stale cached
+// copy of these modules well after the server has been restarted with
+// new ones (a plain server restart doesn't invalidate anything a client
+// already fetched by URL). Bump ASSET_VERSION any time work.js or any
+// file under games/ changes, and update the matching `?v=` on work.html's
+// own <script> tag to match -- changing the URL is what actually forces
+// every cache layer to refetch, restarting the server does not.
+const ASSET_VERSION = "1";
 
-import * as coinflip from "./games/coinflip.js";
-import * as connect4 from "./games/connect4.js";
-import * as minesweeper from "./games/minesweeper.js";
-import * as poison from "./games/poison.js";
-import * as snake from "./games/snake.js";
-import * as solitaire from "./games/solitaire.js";
+const [coinflip, connect4, minesweeper, poison, snake, solitaire] = await Promise.all([
+  import(`./games/coinflip.js?v=${ASSET_VERSION}`),
+  import(`./games/connect4.js?v=${ASSET_VERSION}`),
+  import(`./games/minesweeper.js?v=${ASSET_VERSION}`),
+  import(`./games/poison.js?v=${ASSET_VERSION}`),
+  import(`./games/snake.js?v=${ASSET_VERSION}`),
+  import(`./games/solitaire.js?v=${ASSET_VERSION}`),
+]);
 
 const GAMES = [minesweeper, snake, connect4, coinflip, poison, solitaire];
 
