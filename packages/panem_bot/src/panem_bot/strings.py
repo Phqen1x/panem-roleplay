@@ -100,6 +100,9 @@ STRINGS: dict[str, str] = {
     "talk_not_here": "**{name}** isn't at your location right now -- use `/resident where` to "
     "find them, or `/travel` to meet them.",
     "npc_needs_a_moment": "**{name}** needs a moment before talking more this hour.",
+    "talk_npc_wrong_district": "**{name}** is only assigned to their own district and can't "
+    "be pulled into a thread outside it.",
+    "talk_npc_no_access": "**{name}**'s job doesn't give them access to this location.",
     # Market (FR-ECO-3/4)
     "market_invalid_qty": "Quantity must be a positive number.",
     "market_not_at_market": "**{name}** needs to be at a market location to trade.",
@@ -171,6 +174,7 @@ STRINGS: dict[str, str] = {
     "engagement_nobody_available": "Nobody named could join right now.",
     "engagement_npc_busy_shift": "**{name}** is working right now -- try **{location}** instead.",
     "engagement_npc_busy_sleep": "**{name}** is asleep for the night.",
+    "engagement_npc_no_access": "**{name}**'s job doesn't give them access to **{location}**.",
     "engagement_started_ok": "Engagement started: {thread}",
     "engagement_not_yours": "Only the creator or staff can do that.",
     "engagement_ended_ok": "Engagement ended.",

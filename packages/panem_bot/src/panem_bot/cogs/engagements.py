@@ -320,6 +320,16 @@ class EngagementCog(commands.Cog):
             free_npc_ids: list[str] = []
             busy_lines: list[str] = []
             for npc in matched_npcs:
+                # An NPC only converses in its own assigned district, and
+                # never in a location their profession doesn't grant them
+                # access to (e.g. a restricted Justice Building) -- unlike
+                # a player's character, an NPC has no travel system to
+                # justify appearing somewhere they otherwise couldn't.
+                if not proxy_svc.npc_has_location_access(npc, loc):
+                    busy_lines.append(
+                        t("engagement_npc_no_access", name=npc.name, location=loc.name)
+                    )
+                    continue
                 job = content.jobs.get(npc.job_id) if npc.job_id else None
                 reason = engagements_svc.npc_is_busy(npc, job, phase)
                 if reason is None:

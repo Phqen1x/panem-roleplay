@@ -1417,6 +1417,18 @@ just another `Scene` row.
   thread or an ordinary `/scene` can have NPCs attached this way without ever becoming a
   dedicated engagement itself, and stays open (rather than being archived) once released
   by `/engage end` or the idle timeout.
+- **An NPC only ever converses in its own assigned district, and never in a location
+  its profession doesn't grant it access to.** The current-thread-attach path above
+  means a player could otherwise summon a home-district NPC into a thread that belongs
+  to a different district or location entirely -- so both `/talk` and `/engage start`
+  now resolve the named resident's district from *the thread being attached to*
+  (`here_scene.district_id`/`location_id`) rather than blindly from the character's own
+  `current_district_id`, checking `proxy_svc.can_rp_in_district` on the character first.
+  Separately, `proxy_svc.npc_has_location_access` reuses the same `Location.restricted`/
+  `access_jobs` gate `has_location_access` already applies to players -- but matched
+  against `Npc.job_id` directly, since (unlike a player's free-typed `Character.
+  job_title`) an NPC's `job_id` is always a real `jobs.yaml` catalog id. A Peacekeeper
+  NPC can be pulled into the Justice Building; a shopkeeper NPC can't.
 - **Who replies in a group.** In a strict one-on-one engagement (one character, one NPC)
   every qualifying message gets a reply, same as `/talk` always worked. With more than
   one participant, an NPC only replies to a message that contains their first or last

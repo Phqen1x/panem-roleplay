@@ -31,6 +31,7 @@ from panem_bot import autocomplete
 from panem_bot.errors import NotAllowed, NotFound
 from panem_bot.services import characters as characters_svc
 from panem_bot.services import dialogue as dialogue_svc
+from panem_bot.services import proxy as proxy_svc
 from panem_bot.strings import t
 from panem_shared.db.models import Character, DiscordChannel, Npc, Scene, WorldClock
 from panem_shared.enums import ChannelKind, SceneKind, SceneStatus
@@ -82,7 +83,35 @@ class DialogueCog(commands.Cog):
                 await interaction.followup.send(t("character_not_found"), ephemeral=True)
                 return
 
-            district_id = char.current_district_id
+            # If /talk is run from inside a thread that already has a
+            # scene registered (an ambient thread, an open /scene, or a
+            # prior engagement), the resident named must belong to *that*
+            # scene's district and be actually at its location -- not
+            # wherever the character's own current_district_id/location_id
+            # happen to be -- so a player can't pull a home-district NPC
+            # into some other district's or location's thread just by
+            # naming them. Only when there's no such thread do we fall
+            # back to the character's own district/location, and to
+            # reusing (or creating) a dedicated 1:1 engagement thread.
+            here_scene = None
+            if isinstance(interaction.channel, discord.Thread):
+                here_scene = (
+                    await session.execute(
+                        select(Scene).where(Scene.thread_id == interaction.channel.id)
+                    )
+                ).scalar_one_or_none()
+
+            if here_scene is not None:
+                district_id = here_scene.district_id
+                npc_must_be_at = here_scene.location_id
+            else:
+                district_id = char.current_district_id
+                npc_must_be_at = char.location_id
+
+            if not proxy_svc.can_rp_in_district(char, district_id):
+                await interaction.followup.send(t("proxy_wrong_district"), ephemeral=True)
+                return
+
             npc = (
                 await session.execute(
                     select(Npc).where(Npc.district_id == district_id, Npc.name == resident)
@@ -92,10 +121,16 @@ class DialogueCog(commands.Cog):
                 await interaction.followup.send(t("resident_not_found"), ephemeral=True)
                 return
 
+            content_bundle = self.bot.content  # type: ignore[attr-defined]
+            district = content_bundle.district(district_id)
+            location = next((loc for loc in district.locations if loc.id == npc.location_id), None)
+
             try:
                 dialogue_svc.check_can_talk(char)
-                if npc.location_id != char.location_id:
+                if npc.location_id != npc_must_be_at:
                     raise NotAllowed("talk_not_here", name=npc.name)
+                if location is None or not proxy_svc.npc_has_location_access(npc, location):
+                    raise NotAllowed("talk_npc_no_access", name=npc.name)
 
                 clock = await session.get(WorldClock, 1)
                 tick = clock.tick if clock is not None else 0
@@ -108,28 +143,7 @@ class DialogueCog(commands.Cog):
             except (NotAllowed, NotFound) as exc:
                 await interaction.followup.send(t(exc.reason_key, **exc.fmt), ephemeral=True)
                 return
-
-            content_bundle = self.bot.content  # type: ignore[attr-defined]
-            district = content_bundle.district(district_id)
-            location = next((loc for loc in district.locations if loc.id == npc.location_id), None)
-            if location is None:
-                await interaction.followup.send(t("talk_not_here", name=npc.name), ephemeral=True)
-                return
-
-            # If /talk is run from inside a thread that already has a
-            # scene registered (an ambient thread, an open /scene, or a
-            # prior engagement), pull the NPC into *that* conversation
-            # rather than spinning up a separate one -- the player is
-            # already there, so that's where the NPC should start
-            # talking. Only when there's no such thread do we fall back
-            # to reusing (or creating) a dedicated 1:1 engagement thread.
-            here_scene = None
-            if isinstance(interaction.channel, discord.Thread):
-                here_scene = (
-                    await session.execute(
-                        select(Scene).where(Scene.thread_id == interaction.channel.id)
-                    )
-                ).scalar_one_or_none()
+            assert location is not None
 
             existing_scene = here_scene
             if existing_scene is None:

@@ -5,7 +5,7 @@ import pytest
 from panem_bot.services import proxy as proxy_svc
 from panem_shared.constants import PROXY_MESSAGE_MAX_LEN
 from panem_shared.content.schemas import Location
-from panem_shared.db.models import Character, Scene
+from panem_shared.db.models import Character, Npc, Scene
 from panem_shared.enums import CharacterStatus
 
 
@@ -25,6 +25,20 @@ def make_character(**overrides) -> Character:
     )
     defaults.update(overrides)
     return Character(**defaults)
+
+
+def make_npc(**overrides) -> Npc:
+    defaults = dict(
+        id="npc-1",
+        district_id=12,
+        name="Old Ferro",
+        age=61,
+        location_id="hob",
+        home_location_id="seam",
+        job_id=None,
+    )
+    defaults.update(overrides)
+    return Npc(**defaults)
 
 
 def make_scene(**overrides) -> Scene:
@@ -192,6 +206,56 @@ class TestHasLocationAccess:
         assert not proxy_svc.has_location_access(
             job_title="baker", has_position=False, location=loc
         )
+
+
+class TestNpcDistrictAccess:
+    def test_own_district_allowed(self):
+        npc = make_npc(district_id=12)
+        assert proxy_svc.npc_district_access(npc, 12)
+
+    def test_other_district_denied(self):
+        npc = make_npc(district_id=12)
+        assert not proxy_svc.npc_district_access(npc, 5)
+
+
+class TestNpcHasLocationAccess:
+    def test_unrestricted_always_true(self):
+        loc = Location(id="square", name="The Square", kind="public")
+        npc = make_npc(job_id=None)
+        assert proxy_svc.npc_has_location_access(npc, loc)
+
+    def test_restricted_job_match_true(self):
+        loc = Location(
+            id="justice",
+            name="Justice Building",
+            kind="workplace",
+            restricted=True,
+            access_jobs=["peacekeeper"],
+        )
+        npc = make_npc(job_id="peacekeeper")
+        assert proxy_svc.npc_has_location_access(npc, loc)
+
+    def test_restricted_no_matching_job_false(self):
+        loc = Location(
+            id="justice",
+            name="Justice Building",
+            kind="workplace",
+            restricted=True,
+            access_jobs=["peacekeeper"],
+        )
+        npc = make_npc(job_id="baker")
+        assert not proxy_svc.npc_has_location_access(npc, loc)
+
+    def test_restricted_no_job_at_all_false(self):
+        loc = Location(
+            id="justice",
+            name="Justice Building",
+            kind="workplace",
+            restricted=True,
+            access_jobs=["peacekeeper"],
+        )
+        npc = make_npc(job_id=None)
+        assert not proxy_svc.npc_has_location_access(npc, loc)
 
 
 class TestCheckCanProxy:

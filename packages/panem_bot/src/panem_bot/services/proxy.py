@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from panem_shared.constants import PROXY_MESSAGE_MAX_LEN
 from panem_shared.content.schemas import District, Location
-from panem_shared.db.models import Character, Scene
+from panem_shared.db.models import Character, Npc, Scene
 from panem_shared.enums import CharacterStatus, Position, SceneKind
 
 
@@ -102,6 +102,26 @@ def has_location_access(*, job_title: str | None, has_position: bool, location: 
     if has_position:
         return True
     return job_title is not None and job_title in location.access_jobs
+
+
+def npc_district_access(npc: Npc, district_id: int) -> bool:
+    """An NPC only ever converses in threads belonging to its own assigned
+    `district_id` -- unlike a player's character, an NPC has no travel
+    system to justify appearing anywhere else."""
+    return npc.district_id == district_id
+
+
+def npc_has_location_access(npc: Npc, location: Location) -> bool:
+    """Same restricted-location gate as `has_location_access`, but for an
+    NPC pulled into a `/talk`/`/engage start` thread. Unlike a player's
+    free-typed `Character.job_title`, `Npc.job_id` is a real `jobs.yaml`
+    catalog id, so it can be matched against `location.access_jobs`
+    directly and reliably -- an NPC whose profession doesn't grant them
+    access to a restricted location (e.g. the Justice Building) can't be
+    summoned there just because a player named them."""
+    if not location.restricted:
+        return True
+    return npc.job_id is not None and npc.job_id in location.access_jobs
 
 
 def scene_location_id(scene: Scene | None) -> str | None:
