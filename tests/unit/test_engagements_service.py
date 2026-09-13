@@ -99,18 +99,6 @@ class TestNpcIsBusy:
         assert engagements_svc.npc_is_busy(npc, None, DayPhase.MORNING) is None
 
 
-class TestParseParticipants:
-    def test_splits_and_trims(self):
-        assert engagements_svc.parse_participants("Ferro,  Wren Calder ,Katniss") == [
-            "Ferro",
-            "Wren Calder",
-            "Katniss",
-        ]
-
-    def test_drops_empty_segments(self):
-        assert engagements_svc.parse_participants("Ferro,, ,Wren") == ["Ferro", "Wren"]
-
-
 class TestResolveNpcParticipants:
     def test_matches_case_insensitively(self):
         ferro = make_npc(id="npc-1", name="Old Ferro")

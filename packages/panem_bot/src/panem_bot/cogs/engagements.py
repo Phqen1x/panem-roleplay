@@ -11,6 +11,7 @@ import datetime as dt
 from collections.abc import Awaitable, Callable
 
 import discord
+import structlog
 from discord import app_commands
 from discord.ext import commands, tasks
 from sqlalchemy import select
@@ -36,6 +37,8 @@ from panem_shared.db.models import (
 from panem_shared.enums import ChannelKind, CharacterStatus, SceneKind, SceneStatus
 
 from .scenes import CLOSED_TAG, OPEN_TAG, _find_tag
+
+logger = structlog.get_logger()
 
 
 class _InviteResponseButton(discord.ui.Button["discord.ui.View"]):
@@ -180,18 +183,26 @@ class EngagementCog(commands.Cog):
     @group.command(name="start", description="Start an engagement with NPCs and/or players")
     @app_commands.describe(
         character="Your character",
-        participants="Comma-separated NPC and/or character names to include",
+        participant_1="An NPC or character name to include",
         title="Thread title",
         location="Location id (defaults to your character's current location)",
+        participant_2="Another NPC or character name to include",
+        participant_3="Another NPC or character name to include",
+        participant_4="Another NPC or character name to include",
+        participant_5="Another NPC or character name to include",
     )
     @app_commands.autocomplete(character=autocomplete.own_approved)
     async def start(
         self,
         interaction: discord.Interaction,
         character: str,
-        participants: str,
+        participant_1: str,
         title: str,
         location: str | None = None,
+        participant_2: str | None = None,
+        participant_3: str | None = None,
+        participant_4: str | None = None,
+        participant_5: str | None = None,
     ) -> None:
         assert interaction.guild is not None
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -225,7 +236,17 @@ class EngagementCog(commands.Cog):
                 )
                 return
 
-            names = engagements_svc.parse_participants(participants)
+            names = [
+                name.strip()
+                for name in (
+                    participant_1,
+                    participant_2,
+                    participant_3,
+                    participant_4,
+                    participant_5,
+                )
+                if name and name.strip()
+            ]
             if not names:
                 await interaction.followup.send(t("engagement_needs_participants"), ephemeral=True)
                 return
@@ -315,20 +336,35 @@ class EngagementCog(commands.Cog):
                 "pending_characters": [c.id for c in matched_chars],
                 "npcs": list(free_npc_ids),
             }
-            scene = Scene(
-                district_id=district_id,
-                location_id=loc_id,
-                thread_id=thread.id,
-                forum_channel_id=forum.id,
-                kind=SceneKind.ENGAGEMENT.value,
-                title=title,
-                created_by_character_id=char_id,
-                status=SceneStatus.OPEN.value,
-                last_message_at=dt.datetime.now(dt.UTC),
-                participants=participants_json,
-            )
-            session.add(scene)
-            await session.flush()
+            # `thread` was just created above, so its id should never already
+            # be a `Scene.thread_id` -- but a duplicate-thread_id insert has
+            # been observed in practice (still root-causing why), and it's
+            # cheap to make this idempotent rather than crash the whole
+            # interaction on an otherwise-successfully-created thread.
+            scene = (
+                await session.execute(select(Scene).where(Scene.thread_id == thread.id))
+            ).scalar_one_or_none()
+            if scene is None:
+                scene = Scene(
+                    district_id=district_id,
+                    location_id=loc_id,
+                    thread_id=thread.id,
+                    forum_channel_id=forum.id,
+                    kind=SceneKind.ENGAGEMENT.value,
+                    title=title,
+                    created_by_character_id=char_id,
+                    status=SceneStatus.OPEN.value,
+                    last_message_at=dt.datetime.now(dt.UTC),
+                    participants=participants_json,
+                )
+                session.add(scene)
+                await session.flush()
+            else:
+                logger.warning(
+                    "engagement_thread_id_reused", thread_id=thread.id, scene_id=scene.id
+                )
+                scene.status = SceneStatus.OPEN.value
+                scene.participants = participants_json
 
             for npc_id in free_npc_ids:
                 npc_row = await session.get(Npc, npc_id)
@@ -403,6 +439,61 @@ class EngagementCog(commands.Cog):
         return [
             app_commands.Choice(name=f"{loc.name} ({loc.id})", value=loc.id) for loc in matches[:25]
         ]
+
+    @start.autocomplete("participant_1")
+    @start.autocomplete("participant_2")
+    @start.autocomplete("participant_3")
+    @start.autocomplete("participant_4")
+    @start.autocomplete("participant_5")
+    async def start_participant_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """One callback shared by every `participant_N` slot -- suggests
+        both NPC names in the character's district and other approved
+        characters physically at the (already-picked-or-defaulted)
+        location, excluding whichever names are already sitting in the
+        *other* slots so the same person can't be picked twice."""
+        character_name = getattr(interaction.namespace, "character", None)
+        if not character_name:
+            return []
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            char = await self._get_character(session, interaction.user.id, character_name)
+            if char is None:
+                return []
+            district_id = char.current_district_id
+            loc_id = getattr(interaction.namespace, "location", None) or char.location_id
+            npc_names = (
+                (await session.execute(select(Npc.name).where(Npc.district_id == district_id)))
+                .scalars()
+                .all()
+            )
+            char_names: list[str] = []
+            if loc_id is not None:
+                char_names = (
+                    (
+                        await session.execute(
+                            select(Character.name).where(
+                                Character.status == CharacterStatus.APPROVED.value,
+                                Character.location_id == loc_id,
+                                Character.id != char.id,
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+        already_chosen = {
+            getattr(interaction.namespace, f"participant_{i}", None) for i in range(1, 6)
+        }
+        already_chosen.discard(None)
+        already_chosen.discard(current)
+        current_lower = current.lower()
+        matches = sorted(
+            name
+            for name in {*npc_names, *char_names}
+            if current_lower in name.lower() and name not in already_chosen
+        )
+        return [app_commands.Choice(name=name, value=name) for name in matches[:25]]
 
     @group.command(name="end", description="End this engagement")
     async def end(self, interaction: discord.Interaction) -> None:

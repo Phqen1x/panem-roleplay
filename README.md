@@ -1384,9 +1384,15 @@ generically by `thread_id` without special-casing `SceneKind.PLAYER`, an engagem
 thread gets RP-credit, location pinning, and webhook proxying for free the moment it's
 just another `Scene` row.
 
-- **`/engage start location:<id> participants:<comma-separated names>`** resolves each
-  name against NPCs first, then against characters physically at that location, and
-  opens a forum thread exactly like `/scene start`'s own flow. A named NPC not currently
+- **`/engage start location:<id> participant_1:<name> [participant_2 ... participant_5]`**
+  resolves each named `participant_N` against NPCs first, then against characters
+  physically at that location, and opens a forum thread exactly like `/scene start`'s own
+  flow. Discord slash commands have no true variadic argument, so "1 or more" participants
+  are `ENGAGEMENT_MAX_PARTICIPANTS` (5) individually autocompleted slots (`participant_1`
+  required, the rest optional) rather than one free-text field -- each slot's
+  autocomplete suggests NPCs in the character's district and other approved characters
+  at the target location, excluding names already sitting in a different slot. A named NPC
+  not currently
   working their shift or asleep (`panem_bot.services.engagements.npc_is_busy`, reusing
   `panem_sim.systems.schedule`'s own arrival predicate rather than a second copy of it)
   is relocated there immediately (`Npc.location_id`/`x`/`y` overwritten, the same
@@ -1453,6 +1459,13 @@ just another `Scene` row.
 **Interpretation calls**: an engagement's NPC "travel" is an instant relocation, not a
 simulated multi-tick walk -- every other arrival in this codebase (schedule, ambient
 narration) is already instantaneous, and there's no existing intra-district
-travel-over-time model to build on. `/engage start`'s participants are one free-text,
-comma-separated field rather than fixed named slots, since Discord slash commands have
-no true variadic argument and the request was explicitly "1 or more" of either kind.
+travel-over-time model to build on. `/engage start`'s participants are a fixed number of
+autocompleted, optional slots rather than a single free-text field, since Discord slash
+commands have no true variadic argument; five is comfortably more than any normal
+engagement needs while still fitting Discord's per-command option limit.
+
+`/engage start` also self-heals against a duplicate `Scene.thread_id`: it looks up an
+existing scene for the just-created thread before inserting a new one, and adopts it
+instead of crashing on the database's unique constraint if one is somehow already there
+(observed once in practice; harmless and correct either way, so it's cheap insurance
+regardless of the exact cause).

@@ -42,12 +42,6 @@ def npc_is_busy(npc: Npc, job: Job | None, phase: DayPhase) -> str | None:
     return None
 
 
-def parse_participants(raw: str) -> list[str]:
-    """Splits `/engage start`'s comma-separated `participants` field into
-    trimmed, non-empty names."""
-    return [part.strip() for part in raw.split(",") if part.strip()]
-
-
 def resolve_npc_participants(
     names: list[str], candidates: list[Npc]
 ) -> tuple[list[Npc], list[str]]:

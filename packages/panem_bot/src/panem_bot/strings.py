@@ -167,7 +167,7 @@ STRINGS: dict[str, str] = {
     "or pass `location`.",
     "engagement_not_traveled": "**{name}** needs to `/travel` to **{location}** before "
     "starting an engagement there.",
-    "engagement_needs_participants": "Name at least one NPC or character in `participants`.",
+    "engagement_needs_participants": "Name at least one NPC or character to include.",
     "engagement_nobody_available": "Nobody named could join right now.",
     "engagement_npc_busy_shift": "**{name}** is working right now -- try **{location}** instead.",
     "engagement_npc_busy_sleep": "**{name}** is asleep for the night.",

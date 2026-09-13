@@ -381,6 +381,11 @@ ENGAGEMENT_IDLE_CHECK_INTERVAL_MINUTES = 5
 """How often `EngagementCog`'s background task scans open engagements for
 `last_message_at` past the current timeout, mirroring `SceneCog.
 archive_idle_scenes`'s own `tasks.loop` cadence pattern."""
+ENGAGEMENT_MAX_PARTICIPANTS = 5
+"""`/engage start` has no true variadic argument (Discord slash commands
+don't support one), so participants are `ENGAGEMENT_MAX_PARTICIPANTS`
+individually autocompleted, optional slots (`participant_1` required, the
+rest optional) rather than one free-text field."""
 MAX_ENGAGEMENT_HISTORY_TURNS = 12
 """How many prior `SceneMessage` rows (player lines and NPC replies alike)
 get fed back to the LLM as conversation history for an engagement reply
