@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 
 from panem_shared.content.loader import ContentBundle
 from panem_shared.db.models import (
+    ApartmentLease,
     Character,
     DistrictState,
     JobHistory,
@@ -27,6 +28,8 @@ from panem_shared.db.models import (
     Memory,
     Npc,
     NpcSchedule,
+    Property,
+    PropertyAuction,
     RelationshipRow,
     Shift,
 )
@@ -114,3 +117,15 @@ class WorldState:
     deleted_memory_ids: list[int] = field(default_factory=list)
     """`Memory` row ids `memory.py` wants pruned this tick (expired, or
     over `MEMORY_CAP_PER_NPC` for their owner); deleted by `tick.py`."""
+    properties: dict[int, Property] = field(default_factory=dict)
+    """Every `Property` row, keyed by id -- `panem_sim.systems.housing`
+    mutates these in place (payment collection, foreclosure) the same way
+    `jobs.py` mutates `characters`."""
+    apartment_leases: dict[int, ApartmentLease] = field(default_factory=dict)
+    """Every `ApartmentLease` row, keyed by id."""
+    property_auctions: dict[int, PropertyAuction] = field(default_factory=dict)
+    """Every open `PropertyAuction` row, keyed by id."""
+    new_property_auctions: list[PropertyAuction] = field(default_factory=list)
+    """`PropertyAuction` rows `housing.py` creates this tick (a
+    foreclosure auto-listing a repossessed property); persisted by
+    `tick.py` like `new_shifts`."""

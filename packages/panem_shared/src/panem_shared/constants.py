@@ -268,3 +268,30 @@ REP_ILLICIT_CAUGHT_PENALTY = 15
 """Reputation lost on top of the existing fine/jail/peacekeeper-pressure
 consequence when an illicit-market trade gets caught
 (`panem_bot.services.market._apply_illicit_consequence`)."""
+
+# Housing system: houses/apartments/inns, procedurally seeded per district
+# (no hand-authored YAML content -- `panem_sim.world.seed_properties`).
+# No spec document defines any of this; same placeholder caveat as the
+# other non-spec-sourced blocks above.
+HOUSE_BASE_PRICE_BY_TIER: dict[str, float] = {
+    "apprentice": 500.0,
+    "novice": 1_200.0,
+    "journeyman": 2_500.0,
+    "master": 5_000.0,
+    "expert": 10_000.0,
+}
+"""A house's base purchase price before district/mastery/reputation
+modifiers (`panem_bot.services.housing.quoted_price`), keyed by the
+`JobLevel` tier it's gated to."""
+APARTMENT_UNIT_BASE_PRICE = 800.0
+"""Buying out a single vacant apartment unit -- not tier-gated."""
+APARTMENT_UNIT_BASE_RENT = 40.0
+"""Listed rent for a vacant apartment unit before any landlord repricing."""
+INN_BASE_NIGHTLY_PRICE = 15.0
+"""What a night at an NPC-run inn costs before any owner repricing --
+covers lodging (fatigue restoration) and food (hunger reduction) both."""
+
+HOUSES_PER_TIER_PER_DISTRICT = 3
+APARTMENT_COMPLEXES_PER_DISTRICT = 2
+APARTMENT_UNITS_PER_COMPLEX = 6
+INNS_PER_DISTRICT = 1

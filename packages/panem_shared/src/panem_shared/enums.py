@@ -96,6 +96,17 @@ class Position(enum.StrEnum):
     GOVERNOR = "governor"
 
 
+class PropertyKind(enum.StrEnum):
+    """A `Property` row's kind (housing system). Ownership reuses
+    `OwnerKind`; a house's tier reuses `JobLevel` -- apartments and inns
+    store a placeholder tier (they aren't gated by job level, see
+    `panem_bot.services.housing`)."""
+
+    HOUSE = "house"
+    APARTMENT = "apartment"
+    INN = "inn"
+
+
 class JobLevel(enum.StrEnum):
     """A player character's skill level at their free-typed job
     (`Character.job_title`), driven purely by `Character.shifts_completed`

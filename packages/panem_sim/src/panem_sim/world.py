@@ -28,8 +28,8 @@ from panem_shared.content.loader import ContentBundle, load_content
 from panem_shared.content.names import sample_names
 from panem_shared.content.schemas import District, Job, Location, NpcContent
 from panem_shared.content.traits import sample_traits, speech_tone
-from panem_shared.db.models import DistrictState, Npc, NpcSchedule
-from panem_shared.enums import DayPhase, LocationKind
+from panem_shared.db.models import DistrictState, Npc, NpcSchedule, Property
+from panem_shared.enums import DayPhase, JobLevel, LocationKind, OwnerKind, PropertyKind
 from panem_sim.rng import seed_rng
 from panem_sim.systems.economy import is_shopkeeper_job
 
@@ -53,6 +53,75 @@ async def seed_district_state(session: AsyncSession, content: ContentBundle) -> 
                 quota_target=district.quota.amount if district.quota else 0.0,
             )
         )
+
+
+_UNTIERED_PLACEHOLDER = JobLevel.APPRENTICE.value
+"""Apartments and inns aren't tier-gated (`panem_bot.services.housing`),
+but `Property.tier` is `nullable=False` -- this fills the column with a
+value that's simply never read for those two kinds, rather than making
+the column nullable for two kinds out of three."""
+
+
+async def seed_properties(session: AsyncSession, content: ContentBundle) -> None:
+    """Procedurally seeds houses/apartments/inns per district (idempotent:
+    a district already holding any `Property` row is left untouched) --
+    no hand-authored YAML content for individual properties, the same way
+    `_seed_synthetic_npcs` stands in for real NPC content until it's
+    authored, except here there's no authored alternative at all (housing
+    has no per-property narrative content worth hand-writing).
+
+    Apartment units are never `for_sale` individually -- `suggested_price`
+    is their rent instead (`APARTMENT_UNIT_BASE_RENT`). Buying an entire
+    complex outright (`panem_bot.services.housing`) is priced from
+    `APARTMENT_UNIT_BASE_PRICE * len(units)` at transaction time rather
+    than stored per-unit, since "the complex" isn't a row of its own here
+    -- `complex_id` is just a shared grouping key."""
+    existing_districts = set(
+        (await session.execute(select(Property.district_id).distinct())).scalars().all()
+    )
+    for district in content.districts.values():
+        if district.id in existing_districts:
+            continue
+
+        for tier, base_price in constants.HOUSE_BASE_PRICE_BY_TIER.items():
+            for _ in range(constants.HOUSES_PER_TIER_PER_DISTRICT):
+                session.add(
+                    Property(
+                        district_id=district.id,
+                        kind=PropertyKind.HOUSE.value,
+                        tier=tier,
+                        owner_kind=OwnerKind.NPC.value,
+                        for_sale=True,
+                        suggested_price=base_price,
+                    )
+                )
+
+        for complex_n in range(1, constants.APARTMENT_COMPLEXES_PER_DISTRICT + 1):
+            complex_id = f"d{district.id}_complex_{complex_n}"
+            for _ in range(constants.APARTMENT_UNITS_PER_COMPLEX):
+                session.add(
+                    Property(
+                        district_id=district.id,
+                        kind=PropertyKind.APARTMENT.value,
+                        tier=_UNTIERED_PLACEHOLDER,
+                        complex_id=complex_id,
+                        owner_kind=OwnerKind.NPC.value,
+                        for_sale=False,
+                        suggested_price=constants.APARTMENT_UNIT_BASE_RENT,
+                    )
+                )
+
+        for _ in range(constants.INNS_PER_DISTRICT):
+            session.add(
+                Property(
+                    district_id=district.id,
+                    kind=PropertyKind.INN.value,
+                    tier=_UNTIERED_PLACEHOLDER,
+                    owner_kind=OwnerKind.NPC.value,
+                    for_sale=True,
+                    suggested_price=constants.INN_BASE_NIGHTLY_PRICE,
+                )
+            )
 
 
 def _generic_schedule(district: District, home_id: str) -> dict[DayPhase, dict[str, float]]:
@@ -220,6 +289,7 @@ async def seed_npcs(session: AsyncSession, content: ContentBundle, world_seed: s
 async def seed_world(session: AsyncSession, content: ContentBundle, world_seed: str) -> None:
     await seed_district_state(session, content)
     await seed_npcs(session, content, world_seed)
+    await seed_properties(session, content)
 
 
 async def total_npc_count(session: AsyncSession) -> int:

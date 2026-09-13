@@ -38,6 +38,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from panem_shared.db.base import Base, TimestampMixin
 from panem_shared.enums import (
     CharacterStatus,
+    OwnerKind,
     SceneKind,
     SceneStatus,
     Stance,
@@ -124,6 +125,13 @@ class Character(TimestampMixin, Base):
 
     jailed_until_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
     in_games: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    housing_property_id: Mapped[int | None] = mapped_column(
+        ForeignKey("properties.id"), nullable=True
+    )
+    """The character's home -- an owned `HOUSE`, or the `Property` behind
+    their current `ApartmentLease`. `None` means no fixed home: sleeping
+    (`/sleep`) falls back to the ground's reduced fatigue restoration and
+    an inn stay is a one-off nightly transaction, not a lasting home."""
     positions: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     """`Position` enum values (Victor/Gamemaker/Governor), staff-granted via
     `/staff give position` -- not content-authored or applied for like a
@@ -352,6 +360,107 @@ class JobHistory(Base):
     started_tick: Mapped[int] = mapped_column(Integer, nullable=False)
     ended_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
     reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+
+class Property(Base):
+    """A purchasable/rentable house, apartment unit, or inn (housing
+    system). `district_id` is a plain content-referencing column (no FK,
+    same convention as `Character.district_id` -- districts live in
+    content YAML, not a DB table).
+
+    `tier` is a `JobLevel.value` gating who may *buy* the property --
+    meaningful for a house (a character's job level must be at or above
+    it, per `panem_bot.services.housing`), a fixed placeholder for an
+    apartment or inn, neither of which is tier-gated.
+
+    `complex_id` groups every `APARTMENT`-kind unit in the same building;
+    owning every unit sharing one `complex_id` is what makes a character
+    that building's landlord (computed on the fly from ownership, not a
+    stored flag -- nothing here directly represents "is a landlord").
+
+    `asking_price` is `None` until a seller (or staff) overrides
+    `suggested_price` -- `panem_bot.services.housing.quoted_price` reads
+    whichever is set. It doubles as more than a sale price depending on
+    `kind`: an apartment unit's listed rent when vacant, or an inn's
+    price per night -- documented here rather than adding a column per
+    kind for what's ultimately one "current listed price" concept.
+
+    `mortgage_principal`/`mortgage_payment`/`mortgage_next_due_tick`/
+    `mortgage_missed_payments` track a financed purchase's remaining
+    installments. For an inn, the same four fields double as its daily
+    maintenance-due tracking (`mortgage_payment` = the daily maintenance
+    cost, `mortgage_principal` unused) -- one collection/foreclosure loop
+    in `panem_sim.systems.housing` handles both rather than two parallel
+    mechanisms for "can't afford the payment"."""
+
+    __tablename__ = "properties"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    district_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    tier: Mapped[str] = mapped_column(String(16), nullable=False)
+    complex_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+
+    owner_kind: Mapped[str] = mapped_column(String(16), nullable=False, default=OwnerKind.NPC.value)
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey("characters.id"), nullable=True)
+
+    for_sale: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    suggested_price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    asking_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    mortgage_principal: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    mortgage_payment: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    mortgage_next_due_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    mortgage_missed_payments: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    created_at_tick: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class ApartmentLease(Base):
+    """The one active tenancy on an `APARTMENT`-kind `Property` -- vacating
+    (voluntary move-out or an eviction past `RENT_MISSES_TO_EVICT`)
+    deletes this row rather than keeping lease history, so a unique
+    `property_id` is enough to guarantee one active lease per unit."""
+
+    __tablename__ = "apartment_leases"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    property_id: Mapped[int] = mapped_column(
+        ForeignKey("properties.id"), nullable=False, index=True
+    )
+    tenant_character_id: Mapped[int] = mapped_column(
+        ForeignKey("characters.id"), nullable=False, index=True
+    )
+    rent_price: Mapped[float] = mapped_column(Float, nullable=False)
+    started_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+    next_rent_due_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+    missed_payments: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    __table_args__ = (UniqueConstraint("property_id", name="uq_apartment_lease_one_per_unit"),)
+
+
+class PropertyAuction(Base):
+    """A `Property` listed for bidding -- either voluntary (`seller_kind`
+    is a real `OwnerKind`) or the automatic foreclosure fallback
+    (`seller_kind="bank"`, no `seller_id`) `panem_sim.systems.housing`
+    creates when a mortgage/rent/maintenance payment is missed too many
+    times."""
+
+    __tablename__ = "property_auctions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    property_id: Mapped[int] = mapped_column(
+        ForeignKey("properties.id"), nullable=False, index=True
+    )
+    seller_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    seller_id: Mapped[int | None] = mapped_column(ForeignKey("characters.id"), nullable=True)
+    minimum_bid: Mapped[float] = mapped_column(Float, nullable=False)
+    current_bid: Mapped[float | None] = mapped_column(Float, nullable=True)
+    current_bidder_id: Mapped[int | None] = mapped_column(
+        ForeignKey("characters.id"), nullable=True
+    )
+    ends_at_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
 
 
 class WorldEvent(TimestampMixin, Base):

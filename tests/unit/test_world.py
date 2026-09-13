@@ -18,8 +18,8 @@ from panem_shared.content.schemas import (
     NpcContent,
 )
 from panem_shared.content.traits import TRAITS_PER_NPC
-from panem_shared.db.models import DistrictState, Npc, NpcSchedule
-from panem_shared.enums import DayPhase
+from panem_shared.db.models import DistrictState, Npc, NpcSchedule, Property
+from panem_shared.enums import DayPhase, OwnerKind, PropertyKind
 from panem_sim import world
 
 
@@ -401,6 +401,113 @@ class TestSeedWorld:
             (await db_session.execute(select(DistrictState))).scalars().all()
         )
         npc_count = await world.total_npc_count(db_session)
+        property_count = len((await db_session.execute(select(Property))).scalars().all())
 
         assert district_state_count == 2
         assert npc_count == 2 * constants.SYNTHETIC_NPCS_PER_DISTRICT
+        assert property_count > 0
+
+
+class TestSeedProperties:
+    def _expected_properties_per_district(self) -> int:
+        return (
+            len(constants.HOUSE_BASE_PRICE_BY_TIER) * constants.HOUSES_PER_TIER_PER_DISTRICT
+            + constants.APARTMENT_COMPLEXES_PER_DISTRICT * constants.APARTMENT_UNITS_PER_COMPLEX
+            + constants.INNS_PER_DISTRICT
+        )
+
+    async def test_seeds_the_configured_volume_per_district(self, db_session):
+        content = make_content(make_district(1), make_district(2))
+
+        await world.seed_properties(db_session, content)
+        await db_session.flush()
+
+        for district_id in (1, 2):
+            count = len(
+                (
+                    await db_session.execute(
+                        select(Property).where(Property.district_id == district_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert count == self._expected_properties_per_district()
+
+    async def test_is_idempotent_per_district(self, db_session):
+        content = make_content(make_district(1))
+
+        await world.seed_properties(db_session, content)
+        await db_session.flush()
+        await world.seed_properties(db_session, content)
+        await db_session.flush()
+
+        rows = (await db_session.execute(select(Property))).scalars().all()
+        assert len(rows) == self._expected_properties_per_district()
+
+    async def test_seeds_every_house_tier(self, db_session):
+        content = make_content(make_district(1))
+
+        await world.seed_properties(db_session, content)
+        await db_session.flush()
+
+        houses = (
+            (
+                await db_session.execute(
+                    select(Property).where(Property.kind == PropertyKind.HOUSE.value)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        tiers = {house.tier for house in houses}
+        assert tiers == set(constants.HOUSE_BASE_PRICE_BY_TIER)
+        for house in houses:
+            assert house.suggested_price == constants.HOUSE_BASE_PRICE_BY_TIER[house.tier]
+            assert house.for_sale is True
+            assert house.owner_kind == OwnerKind.NPC.value
+
+    async def test_apartment_units_are_grouped_into_complexes(self, db_session):
+        content = make_content(make_district(1))
+
+        await world.seed_properties(db_session, content)
+        await db_session.flush()
+
+        apartments = (
+            (
+                await db_session.execute(
+                    select(Property).where(Property.kind == PropertyKind.APARTMENT.value)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(apartments) == (
+            constants.APARTMENT_COMPLEXES_PER_DISTRICT * constants.APARTMENT_UNITS_PER_COMPLEX
+        )
+        complex_ids = {unit.complex_id for unit in apartments}
+        assert len(complex_ids) == constants.APARTMENT_COMPLEXES_PER_DISTRICT
+        for unit in apartments:
+            assert unit.for_sale is False
+            assert unit.suggested_price == constants.APARTMENT_UNIT_BASE_RENT
+
+    async def test_seeds_npc_run_inns(self, db_session):
+        content = make_content(make_district(1))
+
+        await world.seed_properties(db_session, content)
+        await db_session.flush()
+
+        inns = (
+            (
+                await db_session.execute(
+                    select(Property).where(Property.kind == PropertyKind.INN.value)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(inns) == constants.INNS_PER_DISTRICT
+        for inn in inns:
+            assert inn.owner_kind == OwnerKind.NPC.value
+            assert inn.for_sale is True
+            assert inn.suggested_price == constants.INN_BASE_NIGHTLY_PRICE
