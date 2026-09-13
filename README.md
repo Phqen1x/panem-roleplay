@@ -1062,6 +1062,12 @@ job, and extends the district economy to react to it.
   the gate, same as it already was for names/backstories. Staff can also change a job any
   time after approval with `/staff give job <character> <job_title> <shift_phase>`, which
   now takes free text + a shift choice instead of a catalog job id.
+- **`/staff give mastery <character> [shifts_completed] [level]`** lets staff directly
+  correct or grant a character's job progress -- either an exact `Character.shifts_completed`
+  count, or a `JobLevel` choice (Apprentice-Expert) that jumps straight to that level's shift
+  threshold (`constants.JOB_LEVEL_SHIFT_THRESHOLDS`); `shifts_completed` wins if both are
+  given. Added after the initial rework shipped, since the only way to change level was to
+  actually complete that many shifts.
 - **`/job apply|list|quit` are retired**, along with `/staff job set|option|remove|show`
   (the `JobOverride` DB table they edited is dropped by the same migration) -- there's no
   more catalog for a player to browse or apply to, and no per-job options to edit. A

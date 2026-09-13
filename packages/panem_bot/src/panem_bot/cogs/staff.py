@@ -18,8 +18,9 @@ from panem_bot.services import characters as characters_svc
 from panem_bot.services import jobs as jobs_svc
 from panem_bot.services.staff import log_staff_action
 from panem_bot.strings import t
+from panem_shared import constants, job_levels
 from panem_shared.db.models import Character, DistrictState, Inventory, Scene, User
-from panem_shared.enums import CharacterStatus, DayPhase, OwnerKind, Position, SceneStatus
+from panem_shared.enums import CharacterStatus, DayPhase, JobLevel, OwnerKind, Position, SceneStatus
 
 MESSAGE_LINK_RE = re.compile(r"/channels/(\d+)/(\d+)/(\d+)$")
 
@@ -518,6 +519,56 @@ class StaffCog(commands.Cog):
             )
         await interaction.response.send_message(
             f"**{character}** is now working as **{job_title}** ({shift_phase.value} shift).",
+            ephemeral=True,
+        )
+
+    @give_group.command(
+        name="mastery",
+        description="Set a character's completed shifts / job level (Apprentice-Expert), staff-only",
+    )
+    @app_commands.describe(
+        character="Character name",
+        shifts_completed="Exact completed-shift count to set (takes priority over level)",
+        level="Jump straight to a level's shift threshold instead of an exact count",
+    )
+    @app_commands.autocomplete(character=autocomplete.any_approved)
+    @app_commands.check(_is_staff)
+    async def give_mastery(
+        self,
+        interaction: discord.Interaction,
+        character: str,
+        shifts_completed: int | None = None,
+        level: JobLevel | None = None,
+    ) -> None:
+        if shifts_completed is None and level is None:
+            await interaction.response.send_message(t("mastery_needs_value"), ephemeral=True)
+            return
+        if shifts_completed is not None and shifts_completed < 0:
+            await interaction.response.send_message(t("invalid_shifts_completed"), ephemeral=True)
+            return
+        new_shifts = (
+            shifts_completed
+            if shifts_completed is not None
+            else constants.JOB_LEVEL_SHIFT_THRESHOLDS[level.value]  # type: ignore[union-attr]
+        )
+        async with self.bot.db() as session:
+            row = await self._find_character(session, character)
+            if row is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            row.shifts_completed = new_shifts
+            new_level = job_levels.job_level_for_shifts(new_shifts)
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="give_mastery",
+                target=str(row.id),
+                payload={"shifts_completed": new_shifts, "level": new_level.value},
+            )
+        await interaction.response.send_message(
+            f"**{character}** now has **{new_shifts}** completed shifts -- "
+            f"**{new_level.value.title()}**.",
             ephemeral=True,
         )
 
