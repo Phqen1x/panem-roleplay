@@ -92,6 +92,7 @@ class TestFixedOrder:
             "economy",
             "housing",
             "social",
+            "npc_chatter",
             "reputation",
             "memory",
             "crisis",

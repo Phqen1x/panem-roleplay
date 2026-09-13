@@ -161,6 +161,54 @@ async def generate_llm_reply(
     return reply.strip()
 
 
+def build_npc_to_npc_context(
+    *, npc: Npc, other_npc: Npc, district: District, location: Location
+) -> omni.RequestContext:
+    """The NPC-to-NPC counterpart of `build_request_context`: `speaker`
+    is another NPC rather than a player `Character` (no reputation/job
+    block one of those would carry), and there's no stance/memories
+    lookup -- unprompted ambient chatter (`panem_sim.systems.
+    npc_chatter`) is pure world flavor, not a tracked relationship the
+    way `/talk`'s stance and memories are."""
+    tone = (npc.speech_style or {}).get("tone", "plain")
+    return omni.RequestContext(
+        mode=omni.RequestMode.DIALOGUE,
+        npc={"name": npc.name, "stance": "neutral", "tone": tone},
+        scene={"location": location.name, "district": district.name},
+        speaker={"name": other_npc.name},
+    )
+
+
+async def generate_npc_to_npc_reply(
+    *,
+    npc: Npc,
+    other_npc: Npc,
+    district: District,
+    location: Location,
+    message: str,
+    settings: Settings,
+    history: Sequence[dict[str, str]] = (),
+) -> str:
+    """`npc` is who's about to speak next; `other_npc` is who they're
+    replying to. `message` is the other NPC's last line -- or, for the
+    very first line of the exchange, an OOC stage direction (`(( ... ))`,
+    the same convention `lemonade/system_prompt.md` already documents
+    for out-of-character instructions) rather than anything literally
+    said, since nothing prompted this conversation but proximity."""
+    provider = resolve_provider(npc, settings)
+    if provider == "template":
+        return template_reply(npc, "neutral", message)
+
+    ctx = build_npc_to_npc_context(
+        npc=npc, other_npc=other_npc, district=district, location=location
+    )
+    try:
+        return await generate_llm_reply(ctx, message, settings, history=history)
+    except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
+        logger.warning("dialogue_llm_failed", npc_id=npc.id, error=str(exc))
+        return template_reply(npc, "neutral", message)
+
+
 async def generate_reply(
     *,
     npc: Npc,

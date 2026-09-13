@@ -65,8 +65,26 @@ class CharacterArrived(_EventBase):
     origin_district_id: int
 
 
-WorldEvent = Annotated[NarrationLine | Bulletin | CharacterArrived, Field(discriminator="kind")]
-AnyWorldEvent = NarrationLine | Bulletin | CharacterArrived
+class NpcChatter(_EventBase):
+    """Two co-located, unengaged NPCs strike up a short conversation on
+    their own (`panem_sim.systems.npc_chatter`), purely as ambient world
+    flavor -- never involving a player. Unlike `NarrationLine`, the sim
+    doesn't write the actual lines here (it never calls the LLM anywhere
+    in this codebase); it just decides *that* and *who*, and the bot's
+    narrator generates and posts the exchange into the location's pinned
+    ambient thread, each line as that NPC (name + avatar), not "The
+    Narrator"."""
+
+    kind: Literal["NpcChatter"] = "NpcChatter"
+    district_id: int
+    location_id: str
+    npc_ids: tuple[str, str]
+
+
+WorldEvent = Annotated[
+    NarrationLine | Bulletin | CharacterArrived | NpcChatter, Field(discriminator="kind")
+]
+AnyWorldEvent = NarrationLine | Bulletin | CharacterArrived | NpcChatter
 
 _event_adapter: TypeAdapter[AnyWorldEvent] = TypeAdapter(WorldEvent)
 

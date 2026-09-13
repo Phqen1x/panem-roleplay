@@ -350,3 +350,48 @@ class TestGenerateLlmReply:
         messages = captured["body"]["messages"]  # type: ignore[index]
         assert messages[1:3] == history
         assert messages[-1] == {"role": "user", "content": "Got anything hot?"}
+
+
+class TestNpcToNpcReply:
+    def test_context_uses_the_other_npc_as_speaker(self):
+        ferro = make_npc(id="npc1", name="Old Ferro")
+        sae = make_npc(id="npc2", name="Greasy Sae", speech_style={"tone": "warm"})
+        ctx = dialogue.build_npc_to_npc_context(
+            npc=ferro,
+            other_npc=sae,
+            district=make_district(),
+            location=make_district().locations[-1],
+        )
+        assert ctx.npc == {"name": "Old Ferro", "stance": "neutral", "tone": "blunt"}
+        assert ctx.speaker == {"name": "Greasy Sae"}
+        assert ctx.memories == ()
+
+    async def test_template_provider_never_calls_the_llm(self):
+        ferro = make_npc()
+        sae = make_npc(id="npc2", name="Greasy Sae")
+        reply = await dialogue.generate_npc_to_npc_reply(
+            npc=ferro,
+            other_npc=sae,
+            district=make_district(),
+            location=make_district().locations[-1],
+            message="(( You spot each other and strike up a conversation. ))",
+            settings=make_settings(dialogue_provider="template"),
+        )
+        assert "Old Ferro" in reply
+
+    async def test_llm_failure_falls_back_to_the_template(self, monkeypatch):
+        async def failing_llm(ctx, message, settings, *, history=()):
+            raise httpx.ConnectError("no route to host")
+
+        monkeypatch.setattr(dialogue, "generate_llm_reply", failing_llm)
+        ferro = make_npc()
+        sae = make_npc(id="npc2", name="Greasy Sae")
+        reply = await dialogue.generate_npc_to_npc_reply(
+            npc=ferro,
+            other_npc=sae,
+            district=make_district(),
+            location=make_district().locations[-1],
+            message="(( opener ))",
+            settings=make_settings(dialogue_provider="llm"),
+        )
+        assert reply == dialogue.template_reply(ferro, "neutral", "(( opener ))")

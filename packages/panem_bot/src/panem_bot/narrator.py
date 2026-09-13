@@ -30,19 +30,23 @@ started from `PanemBot.setup_hook`, not a cog -- it owns no commands or
 
 from __future__ import annotations
 
+import random
 from typing import TYPE_CHECKING, Any
 
 import discord
 from sqlalchemy import select
 
 from panem_bot.outbound import OutboundMessage, SendPriority
-from panem_shared.db.models import Character, DiscordChannel, Scene, User
+from panem_bot.services import dialogue as dialogue_svc
+from panem_shared import constants
+from panem_shared.db.models import Character, DiscordChannel, Npc, Scene, User
 from panem_shared.enums import ChannelKind, SceneKind
 from panem_shared.events import (
     WORLD_EVENTS_CHANNEL,
     Bulletin,
     CharacterArrived,
     NarrationLine,
+    NpcChatter,
     parse_message,
 )
 from panem_shared.logging import get_logger
@@ -156,6 +160,115 @@ async def _handle_bulletin(bot: PanemBot, event: Bulletin) -> None:
     )
 
 
+_NPC_CHATTER_OPENER = (
+    "(( You notice each other nearby and strike up a brief, in-character conversation. ))"
+)
+
+
+async def _handle_npc_chatter(bot: PanemBot, event: NpcChatter) -> None:
+    """Two NPCs talking to each other with nobody prompting it --
+    `panem_sim.systems.npc_chatter` only decides *that* and *who* (the
+    sim never calls the LLM anywhere in this codebase); this generates
+    the actual lines and posts each one into the location's pinned
+    ambient thread through the district forum's webhook, as that NPC
+    (name + avatar) -- the same visual treatment a player's own proxied
+    line gets, not "The Narrator". `SendPriority.NPC` (documented on
+    `OutboundQueue` itself as existing for exactly this: a burst of NPC
+    chatter never delays a player's own message in the same thread)."""
+    async with bot.db() as session:
+        scene = (
+            await session.execute(
+                select(Scene).where(
+                    Scene.district_id == event.district_id,
+                    Scene.location_id == event.location_id,
+                    Scene.kind == SceneKind.AMBIENT.value,
+                )
+            )
+        ).scalar_one_or_none()
+        if scene is None:
+            logger.warning(
+                "npc_chatter_no_ambient_scene",
+                district_id=event.district_id,
+                location_id=event.location_id,
+            )
+            return
+
+        forum_row = (
+            await session.execute(
+                select(DiscordChannel).where(
+                    DiscordChannel.channel_id == scene.forum_channel_id,
+                    DiscordChannel.kind == ChannelKind.FORUM.value,
+                )
+            )
+        ).scalar_one_or_none()
+
+        first_id, second_id = event.npc_ids
+        first = await session.get(Npc, first_id)
+        second = await session.get(Npc, second_id)
+
+    if forum_row is None or forum_row.webhook_id is None or forum_row.webhook_token is None:
+        logger.warning(
+            "npc_chatter_no_webhook", district_id=event.district_id, location_id=event.location_id
+        )
+        return
+    if first is None or second is None:
+        return
+
+    district = bot.content.district(event.district_id)
+    location = next((loc for loc in district.locations if loc.id == event.location_id), None)
+    if location is None:
+        return
+
+    speakers = (first, second)
+    line_count = random.randint(constants.NPC_CHATTER_MIN_LINES, constants.NPC_CHATTER_MAX_LINES)
+    transcript: list[tuple[str, str]] = []
+    lines: list[tuple[Npc, str]] = []
+    for i in range(line_count):
+        speaker = speakers[i % 2]
+        listener = speakers[(i + 1) % 2]
+        prior = transcript[:-1] if transcript else []
+        trigger = transcript[-1][1] if transcript else _NPC_CHATTER_OPENER
+        history = [
+            {"role": "assistant" if npc_id == speaker.id else "user", "content": text}
+            for npc_id, text in prior
+        ]
+        reply = await dialogue_svc.generate_npc_to_npc_reply(
+            npc=speaker,
+            other_npc=listener,
+            district=district,
+            location=location,
+            message=trigger,
+            settings=bot.settings,
+            history=history,
+        )
+        transcript.append((speaker.id, reply))
+        lines.append((speaker, reply))
+
+    webhook = discord.Webhook.partial(forum_row.webhook_id, forum_row.webhook_token, client=bot)
+    thread_id = scene.thread_id
+    forum_channel_id = scene.forum_channel_id
+
+    for speaker, reply in lines:
+
+        async def send(speaker: Npc = speaker, reply: str = reply) -> None:
+            await webhook.send(
+                reply,
+                username=speaker.name,
+                avatar_url=speaker.avatar_url or discord.utils.MISSING,
+                thread=discord.Object(id=thread_id),
+                wait=True,
+            )
+
+        await bot.outbound.enqueue(
+            OutboundMessage(
+                thread_id=thread_id,
+                forum_channel_id=forum_channel_id,
+                priority=SendPriority.NPC,
+                send=send,
+            )
+        )
+
+
 async def _resolve_district_role(
     bot: PanemBot, guild: discord.Guild, district_id: int
 ) -> discord.Role | None:
@@ -224,6 +337,8 @@ async def _dispatch(bot: PanemBot, raw: Any) -> None:
         await _handle_bulletin(bot, event)
     elif isinstance(event, CharacterArrived):
         await _handle_character_arrived(bot, event)
+    elif isinstance(event, NpcChatter):
+        await _handle_npc_chatter(bot, event)
 
 
 async def _handle_sim_alert(bot: PanemBot, raw: str) -> None:
