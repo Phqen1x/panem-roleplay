@@ -1177,6 +1177,18 @@ was verified with a headless Chromium (Playwright) smoke test per game plus a fu
 mocked round-trip through the coordinator, not by the pytest suite (there's no JS test
 runner wired into this repo).
 
+**Opting out of the minigame entirely.** `/work`'s minigame-launch message (both the
+Discord-Activity and plain-browser-link variants) now carries a second button, "Skip
+(neutral wage)", alongside the launch button -- a non-link button whose click resolves the
+shift immediately for the same flat, unmodified wage Solitaire's "Give Up" pays
+(`resolve_shift_game(won=False, neutral=True, ...)`), no win buff or lose debuff either
+way. `JobsCog._finish_shift` gained a `neutral` keyword shared by this button and the
+no-Activity coin-flip path, with its own outcome text ("skips the shift's minigame").
+Implemented as `_SkipButton`, a small `discord.ui.Button` subclass (an injected coroutine,
+matching `views.py`'s `ShiftPhaseSelect`/`ChangesNoteModal` pattern) rather than assigning
+to `Button.callback` directly, which mypy's `strict` mode rejects (`method-assign`) since
+`callback` is a real method on the base class, not a plain instance attribute.
+
 ## Upgrading past duplicate character names
 
 The migration that adds the name-uniqueness index (`7116c3213f6e`) will

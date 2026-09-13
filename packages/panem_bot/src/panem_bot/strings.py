@@ -84,10 +84,10 @@ STRINGS: dict[str, str] = {
     "work_ok": "**{name}** {outcome}: +{wage} money, {rep_delta:+d} reputation.",
     "work_game_ready": "**{name}** clocks in for **{title}**. Play the shift's minigame below "
     "(opens in your browser) -- you're paid based on how it goes, even if you finish after "
-    "the shift ends.",
+    "the shift ends. Not in the mood? Skip it for a flat, neutral wage instead.",
     "work_game_ready_activity": "**{name}** clocks in for **{title}**. Launch the shift's "
     "minigame in Discord below -- you're paid based on how it goes, even if you finish after "
-    "the shift ends.",
+    "the shift ends. Not in the mood? Skip it for a flat, neutral wage instead.",
     "level_up": " **{name}** is now a **{level}** -- wages just went up!",
     # Residents (FR-NPC)
     "no_residents_in_district": "No residents are seeded for that district yet.",

@@ -11,6 +11,7 @@ universal Apprentice->Expert progression replaced it.
 from __future__ import annotations
 
 import random
+from collections.abc import Awaitable, Callable
 
 import discord
 from discord import app_commands
@@ -27,6 +28,21 @@ from panem_shared.db.models import Character, Shift, WorldClock
 from panem_shared.logging import get_logger
 
 logger = get_logger(component="jobs")
+
+
+class _SkipButton(discord.ui.Button["discord.ui.View"]):
+    """A plain callback button (not a link) offering a flat, neutral wage
+    instead of playing the minigame -- same shape as `views.py`'s
+    `ShiftPhaseSelect`/`ChangesNoteModal` (an injected coroutine rather
+    than a subclass override elsewhere), kept local here since it's
+    tightly coupled to `JobsCog._finish_shift`."""
+
+    def __init__(self, on_click: Callable[[discord.Interaction], Awaitable[None]]) -> None:
+        super().__init__(label="Skip (neutral wage)", style=discord.ButtonStyle.secondary)
+        self._on_click = on_click
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await self._on_click(interaction)
 
 
 class JobsCog(commands.Cog):
@@ -47,8 +63,34 @@ class JobsCog(commands.Cog):
         clock = await session.get(WorldClock, 1)
         return clock.tick if clock is not None else 0
 
+    def _skip_button(self, shift_id: int, char_id: int) -> _SkipButton:
+        """Lets a player opt out of the minigame entirely from the same
+        message that offers to launch it -- resolves the shift right away
+        for a flat, neutral wage (`resolve_shift_game`'s `neutral` param,
+        same mechanism as Solitaire's "Give Up"), no win buff or lose
+        debuff either way."""
+
+        async def on_click(skip_interaction: discord.Interaction) -> None:
+            async with self.bot.db() as session:  # type: ignore[attr-defined]
+                shift = await session.get(Shift, shift_id)
+                if shift is None or shift.result is not None:
+                    await skip_interaction.response.send_message(
+                        t("shift_no_longer_open"), ephemeral=True
+                    )
+                    return
+                char = await session.get(Character, char_id)
+                if char is None:
+                    await skip_interaction.response.send_message(
+                        t("character_not_found"), ephemeral=True
+                    )
+                    return
+                text = await self._finish_shift(session, shift, char, won=False, neutral=True)
+            await skip_interaction.response.send_message(text, ephemeral=True)
+
+        return _SkipButton(on_click)
+
     async def _activity_launch_view(
-        self, interaction: discord.Interaction, activity_url: str, shift_id: int
+        self, interaction: discord.Interaction, activity_url: str, shift_id: int, char_id: int
     ) -> tuple[discord.ui.View, bool]:
         """Prefer a real in-Discord Activity launch over a plain browser
         link: an `embedded_application` invite on the player's current
@@ -89,6 +131,7 @@ class JobsCog(commands.Cog):
                         label="Launch in Discord", url=invite.url, style=discord.ButtonStyle.link
                     )
                 )
+                view.add_item(self._skip_button(shift_id, char_id))
                 return view, True
 
         url = f"{activity_url.rstrip('/')}/work.html?shift_id={shift_id}"
@@ -96,6 +139,7 @@ class JobsCog(commands.Cog):
         view.add_item(
             discord.ui.Button(label="Play for your shift", url=url, style=discord.ButtonStyle.link)
         )
+        view.add_item(self._skip_button(shift_id, char_id))
         return view, False
 
     # ------------------------------------------------------------------ /work
@@ -137,16 +181,15 @@ class JobsCog(commands.Cog):
                 await session.flush()
 
             activity_url = self.bot.settings.activity_public_url  # type: ignore[attr-defined]
+            char_id, shift_id, char_name = char.id, open_shift.id, char.name
             if activity_url:
                 current_tick = await self._current_tick(session)
                 shifts_svc.start_shift_game(open_shift, current_tick)
-                char_name, shift_id, job_title = char.name, open_shift.id, char.job_title
-            else:
-                char_id, shift_id, char_name = char.id, open_shift.id, char.name
+                job_title = char.job_title
 
         if activity_url:
             view, launched_in_discord = await self._activity_launch_view(
-                interaction, activity_url, shift_id
+                interaction, activity_url, shift_id, char_id
             )
             key = "work_game_ready_activity" if launched_in_discord else "work_game_ready"
             await interaction.response.send_message(
@@ -179,12 +222,20 @@ class JobsCog(commands.Cog):
         await interaction.response.send_message(text, ephemeral=True)
 
     async def _finish_shift(
-        self, session: AsyncSession, shift: Shift, char: Character, won: bool
+        self,
+        session: AsyncSession,
+        shift: Shift,
+        char: Character,
+        won: bool,
+        *,
+        neutral: bool = False,
     ) -> str:
-        """Resolves `shift` (won or lost) and builds the reply text,
-        including a level-up line if this shift's completion crosses one
-        of `panem_shared.job_levels`' thresholds. Shared by the
-        no-Activity coin-flip path above."""
+        """Resolves `shift` (won, lost, or -- `neutral=True` -- skipped for
+        a flat wage with no win buff or lose debuff) and builds the reply
+        text, including a level-up line if this shift's completion crosses
+        one of `panem_shared.job_levels`' thresholds. Shared by the
+        no-Activity coin-flip path and the minigame-launch message's Skip
+        button above."""
         current_tick = await self._current_tick(session)
         content = self.bot.content  # type: ignore[attr-defined]
         district = content.district(char.district_id)
@@ -193,12 +244,17 @@ class JobsCog(commands.Cog):
         )
         before_level = job_levels.job_level_for_shifts(char.shifts_completed)
         outcome = shifts_svc.resolve_shift_game(
-            char, district, won=won, market_multiplier=market_multiplier
+            char, district, won=won, market_multiplier=market_multiplier, neutral=neutral
         )
         shifts_svc.apply_shift_outcome(shift, char, outcome, tick=current_tick)
         after_level = job_levels.job_level_for_shifts(char.shifts_completed)
 
-        outcome_word = "clears the shift" if won else "barely gets through the shift"
+        if neutral:
+            outcome_word = "skips the shift's minigame"
+        elif won:
+            outcome_word = "clears the shift"
+        else:
+            outcome_word = "barely gets through the shift"
         text = t(
             "work_ok",
             name=char.name,
