@@ -12,15 +12,31 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from panem_bot import redis_keys
+from panem_bot.errors import NotAllowed
 from panem_bot.outbound import OutboundMessage, SendPriority
 from panem_bot.services import characters as characters_svc
+from panem_bot.services import dialogue as dialogue_svc
+from panem_bot.services import engagements as engagements_svc
 from panem_bot.services import housing as housing_svc
 from panem_bot.services import proxy as proxy_svc
 from panem_bot.services import shifts as shifts_svc
 from panem_bot.strings import t
 from panem_shared import constants
-from panem_shared.db.models import Character, DiscordChannel, Scene, Shift, User, WorldClock
-from panem_shared.enums import ChannelKind, CharacterStatus
+from panem_shared.db.models import (
+    Character,
+    DialogueLog,
+    DiscordChannel,
+    Memory,
+    Npc,
+    RelationshipRow,
+    Scene,
+    SceneMessage,
+    Shift,
+    User,
+    WorldClock,
+)
+from panem_shared.enums import ChannelKind, CharacterStatus, OwnerKind, SceneKind
+from panem_shared.relationships import relationship_key
 
 
 class ProxyCog(commands.Cog):
@@ -296,8 +312,9 @@ class ProxyCog(commands.Cog):
             webhook_row.webhook_id, webhook_row.webhook_token, client=self.bot
         )
         chunks = proxy_svc.split_for_webhook(content or "​")
+        is_engagement = scene is not None and scene.kind == SceneKind.ENGAGEMENT.value
 
-        async def send_chunk(chunk: str, files: list[discord.File]) -> None:
+        async def send_chunk(chunk: str, files: list[discord.File], *, is_last: bool) -> None:
             sent = await webhook.send(
                 chunk,
                 username=character.name,
@@ -315,17 +332,220 @@ class ProxyCog(commands.Cog):
             await self.bot.redis.expire(
                 redis_keys.scene_presence_key(thread.id), redis_keys.PRESENCE_TTL_S
             )
+            if is_last and is_engagement:
+                assert scene is not None
+                await self.post_engagement_replies(
+                    webhook=webhook,
+                    thread=thread,
+                    scene_id=scene.id,
+                    speaker_character_id=character.id,
+                    speaker_message_id=sent.id,
+                    message_content=content,
+                )
 
         for i, chunk in enumerate(chunks):
-            files = attachments if i == len(chunks) - 1 else []
+            is_last = i == len(chunks) - 1
+            files = attachments if is_last else []
             await self.bot.outbound.enqueue(
                 OutboundMessage(
                     thread_id=thread.id,
                     forum_channel_id=thread.parent_id,
                     priority=SendPriority.PLAYER,
-                    send=(lambda c=chunk, f=files: send_chunk(c, f)),
+                    send=(lambda c=chunk, f=files, last=is_last: send_chunk(c, f, is_last=last)),
                 )
             )
+
+    async def post_engagement_replies(
+        self,
+        *,
+        webhook: discord.Webhook,
+        thread: discord.Thread,
+        scene_id: int,
+        speaker_character_id: int,
+        speaker_message_id: int,
+        message_content: str,
+    ) -> None:
+        """After a player's line lands in an `ENGAGEMENT`-kind scene, let
+        whichever NPCs should respond (`engagements_svc.npcs_that_should_
+        reply` -- every joined NPC in a strict 1:1, only the ones actually
+        named otherwise) generate and post a reply through the same
+        webhook, as themselves -- exactly how the player's own line was
+        just proxied, only NPC-authored. Not underscore-private: `/talk`
+        (`panem_bot.cogs.dialogue`) posts its own player line directly
+        (it isn't a raw channel message `on_message` can intercept) and
+        calls this via `bot.get_cog("ProxyCog")` to trigger the NPC's
+        reply the same way, rather than duplicating this whole method.
+        Records both the player's line and each reply as a `SceneMessage`
+        (read back as `history` for the next reply) and each NPC reply as
+        a `DialogueLog` row -- the first
+        real use of either table. Deliberately never touches `scene.
+        last_message_at`: that column means "last time a *player* spoke"
+        for `EngagementCog`'s idle-timeout background task, and an NPC
+        replying forever must not keep an empty engagement alive."""
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            scene = await session.get(Scene, scene_id)
+            speaker = await session.get(Character, speaker_character_id)
+            if scene is None or speaker is None:
+                return
+
+            session.add(
+                SceneMessage(
+                    scene_id=scene.id,
+                    thread_id=thread.id,
+                    district_id=scene.district_id,
+                    discord_message_id=speaker_message_id,
+                    author_kind="character",
+                    author_id=str(speaker.id),
+                    author_name=speaker.name,
+                    avatar_url=speaker.avatar_url,
+                    content=message_content,
+                    ts=dt.datetime.now(dt.UTC),
+                )
+            )
+
+            participants = scene.participants
+            npc_ids = participants.get("npcs", [])
+            if not npc_ids:
+                return
+            npcs = (await session.execute(select(Npc).where(Npc.id.in_(npc_ids)))).scalars().all()
+            is_one_on_one = len(participants.get("characters", [])) == 1 and len(npc_ids) == 1
+            speaking = engagements_svc.npcs_that_should_reply(
+                list(npcs), message_content, is_one_on_one=is_one_on_one
+            )
+            if not speaking:
+                return
+
+            other_character_ids = [
+                cid for cid in participants.get("characters", []) if cid != speaker.id
+            ]
+            other_character_names = (
+                (
+                    await session.execute(
+                        select(Character.name).where(Character.id.in_(other_character_ids))
+                    )
+                )
+                .scalars()
+                .all()
+                if other_character_ids
+                else []
+            )
+
+            history_rows = list(
+                reversed(
+                    (
+                        await session.execute(
+                            select(SceneMessage)
+                            .where(SceneMessage.scene_id == scene.id)
+                            .order_by(SceneMessage.ts.desc())
+                            .limit(constants.MAX_ENGAGEMENT_HISTORY_TURNS)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+            )
+
+            clock = await session.get(WorldClock, 1)
+            current_tick = clock.tick if clock is not None else 0
+            content_bundle = self.bot.content  # type: ignore[attr-defined]
+            district = content_bundle.district(scene.district_id)
+            location = next(
+                (loc for loc in district.locations if loc.id == scene.location_id), None
+            )
+            if location is None:
+                return
+
+            for npc in speaking:
+                try:
+                    await dialogue_svc.check_and_spend_stamina(
+                        self.bot.redis,  # type: ignore[attr-defined]
+                        npc=npc,
+                        tick=current_tick,
+                        ttl_seconds=self.bot.settings.tick_interval_seconds * 2,  # type: ignore[attr-defined]
+                    )
+                except NotAllowed:
+                    continue
+
+                key = relationship_key(
+                    (OwnerKind.CHARACTER.value, str(speaker.id)), (OwnerKind.NPC.value, npc.id)
+                )
+                relationship = await session.get(RelationshipRow, key)
+                stance = relationship.stance if relationship is not None else "stranger"
+                memory_rows = (
+                    (
+                        await session.execute(
+                            select(Memory).where(
+                                Memory.owner_kind == "npc", Memory.owner_id == npc.id
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+
+                history = [
+                    {
+                        "role": "assistant"
+                        if row.author_kind == "npc" and row.author_id == npc.id
+                        else "user",
+                        "content": row.content
+                        if row.author_kind == "npc" and row.author_id == npc.id
+                        else f"{row.author_name}: {row.content}",
+                    }
+                    for row in history_rows
+                ]
+                present = [other.name for other in npcs if other.id != npc.id] + list(
+                    other_character_names
+                )
+
+                reply = await dialogue_svc.generate_reply(
+                    npc=npc,
+                    district=district,
+                    location=location,
+                    character=speaker,
+                    stance=stance,
+                    memories=list(memory_rows),
+                    message=message_content,
+                    settings=self.bot.settings,  # type: ignore[attr-defined]
+                    history=history,
+                    present=present,
+                )
+
+                sent = await webhook.send(
+                    reply,
+                    username=npc.name,
+                    avatar_url=npc.avatar_url or discord.utils.MISSING,
+                    thread=thread,
+                    wait=True,
+                )
+                reply_row = SceneMessage(
+                    scene_id=scene.id,
+                    thread_id=thread.id,
+                    district_id=scene.district_id,
+                    discord_message_id=sent.id,
+                    author_kind="npc",
+                    author_id=npc.id,
+                    author_name=npc.name,
+                    avatar_url=npc.avatar_url,
+                    content=reply,
+                    ts=dt.datetime.now(dt.UTC),
+                )
+                session.add(reply_row)
+                history_rows.append(reply_row)
+                session.add(
+                    DialogueLog(
+                        tick=current_tick,
+                        npc_id=npc.id,
+                        character_id=speaker.id,
+                        scene_id=scene.id,
+                        provider=dialogue_svc.resolve_provider(
+                            npc,
+                            self.bot.settings,  # type: ignore[attr-defined]
+                        ),
+                        context={"message": message_content},
+                        output=reply,
+                    )
+                )
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:

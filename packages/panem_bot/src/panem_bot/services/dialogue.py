@@ -18,6 +18,7 @@ immersion-breaking silently beats a visible error for a roleplay bot.
 from __future__ import annotations
 
 import random
+from collections.abc import Sequence
 
 import httpx
 import structlog
@@ -74,13 +75,23 @@ def build_request_context(
     character: Character,
     stance: str,
     memories: list[Memory],
+    present: Sequence[str] = (),
 ) -> omni.RequestContext:
+    """`present` lists everyone else in the scene besides `character`
+    (other engaged NPCs, other joined characters) -- the system prompt
+    already documents and expects a `[SCENE] ... present: ...` field
+    (see `lemonade/system_prompt.md`'s request-contract example), this is
+    just the first real caller to populate it, for a group `/engage`
+    thread rather than `/talk`'s always-1:1 case."""
     relevant = retrieve_memories(memories, "npc", npc.id)
     tone = (npc.speech_style or {}).get("tone", "plain")
+    scene: dict[str, str] = {"location": location.name, "district": district.name}
+    if present:
+        scene["present"] = ", ".join(present)
     return omni.RequestContext(
         mode=omni.RequestMode.DIALOGUE,
         npc={"name": npc.name, "stance": stance, "tone": tone},
-        scene={"location": location.name, "district": district.name},
+        scene=scene,
         speaker={"name": character.name},
         memories=tuple(m.text for m in relevant),
     )
@@ -118,11 +129,21 @@ def template_reply(npc: Npc, stance: str, message: str) -> str:
     return f"*{npc.name} {opener},* {line}"
 
 
-async def generate_llm_reply(ctx: omni.RequestContext, message: str, settings: Settings) -> str:
+async def generate_llm_reply(
+    ctx: omni.RequestContext,
+    message: str,
+    settings: Settings,
+    *,
+    history: Sequence[dict[str, str]] = (),
+) -> str:
+    """`history` is prior `{role, content}` turns (oldest first) from
+    earlier in the same conversation -- an engagement thread's
+    `SceneMessage` rows, most recently. `/talk`'s always-fresh 1:1 calls
+    just pass none, exactly as before this parameter existed."""
     model = settings.llm_model or omni.PROFILES[settings.lemonade_profile].model_name
     body: dict[str, object] = {
         "model": model,
-        "messages": omni.build_messages(ctx, [{"role": "user", "content": message}]),
+        "messages": omni.build_messages(ctx, [*history, {"role": "user", "content": message}]),
         "max_tokens": 200,
         "temperature": 0.8,
     }
@@ -150,6 +171,8 @@ async def generate_reply(
     memories: list[Memory],
     message: str,
     settings: Settings,
+    history: Sequence[dict[str, str]] = (),
+    present: Sequence[str] = (),
 ) -> str:
     provider = resolve_provider(npc, settings)
     if provider == "template":
@@ -162,9 +185,10 @@ async def generate_reply(
         character=character,
         stance=stance,
         memories=memories,
+        present=present,
     )
     try:
-        return await generate_llm_reply(ctx, message, settings)
+        return await generate_llm_reply(ctx, message, settings, history=history)
     except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
         logger.warning("dialogue_llm_failed", npc_id=npc.id, error=str(exc))
         return template_reply(npc, stance, message)

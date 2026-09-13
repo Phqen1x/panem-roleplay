@@ -1,6 +1,19 @@
-"""`/talk` -- LLM-driven NPC dialogue (Plan Phase 6, `lemonade/README.md`)."""
+"""`/talk` -- LLM-driven NPC dialogue (Plan Phase 6, `lemonade/README.md`).
+
+Folded into the engagement system: talking to an NPC opens (or reuses) a
+one-NPC `SceneKind.ENGAGEMENT` thread and posts both the player's line and
+the NPC's reply into it through the district forum's webhook, exactly like
+any other proxied conversation -- not an ephemeral, thread-less one-shot
+any more. `panem_bot.cogs.proxy.ProxyCog.post_engagement_replies` does the
+actual reply generation/posting/history-recording; this command's own job
+is just finding or creating the thread and posting the player's opening
+line into it, since (unlike a normal proxied message) there's no raw
+channel message here for `on_message` to intercept.
+"""
 
 from __future__ import annotations
+
+import datetime as dt
 
 import discord
 from discord import app_commands
@@ -13,9 +26,10 @@ from panem_bot.errors import NotAllowed, NotFound
 from panem_bot.services import characters as characters_svc
 from panem_bot.services import dialogue as dialogue_svc
 from panem_bot.strings import t
-from panem_shared.db.models import Character, Memory, Npc, RelationshipRow, WorldClock
-from panem_shared.enums import OwnerKind
-from panem_shared.relationships import relationship_key
+from panem_shared.db.models import Character, DiscordChannel, Npc, Scene, WorldClock
+from panem_shared.enums import ChannelKind, SceneKind, SceneStatus
+
+from .scenes import OPEN_TAG, _find_tag
 
 
 class DialogueCog(commands.Cog):
@@ -32,6 +46,18 @@ class DialogueCog(commands.Cog):
             )
         ).scalar_one_or_none()
 
+    async def _forum_for_district(
+        self, session: AsyncSession, district_id: int
+    ) -> DiscordChannel | None:
+        return (
+            await session.execute(
+                select(DiscordChannel).where(
+                    DiscordChannel.district_id == district_id,
+                    DiscordChannel.kind == ChannelKind.FORUM.value,
+                )
+            )
+        ).scalar_one_or_none()
+
     @app_commands.command(name="talk", description="Talk to a resident NPC at your location")
     @app_commands.describe(
         character="Character name",
@@ -42,18 +68,18 @@ class DialogueCog(commands.Cog):
     async def talk(
         self, interaction: discord.Interaction, character: str, resident: str, message: str
     ) -> None:
-        await interaction.response.defer(ephemeral=True)
+        assert interaction.guild is not None
+        await interaction.response.defer(ephemeral=True, thinking=True)
         async with self.bot.db() as session:  # type: ignore[attr-defined]
             char = await self._get_character(session, interaction.user.id, character)
             if char is None:
                 await interaction.followup.send(t("character_not_found"), ephemeral=True)
                 return
 
+            district_id = char.current_district_id
             npc = (
                 await session.execute(
-                    select(Npc).where(
-                        Npc.district_id == char.current_district_id, Npc.name == resident
-                    )
+                    select(Npc).where(Npc.district_id == district_id, Npc.name == resident)
                 )
             ).scalar_one_or_none()
             if npc is None:
@@ -77,45 +103,121 @@ class DialogueCog(commands.Cog):
                 await interaction.followup.send(t(exc.reason_key, **exc.fmt), ephemeral=True)
                 return
 
-            content = self.bot.content  # type: ignore[attr-defined]
-            district = content.district(char.current_district_id)
+            content_bundle = self.bot.content  # type: ignore[attr-defined]
+            district = content_bundle.district(district_id)
             location = next((loc for loc in district.locations if loc.id == npc.location_id), None)
             if location is None:
                 await interaction.followup.send(t("talk_not_here", name=npc.name), ephemeral=True)
                 return
 
-            key = relationship_key(
-                (OwnerKind.CHARACTER.value, str(char.id)), (OwnerKind.NPC.value, npc.id)
-            )
-            relationship = await session.get(RelationshipRow, key)
-            stance = relationship.stance if relationship is not None else "stranger"
-
-            memories = (
+            # Reuse an already-open, exactly-this-pair engagement rather
+            # than spawning a new thread every time the same two talk
+            # again -- a real conversation lives in one place.
+            open_engagements = (
                 (
                     await session.execute(
-                        select(Memory).where(Memory.owner_kind == "npc", Memory.owner_id == npc.id)
+                        select(Scene).where(
+                            Scene.district_id == district_id,
+                            Scene.location_id == npc.location_id,
+                            Scene.kind == SceneKind.ENGAGEMENT.value,
+                            Scene.status == SceneStatus.OPEN.value,
+                        )
                     )
                 )
                 .scalars()
                 .all()
             )
-
-            reply = await dialogue_svc.generate_reply(
-                npc=npc,
-                district=district,
-                location=location,
-                character=char,
-                stance=stance,
-                memories=list(memories),
-                message=message,
-                settings=self.bot.settings,  # type: ignore[attr-defined]
+            existing_scene = next(
+                (
+                    s
+                    for s in open_engagements
+                    if s.participants.get("characters") == [char.id]
+                    and s.participants.get("npcs") == [npc.id]
+                    and not s.participants.get("pending_characters")
+                ),
+                None,
             )
-            npc_name = npc.name
 
-        embed = discord.Embed(description=reply)
-        embed.set_author(name=npc_name)
-        embed.set_footer(text=f"{character}: {message}")
-        await interaction.followup.send(embed=embed, ephemeral=True)
+            forum_row = await self._forum_for_district(session, district_id)
+            if forum_row is None or forum_row.webhook_id is None or forum_row.webhook_token is None:
+                await interaction.followup.send(
+                    "This district has no forum configured.", ephemeral=True
+                )
+                return
+
+            char_name, char_id, char_avatar = char.name, char.id, char.avatar_url
+            npc_id, npc_name = npc.id, npc.name
+            scene_id = existing_scene.id if existing_scene is not None else None
+            thread_id = existing_scene.thread_id if existing_scene is not None else None
+            forum_channel_id = forum_row.channel_id
+            webhook_id, webhook_token = forum_row.webhook_id, forum_row.webhook_token
+
+        webhook = discord.Webhook.partial(webhook_id, webhook_token, client=self.bot)
+
+        if thread_id is not None:
+            thread = self.bot.get_channel(thread_id)
+            if not isinstance(thread, discord.Thread):
+                thread = await interaction.guild.fetch_channel(thread_id)
+        else:
+            forum = interaction.guild.get_channel(forum_channel_id)
+            if not isinstance(forum, discord.ForumChannel):
+                await interaction.followup.send("Forum channel not found.", ephemeral=True)
+                return
+            tags = [
+                tg
+                for tg in (_find_tag(forum, location.name), _find_tag(forum, OPEN_TAG))
+                if tg is not None
+            ]
+            thread_with_message = await forum.create_thread(
+                name=f"{char_name} & {npc_name}",
+                content=f"*{char_name} approaches {npc_name} at {location.name}.*",
+                applied_tags=tags,
+            )
+            thread = thread_with_message.thread
+            async with self.bot.db() as session:  # type: ignore[attr-defined]
+                scene = Scene(
+                    district_id=district_id,
+                    location_id=npc.location_id,
+                    thread_id=thread.id,
+                    forum_channel_id=forum.id,
+                    kind=SceneKind.ENGAGEMENT.value,
+                    title=f"{char_name} & {npc_name}",
+                    created_by_character_id=char_id,
+                    status=SceneStatus.OPEN.value,
+                    last_message_at=dt.datetime.now(dt.UTC),
+                    participants={
+                        "characters": [char_id],
+                        "pending_characters": [],
+                        "npcs": [npc_id],
+                    },
+                )
+                session.add(scene)
+                await session.flush()
+                npc_row = await session.get(Npc, npc_id)
+                if npc_row is not None:
+                    npc_row.engagement_id = scene.id
+                scene_id = scene.id
+
+        assert isinstance(thread, discord.Thread)
+        sent = await webhook.send(
+            message,
+            username=char_name,
+            avatar_url=char_avatar or discord.utils.MISSING,
+            thread=thread,
+            wait=True,
+        )
+
+        proxy_cog = self.bot.get_cog("ProxyCog")
+        if proxy_cog is not None:
+            await proxy_cog.post_engagement_replies(  # type: ignore[attr-defined]
+                webhook=webhook,
+                thread=thread,
+                scene_id=scene_id,
+                speaker_character_id=char_id,
+                speaker_message_id=sent.id,
+                message_content=message,
+            )
+        await interaction.followup.send(f"Posted in {thread.mention}.", ephemeral=True)
 
     @talk.autocomplete("resident")
     async def talk_resident_autocomplete(

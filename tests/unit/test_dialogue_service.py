@@ -201,6 +201,29 @@ class TestBuildRequestContext:
         assert ctx.speaker == {"name": "Kat"}
         assert ctx.mode is omni.RequestMode.DIALOGUE
 
+    def test_present_is_folded_into_the_scene_block_when_given(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[],
+            present=["Greasy Sae", "Peeta"],
+        )
+        assert ctx.scene["present"] == "Greasy Sae, Peeta"
+
+    def test_present_is_omitted_from_scene_when_empty(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[],
+        )
+        assert "present" not in ctx.scene
+
 
 class TestTemplateReply:
     def test_mentions_the_npc_and_is_non_empty(self):
@@ -230,7 +253,7 @@ class TestGenerateReply:
         assert reply == dialogue.template_reply(npc, "likes", "hello")
 
     async def test_llm_provider_uses_the_llm_reply(self, monkeypatch):
-        async def fake_llm(ctx, message, settings):
+        async def fake_llm(ctx, message, settings, *, history=()):
             return "The LLM says hello."
 
         monkeypatch.setattr(dialogue, "generate_llm_reply", fake_llm)
@@ -247,7 +270,7 @@ class TestGenerateReply:
         assert reply == "The LLM says hello."
 
     async def test_llm_failure_falls_back_to_the_template(self, monkeypatch):
-        async def failing_llm(ctx, message, settings):
+        async def failing_llm(ctx, message, settings, *, history=()):
             raise httpx.ConnectError("no route to host")
 
         monkeypatch.setattr(dialogue, "generate_llm_reply", failing_llm)
@@ -299,3 +322,31 @@ class TestGenerateLlmReply:
         body = captured["body"]
         assert body["model"] == "panem-omni"  # type: ignore[index]
         assert body["messages"][-1] == {"role": "user", "content": "hello"}  # type: ignore[index]
+
+    async def test_history_turns_come_before_the_new_message(self, monkeypatch):
+        captured: dict[str, object] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(200, json={"choices": [{"message": {"content": "reply"}}]})
+
+        real_async_client = httpx.AsyncClient
+
+        def mock_client(*args: object, **kwargs: object) -> httpx.AsyncClient:
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return real_async_client(*args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(dialogue.httpx, "AsyncClient", mock_client)
+
+        ctx = omni.RequestContext(mode=omni.RequestMode.DIALOGUE, speaker={"name": "Kat"})
+        settings = make_settings(llm_base_url="http://lemonade.local/v1", llm_model="panem-omni")
+        history = [
+            {"role": "user", "content": "Evening, Ferro."},
+            {"role": "assistant", "content": '*nods and says,* "Yeah?"'},
+        ]
+
+        await dialogue.generate_llm_reply(ctx, "Got anything hot?", settings, history=history)
+
+        messages = captured["body"]["messages"]  # type: ignore[index]
+        assert messages[1:3] == history
+        assert messages[-1] == {"role": "user", "content": "Got anything hot?"}
