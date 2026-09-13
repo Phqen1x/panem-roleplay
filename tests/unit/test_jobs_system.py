@@ -197,6 +197,63 @@ class TestMissedShifts:
         assert state.notable_events[0].kind == "fired"
 
 
+class TestWorkGameGraceExcusesMissedShifts:
+    """`/work`'s minigame: a shift whose game was started before it was due
+    stays open, not missed, until WORK_GAME_GRACE_TICKS past tick_due."""
+
+    def _make_state(self, *, started_at_tick: int | None, tick_due: int):
+        from panem_shared.db.models import Shift
+
+        character = make_character(1, job_id="miner", consecutive_missed=0)
+        shift = Shift(
+            character_id=1,
+            job_id="miner",
+            tick_opened=0,
+            tick_due=tick_due,
+            started_at_tick=started_at_tick,
+        )
+        state = WorldState(
+            districts={},
+            npcs={},
+            npc_schedules={},
+            characters={1: character},
+            open_shifts=[shift],
+        )
+        return state, shift
+
+    def test_started_shift_stays_open_right_at_tick_due(self):
+        content = make_content(make_job())
+        state, shift = self._make_state(started_at_tick=0, tick_due=6)
+        jobs.run(state, make_ctx(content, tick=6, phase=DayPhase.AFTERNOON))
+        assert shift.result is None
+        assert state.open_shifts == [shift]
+
+    def test_started_shift_stays_open_within_the_grace_window(self):
+        content = make_content(make_job())
+        state, shift = self._make_state(started_at_tick=0, tick_due=6)
+        tick = 6 + constants.WORK_GAME_GRACE_TICKS
+        jobs.run(state, make_ctx(content, tick=tick, phase=DayPhase.AFTERNOON))
+        assert shift.result is None
+        assert state.open_shifts == [shift]
+
+    def test_started_shift_is_missed_once_grace_expires(self):
+        content = make_content(make_job())
+        state, shift = self._make_state(started_at_tick=0, tick_due=6)
+        tick = 6 + constants.WORK_GAME_GRACE_TICKS + 1
+        jobs.run(state, make_ctx(content, tick=tick, phase=DayPhase.AFTERNOON))
+        assert shift.result == ShiftResult.MISSED.value
+        assert state.open_shifts == []
+
+    def test_unstarted_shift_gets_no_grace(self):
+        content = make_content(make_job())
+        state, shift = self._make_state(started_at_tick=None, tick_due=6)
+        character = state.characters[1]
+        jobs.run(state, make_ctx(content, tick=6, phase=DayPhase.AFTERNOON))
+        assert shift.result == ShiftResult.MISSED.value
+        assert character.consecutive_missed == 1
+        assert state.open_shifts == []
+
+
 class TestTravelGraceExcusesMissedShifts:
     """FR-LOC-9: a shift missed while traveling is excused, not missed."""
 

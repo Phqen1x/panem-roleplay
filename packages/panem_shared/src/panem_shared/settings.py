@@ -107,6 +107,14 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
 
+    # `panem_bot`'s `/work` reads this to link to `panem_api`'s Activity
+    # frontend for its minigame (Minesweeper today) -- an externally
+    # reachable base URL (e.g. https://yourdomain.example or a tunnel URL),
+    # NOT `api_host`/`api_port`, which are only a bind address. Leave unset
+    # to keep `/work`'s classic option-select flow instead (no minigame,
+    # no dependency on panem_api being reachable from Discord clients).
+    activity_public_url: str = ""
+
     def role_id_override_for_district(self, district_id: int) -> int:
         """0 means unset (auto-manage by name); see `*_role_id` fields above."""
         if district_id == 0:

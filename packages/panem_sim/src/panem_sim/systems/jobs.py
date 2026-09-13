@@ -56,10 +56,25 @@ def _is_within_travel_grace(character: Character, ctx: TickContext) -> bool:
     )
 
 
+def _is_within_work_game_grace(shift: Shift, ctx: TickContext) -> bool:
+    """`/work`'s minigame (Minesweeper, `panem_api`'s Activity frontend)
+    can still be in progress past `tick_due` -- a shift whose game was
+    actually launched (`Shift.started_at_tick`) gets `WORK_GAME_GRACE_TICKS`
+    before falling through to the travel-grace/miss logic below, so a
+    player is paid for having started before the deadline even if they
+    finish the board after it."""
+    if shift.started_at_tick is None:
+        return False
+    return ctx.tick - shift.tick_due <= constants.WORK_GAME_GRACE_TICKS
+
+
 def _resolve_missed_shifts(state: WorldState, ctx: TickContext) -> None:
     still_open: list[Shift] = []
     for shift in state.open_shifts:
         if shift.tick_due > ctx.tick:
+            still_open.append(shift)
+            continue
+        if _is_within_work_game_grace(shift, ctx):
             still_open.append(shift)
             continue
 

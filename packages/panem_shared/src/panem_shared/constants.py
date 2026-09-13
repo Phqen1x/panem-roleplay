@@ -18,6 +18,19 @@ MISSES_TO_FIRE = 5
 NEW_HIRE_GRACE_DAYS = 10
 PLAYER_OUTPUT_WEIGHT = 0.35
 
+WORK_GAME_WIN_WAGE_MULT = 1.5
+WORK_GAME_LOSE_WAGE_MULT = 0.4
+"""`/work`'s minigame (Minesweeper, `panem_api`'s Activity frontend):
+winning pays `job.wage * WIN`, losing pays `job.wage * LOSE` -- replacing
+the option-multiplier axis a player's free choice used to control (see
+`panem_shared.shifts.resolve_shift_game`)."""
+WORK_GAME_GRACE_TICKS = TICKS_PER_DAY
+"""How long past a shift's `tick_due` a *started* (`Shift.started_at_tick`
+set) minigame stays open rather than being marked missed -- long enough
+to actually go finish a Minesweeper board without racing the clock, short
+enough that an abandoned game doesn't block a new shift from ever
+opening."""
+
 PRICE_EXPONENT = 0.5
 PRICE_CLAMP_MIN = 0.4
 PRICE_CLAMP_MAX = 4.0

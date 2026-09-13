@@ -295,6 +295,12 @@ class Shift(Base):
     completed_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     result: Mapped[str | None] = mapped_column(String(16), nullable=True)
     output: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    started_at_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """Set when `/work` launches this shift's minigame (Plan §5's "paid if
+    you started before the shift ended" rule) -- `panem_sim.systems.jobs`
+    won't mark a shift missed while this is set and it's still within
+    `WORK_GAME_GRACE_TICKS` of `tick_due`, giving the player time to
+    actually finish the game after the shift's nominal deadline."""
 
 
 class JobHistory(Base):

@@ -921,6 +921,57 @@ Gamemaker/Victor conveniences on top.
   (`Position.GAMEMAKER`), the same staff-granted list `/staff give
   position` already manages -- no new column or command.
 
+## Notes on this Milestone L (`/work`'s Minesweeper minigame) build
+
+Not a phase from the Plan -- a feature request. `/work` no longer always shows the classic
+3-option select menu (still there as a fallback); when `ACTIVITY_PUBLIC_URL` is set, it
+instead marks the shift's minigame started and links to a small Minesweeper board served
+by `panem_api`'s Activity frontend (`work.html`/`work.js`, no build step, matching
+`index.html`/`app.js`'s existing pattern), themed to whichever job/character it's for.
+
+- **Winning pays more, losing pays less** (`panem_shared.shifts.resolve_shift_game`):
+  `job.wage * WORK_GAME_WIN_WAGE_MULT` (1.5x) on a cleared board,
+  `* WORK_GAME_LOSE_WAGE_MULT` (0.4x) on hitting a mine -- replacing the option-multiplier
+  axis a player's free choice (`resolve_shift`, still used by the fallback flow and by
+  RP-credit) used to control. No risk roll for a game-resolved shift: the game itself is
+  now the "did something go wrong" axis, so a `JobOption.risk_effect` would double-dip.
+- **"Paid if you started before the shift ends"** is real, not just a UI promise: `/work`
+  sets a new `Shift.started_at_tick` column (migration `b1c4e7a92f05`), and
+  `panem_sim.systems.jobs._resolve_missed_shifts` won't mark a started-but-unresolved
+  shift missed until `WORK_GAME_GRACE_TICKS` (a day) past its `tick_due` -- long enough to
+  actually go finish a board, short enough that an abandoned game doesn't block a new
+  shift from ever opening for that character.
+- **`ShiftOutcome`/`resolve_shift`/`apply_shift_outcome` moved to `panem_shared.shifts`**
+  (re-exported from `panem_bot.services.shifts` unchanged, so every existing call site
+  keeps working) since `panem_api`'s new result endpoint needs them too and can't depend
+  on `panem_bot` -- the same writer/reader split this codebase already uses repeatedly
+  (`redis_keys`, `panem_shared.memory`, `panem_shared.lemonade`).
+- **`panem_api` gained its first DB write.** Every other endpoint in that process is
+  read-only (see its module docstring); `GET /activity/work/{shift_id}` (shift/job/
+  character info for the page) and `POST /activity/work/{shift_id}/result` (resolves the
+  shift once) are the one exception, gated entirely by whether `session_factory` is
+  configured (`main.py` always wires one up against `DATABASE_URL`, same as `panem_bot`/
+  `panem_sim`). No auth here either, same as the rest of Phase 5 -- the result endpoint
+  trusts the client's reported `won` outright, consistent with this phase's existing,
+  documented no-auth posture.
+- **The "Activity" link is a plain URL, not a verified embedded-Activity launch.** A real
+  Discord Activity normally launches inside a voice channel via Discord's own UI/invite
+  mechanism, which this session had no way to test (same unverified-OAuth caveat as
+  Milestone H/J); what `/work` actually sends is a `discord.ui.Button` link, which opens
+  `work.html` in an external browser/webview when clicked from Discord, not an inlined
+  iframe. Treat "plays in the Activity" as "plays on the same static frontend Discord's
+  Activity would otherwise embed," not as a proven in-Discord embedded launch.
+- **What's verified**: `resolve_shift_game`'s wage math, the grace-period logic (unit
+  tests), and the full `work.html` round trip -- loaded in a real headless Chromium
+  browser against a live `panem_api` instance backed by the dev Postgres database, played
+  to a loss, and confirmed the shift resolved with the correct wage in the DB via the
+  actual HTTP endpoints (not mocked). Winning was exercised directly against the API
+  (`POST .../result` with `won: true`) rather than forced through the browser, since a
+  fair board's outcome isn't fully controllable from outside; the code path is identical
+  either way (`finish(won)`), so this is not a meaningfully weaker check.
+- Snake/Solitaire/other games, and randomizing which minigame `/work` picks, are follow-up
+  scope, not built in this pass.
+
 ## Upgrading past duplicate character names
 
 The migration that adds the name-uniqueness index (`7116c3213f6e`) will

@@ -9,6 +9,7 @@ import uvicorn
 
 from panem_api.app import create_app
 from panem_shared.content.loader import load_content
+from panem_shared.db.session import make_engine, make_session_factory
 from panem_shared.logging import configure_logging
 from panem_shared.settings import get_settings
 
@@ -21,12 +22,14 @@ def main() -> None:
     settings = get_settings()
     content = load_content(DATA_DIR)
     redis_client: redis.Redis = redis.from_url(settings.redis_url, decode_responses=True)
+    session_factory = make_session_factory(make_engine(settings))
 
     app = create_app(
         content=content,
         redis_client=redis_client,
         discord_client_id=settings.discord_client_id,
         discord_client_secret=settings.discord_client_secret,
+        session_factory=session_factory,
     )
     uvicorn.run(app, host=settings.api_host, port=settings.api_port)
 

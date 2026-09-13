@@ -9,7 +9,16 @@ from fastapi.testclient import TestClient
 
 from panem_api.app import create_app
 from panem_shared.content.loader import ContentBundle
-from panem_shared.content.schemas import District, DistrictCulture, DistrictMap, Location
+from panem_shared.content.schemas import (
+    District,
+    DistrictCulture,
+    DistrictMap,
+    Job,
+    JobOption,
+    Location,
+)
+from panem_shared.db.models import Character, Shift, User
+from panem_shared.enums import CharacterStatus
 
 
 class FakeRedis:
@@ -58,6 +67,57 @@ def make_content() -> ContentBundle:
     )
 
 
+def make_job() -> Job:
+    return Job(
+        id="miner",
+        district=1,
+        title="Miner",
+        workplace="mine",
+        wage=10.0,
+        produces={"coal": 5.0},
+        shift_phase="morning",
+        slots=5,
+        options=[JobOption(label="a"), JobOption(label="b"), JobOption(label="c")],
+    )
+
+
+def make_content_with_job() -> ContentBundle:
+    return ContentBundle(
+        districts={0: make_district(0, "The Capitol"), 1: make_district(1, "District 1")},
+        goods={},
+        jobs={"miner": make_job()},
+        routes=[],
+    )
+
+
+async def seed_shift(session_factory, **shift_overrides: object) -> int:
+    async with session_factory() as session, session.begin():
+        user = User(discord_id=42)
+        session.add(user)
+        await session.flush()
+        character = Character(
+            user_id=user.id,
+            district_id=1,
+            current_district_id=1,
+            name="Wren",
+            age=20,
+            status=CharacterStatus.APPROVED.value,
+            money=0,
+        )
+        session.add(character)
+        await session.flush()
+        shift = Shift(
+            character_id=character.id,
+            job_id="miner",
+            tick_opened=0,
+            tick_due=6,
+            **shift_overrides,
+        )
+        session.add(shift)
+        await session.flush()
+        return shift.id
+
+
 @pytest.fixture
 def client() -> TestClient:
     content = make_content()
@@ -80,6 +140,15 @@ def oauth_client() -> TestClient:
     )
     with TestClient(app) as test_client:
         yield test_client
+
+
+@pytest.fixture
+def work_app(db_session_factory):
+    content = make_content_with_job()
+    redis_client = FakeRedis()
+    return create_app(
+        content=content, redis_client=redis_client, session_factory=db_session_factory
+    )
 
 
 class TestHealth:
@@ -218,3 +287,79 @@ class TestDistrictPositionsWebSocket:
             client.websocket_connect("/ws/districts/99/positions") as websocket,
         ):
             websocket.receive_json()
+
+
+class TestWorkShiftStatus:
+    async def test_503s_when_not_configured(self):
+        app = create_app(content=make_content_with_job(), redis_client=FakeRedis())
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/activity/work/1")
+        assert response.status_code == 503
+
+    async def test_404s_for_an_unknown_shift(self, work_app):
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/activity/work/999999")
+        assert response.status_code == 404
+
+    async def test_returns_job_and_character_info(self, work_app, db_session_factory):
+        shift_id = await seed_shift(db_session_factory)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(f"/activity/work/{shift_id}")
+        assert response.status_code == 200
+        assert response.json() == {
+            "job_title": "Miner",
+            "character_name": "Wren",
+            "already_resolved": False,
+        }
+
+    async def test_already_resolved_is_true_once_the_shift_is_worked(
+        self, work_app, db_session_factory
+    ):
+        shift_id = await seed_shift(db_session_factory)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            await client.post(f"/activity/work/{shift_id}/result", json={"won": True})
+            response = await client.get(f"/activity/work/{shift_id}")
+        assert response.json()["already_resolved"] is True
+
+
+class TestWorkShiftResult:
+    async def test_503s_when_not_configured(self):
+        app = create_app(content=make_content_with_job(), redis_client=FakeRedis())
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/activity/work/1/result", json={"won": True})
+        assert response.status_code == 503
+
+    async def test_win_pays_the_win_multiplier(self, work_app, db_session_factory):
+        shift_id = await seed_shift(db_session_factory)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(f"/activity/work/{shift_id}/result", json={"won": True})
+        assert response.status_code == 200
+        assert response.json() == {"wage": 15, "won": True, "character_name": "Wren"}
+
+    async def test_loss_pays_the_loss_multiplier(self, work_app, db_session_factory):
+        shift_id = await seed_shift(db_session_factory)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(f"/activity/work/{shift_id}/result", json={"won": False})
+        assert response.status_code == 200
+        assert response.json()["wage"] == 4
+
+    async def test_409s_if_already_resolved(self, work_app, db_session_factory):
+        shift_id = await seed_shift(db_session_factory)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            await client.post(f"/activity/work/{shift_id}/result", json={"won": True})
+            response = await client.post(f"/activity/work/{shift_id}/result", json={"won": True})
+        assert response.status_code == 409
+
+    async def test_404s_for_an_unknown_shift(self, work_app):
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/activity/work/999999/result", json={"won": True})
+        assert response.status_code == 404

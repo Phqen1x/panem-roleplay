@@ -1,0 +1,87 @@
+main {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 16px;
+  text-align: center;
+}
+
+#status {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+#result {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+#result.win {
+  color: #7cd992;
+}
+
+#result.lose {
+  color: #e0736b;
+}
+
+#board {
+  display: inline-grid;
+  gap: 2px;
+  margin: 12px auto;
+  background: var(--border);
+  padding: 2px;
+  border-radius: 4px;
+}
+
+.cell {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 700;
+  background: var(--panel);
+  color: var(--text);
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+  user-select: none;
+  padding: 0;
+}
+
+.cell.revealed {
+  background: var(--bg);
+  cursor: default;
+}
+
+.cell.mine {
+  background: #5c2a2a;
+}
+
+.cell.flagged {
+  color: var(--accent);
+}
+
+.cell[data-count="1"] {
+  color: #6fa8ff;
+}
+
+.cell[data-count="2"] {
+  color: #7cd992;
+}
+
+.cell[data-count="3"] {
+  color: #e0736b;
+}
+
+.cell[data-count="4"],
+.cell[data-count="5"],
+.cell[data-count="6"] {
+  color: var(--accent);
+}
+
+#hint {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 4px;
+}

@@ -67,8 +67,27 @@ class JobsCog(commands.Cog):
                 await interaction.response.send_message(t("job_not_found"), ephemeral=True)
                 return
 
-            char_id, shift_id, char_name = char.id, open_shift.id, char.name
-            labels = [option.label for option in job.options]
+            activity_url = self.bot.settings.activity_public_url  # type: ignore[attr-defined]
+            if activity_url:
+                current_tick = await self._current_tick(session)
+                shifts_svc.start_shift_game(open_shift, current_tick)
+                char_name, shift_id, job_title = char.name, open_shift.id, job.title
+            else:
+                char_id, shift_id, char_name = char.id, open_shift.id, char.name
+                labels = [option.label for option in job.options]
+
+        if activity_url:
+            url = f"{activity_url.rstrip('/')}/work.html?shift_id={shift_id}"
+            view = discord.ui.View()
+            view.add_item(
+                discord.ui.Button(
+                    label="Play for your shift", url=url, style=discord.ButtonStyle.link
+                )
+            )
+            await interaction.response.send_message(
+                t("work_game_ready", name=char_name, title=job_title), view=view, ephemeral=True
+            )
+            return
 
         async def on_choose(select_interaction: discord.Interaction, option_index: int) -> None:
             await self._resolve_work(select_interaction, char_id, shift_id, option_index)

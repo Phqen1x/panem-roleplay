@@ -1,20 +1,27 @@
 """FastAPI REST + WebSocket bridge for the Activity's live map (Plan §8,
-Phase 5).
+Phase 5), plus the `/work` minigame's result endpoint (Plan §9-adjacent).
 
-Reads only -- nothing here writes game state. `panem_sim`'s tick loop is
-the sole writer of `pos:{district_id}` (`panem_shared.redis_keys
-.positions_key`), a plain Redis string holding the district's current
-NPC/character positions as JSON (`panem_sim.tick._district_positions`);
-this app just serves that same key back over HTTP and a polling
-WebSocket. No durability contract here the way `world_events` has one --
-a missing/stale key just means the sim hasn't ticked yet (a fresh world)
-or Redis lost it, not a bug to recover from.
+The live-map side is reads only -- `panem_sim`'s tick loop is the sole
+writer of `pos:{district_id}` (`panem_shared.redis_keys.positions_key`), a
+plain Redis string holding the district's current NPC/character positions
+as JSON (`panem_sim.tick._district_positions`); this app just serves that
+same key back over HTTP and a polling WebSocket. No durability contract
+here the way `world_events` has one -- a missing/stale key just means the
+sim hasn't ticked yet (a fresh world) or Redis lost it, not a bug to
+recover from.
 
-No auth is enforced (see `Settings.api_host`'s comment in
-`panem_shared.settings`): a real Discord Activity authenticates through
-Discord's own OAuth handshake, which needs credentials and a live Activity
-to verify against that this session had no way to test. Left as an
-explicit, documented gap rather than unverifiable placeholder code.
+The `/activity/work/*` endpoints below are the one place this process
+*does* write game state -- `session_factory` (`None` unless
+`ACTIVITY_PUBLIC_URL` is set, see `panem_bot`'s `/work`) is this process's
+only DB access, kept separate from the read-only map endpoints above.
+
+No auth is enforced anywhere in this file (see `Settings.api_host`'s
+comment in `panem_shared.settings`): a real Discord Activity authenticates
+through Discord's own OAuth handshake, which needs credentials and a live
+Activity to verify against that this session had no way to test. Left as
+an explicit, documented gap rather than unverifiable placeholder code --
+the work-result endpoint trusts whatever `won` the client reports, the
+same trust level as every other unauthenticated endpoint here.
 """
 
 from __future__ import annotations
@@ -30,10 +37,14 @@ import redis.asyncio as redis
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from panem_shared.content.loader import ContentBundle
+from panem_shared.db.models import Character, Shift, WorldClock
+from panem_shared.db.session import session_scope
 from panem_shared.logging import get_logger
 from panem_shared.redis_keys import positions_key
+from panem_shared.shifts import apply_shift_outcome, resolve_shift_game
 
 logger = get_logger(component="api")
 
@@ -88,6 +99,22 @@ class ClientErrorReport(BaseModel):
     stack: str | None = None
 
 
+class WorkShiftStatus(BaseModel):
+    job_title: str
+    character_name: str
+    already_resolved: bool
+
+
+class WorkResultRequest(BaseModel):
+    won: bool
+
+
+class WorkResultResponse(BaseModel):
+    wage: int
+    won: bool
+    character_name: str
+
+
 async def _read_positions(redis_client: redis.Redis, district_id: int) -> Positions:
     raw = await redis_client.get(positions_key(district_id))
     if raw is None:
@@ -101,6 +128,7 @@ def create_app(
     redis_client: redis.Redis,
     discord_client_id: str = "",
     discord_client_secret: str = "",
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -209,6 +237,53 @@ def create_app(
             )
             raise HTTPException(status_code=502, detail="Discord token exchange failed")
         return TokenExchangeResponse(access_token=response.json()["access_token"])
+
+    @app.get("/activity/work/{shift_id}", response_model=WorkShiftStatus)
+    async def work_shift_status(shift_id: int) -> WorkShiftStatus:
+        """Lets `work.html` show the player who/what they're playing for
+        (and refuse a stale link) before they've played anything."""
+        if session_factory is None:
+            raise HTTPException(status_code=503, detail="The work minigame isn't configured")
+        async with session_scope(session_factory) as session:
+            shift = await session.get(Shift, shift_id)
+            character = await session.get(Character, shift.character_id) if shift else None
+            job = content.jobs.get(shift.job_id) if shift else None
+            if shift is None or character is None or job is None:
+                raise HTTPException(status_code=404, detail="No such shift")
+            return WorkShiftStatus(
+                job_title=job.title,
+                character_name=character.name,
+                already_resolved=shift.result is not None,
+            )
+
+    @app.post("/activity/work/{shift_id}/result", response_model=WorkResultResponse)
+    async def work_shift_result(shift_id: int, body: WorkResultRequest) -> WorkResultResponse:
+        """The only DB write in this process: `work.html` reports whether
+        its Minesweeper board was won or lost once the player finishes,
+        and this resolves the shift the same way `panem_bot`'s classic
+        `/work` option-select flow does (`panem_shared.shifts`), just with
+        `resolve_shift_game`'s win/lose wage multiplier instead of a
+        chosen option's. Trusts the client's `won` outright -- see this
+        module's docstring."""
+        if session_factory is None:
+            raise HTTPException(status_code=503, detail="The work minigame isn't configured")
+        async with session_scope(session_factory) as session:
+            shift = await session.get(Shift, shift_id)
+            if shift is None:
+                raise HTTPException(status_code=404, detail="No such shift")
+            if shift.result is not None:
+                raise HTTPException(status_code=409, detail="This shift was already resolved")
+            character = await session.get(Character, shift.character_id)
+            job = content.jobs.get(shift.job_id)
+            if character is None or job is None:
+                raise HTTPException(status_code=404, detail="No such shift")
+            clock = await session.get(WorldClock, 1)
+            tick = clock.tick if clock is not None else 0
+            outcome = resolve_shift_game(job, body.won)
+            apply_shift_outcome(shift, character, outcome, tick=tick)
+            wage, character_name = round(outcome.wage), character.name
+        logger.info("work_game_resolved", shift_id=shift_id, won=body.won, wage=wage)
+        return WorkResultResponse(wage=wage, won=body.won, character_name=character_name)
 
     if STATIC_DIR.exists():
         # Mounted last so it only ever catches paths none of the routes

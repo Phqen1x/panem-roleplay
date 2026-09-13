@@ -90,6 +90,8 @@ STRINGS: dict[str, str] = {
     "job_no_open_shift": "**{name}** doesn't have a shift open right now.",
     "shift_no_longer_open": "That shift is no longer open.",
     "work_ok": "**{name}** works: +{wage} money, {rep_delta:+d} reputation.",
+    "work_game_ready": "**{name}** clocks in for **{title}**. Play the shift's minigame below -- "
+    "you're paid based on how it goes, even if you finish after the shift ends.",
     "promotion_available": " **{name}** is eligible for a promotion to **{next_title}** -- ask staff.",
     "no_jobs_in_district": "No jobs are defined for that district yet.",
     # Residents (FR-NPC)

@@ -89,6 +89,49 @@ class TestResolveShift:
         assert outcome.risk_effect is None
 
 
+class TestResolveShiftGame:
+    def test_win_pays_more_than_the_base_wage(self):
+        job = make_job(wage=10.0)
+        outcome = shifts_svc.resolve_shift_game(job, True)
+        assert outcome.wage == pytest.approx(10.0 * shifts_svc.constants.WORK_GAME_WIN_WAGE_MULT)
+        assert outcome.wage > job.wage
+
+    def test_loss_pays_less_than_the_base_wage(self):
+        job = make_job(wage=10.0)
+        outcome = shifts_svc.resolve_shift_game(job, False)
+        assert outcome.wage == pytest.approx(10.0 * shifts_svc.constants.WORK_GAME_LOSE_WAGE_MULT)
+        assert outcome.wage < job.wage
+
+    def test_no_risk_regardless_of_outcome(self):
+        job = make_job()
+        assert shifts_svc.resolve_shift_game(job, True).risk_triggered is False
+        assert shifts_svc.resolve_shift_game(job, False).risk_triggered is False
+
+    def test_win_gives_a_small_reputation_bump_loss_gives_none(self):
+        job = make_job()
+        assert shifts_svc.resolve_shift_game(job, True).rep_delta == 1
+        assert shifts_svc.resolve_shift_game(job, False).rep_delta == 0
+
+    def test_output_scales_with_the_same_win_lose_multiplier(self):
+        job = make_job(produces={"coal": 10.0})
+        win_output = shifts_svc.resolve_shift_game(job, True).output["coal"]
+        lose_output = shifts_svc.resolve_shift_game(job, False).output["coal"]
+        assert win_output > lose_output
+
+
+class TestStartShiftGame:
+    def test_sets_started_at_tick(self):
+        shift = Shift(character_id=1, job_id="miner", tick_opened=0, tick_due=6)
+        shifts_svc.start_shift_game(shift, 3)
+        assert shift.started_at_tick == 3
+
+    def test_is_idempotent(self):
+        shift = Shift(character_id=1, job_id="miner", tick_opened=0, tick_due=6)
+        shifts_svc.start_shift_game(shift, 3)
+        shifts_svc.start_shift_game(shift, 10)
+        assert shift.started_at_tick == 3
+
+
 class TestApplyShiftOutcome:
     def test_completes_shift_and_updates_character(self):
         job = make_job()
