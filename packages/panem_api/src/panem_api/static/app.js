@@ -46,6 +46,37 @@ async function fetchJson(path, options) {
   return response.json();
 }
 
+const STEP_TIMEOUT_MS = 8000;
+
+function withTimeout(promise, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(`"${label}" timed out after ${STEP_TIMEOUT_MS}ms`)), STEP_TIMEOUT_MS);
+    }),
+  ]);
+}
+
+// Best-effort: lands the failure in panem_api's own server log
+// (`activity_client_error`) so it's visible without opening the
+// Activity's devtools -- which, inside an actual Discord client, can be
+// genuinely hard to reach at all.
+async function reportClientError(step, err) {
+  try {
+    await fetch("/activity/debug", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        step,
+        message: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      }),
+    });
+  } catch {
+    // Nothing more we can do if even this fails.
+  }
+}
+
 async function authenticateWithDiscord() {
   let clientId = "";
   try {
@@ -58,34 +89,49 @@ async function authenticateWithDiscord() {
     return;
   }
 
+  let step = "loading embedded-app-sdk";
   try {
     const { DiscordSDK } = await import(DISCORD_SDK_URL);
     const discordSdk = new DiscordSDK(clientId);
-    await discordSdk.ready();
-    const { code } = await discordSdk.commands.authorize({
-      client_id: clientId,
-      response_type: "code",
-      state: "",
-      scope: ["identify"],
-    });
+
+    step = "discordSdk.ready()";
+    await withTimeout(discordSdk.ready(), step);
+
+    step = "commands.authorize()";
+    const { code } = await withTimeout(
+      discordSdk.commands.authorize({
+        client_id: clientId,
+        response_type: "code",
+        state: "",
+        scope: ["identify"],
+      }),
+      step
+    );
+
+    step = "/activity/token exchange";
     const { access_token: accessToken } = await fetchJson("/activity/token", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code }),
     });
-    await discordSdk.commands.authenticate({ access_token: accessToken });
+
+    step = "commands.authenticate()";
+    await withTimeout(discordSdk.commands.authenticate({ access_token: accessToken }), step);
+
     setStatus("Connected via Discord.");
   } catch (err) {
     // Expected whenever this page isn't actually running inside a Discord
     // Activity iframe (e.g. a plain browser tab during local testing) --
     // but also where a real misconfiguration (bad client secret, Activities
-    // not enabled for this app, ...) surfaces. Logged in full so the
-    // browser console -- reachable via the Activity's own "Inspect
-    // Element"/devtools -- shows the real reason, not just "it failed".
-    console.error("Discord Activity authentication failed:", err);
+    // not enabled for this app, ...) surfaces. Reported to both the
+    // browser console and the server log (see reportClientError) so the
+    // real reason shows up somewhere reachable either way.
+    console.error(`Discord Activity auth failed at step "${step}":`, err);
+    reportClientError(step, err);
     setStatus(
-      `Preview mode -- Discord auth failed (${err instanceof Error ? err.message : err}). ` +
-        "Showing the live map anyway; see the browser console for details."
+      `Preview mode -- Discord auth failed at "${step}" ` +
+        `(${err instanceof Error ? err.message : err}). Showing the live map anyway; ` +
+        "check the panem_api server log for details."
     );
   }
 }

@@ -17,6 +17,12 @@ is idempotent and fixes both. `CharacterArrived` isn't a message at all
 -- it's how `panem_sim` tells the bot a cross-district trip finished, so
 this can grant/revoke the "visitor" district role directly (FR-LOC-9).
 
+Also subscribes to Redis `SIM_ALERTS_CHANNEL` (`panem_shared.redis_keys`)
+and forwards whatever `panem_sim` publishes there straight to
+`Settings.log_channel_id` -- previously nothing in the bot listened on
+that channel at all, so a tick failure that paused the whole sim was
+completely invisible in Discord.
+
 Runs as one long-lived background task for the process's lifetime,
 started from `PanemBot.setup_hook`, not a cog -- it owns no commands or
 `discord.py` event listeners.
@@ -40,6 +46,7 @@ from panem_shared.events import (
     parse_message,
 )
 from panem_shared.logging import get_logger
+from panem_shared.redis_keys import SIM_ALERTS_CHANNEL
 
 if TYPE_CHECKING:
     from panem_bot.bot import PanemBot
@@ -219,20 +226,41 @@ async def _dispatch(bot: PanemBot, raw: Any) -> None:
         await _handle_character_arrived(bot, event)
 
 
+async def _handle_sim_alert(bot: PanemBot, raw: str) -> None:
+    """FR-TCK-3: `panem_sim` publishes here when a tick fails twice in a
+    row and pauses the whole world -- the single most operationally
+    important thing this bot can tell staff about, so it goes straight to
+    `Settings.log_channel_id` rather than through the `OutboundQueue`
+    (there's no roleplay/narration priority this should ever wait behind).
+    A missing/misconfigured log channel is loudly logged rather than
+    silently dropping the alert."""
+    channel = bot.get_channel(bot.settings.log_channel_id)
+    if not isinstance(channel, discord.TextChannel):
+        logger.warning("sim_alert_no_log_channel", message=raw)
+        return
+    try:
+        await channel.send(f":rotating_light: **Sim alert:** {raw}")
+    except discord.HTTPException:
+        logger.exception("sim_alert_send_failed")
+
+
 async def run(bot: PanemBot) -> None:
     """Long-lived pubsub loop; runs until cancelled at bot shutdown."""
     pubsub = bot.redis.pubsub()
-    await pubsub.subscribe(WORLD_EVENTS_CHANNEL)
+    await pubsub.subscribe(WORLD_EVENTS_CHANNEL, SIM_ALERTS_CHANNEL)
     logger.info("narrator_started")
     try:
         async for message in pubsub.listen():
             if message["type"] != "message":
                 continue
             try:
-                await _dispatch(bot, message["data"])
+                if message["channel"] == SIM_ALERTS_CHANNEL:
+                    await _handle_sim_alert(bot, message["data"])
+                else:
+                    await _dispatch(bot, message["data"])
             except Exception:
                 logger.exception("narrator_dispatch_failed")
     finally:
-        await pubsub.unsubscribe(WORLD_EVENTS_CHANNEL)
+        await pubsub.unsubscribe(WORLD_EVENTS_CHANNEL, SIM_ALERTS_CHANNEL)
         # redis-py's own PubSub.aclose() lacks a return annotation.
         await pubsub.aclose()  # type: ignore[no-untyped-call]

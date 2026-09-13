@@ -43,13 +43,11 @@ from panem_shared.db.session import session_scope
 from panem_shared.enums import ShiftResult
 from panem_shared.events import AnyWorldEvent, parse_event, publish
 from panem_shared.logging import get_logger
-from panem_shared.redis_keys import positions_key
+from panem_shared.redis_keys import SIM_ALERTS_CHANNEL, positions_key
 from panem_sim.rng import tick_rng
 from panem_sim.state import TickContext, WorldState
 from panem_sim.systems import FIXED_ORDER
 from panem_sim.systems.time import advance
-
-SIM_ALERTS_CHANNEL = "sim:alerts"
 
 logger = get_logger()
 

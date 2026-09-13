@@ -82,6 +82,12 @@ class TokenExchangeResponse(BaseModel):
     access_token: str
 
 
+class ClientErrorReport(BaseModel):
+    step: str
+    message: str
+    stack: str | None = None
+
+
 async def _read_positions(redis_client: redis.Redis, district_id: int) -> Positions:
     raw = await redis_client.get(positions_key(district_id))
     if raw is None:
@@ -155,6 +161,18 @@ def create_app(
         Activities embed it in the iframe URL already); lets the static
         frontend avoid hardcoding it at build time."""
         return ActivityConfig(client_id=discord_client_id)
+
+    @app.post("/activity/debug")
+    async def activity_debug(report: ClientErrorReport) -> dict[str, bool]:
+        """A real Discord Activity's devtools can be genuinely hard to
+        reach (no right-click Inspect in most clients), so app.js posts
+        its own auth failures here instead of only logging to a browser
+        console nobody watching the server can see -- this just puts the
+        same information into this process's own log output."""
+        logger.warning(
+            "activity_client_error", step=report.step, message=report.message, stack=report.stack
+        )
+        return {"logged": True}
 
     @app.post("/activity/token", response_model=TokenExchangeResponse)
     async def activity_token(body: TokenExchangeRequest) -> TokenExchangeResponse:

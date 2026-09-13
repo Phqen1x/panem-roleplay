@@ -15,6 +15,7 @@ from panem_shared.events import Bulletin, CharacterArrived, NarrationLine
 class FakeSettings:
     def __init__(self) -> None:
         self.discord_guild_id = 999
+        self.log_channel_id = 555
 
     def role_id_override_for_district(self, district_id: int) -> int:
         return 0  # no override configured -- resolve by role name instead
@@ -46,6 +47,7 @@ class FakeBot:
         self.settings = FakeSettings()
         self.content = FakeContent()
         self.get_guild = MagicMock(return_value=None)
+        self.get_channel = MagicMock(return_value=None)
 
     @asynccontextmanager
     async def db(self):
@@ -279,6 +281,28 @@ class TestHandleCharacterArrived:
         await narrator._handle_character_arrived(bot, event)  # no raise
 
 
+class TestHandleSimAlert:
+    async def test_posts_to_the_log_channel(self, bot: FakeBot):
+        log_channel = AsyncMock(spec=discord.TextChannel)
+        bot.get_channel = MagicMock(return_value=log_channel)
+
+        await narrator._handle_sim_alert(bot, "Tick failed twice in a row, pausing: boom")
+
+        log_channel.send.assert_awaited_once()
+        assert "boom" in log_channel.send.await_args.args[0]
+
+    async def test_no_op_when_log_channel_not_configured(self, bot: FakeBot):
+        bot.get_channel = MagicMock(return_value=None)
+        await narrator._handle_sim_alert(bot, "boom")  # no raise
+
+    async def test_send_failure_is_caught_and_logged(self, bot: FakeBot):
+        log_channel = AsyncMock(spec=discord.TextChannel)
+        log_channel.send = AsyncMock(side_effect=discord.HTTPException(MagicMock(), "nope"))
+        bot.get_channel = MagicMock(return_value=log_channel)
+
+        await narrator._handle_sim_alert(bot, "boom")  # no raise
+
+
 class TestDispatch:
     async def test_routes_narration_line_to_its_handler(self, bot: FakeBot, monkeypatch):
         handle_narration = AsyncMock()
@@ -317,19 +341,19 @@ class TestDispatch:
 class FakePubSub:
     def __init__(self, messages: list[dict[str, object]]) -> None:
         self._messages = messages
-        self.subscribed_to: str | None = None
-        self.unsubscribed_from: str | None = None
+        self.subscribed_to: tuple[str, ...] = ()
+        self.unsubscribed_from: tuple[str, ...] = ()
         self.closed = False
 
-    async def subscribe(self, channel: str) -> None:
-        self.subscribed_to = channel
+    async def subscribe(self, *channels: str) -> None:
+        self.subscribed_to = channels
 
     async def listen(self):
         for message in self._messages:
             yield message
 
-    async def unsubscribe(self, channel: str) -> None:
-        self.unsubscribed_from = channel
+    async def unsubscribe(self, *channels: str) -> None:
+        self.unsubscribed_from = channels
 
     async def aclose(self) -> None:
         self.closed = True
@@ -347,17 +371,48 @@ class TestRun:
     async def test_survives_a_malformed_payload_and_cleans_up_on_exit(self, bot: FakeBot):
         good_event = NarrationLine(tick=1, district_id=1, location_id="nowhere", text="...")
         messages: list[dict[str, object]] = [
-            {"type": "subscribe", "data": 1},
-            {"type": "message", "data": "not valid json"},
-            {"type": "message", "data": good_event.model_dump_json()},
+            {"type": "subscribe", "data": 1, "channel": narrator.WORLD_EVENTS_CHANNEL},
+            {
+                "type": "message",
+                "data": "not valid json",
+                "channel": narrator.WORLD_EVENTS_CHANNEL,
+            },
+            {
+                "type": "message",
+                "data": good_event.model_dump_json(),
+                "channel": narrator.WORLD_EVENTS_CHANNEL,
+            },
         ]
         fake_redis = FakeRedis(messages)
         bot.redis = fake_redis  # type: ignore[attr-defined]
 
         await narrator.run(bot)
 
-        assert fake_redis._pubsub.subscribed_to == narrator.WORLD_EVENTS_CHANNEL
-        assert fake_redis._pubsub.unsubscribed_from == narrator.WORLD_EVENTS_CHANNEL
+        assert fake_redis._pubsub.subscribed_to == (
+            narrator.WORLD_EVENTS_CHANNEL,
+            narrator.SIM_ALERTS_CHANNEL,
+        )
+        assert fake_redis._pubsub.unsubscribed_from == (
+            narrator.WORLD_EVENTS_CHANNEL,
+            narrator.SIM_ALERTS_CHANNEL,
+        )
         assert fake_redis._pubsub.closed is True
         # the malformed message didn't stop the loop from reaching the good one
         bot.outbound.enqueue.assert_not_called()  # no ambient scene seeded for "nowhere"
+
+    async def test_routes_a_sim_alert_to_the_log_channel(self, bot: FakeBot):
+        log_channel = AsyncMock(spec=discord.TextChannel)
+        bot.get_channel = MagicMock(return_value=log_channel)
+        messages: list[dict[str, object]] = [
+            {
+                "type": "message",
+                "data": "Tick failed twice in a row, pausing: boom",
+                "channel": narrator.SIM_ALERTS_CHANNEL,
+            }
+        ]
+        bot.redis = FakeRedis(messages)  # type: ignore[attr-defined]
+
+        await narrator.run(bot)
+
+        log_channel.send.assert_awaited_once()
+        assert "boom" in log_channel.send.await_args.args[0]

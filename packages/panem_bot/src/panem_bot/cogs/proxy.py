@@ -338,6 +338,7 @@ class ProxyCog(commands.Cog):
             async with self.bot.db() as session:
                 await log_staff_action(
                     session,
+                    bot=self.bot,
                     staff_discord_id=payload.user_id,
                     action="proxy_delete",
                     target=str(payload.message_id),

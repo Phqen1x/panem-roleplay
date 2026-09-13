@@ -131,6 +131,22 @@ class TestDistrictPositions:
         assert response.status_code == 404
 
 
+class TestActivityDebug:
+    def test_accepts_and_acknowledges_a_report(self, client: TestClient):
+        response = client.post(
+            "/activity/debug",
+            json={"step": "commands.authorize()", "message": "boom", "stack": "trace"},
+        )
+        assert response.status_code == 200
+        assert response.json() == {"logged": True}
+
+    def test_stack_is_optional(self, client: TestClient):
+        response = client.post(
+            "/activity/debug", json={"step": "discordSdk.ready()", "message": "timed out"}
+        )
+        assert response.status_code == 200
+
+
 class TestActivityConfig:
     def test_returns_empty_client_id_when_unconfigured(self, client: TestClient):
         response = client.get("/activity/config")

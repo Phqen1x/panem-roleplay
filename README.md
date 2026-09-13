@@ -776,6 +776,35 @@ for staff to hand out special jobs (Mentor) outside the normal apply flow.
   job` has something concrete to grant. No Capitol mentor exists --
   the Capitol doesn't send tributes.
 
+## Notes on the log channel and the Activity's OAuth handshake
+
+Two support fixes, not a milestone.
+
+- **`#panem-log` (`LOG_CHANNEL_ID`) used to log exactly one thing: a
+  rejected character application.** Nothing else ever posted there --
+  every staff moderation action (`/staff ban|kill|note|delete_pending|
+  give ...`) was written to the `staff_actions` DB table and nowhere
+  else, and a `panem_sim` tick failing twice in a row (`FR-TCK-3`,
+  published to Redis's `SIM_ALERTS_CHANNEL`) had no listener on the bot
+  side at all -- the single most operationally important failure mode in
+  the whole system was completely invisible in Discord. Both are fixed:
+  `log_staff_action` now also posts a one-line summary to the log
+  channel when given a `bot` (every call site in `staff.py`/`proxy.py`
+  passes one), and `narrator.run` now also subscribes to
+  `SIM_ALERTS_CHANNEL` and forwards whatever `panem_sim` publishes there
+  straight to the log channel.
+- **The Activity's OAuth handshake failing silently was traced to
+  `prompt: "none"`** in the `commands.authorize()` call -- that tells
+  Discord to skip the consent screen entirely, which fails outright
+  (rather than prompting) for anyone who hasn't already granted this
+  application the `identify` scope. Removed. The frontend also now
+  tracks which exact step failed (`ready()` / `authorize()` / the token
+  exchange / `authenticate()`) with an 8s timeout per step so a hang
+  reads as a clear error instead of an indefinite silence, and reports
+  failures to a new `POST /activity/debug` (logged server-side as
+  `activity_client_error`) since a real Discord Activity's devtools can
+  be genuinely hard to reach to read the browser console directly.
+
 ## Upgrading past duplicate character names
 
 The migration that adds the name-uniqueness index (`7116c3213f6e`) will

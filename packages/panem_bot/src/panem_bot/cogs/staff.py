@@ -115,7 +115,11 @@ class StaffCog(commands.Cog):
                 await session.flush()
             row.banned_at = dt.datetime.now(dt.UTC)
             await log_staff_action(
-                session, staff_discord_id=interaction.user.id, action="ban", target=str(user.id)
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="ban",
+                target=str(user.id),
             )
         await interaction.response.send_message(f"Banned {user.mention}.", ephemeral=True)
 
@@ -139,6 +143,7 @@ class StaffCog(commands.Cog):
             row.max_characters_override = limit
             await log_staff_action(
                 session,
+                bot=self.bot,
                 staff_discord_id=interaction.user.id,
                 action="character_limit",
                 target=str(user.id),
@@ -169,7 +174,11 @@ class StaffCog(commands.Cog):
                 return
             row.status = CharacterStatus.DEAD.value
             await log_staff_action(
-                session, staff_discord_id=interaction.user.id, action="kill", target=str(row.id)
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="kill",
+                target=str(row.id),
             )
         await interaction.response.send_message(f"**{character}** has died.", ephemeral=True)
 
@@ -187,6 +196,7 @@ class StaffCog(commands.Cog):
                 return
             await log_staff_action(
                 session,
+                bot=self.bot,
                 staff_discord_id=interaction.user.id,
                 action="note",
                 target=str(row.id),
@@ -221,6 +231,7 @@ class StaffCog(commands.Cog):
             await session.delete(row)
             await log_staff_action(
                 session,
+                bot=self.bot,
                 staff_discord_id=interaction.user.id,
                 action="delete_pending",
                 target=str(char_id),
@@ -258,6 +269,7 @@ class StaffCog(commands.Cog):
                 scene.status = SceneStatus.LOCKED.value
             await log_staff_action(
                 session,
+                bot=self.bot,
                 staff_discord_id=interaction.user.id,
                 action="scene_lock",
                 target=str(thread.id),
@@ -280,6 +292,7 @@ class StaffCog(commands.Cog):
                 scene.status = SceneStatus.ARCHIVED.value
             await log_staff_action(
                 session,
+                bot=self.bot,
                 staff_discord_id=interaction.user.id,
                 action="scene_archive",
                 target=str(thread.id),
@@ -393,6 +406,7 @@ class StaffCog(commands.Cog):
                 return
             await log_staff_action(
                 session,
+                bot=self.bot,
                 staff_discord_id=interaction.user.id,
                 action="job_set",
                 target=job_id,
@@ -454,6 +468,7 @@ class StaffCog(commands.Cog):
                 return
             await log_staff_action(
                 session,
+                bot=self.bot,
                 staff_discord_id=interaction.user.id,
                 action="job_option",
                 target=job_id,
@@ -477,7 +492,11 @@ class StaffCog(commands.Cog):
                 return
             await jobs_svc.remove_job(session, job_id=job_id, staff_discord_id=interaction.user.id)
             await log_staff_action(
-                session, staff_discord_id=interaction.user.id, action="job_remove", target=job_id
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="job_remove",
+                target=job_id,
             )
         await interaction.response.send_message(t("job_removed_ok", job_id=job_id), ephemeral=True)
 
@@ -531,6 +550,7 @@ class StaffCog(commands.Cog):
             row.money = max(0, row.money + amount)
             await log_staff_action(
                 session,
+                bot=self.bot,
                 staff_discord_id=interaction.user.id,
                 action="give_money",
                 target=str(row.id),
@@ -576,6 +596,7 @@ class StaffCog(commands.Cog):
                 inv.qty = new_qty
             await log_staff_action(
                 session,
+                bot=self.bot,
                 staff_discord_id=interaction.user.id,
                 action="give_item",
                 target=str(row.id),
@@ -628,6 +649,7 @@ class StaffCog(commands.Cog):
             row.positions = sorted(held)
             await log_staff_action(
                 session,
+                bot=self.bot,
                 staff_discord_id=interaction.user.id,
                 action="give_position",
                 target=str(row.id),
@@ -665,6 +687,7 @@ class StaffCog(commands.Cog):
             row.consecutive_missed = 0
             await log_staff_action(
                 session,
+                bot=self.bot,
                 staff_discord_id=interaction.user.id,
                 action="give_job",
                 target=str(row.id),
