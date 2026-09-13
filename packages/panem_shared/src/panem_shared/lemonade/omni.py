@@ -213,6 +213,18 @@ def _job_line(job: Job, jobs_by_id: Mapping[str, Job]) -> str:
     return ", ".join(parts)
 
 
+def _good_label(good_id: str, goods: Mapping[str, Good]) -> str:
+    """A good's name plus its `category` in parentheses (e.g. "coal
+    (fuel)") -- the atlas is the only place a small planner model sees
+    what a good actually *is*, and without that tag it has no way to
+    tell a district's mined/manufactured quota good (fuel, materials,
+    industrial) apart from something a person could eat (food)."""
+    if good_id not in goods:
+        return _humanize(good_id)
+    good = goods[good_id]
+    return f"{_humanize(good.name.lower())} ({_humanize(good.category)})"
+
+
 def _district_block(district: District, bundle: ContentBundle) -> str:
     jobs = sorted(bundle.jobs_for_district(district.id), key=lambda j: (not j.legal, -j.wage))
     goods = bundle.goods
@@ -221,26 +233,14 @@ def _district_block(district: District, bundle: ContentBundle) -> str:
     if district.produces:
         facts.append(
             "Produces: "
-            + ", ".join(
-                _humanize(goods[g].name.lower() if g in goods else g) for g in district.produces
-            )
-            + "."
+            + ", ".join(_good_label(g, goods) for g in district.produces)
+            + " -- shipped to the Capitol; not necessarily what anyone here eats."
         )
     if district.quota is not None:
-        good_name = (
-            goods[district.quota.good].name.lower()
-            if district.quota.good in goods
-            else district.quota.good
-        )
-        facts.append(f"Monthly Capitol quota: {district.quota.amount:,.0f} {good_name}.")
+        good_label = _good_label(district.quota.good, goods)
+        facts.append(f"Monthly Capitol quota: {district.quota.amount:,.0f} {good_label}.")
     if district.imports:
-        facts.append(
-            "Imports: "
-            + ", ".join(
-                _humanize(goods[g].name.lower() if g in goods else g) for g in district.imports
-            )
-            + "."
-        )
+        facts.append("Imports: " + ", ".join(_good_label(g, goods) for g in district.imports) + ".")
     lines.append(" ".join(facts))
     culture = district.culture
     voice = [f"Voice: {', '.join(_humanize(t) for t in culture.tone)}."]
@@ -268,15 +268,17 @@ def _goods_line(goods: Mapping[str, Good]) -> str:
     tickets = [g for g in goods.values() if g.kind == "ticket"]
     parts: list[str] = []
     for good in sorted(commodities, key=lambda g: g.base_price):
-        note = []
+        note = [good.category]
         if good.rationed:
             note.append("rationed")
         if good.perishable:
             note.append("spoils")
-        parts.append(
-            f"{good.name.lower()} {good.base_price:g}" + (f" ({', '.join(note)})" if note else "")
-        )
+        parts.append(f"{good.name.lower()} {good.base_price:g} ({', '.join(note)})")
     line = "Goods and their base prices: " + " | ".join(parts) + "."
+    line += (
+        " Only the food-category goods here are things a person eats -- fuel, materials, "
+        "industrial and utility goods are shipped or used, never consumed."
+    )
     if tickets:
         price = tickets[0].base_price
         line += f" A train ticket to any district costs {price:g}."
