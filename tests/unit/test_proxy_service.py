@@ -18,7 +18,7 @@ def make_character(**overrides) -> Character:
         name="Katniss",
         age=16,
         status=CharacterStatus.APPROVED.value,
-        job_id=None,
+        job_title=None,
         positions=[],
         jailed_until_tick=None,
         location_id=None,
@@ -173,23 +173,25 @@ class TestSceneLocationId:
 class TestHasLocationAccess:
     def test_unrestricted_always_true(self):
         loc = Location(id="square", name="The Square", kind="public")
-        assert proxy_svc.has_location_access(job_id=None, has_position=False, location=loc)
+        assert proxy_svc.has_location_access(job_title=None, has_position=False, location=loc)
 
     def test_restricted_with_a_position_true(self):
         loc = Location(id="village", name="Victor's Village", kind="residential", restricted=True)
-        assert proxy_svc.has_location_access(job_id=None, has_position=True, location=loc)
+        assert proxy_svc.has_location_access(job_title=None, has_position=True, location=loc)
 
     def test_restricted_job_match_true(self):
         loc = Location(
             id="mine", name="Mine", kind="workplace", restricted=True, access_jobs=["miner"]
         )
-        assert proxy_svc.has_location_access(job_id="miner", has_position=False, location=loc)
+        assert proxy_svc.has_location_access(job_title="miner", has_position=False, location=loc)
 
     def test_restricted_no_access_false(self):
         loc = Location(
             id="mine", name="Mine", kind="workplace", restricted=True, access_jobs=["miner"]
         )
-        assert not proxy_svc.has_location_access(job_id="baker", has_position=False, location=loc)
+        assert not proxy_svc.has_location_access(
+            job_title="baker", has_position=False, location=loc
+        )
 
 
 class TestCheckCanProxy:

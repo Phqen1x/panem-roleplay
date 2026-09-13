@@ -12,16 +12,16 @@ from sqlalchemy import func, select
 from panem_bot import autocomplete
 from panem_bot.errors import ServiceError, ValidationFailed
 from panem_bot.services import characters as characters_svc
-from panem_bot.services import jobs as jobs_svc
 from panem_bot.strings import t
 from panem_bot.views import (
     CHAR_ID_FOOTER_PREFIX,
+    SHIFT_PHASE_LABELS,
     ApprovalView,
-    JobSelectView,
+    ShiftPhaseSelectView,
 )
-from panem_shared import constants
+from panem_shared import constants, job_levels
 from panem_shared.db.models import Character, Shift, User, WorldClock
-from panem_shared.enums import CharacterStatus
+from panem_shared.enums import CharacterStatus, DayPhase
 from panem_shared.simtime import clock_string, phase_time_range
 
 EMBED_FIELD_VALUE_LIMIT = 1024
@@ -107,7 +107,7 @@ class CharacterCog(commands.Cog):
             backstory: str,
             avatar_url: str,
         ) -> None:
-            await self._prompt_job(
+            await self._prompt_job_title(
                 modal_interaction, district_id, name, age_str, appearance, backstory, avatar_url
             )
 
@@ -117,7 +117,7 @@ class CharacterCog(commands.Cog):
             CharacterDetailsModal(on_submit=on_submit, age_placeholder=placeholder)
         )
 
-    async def _prompt_job(
+    async def _prompt_job_title(
         self,
         interaction: discord.Interaction,
         district_id: int,
@@ -127,6 +127,8 @@ class CharacterCog(commands.Cog):
         backstory: str,
         avatar_url: str,
     ) -> None:
+        from panem_bot.modals import JobTitleModal
+
         try:
             age = int(age_str)
         except ValueError:
@@ -157,34 +159,56 @@ class CharacterCog(commands.Cog):
                     t(exc.reason_key, **exc.fmt), ephemeral=True
                 )
                 return
-            open_jobs = await self._open_legal_jobs(session, district_id)
 
-        async def on_job_chosen(job_interaction: discord.Interaction, job_id: str | None) -> None:
+        async def on_job_title(job_interaction: discord.Interaction, job_title: str) -> None:
+            await self._prompt_shift_phase(
+                job_interaction,
+                district_id,
+                name,
+                age,
+                appearance,
+                backstory,
+                avatar_url,
+                job_title,
+            )
+
+        await interaction.response.send_modal(JobTitleModal(on_submit=on_job_title))
+
+    async def _prompt_shift_phase(
+        self,
+        interaction: discord.Interaction,
+        district_id: int,
+        name: str,
+        age: int,
+        appearance: str,
+        backstory: str,
+        avatar_url: str,
+        job_title: str,
+    ) -> None:
+        try:
+            characters_svc.validate_job_title(job_title)
+        except ValidationFailed as exc:
+            await interaction.response.send_message(t(exc.reason_key, **exc.fmt), ephemeral=True)
+            return
+
+        async def on_phase_chosen(phase_interaction: discord.Interaction, shift_phase: str) -> None:
             await self._finish_create(
-                job_interaction, district_id, name, age, appearance, backstory, avatar_url, job_id
+                phase_interaction,
+                district_id,
+                name,
+                age,
+                appearance,
+                backstory,
+                avatar_url,
+                job_title,
+                shift_phase,
             )
 
         await interaction.response.send_message(
-            "Desired job (if a slot isn't free, you'll start unemployed):",
-            view=JobSelectView(open_jobs, on_job_chosen),
+            "When does your character work their shift?",
+            view=ShiftPhaseSelectView(on_phase_chosen),
             ephemeral=True,
         )
-
-    async def _open_legal_jobs(self, session, district_id: int) -> list[tuple[str, str]]:
-        all_district_jobs = await jobs_svc.jobs_for_district(session, self.bot.content, district_id)
-        jobs = [j for j in all_district_jobs if j.legal and not j.staff_only]
-        if not jobs:
-            return []
-        counts = await session.execute(
-            select(Character.job_id, func.count())
-            .where(
-                Character.job_id.in_([j.id for j in jobs]),
-                Character.status == CharacterStatus.APPROVED.value,
-            )
-            .group_by(Character.job_id)
-        )
-        count_map = dict(counts.all())
-        return [(j.id, j.title) for j in jobs if count_map.get(j.id, 0) < j.slots]
 
     async def _finish_create(
         self,
@@ -195,7 +219,8 @@ class CharacterCog(commands.Cog):
         appearance: str,
         backstory: str,
         avatar_url: str,
-        job_id: str | None,
+        job_title: str,
+        shift_phase: str,
     ) -> None:
         async with self.bot.db() as session:
             user = await characters_svc.get_or_create_user(session, interaction.user.id)
@@ -209,7 +234,8 @@ class CharacterCog(commands.Cog):
                     appearance=appearance,
                     backstory=backstory,
                     avatar_url=avatar_url or None,
-                    desired_job_id=job_id,
+                    job_title=job_title,
+                    shift_phase=shift_phase,
                     max_characters=characters_svc.effective_max_characters(user, self.bot.settings),
                 )
             except ServiceError as exc:
@@ -231,19 +257,17 @@ class CharacterCog(commands.Cog):
         async with self.bot.db() as session:
             character = await characters_svc.get_character(session, character_id)
             district = self.bot.content.district(character.district_id)
-            job = (
-                await jobs_svc.get_job(session, self.bot.content, character.job_id)
-                if character.job_id
-                else None
-            )
             embed = discord.Embed(
                 title=f"Character Application: {character.name}", color=discord.Color.blurple()
             )
             embed.add_field(name="Applicant", value=f"<@{interaction.user.id}>", inline=True)
             embed.add_field(name="District", value=district.name, inline=True)
             embed.add_field(name="Age", value=str(character.age), inline=True)
+            shift_label = SHIFT_PHASE_LABELS.get(character.shift_phase or "", character.shift_phase)
             embed.add_field(
-                name="Desired Job", value=job.title if job else "Unemployed", inline=True
+                name="Desired Job",
+                value=f"{character.job_title} ({shift_label} shift)",
+                inline=True,
             )
             embed.add_field(name="Appearance", value=character.appearance or "-", inline=False)
             embed.add_field(
@@ -262,13 +286,7 @@ class CharacterCog(commands.Cog):
             try:
                 character = await characters_svc.get_character(session, character_id)
                 district = self.bot.content.district(character.district_id)
-                district_jobs = await jobs_svc.jobs_for_district(
-                    session, self.bot.content, district.id
-                )
-                job_slots = {j.id: j.slots for j in district_jobs}
-                await characters_svc.approve_character(
-                    session, character, district=district, job_slots=job_slots
-                )
+                await characters_svc.approve_character(session, character, district=district)
             except ServiceError:
                 await interaction.response.send_message("Already handled.", ephemeral=True)
                 return
@@ -535,11 +553,7 @@ class CharacterCog(commands.Cog):
             if row is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
-            job_name = "Unemployed"
-            job = None
-            if row.job_id:
-                job = await jobs_svc.get_job(session, self.bot.content, row.job_id)
-                job_name = job.title if job else row.job_id
+            job_name = row.job_title or "Unemployed"
             location_name = "-"
             if row.location_id:
                 district = self.bot.content.district(row.current_district_id)
@@ -561,10 +575,20 @@ class CharacterCog(commands.Cog):
                     shift_value = f"Overdue since {due_time} -- work it now!"
                 else:
                     shift_value = f"Open, due by {due_time}"
-            elif job is not None:
-                shift_value = f"No shift open -- works {phase_time_range(job.shift_phase)}"
+            elif row.shift_phase is not None:
+                shift_value = (
+                    f"No shift open -- works {phase_time_range(DayPhase(row.shift_phase))}"
+                )
             else:
                 shift_value = "No job"
+
+            level = job_levels.job_level_for_shifts(row.shifts_completed)
+            shifts_left = job_levels.shifts_to_next_level(row.shifts_completed)
+            level_value = (
+                f"{level.value.title()} ({shifts_left} shifts to next level)"
+                if shifts_left is not None
+                else f"{level.value.title()} (max level)"
+            )
 
             district_value = self._district_status_value(row)
             jailed_value = (
@@ -576,6 +600,7 @@ class CharacterCog(commands.Cog):
         embed.add_field(name="Hunger", value=str(row.hunger))
         embed.add_field(name="Health", value=str(row.health))
         embed.add_field(name="Job", value=job_name)
+        embed.add_field(name="Level", value=level_value)
         embed.add_field(name="Shift", value=shift_value)
         embed.add_field(name="District", value=district_value)
         embed.add_field(name="Location", value=location_name)

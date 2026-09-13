@@ -13,7 +13,7 @@ from panem_shared.content.schemas import (
     Location,
     Route,
 )
-from panem_shared.db.models import DistrictState, MarketPrice, Npc, Shift
+from panem_shared.db.models import Character, DistrictState, MarketPrice, Npc, Shift
 from panem_shared.enums import DayPhase
 from panem_sim.rng import tick_rng
 from panem_sim.state import TickContext, WorldState
@@ -117,13 +117,13 @@ def make_ctx(content: ContentBundle, *, tick: int = DAY_TICK, day: int = 2) -> T
 
 
 def make_state(
-    *, districts=None, npcs=None, completed_shifts=None, market_prices=None
+    *, districts=None, npcs=None, characters=None, completed_shifts=None, market_prices=None
 ) -> WorldState:
     return WorldState(
         districts=districts or {},
         npcs=npcs or {},
         npc_schedules={},
-        characters={},
+        characters=characters or {},
         open_shifts=[],
         completed_shifts=completed_shifts or [],
         market_prices=market_prices or {},
@@ -214,23 +214,118 @@ class TestPlayerSupply:
     def test_completed_shift_output_feeds_supply_and_lowers_price(self):
         district = make_district(1, produces=["coal"], population_base=10)
         good = make_good("coal", base_price=10.0)
-        job = make_job(id="miner", district=1)
-        content = make_content([district], [good], [job])
+        content = make_content([district], [good])
+        character = Character(
+            id=1,
+            user_id=1,
+            district_id=1,
+            current_district_id=1,
+            name="Wren",
+            age=20,
+            status="approved",
+            job_title="Miner",
+            shift_phase="morning",
+        )
         shift = Shift(
             character_id=1,
-            job_id="miner",
+            job_id="Miner",
             tick_opened=1,
             tick_due=6,
             completed_at=5,
             result="completed",
             output={"coal": 5000.0},
         )
-        state = make_state(districts={1: make_district_row(1)}, completed_shifts=[shift])
+        state = make_state(
+            districts={1: make_district_row(1)},
+            characters={1: character},
+            completed_shifts=[shift],
+        )
 
         economy.run(state, make_ctx(content))
 
         row = state.market_prices[(1, "coal")]
         assert row.supply >= 5000.0
+
+
+class TestActivePlayerDemand:
+    def test_falls_back_to_population_based_demand_with_no_active_players(self):
+        district = make_district(1, produces=["coal"], population_base=100)
+        good = make_good("coal", base_price=10.0)
+        content = make_content([district], [good])
+        state = make_state(districts={1: make_district_row(1)})
+
+        economy.run(state, make_ctx(content))
+
+        row = state.market_prices[(1, "coal")]
+        assert row.demand == 100 * constants.MARKET_DEMAND_PER_CAPITA
+
+    def test_active_player_demand_overrides_population_base(self):
+        district = make_district(1, produces=["coal"], population_base=1_000_000)
+        good = make_good("coal", base_price=10.0)
+        content = make_content([district], [good])
+        character = Character(
+            id=1,
+            user_id=1,
+            district_id=1,
+            current_district_id=1,
+            name="Wren",
+            age=20,
+            status="approved",
+            last_active_tick=DAY_TICK,
+        )
+        state = make_state(districts={1: make_district_row(1)}, characters={1: character})
+
+        economy.run(state, make_ctx(content, tick=DAY_TICK))
+
+        row = state.market_prices[(1, "coal")]
+        assert row.demand == constants.ACTIVE_PLAYER_DEMAND_PER_CAPITA
+
+    def test_stale_activity_does_not_count_as_active(self):
+        district = make_district(1, produces=["coal"], population_base=100)
+        good = make_good("coal", base_price=10.0)
+        content = make_content([district], [good])
+        stale_tick = (
+            DAY_TICK - (constants.ACTIVE_PLAYER_WINDOW_SIM_DAYS * constants.TICKS_PER_DAY) - 1
+        )
+        character = Character(
+            id=1,
+            user_id=1,
+            district_id=1,
+            current_district_id=1,
+            name="Wren",
+            age=20,
+            status="approved",
+            last_active_tick=stale_tick,
+        )
+        state = make_state(districts={1: make_district_row(1)}, characters={1: character})
+
+        economy.run(state, make_ctx(content, tick=DAY_TICK))
+
+        row = state.market_prices[(1, "coal")]
+        assert row.demand == 100 * constants.MARKET_DEMAND_PER_CAPITA
+
+    def test_imported_good_gets_a_higher_demand_weight_than_produced(self):
+        district = make_district(1, produces=["coal"], imports=["grain"], population_base=1)
+        coal = make_good("coal", base_price=10.0)
+        grain = make_good("grain", base_price=10.0)
+        content = make_content([district], [coal, grain])
+        character = Character(
+            id=1,
+            user_id=1,
+            district_id=1,
+            current_district_id=1,
+            name="Wren",
+            age=20,
+            status="approved",
+            last_active_tick=DAY_TICK,
+        )
+        state = make_state(districts={1: make_district_row(1)}, characters={1: character})
+
+        economy.run(state, make_ctx(content, tick=DAY_TICK))
+
+        coal_row = state.market_prices[(1, "coal")]
+        grain_row = state.market_prices[(1, "grain")]
+        assert grain_row.demand > coal_row.demand
 
 
 class TestExports:

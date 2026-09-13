@@ -170,11 +170,13 @@ class TestCreateCharacter:
             age=16,
             appearance="",
             backstory="",
-            desired_job_id="miner",
+            job_title="Miner",
+            shift_phase="morning",
             max_characters=3,
         )
         assert character.status == CharacterStatus.PENDING.value
-        assert character.job_id == "miner"
+        assert character.job_title == "Miner"
+        assert character.shift_phase == "morning"
 
     async def test_banned_user_refused(self, db_session):
         user = await make_user(db_session)
@@ -188,7 +190,8 @@ class TestCreateCharacter:
                 age=16,
                 appearance="",
                 backstory="",
-                desired_job_id=None,
+                job_title="Baker",
+                shift_phase="morning",
                 max_characters=3,
             )
 
@@ -203,7 +206,8 @@ class TestCreateCharacter:
                 age=16,
                 appearance="",
                 backstory="",
-                desired_job_id=None,
+                job_title="Baker",
+                shift_phase="morning",
                 max_characters=3,
             )
         with pytest.raises(LimitReached):
@@ -215,7 +219,8 @@ class TestCreateCharacter:
                 age=16,
                 appearance="",
                 backstory="",
-                desired_job_id=None,
+                job_title="Baker",
+                shift_phase="morning",
                 max_characters=3,
             )
 
@@ -230,7 +235,8 @@ class TestCreateCharacter:
                 age=16,
                 appearance="",
                 backstory="",
-                desired_job_id=None,
+                job_title="Baker",
+                shift_phase="morning",
                 max_characters=3,
             )
 
@@ -244,7 +250,8 @@ class TestCreateCharacter:
             age=16,
             appearance="",
             backstory="",
-            desired_job_id=None,
+            job_title="Baker",
+            shift_phase="morning",
             max_characters=3,
             avatar_url="https://example.com/avatar.png",
         )
@@ -260,7 +267,8 @@ class TestCreateCharacter:
             age=16,
             appearance="",
             backstory="",
-            desired_job_id=None,
+            job_title="Baker",
+            shift_phase="morning",
             max_characters=3,
         )
         assert character.avatar_url is None
@@ -276,7 +284,8 @@ class TestCreateCharacter:
                 age=16,
                 appearance="",
                 backstory="",
-                desired_job_id=None,
+                job_title="Baker",
+                shift_phase="morning",
                 max_characters=3,
                 avatar_url="not-a-url",
             )
@@ -293,7 +302,8 @@ class TestNameUniqueness:
             age=16,
             appearance="",
             backstory="",
-            desired_job_id=None,
+            job_title="Baker",
+            shift_phase="morning",
             max_characters=3,
         )
         with pytest.raises(ValidationFailed):
@@ -305,7 +315,8 @@ class TestNameUniqueness:
                 age=16,
                 appearance="",
                 backstory="",
-                desired_job_id=None,
+                job_title="Baker",
+                shift_phase="morning",
                 max_characters=3,
             )
 
@@ -320,7 +331,8 @@ class TestNameUniqueness:
             age=16,
             appearance="",
             backstory="",
-            desired_job_id=None,
+            job_title="Baker",
+            shift_phase="morning",
             max_characters=3,
         )
         with pytest.raises(ValidationFailed):
@@ -332,7 +344,8 @@ class TestNameUniqueness:
                 age=16,
                 appearance="",
                 backstory="",
-                desired_job_id=None,
+                job_title="Baker",
+                shift_phase="morning",
                 max_characters=3,
             )
 
@@ -346,7 +359,8 @@ class TestNameUniqueness:
             age=16,
             appearance="",
             backstory="",
-            desired_job_id=None,
+            job_title="Baker",
+            shift_phase="morning",
             max_characters=3,
         )
         with pytest.raises(ValidationFailed):
@@ -358,7 +372,8 @@ class TestNameUniqueness:
                 age=16,
                 appearance="",
                 backstory="",
-                desired_job_id=None,
+                job_title="Baker",
+                shift_phase="morning",
                 max_characters=3,
             )
 
@@ -373,7 +388,8 @@ class TestNameUniqueness:
             age=16,
             appearance="",
             backstory="",
-            desired_job_id=None,
+            job_title="Baker",
+            shift_phase="morning",
             max_characters=3,
         )
         characters_svc.reject_character(rejected)
@@ -391,7 +407,8 @@ class TestNameUniqueness:
             age=16,
             appearance="",
             backstory="",
-            desired_job_id=None,
+            job_title="Baker",
+            shift_phase="morning",
             max_characters=3,
         )
         assert character.name == "Katniss"
@@ -406,7 +423,8 @@ class TestNameUniqueness:
             age=16,
             appearance="",
             backstory="",
-            desired_job_id=None,
+            job_title="Baker",
+            shift_phase="morning",
             max_characters=3,
         )
         # Renaming a character to its own current name must not self-conflict.
@@ -416,7 +434,7 @@ class TestNameUniqueness:
 
 
 class TestApproveCharacter:
-    async def test_assigns_job_when_slot_free(self, db_session):
+    async def test_approves_and_carries_the_desired_job_over_unchanged(self, db_session):
         user = await make_user(db_session)
         district = make_district()
         character = await characters_svc.create_character(
@@ -427,51 +445,16 @@ class TestApproveCharacter:
             age=16,
             appearance="",
             backstory="",
-            desired_job_id="miner",
+            job_title="Miner",
+            shift_phase="morning",
             max_characters=3,
         )
-        await characters_svc.approve_character(
-            db_session, character, district=district, job_slots={"miner": 1}
-        )
+        await characters_svc.approve_character(db_session, character, district=district)
         assert character.status == CharacterStatus.APPROVED.value
-        assert character.job_id == "miner"
+        assert character.job_title == "Miner"
+        assert character.shift_phase == "morning"
         assert character.money == 40
         assert character.location_id == "square"
-
-    async def test_falls_back_to_unemployed_when_slot_full(self, db_session):
-        user = await make_user(db_session)
-        district = make_district()
-        # fill the one slot with an already-approved character
-        taken = await characters_svc.create_character(
-            db_session,
-            user=await make_user(db_session, discord_id=222),
-            district_id=district.id,
-            name="Gale",
-            age=18,
-            appearance="",
-            backstory="",
-            desired_job_id="miner",
-            max_characters=3,
-        )
-        await characters_svc.approve_character(
-            db_session, taken, district=district, job_slots={"miner": 1}
-        )
-
-        character = await characters_svc.create_character(
-            db_session,
-            user=user,
-            district_id=district.id,
-            name="Katniss",
-            age=16,
-            appearance="",
-            backstory="",
-            desired_job_id="miner",
-            max_characters=3,
-        )
-        await characters_svc.approve_character(
-            db_session, character, district=district, job_slots={"miner": 1}
-        )
-        assert character.job_id is None
 
     async def test_raises_if_not_pending(self, db_session):
         user = await make_user(db_session)
@@ -484,16 +467,13 @@ class TestApproveCharacter:
             age=16,
             appearance="",
             backstory="",
-            desired_job_id=None,
+            job_title="Baker",
+            shift_phase="morning",
             max_characters=3,
         )
-        await characters_svc.approve_character(
-            db_session, character, district=district, job_slots={}
-        )
+        await characters_svc.approve_character(db_session, character, district=district)
         with pytest.raises(NotAllowed):
-            await characters_svc.approve_character(
-                db_session, character, district=district, job_slots={}
-            )
+            await characters_svc.approve_character(db_session, character, district=district)
 
 
 class TestRetireCharacter:
@@ -508,15 +488,15 @@ class TestRetireCharacter:
             age=16,
             appearance="",
             backstory="",
-            desired_job_id="miner",
+            job_title="Miner",
+            shift_phase="morning",
             max_characters=3,
         )
-        await characters_svc.approve_character(
-            db_session, character, district=district, job_slots={"miner": 1}
-        )
+        await characters_svc.approve_character(db_session, character, district=district)
         await characters_svc.retire_character(db_session, character)
         assert character.status == CharacterStatus.RETIRED.value
-        assert character.job_id is None
+        assert character.job_title is None
+        assert character.shift_phase is None
 
     async def test_retire_requires_approved(self, db_session):
         user = await make_user(db_session)
@@ -528,7 +508,8 @@ class TestRetireCharacter:
             age=16,
             appearance="",
             backstory="",
-            desired_job_id=None,
+            job_title="Baker",
+            shift_phase="morning",
             max_characters=3,
         )
         with pytest.raises(NotAllowed):
@@ -547,12 +528,11 @@ class TestRejectAndRequestChanges:
             age=16,
             appearance="",
             backstory="",
-            desired_job_id=None,
+            job_title="Baker",
+            shift_phase="morning",
             max_characters=3,
         )
-        await characters_svc.approve_character(
-            db_session, character, district=district, job_slots={}
-        )
+        await characters_svc.approve_character(db_session, character, district=district)
         with pytest.raises(NotAllowed):
             characters_svc.reject_character(character)
 

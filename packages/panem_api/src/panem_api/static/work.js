@@ -137,6 +137,9 @@ async function finish(won) {
     resultEl.hidden = false;
     resultEl.className = won ? "win" : "lose";
     resultEl.textContent = `${body.character_name} earns ${body.wage} money this shift.`;
+    if (body.leveled_up) {
+      resultEl.textContent += ` Now a ${body.level}!`;
+    }
   } catch (err) {
     resultEl.hidden = false;
     resultEl.className = "lose";

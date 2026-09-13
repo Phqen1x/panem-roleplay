@@ -49,6 +49,11 @@ def validate_avatar_url(url: str) -> None:
         raise ValidationFailed("invalid_avatar_url")
 
 
+def validate_job_title(title: str) -> None:
+    if not title.strip() or len(title) > constants.JOB_TITLE_MAX_LEN:
+        raise ValidationFailed("invalid_job_title")
+
+
 def validate_proxy_tag(tag: str) -> None:
     if not (constants.PROXY_TAG_MIN_LEN <= len(tag) <= constants.PROXY_TAG_MAX_LEN):
         raise ValidationFailed("invalid_proxy_tag")
@@ -126,7 +131,8 @@ async def create_character(
     age: int,
     appearance: str,
     backstory: str,
-    desired_job_id: str | None,
+    job_title: str,
+    shift_phase: str,
     max_characters: int,
     avatar_url: str | None = None,
 ) -> Character:
@@ -136,6 +142,7 @@ async def create_character(
     validate_character_fields(
         district_id=district_id, name=name, age=age, appearance=appearance, backstory=backstory
     )
+    validate_job_title(job_title)
     if avatar_url:
         validate_avatar_url(avatar_url)
     await ensure_name_available(session, name)
@@ -153,20 +160,12 @@ async def create_character(
         backstory=backstory,
         avatar_url=avatar_url or None,
         status=CharacterStatus.PENDING.value,
-        job_id=desired_job_id,
+        job_title=job_title,
+        shift_phase=shift_phase,
     )
     session.add(character)
     await session.flush()
     return character
-
-
-async def _job_slot_free(session: AsyncSession, job_id: str, slots: int) -> bool:
-    result = await session.execute(
-        select(func.count())
-        .select_from(Character)
-        .where(Character.job_id == job_id, Character.status == CharacterStatus.APPROVED.value)
-    )
-    return int(result.scalar_one()) < slots
 
 
 async def approve_character(
@@ -174,31 +173,22 @@ async def approve_character(
     character: Character,
     *,
     district: District,
-    job_slots: dict[str, int],
 ) -> Character:
-    """FR-CHR-4. `job_slots` maps job_id -> slots, from `jobs.yaml`."""
+    """FR-CHR-4. The `job_title`/`shift_phase` the player free-typed at
+    creation just carry over unchanged -- there's no catalog slot to
+    contend for anymore; staff sign off on (or edit, via `/staff give
+    job`) whatever's there as part of this same approval, not a separate
+    allocation step."""
     if character.status != CharacterStatus.PENDING.value:
         raise NotAllowed("not_pending")
 
     # Content validation (Spec §5.4) guarantees every district has >= 1 public location.
     public_location = next(loc for loc in district.locations if loc.kind.value == "public")
 
-    # Resolve the job slot before mutating `character` at all: `_job_slot_free`
-    # counts approved characters against this same job_id, and autoflush would
-    # otherwise make this character's own pending status="approved" update
-    # visible to that count, making it appear to occupy its own slot.
-    desired = character.job_id
-    keep_job = (
-        desired is not None
-        and desired in job_slots
-        and await _job_slot_free(session, desired, job_slots[desired])
-    )
-
     character.status = CharacterStatus.APPROVED.value
     character.money = constants.STARTING_MONEY
     character.location_id = public_location.id
     character.current_district_id = district.id
-    character.job_id = desired if keep_job else None
 
     await session.flush()
     return character
@@ -231,7 +221,8 @@ async def retire_character(session: AsyncSession, character: Character) -> Chara
     )
 
     character.status = CharacterStatus.RETIRED.value
-    character.job_id = None
+    character.job_title = None
+    character.shift_phase = None
     await session.flush()
     return character
 

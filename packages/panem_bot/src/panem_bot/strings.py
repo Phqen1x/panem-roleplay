@@ -14,6 +14,7 @@ STRINGS: dict[str, str] = {
     "invalid_age": "Age must be between {min} and {max}.",
     "invalid_appearance": "Appearance must be {max} characters or fewer.",
     "invalid_backstory": "Backstory must be {max} characters or fewer.",
+    "invalid_job_title": "Job title can't be empty and must be 80 characters or fewer.",
     "invalid_district": "Not a valid district.",
     "no_district_role": "You don't have a district role yet -- pick one during onboarding, or "
     "ask staff to assign one, before creating a character.",
@@ -70,34 +71,21 @@ STRINGS: dict[str, str] = {
     "travel_district_ok": (
         "**{name}** boards a train for **{district}** -- arriving in {ticks} ticks."
     ),
-    # Staff job editing (/staff job ...)
-    "job_bad_json": "Not valid JSON: {detail}",
-    "job_schema_invalid": "Doesn't match the job schema: {detail}",
-    "job_bad_district": "{detail}",
-    "job_bad_workplace": "{detail}",
-    "job_not_found": "No job with that id (checked jobs.yaml and staff overrides).",
-    "job_missing_fields": "{detail}",
-    "job_set_ok": "Job **{job_id}** saved for district {district_id}.",
-    "job_option_ok": "Job **{job_id}** option {slot} saved.",
-    "job_removed_ok": "Job **{job_id}** removed.",
-    # Jobs and shifts (FR-JOB)
-    "already_employed": "That character already has a job — quit it first with `/job quit`.",
-    "not_employed": "That character doesn't have a job to quit.",
-    "job_staff_only": "That position can only be assigned by staff.",
-    "reputation_too_low": "Reputation too low for that job (needs {min_reputation}).",
-    "job_applied": "**{name}** is now working as **{title}**.",
-    "job_quit": "**{name}** has left their job.",
+    # Jobs and shifts (FR-JOB, reworked: free-typed job_title + shift_phase,
+    # set at character creation and changed only by staff -- no more
+    # catalog to apply for/quit/list, or a JobOption-driven ladder to check).
+    "job_none_set": "**{name}** doesn't have a job set -- ask staff to set one with "
+    "`/staff give job`.",
     "job_no_open_shift": "**{name}** doesn't have a shift open right now.",
     "shift_no_longer_open": "That shift is no longer open.",
-    "work_ok": "**{name}** works: +{wage} money, {rep_delta:+d} reputation.",
+    "work_ok": "**{name}** {outcome}: +{wage} money, {rep_delta:+d} reputation.",
     "work_game_ready": "**{name}** clocks in for **{title}**. Play the shift's minigame below "
     "(opens in your browser) -- you're paid based on how it goes, even if you finish after "
     "the shift ends.",
     "work_game_ready_activity": "**{name}** clocks in for **{title}**. Launch the shift's "
     "minigame in Discord below -- you're paid based on how it goes, even if you finish after "
     "the shift ends.",
-    "promotion_available": " **{name}** is eligible for a promotion to **{next_title}** -- ask staff.",
-    "no_jobs_in_district": "No jobs are defined for that district yet.",
+    "level_up": " **{name}** is now a **{level}** -- wages just went up!",
     # Residents (FR-NPC)
     "no_residents_in_district": "No residents are seeded for that district yet.",
     "resident_not_found": "No resident by that name in this district.",

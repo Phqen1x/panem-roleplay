@@ -10,7 +10,8 @@ staff approval, Discord Forum-based scenes, and character proxying),
 **Phase 1 — World Simulation** (Plan §4: a deterministic tick loop, NPC
 movement, ambient narration, intra-district `/travel`/`/where`), and
 **Phase 2 — Economy** (Plan §5: nightly hunger/health, job shifts,
-`/work`, `/job list|apply|quit`, district-level supply/demand pricing,
+`/work`, free-typed jobs (see "Notes on the job system rework" below --
+`/job list|apply|quit` are retired), district-level supply/demand pricing,
 exports, quotas, shopkeeper restocking, `/market prices|buy|sell`/
 `/inventory`, and now cross-district travel by train -- `/travel
 district:<id>`, tickets, transit ticks, and visitor roles -- plus a real
@@ -1046,6 +1047,85 @@ by `panem_api`'s Activity frontend (`work.html`/`work.js`, no build step, matchi
   either way (`finish(won)`), so this is not a meaningfully weaker check.
 - Snake/Solitaire/other games, and randomizing which minigame `/work` picks, are follow-up
   scope, not built in this pass.
+
+## Notes on the job system rework (free-typed jobs, leveling, district economy)
+
+A feature request, not a Plan phase -- reworks how player characters get and grow in a
+job, and extends the district economy to react to it.
+
+- **Jobs are free-typed now, not picked from `data/jobs.yaml`.** At character creation,
+  the player types a job title (`Character.job_title`, up to 80 chars) and picks a shift
+  (`Character.shift_phase`, a `DayPhase`) instead of choosing from a list of catalog
+  jobs with open slots. Staff review both as part of the normal approve/request-changes/
+  reject flow (the approval embed shows them) to judge whether the job makes sense for
+  the district and is allowable -- there's no automated check for this, staff judgment is
+  the gate, same as it already was for names/backstories. Staff can also change a job any
+  time after approval with `/staff give job <character> <job_title> <shift_phase>`, which
+  now takes free text + a shift choice instead of a catalog job id.
+- **`/job apply|list|quit` are retired**, along with `/staff job set|option|remove|show`
+  (the `JobOverride` DB table they edited is dropped by the same migration) -- there's no
+  more catalog for a player to browse or apply to, and no per-job options to edit. A
+  character with no job (never assigned, or fired for missing shifts) can only be given
+  one again by staff; there's no player self-service anymore. `/staff job list` survives
+  unchanged -- it's read-only and still useful for seeing what catalog jobs *NPCs* hold
+  (NPCs are entirely untouched by this rework: `Npc.job_id`/`data/jobs.yaml`/
+  `JobOption`/`Job.wage`/`Job.produces` all still work exactly as before for them).
+- **Apprentice -> Expert leveling** (`panem_shared.job_levels`, `JobLevel` enum) replaces
+  the old per-job `ladder_next`/`ladder_requirement` promotion system, which had nowhere
+  to be authored against once jobs aren't a catalog. Purely driven by
+  `Character.shifts_completed` (incremented on every resolved shift, win or lose):
+  Apprentice (0 shifts) -> Novice (28) -> Journeyman (+56 = 84) -> Master (+84 = 168) ->
+  Expert (+112 = 280), each level a further +0.5x wage multiplier (1.0x/1.5x/2.0x/2.5x/
+  3.0x). `/character status` shows the current level and shifts left to the next one.
+- **Wage formula**: `PLAYER_JOB_BASE_WAGE` (20, flat -- there's no more per-job authored
+  wage) x the level multiplier above x the minigame's win/lose multiplier
+  (`WORK_GAME_WIN_WAGE_MULT`/`LOSE`, unchanged from the Minesweeper build) x a market
+  multiplier (below). The old catalog-authored 3-option "work hard / play safe / cover a
+  crewmate" menu is gone with the catalog it was defined in -- `/work` without
+  `ACTIVITY_PUBLIC_URL` configured now resolves immediately via a coin-flip
+  (`NO_ACTIVITY_WORK_WIN_PROBABILITY`, 0.6) using the same win/lose math the minigame
+  uses, rather than showing that menu. RP-credit (a long proxied message completing an
+  open shift, FR-PRX-7) always counts as a win, and no longer needs the message's scene
+  tagged for a job's `workplace` -- there isn't one to tag against anymore, so any
+  proxied RP while a shift is open counts, everywhere (previously only Gamemakers got
+  that "anywhere" privilege).
+- **Every completed player shift produces one unit of the character's home district's
+  own quota good** (`District.quota.good` -- already exactly the "key good per district"
+  concept, e.g. District 12's coal, District 1's luxury goods; the Capitol has no quota
+  and so player jobs there produce nothing), feeding `panem_sim.systems.economy`'s
+  existing supply-side pricing the same way `Job.produces` used to for NPCs. Local
+  discount for a district's own good falls out of the existing per-district pricing model
+  for free -- a district producing its own key good already prices it lower there than a
+  district that has to import it, with no new code needed for that part.
+- **Demand is active-player-driven now**, not purely `population_base`: a district's
+  demand for a good comes from how many of its characters have done something active
+  (`/work`ed or proxied a message -- `Character.last_active_tick`) in the last
+  `ACTIVE_PLAYER_WINDOW_SIM_DAYS` (42 sim-days = 7 real days at the default tick rate),
+  weighted per-good by whether the district produces it (baseline) or imports it
+  (`DISTRICT_IMPORT_DEMAND_WEIGHT`, 2x -- a district wants more of what it doesn't make
+  itself, e.g. the Capitol wanting luxury goods more than coal). Falls back to the old
+  flat `population_base * MARKET_DEMAND_PER_CAPITA` rate for a district with no
+  active-player signal yet (a fresh world, or one nobody's playing in), so its market
+  doesn't collapse to zero. This is what makes "produce too little for what's wanted, or
+  more than anyone's buying" actually move prices per FR-ECO-2's existing scarcity/glut
+  formula -- no new pricing math needed there, just a better demand input.
+- **Wage feeds back from price**: a district whose own quota good is currently trading
+  above its `base_price` (scarce) pays a wage boost on top of everything above; one
+  whose good is undersupplied-relative-to-nothing or oversupplied (cheap) pays a debuff
+  (`panem_shared.shifts.market_wage_multiplier`, `price / base_price`, already bounded by
+  the sim's own `PRICE_CLAMP_MIN`/`MAX` so no separate clamp is needed). This is the
+  "if goods are worth more, the producing district's wages go up" loop -- reached by
+  `/work` and the minigame result endpoint looking up the character's home district's
+  current `MarketPrice` for its own quota good before paying out.
+- **What this pass does not build** (flagged explicitly rather than silently skipped):
+  hand-authored per-good-per-district demand weights (every good mattering a specific,
+  different amount to every district, e.g. the Capitol barely needing coal but needing
+  grain a lot) -- this uses the cruder produces/imports-based heuristic above instead of
+  200+ authored weights; and a real per-good consumption model (characters/NPCs actually
+  needing to buy and consume specific goods daily -- food to not go hungry, coal to heat
+  a home once housing exists) -- `needs.py`'s nightly living cost is still a flat money
+  cost, not tied to owning any particular good. Both are real follow-up scope, deferred
+  the same way housing itself was in the original request.
 
 ## Upgrading past duplicate character names
 

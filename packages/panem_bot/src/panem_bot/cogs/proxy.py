@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
-import random
 
 import discord
 from discord import app_commands
@@ -15,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from panem_bot import redis_keys
 from panem_bot.outbound import OutboundMessage, SendPriority
 from panem_bot.services import characters as characters_svc
-from panem_bot.services import jobs as jobs_svc
 from panem_bot.services import proxy as proxy_svc
 from panem_bot.services import shifts as shifts_svc
 from panem_bot.strings import t
@@ -138,9 +136,19 @@ class ProxyCog(commands.Cog):
     async def _apply_rp_credit(
         self, session: AsyncSession, character: Character, scene: Scene, content: str
     ) -> None:
-        """FR-PRX-7: a long-enough proxied message inside the scene tagged
-        for the character's open shift's workplace completes that shift as
-        if `/work` had picked option 0, with no separate command needed."""
+        """FR-PRX-7: a long-enough proxied message completes an open shift
+        with no separate command needed, counted as a win. Jobs are
+        free-typed now (no catalog `workplace` to tag a scene against), so
+        this no longer gates on `scene`/location -- any proxied RP while a
+        shift is open counts, same as `can_earn_rp_credit_anywhere` already
+        gave Gamemakers before the rework. Also touches `last_active_tick`
+        (the district economy's active-player signal) regardless of
+        whether there's an open shift to credit -- proxying at all counts
+        as "active"."""
+        clock = await session.get(WorldClock, 1)
+        current_tick = clock.tick if clock is not None else 0
+        character.last_active_tick = current_tick
+
         open_shift = (
             await session.execute(
                 select(Shift).where(Shift.character_id == character.id, Shift.result.is_(None))
@@ -148,20 +156,17 @@ class ProxyCog(commands.Cog):
         ).scalar_one_or_none()
         if open_shift is None:
             return
-
-        job = await jobs_svc.get_job(session, self.bot.content, open_shift.job_id)  # type: ignore[attr-defined]
-        if job is None:
-            return
-        if scene.location_id != job.workplace and not shifts_svc.can_earn_rp_credit_anywhere(
-            character
-        ):
-            return
         if not shifts_svc.meets_rp_credit(content):
             return
 
-        clock = await session.get(WorldClock, 1)
-        current_tick = clock.tick if clock is not None else 0
-        outcome = shifts_svc.resolve_shift(job, 0, is_player=True, rng=random.Random())
+        bot_content = self.bot.content  # type: ignore[attr-defined]
+        district = bot_content.district(character.district_id)
+        market_multiplier = await shifts_svc.market_multiplier_for_district(
+            session, bot_content, district
+        )
+        outcome = shifts_svc.resolve_shift_game(
+            character, district, won=True, market_multiplier=market_multiplier
+        )
         shifts_svc.apply_shift_outcome(open_shift, character, outcome, tick=current_tick)
 
     @commands.Cog.listener()

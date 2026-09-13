@@ -40,11 +40,13 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from panem_shared.content.loader import ContentBundle
-from panem_shared.db.models import Character, Shift, WorldClock
+from panem_shared.content.schemas import District
+from panem_shared.db.models import Character, MarketPrice, Shift, WorldClock
 from panem_shared.db.session import session_scope
+from panem_shared.job_levels import job_level_for_shifts
 from panem_shared.logging import get_logger
 from panem_shared.redis_keys import positions_key, work_pending_key
-from panem_shared.shifts import apply_shift_outcome, resolve_shift_game
+from panem_shared.shifts import apply_shift_outcome, market_wage_multiplier, resolve_shift_game
 
 logger = get_logger(component="api")
 
@@ -113,10 +115,29 @@ class WorkResultResponse(BaseModel):
     wage: int
     won: bool
     character_name: str
+    leveled_up: bool
+    level: str
 
 
 class WorkPendingShift(BaseModel):
     shift_id: int
+
+
+async def _market_multiplier(
+    session: AsyncSession, content: ContentBundle, district: District
+) -> float:
+    """Same wage feedback `panem_bot.services.shifts.
+    market_multiplier_for_district` gives the bot's own `/work` -- this
+    process can't import `panem_bot`, so the same small lookup is
+    duplicated here rather than shared."""
+    if district.quota is None:
+        return 1.0
+    good = content.goods.get(district.quota.good)
+    if good is None:
+        return 1.0
+    row = await session.get(MarketPrice, (district.id, good.id))
+    price = row.price if row is not None else good.base_price
+    return market_wage_multiplier(price, good.base_price)
 
 
 async def _read_positions(redis_client: redis.Redis, district_id: int) -> Positions:
@@ -258,17 +279,19 @@ def create_app(
     @app.get("/activity/work/{shift_id}", response_model=WorkShiftStatus)
     async def work_shift_status(shift_id: int) -> WorkShiftStatus:
         """Lets `work.html` show the player who/what they're playing for
-        (and refuse a stale link) before they've played anything."""
+        (and refuse a stale link) before they've played anything. Jobs are
+        free-typed (`Character.job_title`) rather than a catalog entry
+        now, so this reads the character directly instead of joining
+        through `content.jobs`."""
         if session_factory is None:
             raise HTTPException(status_code=503, detail="The work minigame isn't configured")
         async with session_scope(session_factory) as session:
             shift = await session.get(Shift, shift_id)
             character = await session.get(Character, shift.character_id) if shift else None
-            job = content.jobs.get(shift.job_id) if shift else None
-            if shift is None or character is None or job is None:
+            if shift is None or character is None or character.job_title is None:
                 raise HTTPException(status_code=404, detail="No such shift")
             return WorkShiftStatus(
-                job_title=job.title,
+                job_title=character.job_title,
                 character_name=character.name,
                 already_resolved=shift.result is not None,
             )
@@ -277,11 +300,11 @@ def create_app(
     async def work_shift_result(shift_id: int, body: WorkResultRequest) -> WorkResultResponse:
         """The only DB write in this process: `work.html` reports whether
         its Minesweeper board was won or lost once the player finishes,
-        and this resolves the shift the same way `panem_bot`'s classic
-        `/work` option-select flow does (`panem_shared.shifts`), just with
-        `resolve_shift_game`'s win/lose wage multiplier instead of a
-        chosen option's. Trusts the client's `won` outright -- see this
-        module's docstring."""
+        and this resolves the shift the same way `panem_bot`'s `/work`
+        does (`panem_shared.shifts.resolve_shift_game`) -- job level,
+        win/lose, and the home district's current market price for its
+        quota good all factor into the wage. Trusts the client's `won`
+        outright -- see this module's docstring."""
         if session_factory is None:
             raise HTTPException(status_code=503, detail="The work minigame isn't configured")
         async with session_scope(session_factory) as session:
@@ -291,16 +314,27 @@ def create_app(
             if shift.result is not None:
                 raise HTTPException(status_code=409, detail="This shift was already resolved")
             character = await session.get(Character, shift.character_id)
-            job = content.jobs.get(shift.job_id)
-            if character is None or job is None:
+            if character is None:
                 raise HTTPException(status_code=404, detail="No such shift")
             clock = await session.get(WorldClock, 1)
             tick = clock.tick if clock is not None else 0
-            outcome = resolve_shift_game(job, body.won)
+            district = content.district(character.district_id)
+            market_multiplier = await _market_multiplier(session, content, district)
+            before_level = job_level_for_shifts(character.shifts_completed)
+            outcome = resolve_shift_game(
+                character, district, won=body.won, market_multiplier=market_multiplier
+            )
             apply_shift_outcome(shift, character, outcome, tick=tick)
+            after_level = job_level_for_shifts(character.shifts_completed)
             wage, character_name = round(outcome.wage), character.name
         logger.info("work_game_resolved", shift_id=shift_id, won=body.won, wage=wage)
-        return WorkResultResponse(wage=wage, won=body.won, character_name=character_name)
+        return WorkResultResponse(
+            wage=wage,
+            won=body.won,
+            character_name=character_name,
+            leveled_up=after_level != before_level,
+            level=after_level.value,
+        )
 
     if STATIC_DIR.exists():
         # Mounted last so it only ever catches paths none of the routes

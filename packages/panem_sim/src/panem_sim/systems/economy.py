@@ -12,12 +12,20 @@ Runs once per day (the same `ctx.tick % TICKS_PER_DAY == 0` gate as
    systems intentionally don't share bookkeeping: `jobs.py` still pays
    each NPC individually and stochastically for flavor, while this only
    needs an aggregate, deterministic supply figure for pricing.
-2. **Demand** (FR-ECO-1) is a flat per-capita rate against
-   `District.population_base` for every good the district produces or
-   imports -- there's no real per-good consumption model (nothing tracks
-   a character/NPC actually eating bread or burning coal), so this is a
-   much cruder placeholder than the supply side gets. See
-   `constants.MARKET_DEMAND_PER_CAPITA`.
+2. **Demand** (FR-ECO-1, job-system rework) is per active player in the
+   district (one who's `/work`ed or proxied within
+   `ACTIVE_PLAYER_WINDOW_SIM_DAYS`, `Character.last_active_tick`),
+   weighted per good by whether the district produces it (baseline) or
+   imports it (`DISTRICT_IMPORT_DEMAND_WEIGHT`, higher -- a district
+   wants more of what it doesn't make itself). Falls back to the older
+   flat `District.population_base * MARKET_DEMAND_PER_CAPITA` rate for a
+   district with no active-player signal yet (a fresh world, or an
+   all-NPC district), so its market doesn't collapse to zero. Still not a
+   real per-good consumption model (nothing tracks a character/NPC
+   actually eating bread or burning coal to heat a home) -- see
+   `README.md`'s "Notes on the job system rework" for what a fuller
+   version would need (per-district/per-good need weights beyond the
+   produces/imports heuristic, daily consumption tied to inventory).
 3. **Exports** (FR-ECO-6) move goods along `routes.yaml` from their
    `from_` district, capped by each route's `capacity` and by the
    district's remaining supply of that route's good (several routes can
@@ -69,15 +77,19 @@ def _add_supply(supply: Supply, district_id: int, good_id: str, qty: float) -> N
 
 def _player_supply(state: WorldState, ctx: TickContext) -> Supply:
     """FR-ECO-1: real production from shifts a player actually completed,
-    attributed to the job's own district (not wherever the character
-    currently is -- a shift is tied to a workplace, not a person)."""
+    attributed to the character's home district. Player jobs are
+    free-typed now (`Character.job_title`, not a `jobs.yaml` catalog
+    entry `shift.job_id` could look up), so this reads the district off
+    the character instead of a job -- `panem_shared.shifts.
+    resolve_shift_game` already computed `shift.output` as one unit of
+    that district's own quota good per completed shift."""
     supply: Supply = {}
     for shift in state.completed_shifts:
-        job = ctx.content.jobs.get(shift.job_id)
-        if job is None:
+        character = state.characters.get(shift.character_id)
+        if character is None:
             continue
         for good_id, qty in (shift.output or {}).items():
-            _add_supply(supply, job.district, good_id, qty)
+            _add_supply(supply, character.district_id, good_id, qty)
     return supply
 
 
@@ -110,6 +122,39 @@ def _traded_goods(district: District) -> set[str]:
     """Goods this district's market deals in -- what it makes plus what
     it brings in from elsewhere (Spec §1: `produces`/`imports`)."""
     return set(district.produces) | set(district.imports)
+
+
+def _active_player_count(state: WorldState, ctx: TickContext, district_id: int) -> int:
+    """Characters whose home is `district_id` and who've done something
+    active (`/work`, a proxied message -- `Character.last_active_tick`)
+    within `ACTIVE_PLAYER_WINDOW_SIM_DAYS`, the sim-time equivalent of a
+    real week at the default tick rate."""
+    cutoff = ctx.tick - constants.ACTIVE_PLAYER_WINDOW_SIM_DAYS * constants.TICKS_PER_DAY
+    return sum(
+        1
+        for character in state.characters.values()
+        if character.district_id == district_id
+        and character.last_active_tick is not None
+        and character.last_active_tick >= cutoff
+    )
+
+
+def _demand_weight(district: District, good_id: str) -> float:
+    """A district demands a good it imports more than one it makes
+    itself (Capitol wants luxury goods more than coal, D12 wants grain
+    more than luxury goods) -- see `DISTRICT_IMPORT_DEMAND_WEIGHT`."""
+    return constants.DISTRICT_IMPORT_DEMAND_WEIGHT if good_id in district.imports else 1.0
+
+
+def _demand_for_good(district: District, good_id: str, *, active_players: int) -> float:
+    """FR-ECO-1's demand side: per-active-player once a district has any
+    active-player signal at all, falling back to the older flat
+    `population_base` rate for an all-NPC/nobody-active-yet district so
+    its market doesn't collapse to zero the moment the sim starts."""
+    weight = _demand_weight(district, good_id)
+    if active_players > 0:
+        return active_players * constants.ACTIVE_PLAYER_DEMAND_PER_CAPITA * weight
+    return district.population_base * constants.MARKET_DEMAND_PER_CAPITA * weight
 
 
 def _current_price(state: WorldState, district_id: int, good_id: str, ctx: TickContext) -> float:
@@ -150,15 +195,20 @@ def _run_exports(state: WorldState, ctx: TickContext, supply: Supply) -> dict[in
 
 def _update_prices(state: WorldState, ctx: TickContext, supply: Supply) -> None:
     """FR-ECO-2: EMA toward a target price derived from the demand/supply
-    ratio, clamped to `[PRICE_CLAMP_MIN, PRICE_CLAMP_MAX] * base_price`."""
+    ratio, clamped to `[PRICE_CLAMP_MIN, PRICE_CLAMP_MAX] * base_price`.
+    A district producing less of a good than active players there demand
+    (or less than other districts are buying via `_run_exports`) sees
+    that ratio climb -- scarcity raises the price everywhere the good is
+    traded; overproduction relative to demand pushes it back down."""
     for district in ctx.content.districts.values():
         district_supply = supply.get(district.id, {})
+        active_players = _active_player_count(state, ctx, district.id)
         for good_id in _traded_goods(district):
             good = ctx.content.goods.get(good_id)
             if good is None:
                 continue
             qty_supplied = max(district_supply.get(good_id, 0.0), constants.MARKET_SUPPLY_FLOOR)
-            demand = district.population_base * constants.MARKET_DEMAND_PER_CAPITA
+            demand = _demand_for_good(district, good_id, active_players=active_players)
             ratio = demand / qty_supplied
             clamped = min(
                 max(ratio**constants.PRICE_EXPONENT, constants.PRICE_CLAMP_MIN),

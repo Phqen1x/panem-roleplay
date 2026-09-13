@@ -20,8 +20,11 @@ Two populations, handled differently:
 Job-status changes (a shift missed, a firing) are pure DB-state changes
 in this milestone; there's no player-facing push notification yet (that
 would need a new DM-capable `WorldEvent` kind, which is more than this
-milestone's scope) -- a fired character finds out via `/job list` or by
-`/work` failing next time, not a proactive DM.
+milestone's scope) -- a fired character finds out from `/character
+status` or by `/work` refusing next time, not a proactive DM. Firing
+clears `Character.job_title`/`shift_phase` (the job rework's free-typed
+fields) rather than a catalog `job_id` -- only staff can set them again
+(`/staff give job`), same as at character creation.
 """
 
 from __future__ import annotations
@@ -104,7 +107,8 @@ def _fire(state: WorldState, character: Character, job_id: str, ctx: TickContext
             reason="fired",
         )
     )
-    character.job_id = None
+    character.job_title = None
+    character.shift_phase = None
     character.job_started_tick = None
     character.consecutive_missed = 0
     state.notable_events.append(
@@ -127,13 +131,12 @@ def _open_shifts_for_due_characters(state: WorldState, ctx: TickContext) -> None
     for character in state.characters.values():
         if character.id in already_open:
             continue
-        job = _job_for(ctx, character.job_id)
-        if job is None or job.shift_phase != ctx.phase:
+        if character.job_title is None or character.shift_phase != ctx.phase:
             continue
 
         shift = Shift(
             character_id=character.id,
-            job_id=job.id,
+            job_id=character.job_title,
             tick_opened=ctx.tick,
             tick_due=ctx.tick + constants.SHIFT_DURATION_TICKS,
             result=None,

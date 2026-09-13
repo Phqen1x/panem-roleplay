@@ -81,7 +81,7 @@ def can_rp_at_location(character: Character, location_id: str) -> bool:
     return _is_gamemaker(character)
 
 
-def has_location_access(*, job_id: str | None, has_position: bool, location: Location) -> bool:
+def has_location_access(*, job_title: str | None, has_position: bool, location: Location) -> bool:
     """FR-LOC-3. Item-based access (`access_items`) needs inventory, which
     doesn't exist before Phase 2, so it's treated as never satisfied here —
     a restricted item-gated location is inaccessible to everyone until then,
@@ -89,12 +89,19 @@ def has_location_access(*, job_id: str | None, has_position: bool, location: Loc
 
     `has_position` generalizes what used to be a single `is_victor` check:
     holding *any* staff-granted `Position` (Victor, Gamemaker, Governor)
-    grants the same restricted-location access a Victor always had."""
+    grants the same restricted-location access a Victor always had.
+
+    `location.access_jobs` (a list of `jobs.yaml` catalog ids) can't
+    reliably match a free-typed `Character.job_title` anymore since the
+    job rework -- this check is kept for the rare case a player happened
+    to type exactly one of those ids, but `has_position` (or staff simply
+    moving the character somewhere via `/staff`) is the real access path
+    now for a job-gated location."""
     if not location.restricted:
         return True
     if has_position:
         return True
-    return job_id is not None and job_id in location.access_jobs
+    return job_title is not None and job_title in location.access_jobs
 
 
 def scene_location_id(scene: Scene | None) -> str | None:
@@ -134,7 +141,9 @@ def check_can_proxy(
             return ProxyRefusal("proxy_not_traveled")
         location = next((loc for loc in district.locations if loc.id == location_id), None)
         if location is not None and not has_location_access(
-            job_id=character.job_id, has_position=bool(character.positions), location=location
+            job_title=character.job_title,
+            has_position=bool(character.positions),
+            location=location,
         ):
             return ProxyRefusal("proxy_location_restricted")
 

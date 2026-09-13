@@ -2,9 +2,12 @@
 
 Discord modals cap out at 5 text inputs and don't support select menus, so
 the full field set (name, age, district, appearance, backstory,
-avatar URL, desired_job) is collected across three interaction steps: a
-district select, this modal (name/age/appearance/backstory/avatar -- the
-modal's full 5-input budget), then a job select. See
+avatar URL, job title, shift phase) is collected across four interaction
+steps: a district select, `CharacterDetailsModal`
+(name/age/appearance/backstory/avatar -- the modal's full 5-input
+budget), `JobTitleModal` (job title needs its own modal -- there's no
+room left in the first one), then a shift-phase select (a `View`, not a
+modal, since a phase is a fixed list of choices, not free text). See
 `panem_bot.cogs.characters` for how the steps chain together. An avatar
 set here goes to staff for review with the rest of the application, same
 as `/character avatar` does for a later change.
@@ -62,3 +65,25 @@ class CharacterDetailsModal(discord.ui.Modal, title="New Character"):
             str(self.backstory.value or ""),
             str(self.avatar.value or ""),
         )
+
+
+class JobTitleModal(discord.ui.Modal, title="Desired Job"):
+    job_title = discord.ui.TextInput(
+        label="What job does your character want?",
+        max_length=80,
+        placeholder="e.g. Coal miner, Seamstress, Fisherman's apprentice",
+    )
+
+    def __init__(
+        self,
+        *,
+        on_submit: Callable[[discord.Interaction, str], Awaitable[None]],
+        prefill: str | None = None,
+    ) -> None:
+        super().__init__()
+        self._on_submit = on_submit
+        if prefill:
+            self.job_title.default = prefill
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await self._on_submit(interaction, str(self.job_title.value))

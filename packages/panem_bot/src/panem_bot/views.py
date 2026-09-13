@@ -23,56 +23,33 @@ def character_id_from_message(message: discord.Message) -> int | None:
         return None
 
 
-class JobSelect(discord.ui.Select):
-    def __init__(
-        self,
-        jobs: list[tuple[str, str]],
-        on_choose: Callable[[discord.Interaction, str | None], Awaitable[None]],
-    ) -> None:
-        options = [discord.SelectOption(label="Unemployed", value="__none__")]
-        options += [discord.SelectOption(label=title, value=jid) for jid, title in jobs]
-        super().__init__(placeholder="Choose a desired job...", options=options[:25])
-        self._on_choose = on_choose
-
-    async def callback(self, interaction: discord.Interaction) -> None:
-        value = self.values[0]
-        await self._on_choose(interaction, None if value == "__none__" else value)
+SHIFT_PHASE_LABELS: dict[str, str] = {
+    "morning": "Morning",
+    "afternoon": "Afternoon",
+    "evening": "Evening",
+    "night": "Night",
+}
+"""Display order/labels for `ShiftPhaseSelect` -- keys are `DayPhase`
+values (`panem_shared.enums.DayPhase`)."""
 
 
-class JobSelectView(discord.ui.View):
-    def __init__(
-        self,
-        jobs: list[tuple[str, str]],
-        on_choose: Callable[[discord.Interaction, str | None], Awaitable[None]],
-    ) -> None:
-        super().__init__(timeout=300)
-        self.add_item(JobSelect(jobs, on_choose))
-
-
-class WorkOptionSelect(discord.ui.Select):
-    def __init__(
-        self,
-        labels: list[str],
-        on_choose: Callable[[discord.Interaction, int], Awaitable[None]],
-    ) -> None:
+class ShiftPhaseSelect(discord.ui.Select):
+    def __init__(self, on_choose: Callable[[discord.Interaction, str], Awaitable[None]]) -> None:
         options = [
-            discord.SelectOption(label=label, value=str(i)) for i, label in enumerate(labels)
+            discord.SelectOption(label=label, value=phase)
+            for phase, label in SHIFT_PHASE_LABELS.items()
         ]
-        super().__init__(placeholder="Choose how to work this shift...", options=options)
+        super().__init__(placeholder="Choose when you work your shift...", options=options)
         self._on_choose = on_choose
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        await self._on_choose(interaction, int(self.values[0]))
+        await self._on_choose(interaction, self.values[0])
 
 
-class WorkOptionView(discord.ui.View):
-    def __init__(
-        self,
-        labels: list[str],
-        on_choose: Callable[[discord.Interaction, int], Awaitable[None]],
-    ) -> None:
+class ShiftPhaseSelectView(discord.ui.View):
+    def __init__(self, on_choose: Callable[[discord.Interaction, str], Awaitable[None]]) -> None:
         super().__init__(timeout=300)
-        self.add_item(WorkOptionSelect(labels, on_choose))
+        self.add_item(ShiftPhaseSelect(on_choose))
 
 
 class ChangesNoteModal(discord.ui.Modal, title="Request Changes"):

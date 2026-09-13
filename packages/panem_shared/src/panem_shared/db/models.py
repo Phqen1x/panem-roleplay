@@ -76,9 +76,27 @@ class Character(TimestampMixin, Base):
         String(16), nullable=False, default=CharacterStatus.PENDING.value, index=True
     )
 
-    job_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    job_title: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    """Free-typed by the player at character creation (Spec rework: no more
+    picking from a `jobs.yaml` catalog) -- staff sign off on it (or edit it)
+    as part of approval, same as the rest of the application, and can change
+    it any time after via `/staff give job`. Purely descriptive; wages and
+    market production no longer key off it at all (see `shift_phase` and
+    `panem_shared.shifts`)."""
+    shift_phase: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    """`DayPhase` the player chose to work at creation (staff-editable the
+    same way `job_title` is) -- replaces a catalog `Job.shift_phase`."""
+    shifts_completed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    """Total shifts ever completed (`/work`, win or lose) -- drives the
+    Apprentice->Expert wage-multiplier ladder in `panem_shared.job_levels`,
+    which replaced the old per-job ladder (`Job.ladder_next`)."""
     job_started_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
     consecutive_missed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_active_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """Last tick this character did something active (`/work`, a proxied
+    message) -- drives the district economy's active-player demand model
+    (`panem_sim.systems.economy`), a proxy for "interacted in the past real
+    week" since ticks run on a fixed real-time cadence."""
 
     reputation: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     money: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -314,25 +332,6 @@ class JobHistory(Base):
     started_tick: Mapped[int] = mapped_column(Integer, nullable=False)
     ended_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
     reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
-
-
-class JobOverride(TimestampMixin, Base):
-    """Staff-edited job definitions layered on top of `jobs.yaml` (no code
-    change / redeploy needed to add, edit, or remove a job per district).
-
-    `id` reuses the same job-id namespace as the content file: a row whose
-    id matches a YAML job overrides it; a new id adds a job that doesn't
-    exist in YAML at all. `disabled=True` removes the job from the merged
-    view regardless of whether it originated in YAML or here.
-    """
-
-    __tablename__ = "job_overrides"
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    district_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
-    disabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    updated_by_discord_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
 
 class WorldEvent(TimestampMixin, Base):

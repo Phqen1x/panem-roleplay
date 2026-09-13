@@ -80,7 +80,7 @@ class TestCheckCanTravel:
 
     def test_refuses_restricted_location_without_access(self):
         district = make_district()
-        character = make_character(job_id=None, positions=[])
+        character = make_character(job_title=None, positions=[])
         location = travel_svc.resolve_location(district, "labs")
         with pytest.raises(NotAllowed) as exc_info:
             travel_svc.check_can_travel(character=character, location=location)

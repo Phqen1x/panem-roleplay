@@ -31,6 +31,47 @@ to actually go finish a Minesweeper board without racing the clock, short
 enough that an abandoned game doesn't block a new shift from ever
 opening."""
 
+NO_ACTIVITY_WORK_WIN_PROBABILITY = 0.6
+"""`/work` without `ACTIVITY_PUBLIC_URL` configured (no Minesweeper board to
+actually win or lose) resolves immediately with a coin-flip at this
+probability instead -- the classic 3-option choose-your-risk menu was
+retired along with the `jobs.yaml` catalog it was authored against, so
+win/lose is now the only outcome axis `/work` has, configured or not."""
+
+PLAYER_JOB_BASE_WAGE = 20.0
+"""Every player job pays from this same flat base now that a job is a
+free-typed title (`Character.job_title`) rather than a catalog entry with
+its own authored wage -- `panem_shared.job_levels`' level multiplier and
+`WORK_GAME_WIN_WAGE_MULT`/`LOSE` stack on top of it, and
+`panem_sim.systems.economy`'s market price on top of that again."""
+
+PLAYER_SHIFT_OUTPUT_QTY = 1.0
+"""FR-ECO rework: every completed player shift (win or lose -- they still
+did the work) produces exactly one unit of their home district's quota
+good (`District.quota.good`, e.g. District 12's coal), feeding
+`panem_sim.systems.economy`'s supply the same way `Job.produces` used to."""
+
+JOB_LEVEL_SHIFT_THRESHOLDS: dict[str, int] = {
+    "apprentice": 0,
+    "novice": 28,
+    "journeyman": 84,  # 28 + 56
+    "master": 168,  # 84 + 84
+    "expert": 280,  # 168 + 112
+}
+"""Cumulative `Character.shifts_completed` needed to reach each `JobLevel`
+(`panem_shared.job_levels.job_level_for_shifts`)."""
+
+JOB_LEVEL_WAGE_MULTIPLIERS: dict[str, float] = {
+    "apprentice": 1.0,
+    "novice": 1.5,
+    "journeyman": 2.0,
+    "master": 2.5,
+    "expert": 3.0,
+}
+"""Wage multiplier for each `JobLevel`, +0.5x per level -- stacks with
+(multiplies on top of) the win/lose outcome multiplier, per
+`panem_shared.shifts.resolve_shift_game`."""
+
 PRICE_EXPONENT = 0.5
 PRICE_CLAMP_MIN = 0.4
 PRICE_CLAMP_MAX = 4.0
@@ -82,6 +123,9 @@ CHARACTER_APPEARANCE_MAX_LEN = 400
 CHARACTER_BACKSTORY_MAX_LEN = 1500
 CHARACTER_AGE_MIN = 12
 CHARACTER_AGE_MAX = 80
+JOB_TITLE_MAX_LEN = 80
+"""Free-typed at character creation (`Character.job_title`), matches the
+DB column width."""
 # Reaping-eligible districts (all but the Capitol) may only create
 # characters in the reaping age range; adult characters are Capitol-only.
 NON_CAPITOL_AGE_MAX = 18
@@ -150,6 +194,27 @@ MARKET_SUPPLY_FLOOR = 0.01
 """Supply is clamped to at least this before dividing by it in the price
 formula, so a district producing literally nothing today doesn't divide
 by zero -- reads as "effectively empty shelves", not an error."""
+
+ACTIVE_PLAYER_WINDOW_SIM_DAYS = 42
+""""Interacted within the past real-life week" for the active-player
+demand model below -- at the default `TICK_INTERVAL_SECONDS` (600s) and
+`TICKS_PER_DAY` (24), one sim-day is 4 real hours, so 42 sim-days is 7
+real days. Re-tune if your `TICK_INTERVAL_SECONDS` differs from the
+default (same caveat as `AWAY_GRACE_DAYS`)."""
+ACTIVE_PLAYER_DEMAND_PER_CAPITA = 1.0
+"""Daily demand for a good, per active player (one who has worked a shift
+or sent a proxied message within `ACTIVE_PLAYER_WINDOW_SIM_DAYS`) in a
+district that needs it -- replaces `MARKET_DEMAND_PER_CAPITA`'s flat
+`population_base` rate once a district has any active-player signal at
+all (falls back to the old population-based rate for an all-NPC district
+with nobody active yet, so its market doesn't go to zero)."""
+DISTRICT_IMPORT_DEMAND_WEIGHT = 2.0
+"""A district demands a good it *imports* more than one it produces
+itself (Capitol wants a lot of luxury goods, D12 wants a lot of grain,
+neither produces much of what it's short on) -- multiplies the per-capita
+demand rate above for a district's `imports`; `produces` goods use a
+1.0 baseline weight. A crude stand-in for real per-good/per-district
+consumption modeling (see README's "Notes on the job system rework")."""
 QUOTA_MET_FAVOR_DELTA = 2.0
 QUOTA_MISSED_FAVOR_DELTA = 3.0
 """`capitol_favor` change at month-end (FR-ECO-5); missing costs more

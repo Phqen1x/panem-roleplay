@@ -91,12 +91,17 @@ def make_content_with_job() -> ContentBundle:
     )
 
 
-async def seed_shift(session_factory, **shift_overrides: object) -> int:
+async def seed_shift(
+    session_factory,
+    *,
+    character_overrides: dict[str, object] | None = None,
+    **shift_overrides: object,
+) -> int:
     async with session_factory() as session, session.begin():
         user = User(discord_id=42)
         session.add(user)
         await session.flush()
-        character = Character(
+        character_kwargs: dict[str, object] = dict(
             user_id=user.id,
             district_id=1,
             current_district_id=1,
@@ -104,7 +109,11 @@ async def seed_shift(session_factory, **shift_overrides: object) -> int:
             age=20,
             status=CharacterStatus.APPROVED.value,
             money=0,
+            job_title="Miner",
+            shift_phase="morning",
         )
+        character_kwargs.update(character_overrides or {})
+        character = Character(**character_kwargs)  # type: ignore[arg-type]
         session.add(character)
         await session.flush()
         shift = Shift(
@@ -369,7 +378,13 @@ class TestWorkShiftResult:
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(f"/activity/work/{shift_id}/result", json={"won": True})
         assert response.status_code == 200
-        assert response.json() == {"wage": 15, "won": True, "character_name": "Wren"}
+        assert response.json() == {
+            "wage": 30,
+            "won": True,
+            "character_name": "Wren",
+            "leveled_up": False,
+            "level": "apprentice",
+        }
 
     async def test_loss_pays_the_loss_multiplier(self, work_app, db_session_factory):
         shift_id = await seed_shift(db_session_factory)
@@ -377,7 +392,23 @@ class TestWorkShiftResult:
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(f"/activity/work/{shift_id}/result", json={"won": False})
         assert response.status_code == 200
-        assert response.json()["wage"] == 4
+        assert response.json()["wage"] == 8
+
+    async def test_reports_leveling_up(self, work_app, db_session_factory):
+        from panem_shared import constants
+
+        shift_id = await seed_shift(
+            db_session_factory,
+            character_overrides={
+                "shifts_completed": constants.JOB_LEVEL_SHIFT_THRESHOLDS["novice"] - 1
+            },
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(f"/activity/work/{shift_id}/result", json={"won": True})
+        assert response.status_code == 200
+        assert response.json()["leveled_up"] is True
+        assert response.json()["level"] == "novice"
 
     async def test_409s_if_already_resolved(self, work_app, db_session_factory):
         shift_id = await seed_shift(db_session_factory)

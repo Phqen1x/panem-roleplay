@@ -2,24 +2,33 @@
 
 `panem_sim.systems.jobs` opens and misses/fires shifts inside the tick
 loop; everything here resolves a shift a player actually did something
-about -- picked an option with `/work`, played its minigame, or earned RP
-credit by proxying in the right scene -- which happens outside the tick
-loop, on the bot's own DB session.
+about -- played `/work`'s minigame (or its no-Activity coin-flip
+fallback), or earned RP credit by proxying in the right scene -- which
+happens outside the tick loop, on the bot's own DB session.
 
-`ShiftOutcome`/`resolve_shift`/`apply_shift_outcome` live in
+`ShiftOutcome`/`resolve_shift_game`/`apply_shift_outcome` live in
 `panem_shared.shifts`, not here, since `panem_api`'s `/work` minigame
-result endpoint needs them too and can't depend on `panem_bot`; re-exported
-below so every existing call site (`shifts_svc.resolve_shift(...)`) keeps
-working unchanged.
+result endpoint needs them too and can't depend on `panem_bot`;
+re-exported below so every existing call site (`shifts_svc.
+resolve_shift_game(...)`) keeps working unchanged. The old per-option
+`resolve_shift`, and the `/job apply|list|quit`/`check_can_apply`/
+`check_promotion_eligible` functions that went with the `jobs.yaml`
+catalog it read, are retired along with that catalog -- a player's job is
+now a free-typed `Character.job_title` + `shift_phase`, set at character
+creation and changed only by staff (`/staff give job`), not applied for
+or quit by the player.
 """
 
 from __future__ import annotations
 
-from panem_bot.errors import NotAllowed
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from panem_bot.services import market as market_svc
 from panem_shared import constants
-from panem_shared.content.schemas import Job
+from panem_shared.content.loader import ContentBundle
+from panem_shared.content.schemas import District
 from panem_shared.db.models import Character, Shift
-from panem_shared.enums import CharacterStatus, Position
+from panem_shared.enums import Position
 from panem_shared.shifts import (
     ShiftOutcome as ShiftOutcome,
 )
@@ -27,11 +36,33 @@ from panem_shared.shifts import (
     apply_shift_outcome as apply_shift_outcome,
 )
 from panem_shared.shifts import (
-    resolve_shift as resolve_shift,
+    market_wage_multiplier as market_wage_multiplier,
 )
 from panem_shared.shifts import (
     resolve_shift_game as resolve_shift_game,
 )
+
+
+async def market_multiplier_for_district(
+    session: AsyncSession, content: ContentBundle, district: District
+) -> float:
+    """The wage multiplier `resolve_shift_game` should use for a shift
+    worked in `district` -- `1.0` for a district with no quota good (the
+    Capitol) or no good/price data at all."""
+    if district.quota is None:
+        return 1.0
+    good = content.goods.get(district.quota.good)
+    if good is None:
+        return 1.0
+    price = await market_svc.get_price(session, district.id, good)
+    return market_wage_multiplier(price, good.base_price)
+
+
+def has_job(character: Character) -> bool:
+    """Whether `character` has enough set to `/work` at all -- both a
+    free-typed `job_title` and a `shift_phase` are required, since staff
+    approval/`/staff give job` set them together."""
+    return character.job_title is not None and character.shift_phase is not None
 
 
 def start_shift_game(shift: Shift, tick: int) -> None:
@@ -46,22 +77,22 @@ def open_adhoc_shift_override(
     character: Character, tick: int, *, is_staff: bool = False
 ) -> Shift | None:
     """A Gamemaker can `/work` at any time, in any place -- not just when
-    `panem_sim` has already opened a shift for their job's `shift_phase`,
-    and not only when physically at its `workplace` (see
-    `can_earn_rp_credit_anywhere`). `is_staff` extends the same "no open
-    shift needed" privilege to real (Discord-role) staff working their own
-    characters, regardless of the character's in-fiction `Position` --
-    staff shouldn't have to wait on the shift schedule to test or
-    demonstrate a job. Synthesizes a fresh `Shift` on the spot instead of
-    refusing with "no open shift"; `None` if `character` has no job to work
-    at all, or neither privilege applies."""
-    if character.job_id is None:
+    `panem_sim` has already opened a shift for their chosen `shift_phase`.
+    `is_staff` extends the same "no open shift needed" privilege to real
+    (Discord-role) staff working their own characters, regardless of the
+    character's in-fiction `Position` -- staff shouldn't have to wait on
+    the shift schedule to test or demonstrate a job. Synthesizes a fresh
+    `Shift` on the spot instead of refusing with "no open shift"; `None`
+    if `character` has no job to work at all, or neither privilege
+    applies."""
+    if not has_job(character):
         return None
     if not is_staff and Position.GAMEMAKER.value not in character.positions:
         return None
+    assert character.job_title is not None
     return Shift(
         character_id=character.id,
-        job_id=character.job_id,
+        job_id=character.job_title,
         tick_opened=tick,
         tick_due=tick + constants.SHIFT_DURATION_TICKS,
     )
@@ -69,57 +100,13 @@ def open_adhoc_shift_override(
 
 def can_earn_rp_credit_anywhere(character: Character) -> bool:
     """A Gamemaker's RP-credit shift completion (FR-PRX-7) isn't tied to
-    being physically in the job's `workplace` scene -- the same "any
-    place" privilege `open_adhoc_shift_override` gives `/work`
-    itself."""
+    being physically in a job's workplace scene -- the same "any place"
+    privilege `open_adhoc_shift_override` gives `/work` itself."""
     return Position.GAMEMAKER.value in character.positions
 
 
 def meets_rp_credit(content: str) -> bool:
     """FR-PRX-7: whether a proxied message is long enough to count as
-    working a shift. Whether the *scene* is the right one (tagged for the
-    job's workplace) is the caller's job -- this only checks length."""
+    working a shift. Whether the *scene* is the right one is the caller's
+    job -- this only checks length."""
     return len(content) >= constants.RP_CREDIT_MIN_CHARS
-
-
-def check_can_apply(character: Character, job: Job) -> None:
-    """FR-JOB-1 (implied): raises `NotAllowed` if `character` can't take
-    `job` right now."""
-    if character.status != CharacterStatus.APPROVED.value:
-        raise NotAllowed("character_not_approved")
-    if character.job_id is not None:
-        raise NotAllowed("already_employed")
-    if job.staff_only:
-        raise NotAllowed("job_staff_only")
-    if job.min_reputation is not None and character.reputation < job.min_reputation:
-        raise NotAllowed("reputation_too_low", min_reputation=job.min_reputation)
-
-
-def check_promotion_eligible(character: Character, job: Job) -> bool:
-    """FR-JOB-9: whether `character` qualifies for `job.ladder_next`.
-    `ladder_requirement`'s exact key schema isn't available in this
-    session's context either -- this only recognizes a `min_reputation`
-    key, the one requirement that reads unambiguously from its name."""
-    if job.ladder_next is None:
-        return False
-    requirement = job.ladder_requirement or {}
-    min_reputation = requirement.get("min_reputation")
-    return min_reputation is None or character.reputation >= min_reputation
-
-
-def apply_for_job(character: Character, job: Job, *, tick: int) -> None:
-    character.job_id = job.id
-    character.job_started_tick = tick
-    character.consecutive_missed = 0
-
-
-def quit_job(character: Character) -> tuple[str, int | None]:
-    """Returns `(job_id, started_tick)` for the caller to record a
-    `JobHistory` row with; raises `NotAllowed` if there's no job to quit."""
-    if character.job_id is None:
-        raise NotAllowed("not_employed")
-    job_id, started_tick = character.job_id, character.job_started_tick
-    character.job_id = None
-    character.job_started_tick = None
-    character.consecutive_missed = 0
-    return job_id, started_tick

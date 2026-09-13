@@ -94,3 +94,18 @@ class Position(enum.StrEnum):
     VICTOR = "victor"
     GAMEMAKER = "gamemaker"
     GOVERNOR = "governor"
+
+
+class JobLevel(enum.StrEnum):
+    """A player character's skill level at their free-typed job
+    (`Character.job_title`), driven purely by `Character.shifts_completed`
+    -- replaces the old per-job `ladder_next` progression now that jobs
+    aren't a fixed catalog a ladder could be authored against. See
+    `panem_shared.job_levels` for the shift-count thresholds and the
+    wage multiplier each level grants."""
+
+    APPRENTICE = "apprentice"
+    NOVICE = "novice"
+    JOURNEYMAN = "journeyman"
+    MASTER = "master"
+    EXPERT = "expert"
