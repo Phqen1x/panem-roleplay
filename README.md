@@ -879,6 +879,33 @@ today's `data/` rather than copied) and its deploy-file diffs re-adapted by hand
   template path. Any LLM failure (timeout, connection error, malformed response) silently
   falls back to the template reply rather than erroring the command out -- an
   immersion-breaking canned line beats a visible stack trace for a roleplay bot.
+- **Reducing repetitive LLM replies.** Players reported an NPC circling back to the same
+  memory or the same line ("keep your coat buttoned tight") almost every turn, even
+  inside a single engagement with the conversation's own prior turns right there as
+  `history`. The small local models this feature targets (`lemonade/README.md`'s
+  Profiles -- a 4B model on a modest machine) fall into that loop far more readily than a
+  large hosted one. `generate_llm_reply`'s request body now sets `frequency_penalty`
+  (`LLM_REPLY_FREQUENCY_PENALTY`) and `presence_penalty` (`LLM_REPLY_PRESENCE_PENALTY`),
+  standard OpenAI-compatible fields Lemonade's llama.cpp-backed server honors, to push
+  sampling away from tokens/topics already used earlier in the same request.
+  `lemonade/system_prompt.md`'s "Voicing an NPC" section also now tells the model to use
+  at most one memory per reply only when it actually fits (never the same one twice in a
+  conversation) and to answer what was just said rather than returning to a favorite
+  topic -- prompt-level guidance alongside the sampling-level fix, since either alone is
+  weaker against a small model's tendency to fixate.
+- **Grounding a reply in more than just stance.** The system prompt has always documented
+  `[NPC] ... job or role; ... personality`, `[SCENE] ... crisis level if any`, and
+  `[SPEAKER] ... district, job, reputation` header lines, but `build_request_context` never
+  actually populated them -- an NPC's opinion of the speaker (`stance`) was the only thing
+  actually shaping a reply. It now also sends the NPC's age, job title (looked up from
+  `content.jobs` by `Npc.job_id`), traits (personality) and an authored `NpcContent.
+  backstory` excerpt (`NPC_BACKGROUND_PROMPT_MAX_LEN` characters -- a full 1500-character
+  backstory would dominate every request), the district's live `DistrictState` (crisis
+  level/kind, morale, unrest, gathered once per message in `ProxyCog.post_engagement_
+  replies` since it doesn't vary between the NPCs replying to one line), and the speaking
+  character's own job title, home district and `reputation`. All of it is optional and
+  additive -- a caller that doesn't have some piece (npc-to-npc chatter, in particular)
+  just omits that header line rather than sending a placeholder.
 - **The template path is genuinely new too**, not a pre-existing fallback -- nothing
   called `dialogue_provider` before this milestone. It's a small, deterministic (seeded by
   the NPC + message text) set of canned lines varied by `speech_tone`

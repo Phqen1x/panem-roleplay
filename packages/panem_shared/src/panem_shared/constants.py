@@ -93,6 +93,27 @@ APPROACH_COOLDOWN_TICKS = 2
 LOCATION_RADIUS_PX = 60
 MAX_WORDS_REPLY = 90
 
+LLM_REPLY_MAX_TOKENS = 200
+LLM_REPLY_TEMPERATURE = 0.8
+LLM_REPLY_FREQUENCY_PENALTY = 0.6
+"""Penalizes tokens by how often they've already appeared in this request
+(OpenAI-compatible field, honored by Lemonade's llama.cpp-backed server) --
+the small local models this feature targets (`lemonade/README.md`'s
+Profiles) fall into repeating the same phrase or the same memory almost
+verbatim far more readily than a large hosted model, even with the
+conversation's own prior turns as `history` right there in context."""
+LLM_REPLY_PRESENCE_PENALTY = 0.4
+"""Penalizes any token that has appeared at all, on top of `LLM_REPLY_
+FREQUENCY_PENALTY` -- together they push the model off a topic (e.g. the
+same memory) it has already spent a turn on, not just off exact repeated
+wording."""
+NPC_BACKGROUND_PROMPT_MAX_LEN = 240
+"""An authored `NpcContent.backstory` can run up to 1500 characters (fine
+for the `/resident profile` embed it's normally shown in), but every
+dialogue reply resends the whole request header -- so the LLM's `[NPC]
+... background` line gets only this many characters of it (truncated with
+an ellipsis), enough to color a reply without dominating the prompt."""
+
 TICKET_BASE = 20
 TRANSIT_TICKS = 4
 AWAY_GRACE_DAYS = 18

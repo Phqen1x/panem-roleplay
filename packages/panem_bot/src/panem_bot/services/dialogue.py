@@ -27,7 +27,7 @@ from redis.asyncio import Redis
 from panem_bot.errors import NotAllowed
 from panem_shared import constants
 from panem_shared.content.schemas import District, Location
-from panem_shared.db.models import Character, Memory, Npc
+from panem_shared.db.models import Character, DistrictState, Memory, Npc
 from panem_shared.enums import CharacterStatus
 from panem_shared.lemonade import omni
 from panem_shared.memory import retrieve as retrieve_memories
@@ -76,23 +76,69 @@ def build_request_context(
     stance: str,
     memories: list[Memory],
     present: Sequence[str] = (),
+    npc_job_title: str | None = None,
+    npc_background: str | None = None,
+    district_state: DistrictState | None = None,
+    character_job_title: str | None = None,
+    character_home_district: District | None = None,
 ) -> omni.RequestContext:
     """`present` lists everyone else in the scene besides `character`
     (other engaged NPCs, other joined characters) -- the system prompt
     already documents and expects a `[SCENE] ... present: ...` field
     (see `lemonade/system_prompt.md`'s request-contract example), this is
     just the first real caller to populate it, for a group `/engage`
-    thread rather than `/talk`'s always-1:1 case."""
+    thread rather than `/talk`'s always-1:1 case.
+
+    The rest of the new, optional fields fill in blocks the system prompt
+    has always documented (`[NPC] ... job or role; ... personality`,
+    `[SCENE] ... crisis level if any`, `[SPEAKER] ... district, job,
+    reputation`) but that nothing populated before this -- so an NPC's
+    opinion of the speaker (`stance`) was the only thing actually shaping
+    a reply; their own background, the speaker's own standing, and the
+    district's state never reached the model at all. `None`/empty
+    callers (npc-to-npc chatter, any caller that skips them) simply don't
+    get those header lines -- `render_request_header` already omits an
+    empty block."""
     relevant = retrieve_memories(memories, "npc", npc.id)
     tone = (npc.speech_style or {}).get("tone", "plain")
+
+    npc_block: dict[str, str] = {
+        "name": npc.name,
+        "age": str(npc.age),
+        "stance": stance,
+        "tone": tone,
+    }
+    if npc_job_title:
+        npc_block["job"] = npc_job_title
+    if npc.traits:
+        npc_block["personality"] = ", ".join(npc.traits)
+    if npc_background:
+        npc_block["background"] = npc_background
+
     scene: dict[str, str] = {"location": location.name, "district": district.name}
     if present:
         scene["present"] = ", ".join(present)
+    if district_state is not None:
+        crisis = f"level {district_state.crisis_level}"
+        if district_state.crisis_kind:
+            crisis += f" ({district_state.crisis_kind})"
+        scene["crisis"] = crisis
+        scene["district_mood"] = (
+            f"morale {district_state.morale:.0f}/100, unrest {district_state.unrest:.0f}/100"
+        )
+
+    speaker: dict[str, str] = {"name": character.name}
+    if character_job_title:
+        speaker["job"] = character_job_title
+    if character_home_district is not None:
+        speaker["district"] = character_home_district.name
+    speaker["reputation"] = f"{character.reputation or 0.0:.1f}"
+
     return omni.RequestContext(
         mode=omni.RequestMode.DIALOGUE,
-        npc={"name": npc.name, "stance": stance, "tone": tone},
+        npc=npc_block,
         scene=scene,
-        speaker={"name": character.name},
+        speaker=speaker,
         memories=tuple(m.text for m in relevant),
     )
 
@@ -144,8 +190,14 @@ async def generate_llm_reply(
     body: dict[str, object] = {
         "model": model,
         "messages": omni.build_messages(ctx, [*history, {"role": "user", "content": message}]),
-        "max_tokens": 200,
-        "temperature": 0.8,
+        "max_tokens": constants.LLM_REPLY_MAX_TOKENS,
+        "temperature": constants.LLM_REPLY_TEMPERATURE,
+        # Local models repeat themselves (the same phrase, the same
+        # memory) far more readily than a large hosted one -- these push
+        # the model off whatever it's already said this request, on top
+        # of `history` already showing it its own prior turns.
+        "frequency_penalty": constants.LLM_REPLY_FREQUENCY_PENALTY,
+        "presence_penalty": constants.LLM_REPLY_PRESENCE_PENALTY,
     }
     headers = {"Authorization": f"Bearer {settings.llm_api_key}"} if settings.llm_api_key else {}
     timeout = settings.llm_timeout_ms / 1000
@@ -221,6 +273,11 @@ async def generate_reply(
     settings: Settings,
     history: Sequence[dict[str, str]] = (),
     present: Sequence[str] = (),
+    npc_job_title: str | None = None,
+    npc_background: str | None = None,
+    district_state: DistrictState | None = None,
+    character_job_title: str | None = None,
+    character_home_district: District | None = None,
 ) -> str:
     provider = resolve_provider(npc, settings)
     if provider == "template":
@@ -234,6 +291,11 @@ async def generate_reply(
         stance=stance,
         memories=memories,
         present=present,
+        npc_job_title=npc_job_title,
+        npc_background=npc_background,
+        district_state=district_state,
+        character_job_title=character_job_title,
+        character_home_district=character_home_district,
     )
     try:
         return await generate_llm_reply(ctx, message, settings, history=history)

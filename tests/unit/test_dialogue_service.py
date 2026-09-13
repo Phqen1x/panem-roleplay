@@ -14,7 +14,7 @@ from panem_shared.content.schemas import (
     DistrictMap,
     Location,
 )
-from panem_shared.db.models import Character, Memory, Npc
+from panem_shared.db.models import Character, DistrictState, Memory, Npc
 from panem_shared.enums import CharacterStatus
 from panem_shared.lemonade import omni
 from panem_shared.settings import Settings
@@ -76,6 +76,12 @@ def make_district() -> District:
         locations=locations,
         map=DistrictMap(image="x.png", width=100, height=100, location_coords=coords),
     )
+
+
+def make_district_state(**overrides: object) -> DistrictState:
+    defaults: dict[str, object] = dict(district_id=1, morale=60.0, unrest=0.0)
+    defaults.update(overrides)
+    return DistrictState(**defaults)  # type: ignore[arg-type]
 
 
 def make_memory(**overrides: object) -> Memory:
@@ -196,9 +202,15 @@ class TestBuildRequestContext:
             memories=memories,
         )
         assert ctx.memories == ("about npc1",)
-        assert ctx.npc == {"name": "Old Ferro", "stance": "likes", "tone": "blunt"}
+        assert ctx.npc == {
+            "name": "Old Ferro",
+            "age": "60",
+            "stance": "likes",
+            "tone": "blunt",
+            "personality": "stern",
+        }
         assert ctx.scene == {"location": "The Hob", "district": "District 12"}
-        assert ctx.speaker == {"name": "Kat"}
+        assert ctx.speaker == {"name": "Kat", "reputation": "0.0"}
         assert ctx.mode is omni.RequestMode.DIALOGUE
 
     def test_present_is_folded_into_the_scene_block_when_given(self):
@@ -223,6 +235,72 @@ class TestBuildRequestContext:
             memories=[],
         )
         assert "present" not in ctx.scene
+
+    def test_npc_job_and_background_are_included_when_given(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[],
+            npc_job_title="Miner",
+            npc_background="Lost a brother in a mine collapse.",
+        )
+        assert ctx.npc["job"] == "Miner"
+        assert ctx.npc["background"] == "Lost a brother in a mine collapse."
+
+    def test_npc_job_and_background_omitted_when_not_given(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[],
+        )
+        assert "job" not in ctx.npc
+        assert "background" not in ctx.npc
+
+    def test_district_state_folds_crisis_and_mood_into_scene(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[],
+            district_state=make_district_state(crisis_level=2, crisis_kind="shortage"),
+        )
+        assert ctx.scene["crisis"] == "level 2 (shortage)"
+        assert "morale" in ctx.scene["district_mood"]
+
+    def test_district_state_omitted_when_not_given(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[],
+        )
+        assert "crisis" not in ctx.scene
+        assert "district_mood" not in ctx.scene
+
+    def test_speaker_job_district_and_reputation_are_included(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(reputation=4.5),
+            stance="likes",
+            memories=[],
+            character_job_title="Baker",
+            character_home_district=make_district(),
+        )
+        assert ctx.speaker["job"] == "Baker"
+        assert ctx.speaker["district"] == "District 12"
+        assert ctx.speaker["reputation"] == "4.5"
 
 
 class TestTemplateReply:
@@ -322,6 +400,8 @@ class TestGenerateLlmReply:
         body = captured["body"]
         assert body["model"] == "panem-omni"  # type: ignore[index]
         assert body["messages"][-1] == {"role": "user", "content": "hello"}  # type: ignore[index]
+        assert body["frequency_penalty"] == constants.LLM_REPLY_FREQUENCY_PENALTY  # type: ignore[index]
+        assert body["presence_penalty"] == constants.LLM_REPLY_PRESENCE_PENALTY  # type: ignore[index]
 
     async def test_history_turns_come_before_the_new_message(self, monkeypatch):
         captured: dict[str, object] = {}

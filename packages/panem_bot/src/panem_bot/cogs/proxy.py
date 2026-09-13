@@ -26,6 +26,7 @@ from panem_shared.db.models import (
     Character,
     DialogueLog,
     DiscordChannel,
+    DistrictState,
     Memory,
     Npc,
     RelationshipRow,
@@ -460,6 +461,15 @@ class ProxyCog(commands.Cog):
             if location is None:
                 return
 
+            # Everything an NPC's reply should actually be shaped by
+            # beyond stance -- their own background, the speaker's
+            # standing, and the district's state -- gathered once per
+            # message rather than per NPC, since none of it changes
+            # between the NPCs replying to the same line.
+            district_state = await session.get(DistrictState, scene.district_id)
+            character_job_title = speaker.job_title
+            character_home_district = content_bundle.district(speaker.district_id)
+
             for npc in speaking:
                 try:
                     await dialogue_svc.check_and_spend_stamina(
@@ -503,6 +513,16 @@ class ProxyCog(commands.Cog):
                     other_character_names
                 )
 
+                npc_job = content_bundle.jobs.get(npc.job_id) if npc.job_id else None
+                npc_content = content_bundle.npcs.get(npc.id)
+                npc_background = None
+                if npc_content is not None:
+                    npc_background = npc_content.backstory[
+                        : constants.NPC_BACKGROUND_PROMPT_MAX_LEN
+                    ]
+                    if len(npc_content.backstory) > constants.NPC_BACKGROUND_PROMPT_MAX_LEN:
+                        npc_background += "…"
+
                 reply = await dialogue_svc.generate_reply(
                     npc=npc,
                     district=district,
@@ -514,6 +534,11 @@ class ProxyCog(commands.Cog):
                     settings=self.bot.settings,  # type: ignore[attr-defined]
                     history=history,
                     present=present,
+                    npc_job_title=npc_job.title if npc_job is not None else None,
+                    npc_background=npc_background,
+                    district_state=district_state,
+                    character_job_title=character_job_title,
+                    character_home_district=character_home_district,
                 )
 
                 sent = await webhook.send(
