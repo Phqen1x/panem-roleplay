@@ -1,14 +1,19 @@
 """`/talk` -- LLM-driven NPC dialogue (Plan Phase 6, `lemonade/README.md`).
 
-Folded into the engagement system: talking to an NPC opens (or reuses) a
-one-NPC `SceneKind.ENGAGEMENT` thread and posts both the player's line and
-the NPC's reply into it through the district forum's webhook, exactly like
-any other proxied conversation -- not an ephemeral, thread-less one-shot
-any more. `panem_bot.cogs.proxy.ProxyCog.post_engagement_replies` does the
-actual reply generation/posting/history-recording; this command's own job
-is just finding or creating the thread and posting the player's opening
-line into it, since (unlike a normal proxied message) there's no raw
-channel message here for `on_message` to intercept.
+Folded into the engagement system: talking to an NPC posts both the
+player's line and the NPC's reply through the district forum's webhook,
+exactly like any other proxied conversation -- not an ephemeral,
+thread-less one-shot any more. If run from inside a thread that already
+has a scene registered (an ambient thread, an open `/scene`, or a prior
+engagement), the NPC is pulled into *that* conversation rather than a
+separate one -- the player is already there, so that's where the NPC
+should start talking. Only outside of such a thread does this fall back
+to reusing (or creating) a dedicated 1:1 engagement thread.
+`panem_bot.cogs.proxy.ProxyCog.post_engagement_replies` does the actual
+reply generation/posting/history-recording; this command's own job is
+just finding (or, as a fallback, creating) the thread and posting the
+player's opening line into it, since (unlike a normal proxied message)
+there's no raw channel message here for `on_message` to intercept.
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from panem_bot import autocomplete
@@ -110,33 +116,56 @@ class DialogueCog(commands.Cog):
                 await interaction.followup.send(t("talk_not_here", name=npc.name), ephemeral=True)
                 return
 
-            # Reuse an already-open, exactly-this-pair engagement rather
-            # than spawning a new thread every time the same two talk
-            # again -- a real conversation lives in one place.
-            open_engagements = (
-                (
+            # If /talk is run from inside a thread that already has a
+            # scene registered (an ambient thread, an open /scene, or a
+            # prior engagement), pull the NPC into *that* conversation
+            # rather than spinning up a separate one -- the player is
+            # already there, so that's where the NPC should start
+            # talking. Only when there's no such thread do we fall back
+            # to reusing (or creating) a dedicated 1:1 engagement thread.
+            here_scene = None
+            if isinstance(interaction.channel, discord.Thread):
+                here_scene = (
                     await session.execute(
-                        select(Scene).where(
-                            Scene.district_id == district_id,
-                            Scene.location_id == npc.location_id,
-                            Scene.kind == SceneKind.ENGAGEMENT.value,
-                            Scene.status == SceneStatus.OPEN.value,
+                        select(Scene).where(Scene.thread_id == interaction.channel.id)
+                    )
+                ).scalar_one_or_none()
+
+            existing_scene = here_scene
+            if existing_scene is None:
+                open_engagements = (
+                    (
+                        await session.execute(
+                            select(Scene).where(
+                                Scene.district_id == district_id,
+                                Scene.location_id == npc.location_id,
+                                Scene.kind == SceneKind.ENGAGEMENT.value,
+                                Scene.status == SceneStatus.OPEN.value,
+                            )
                         )
                     )
+                    .scalars()
+                    .all()
                 )
-                .scalars()
-                .all()
-            )
-            existing_scene = next(
-                (
-                    s
-                    for s in open_engagements
-                    if s.participants.get("characters") == [char.id]
-                    and s.participants.get("npcs") == [npc.id]
-                    and not s.participants.get("pending_characters")
-                ),
-                None,
-            )
+                existing_scene = next(
+                    (
+                        s
+                        for s in open_engagements
+                        if s.participants.get("characters") == [char.id]
+                        and s.participants.get("npcs") == [npc.id]
+                        and not s.participants.get("pending_characters")
+                    ),
+                    None,
+                )
+
+            if here_scene is not None:
+                participants = dict(here_scene.participants or {})
+                npcs_here = list(participants.get("npcs", []))
+                if npc.id not in npcs_here:
+                    npcs_here.append(npc.id)
+                    participants["npcs"] = npcs_here
+                    here_scene.participants = participants
+                npc.engagement_id = here_scene.id
 
             forum_row = await self._forum_for_district(session, district_id)
             if forum_row is None or forum_row.webhook_id is None or forum_row.webhook_token is None:
@@ -175,24 +204,36 @@ class DialogueCog(commands.Cog):
             )
             thread = thread_with_message.thread
             async with self.bot.db() as session:  # type: ignore[attr-defined]
-                scene = Scene(
-                    district_id=district_id,
-                    location_id=npc.location_id,
-                    thread_id=thread.id,
-                    forum_channel_id=forum.id,
-                    kind=SceneKind.ENGAGEMENT.value,
-                    title=f"{char_name} & {npc_name}",
-                    created_by_character_id=char_id,
-                    status=SceneStatus.OPEN.value,
-                    last_message_at=dt.datetime.now(dt.UTC),
-                    participants={
+                # forum.create_thread() dispatches a gateway `on_thread_create`
+                # event the moment the thread exists on Discord's side
+                # (`SceneCog.on_thread_create`), which races this insert and
+                # can get there first, registering the thread as an ordinary
+                # SceneKind.PLAYER scene -- upsert, exactly like `/scene
+                # start` and `/engage start` do, so this command's data (the
+                # real kind, participants, and title) always wins regardless
+                # of which one lands first.
+                values = {
+                    "district_id": district_id,
+                    "location_id": npc.location_id,
+                    "thread_id": thread.id,
+                    "forum_channel_id": forum.id,
+                    "kind": SceneKind.ENGAGEMENT.value,
+                    "title": f"{char_name} & {npc_name}",
+                    "created_by_character_id": char_id,
+                    "status": SceneStatus.OPEN.value,
+                    "last_message_at": dt.datetime.now(dt.UTC),
+                    "participants": {
                         "characters": [char_id],
                         "pending_characters": [],
                         "npcs": [npc_id],
                     },
-                )
-                session.add(scene)
-                await session.flush()
+                }
+                stmt = pg_insert(Scene).values(**values)
+                stmt = stmt.on_conflict_do_update(index_elements=["thread_id"], set_=values)
+                await session.execute(stmt)
+                scene = (
+                    await session.execute(select(Scene).where(Scene.thread_id == thread.id))
+                ).scalar_one()
                 npc_row = await session.get(Npc, npc_id)
                 if npc_row is not None:
                     npc_row.engagement_id = scene.id

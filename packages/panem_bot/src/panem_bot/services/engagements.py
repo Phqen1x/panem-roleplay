@@ -23,7 +23,7 @@ from panem_bot.errors import NotAllowed
 from panem_shared import constants
 from panem_shared.content.schemas import Job
 from panem_shared.db.models import Character, Npc, Scene
-from panem_shared.enums import CharacterStatus, DayPhase, SceneKind, SceneStatus
+from panem_shared.enums import CharacterStatus, DayPhase, SceneStatus
 
 
 def npc_is_busy(npc: Npc, job: Job | None, phase: DayPhase) -> str | None:
@@ -122,18 +122,21 @@ def npcs_that_should_reply(npcs: list[Npc], content: str, *, is_one_on_one: bool
 
 
 def scenes_to_close(scenes: list[Scene], *, timeout_minutes: int, now: dt.datetime) -> list[int]:
-    """Which open `ENGAGEMENT`-kind scenes have gone `timeout_minutes`
+    """Which open scenes with NPC participants have gone `timeout_minutes`
     without a *player* speaking (`Scene.last_message_at` -- only ever
     touched by a player's own proxied line, never an NPC reply, see
     `ProxyCog.post_engagement_replies`), mirroring `services.scenes.
     pick_scenes_to_archive`'s shape: pure decision logic the cog's
     `tasks.loop` acts on, unit-testable with no Discord thread involved.
     Unlike that function, there's no district cap here -- every idle
-    engagement closes, not just enough to get back under one."""
+    engagement closes, not just enough to get back under one. Checked by
+    `participants["npcs"]` rather than `kind == ENGAGEMENT`, since `/talk`/
+    `/engage start` can attach NPCs to any scene (an ambient thread, an
+    open `/scene`), not just a dedicated engagement thread."""
     return [
         scene.id
         for scene in scenes
-        if scene.kind == SceneKind.ENGAGEMENT.value
+        if scene.participants.get("npcs")
         and scene.status == SceneStatus.OPEN.value
         and scene.last_message_at is not None
         and (now - scene.last_message_at) >= dt.timedelta(minutes=timeout_minutes)

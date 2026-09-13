@@ -207,9 +207,21 @@ class TestScenesToClose:
         scene = make_scene(1, last_message_at=self.NOW - dt.timedelta(minutes=5))
         assert engagements_svc.scenes_to_close([scene], timeout_minutes=30, now=self.NOW) == []
 
-    def test_ignores_a_non_engagement_scene(self):
+    def test_a_non_engagement_kind_scene_with_npcs_attached_still_closes(self):
+        # /talk and /engage start can attach NPCs to any scene (an ambient
+        # thread, an open /scene), not just a dedicated engagement thread --
+        # the idle-release logic doesn't care about `kind`, only whether
+        # NPCs are actually present.
         scene = make_scene(
             1, kind=SceneKind.PLAYER.value, last_message_at=self.NOW - dt.timedelta(hours=2)
+        )
+        assert engagements_svc.scenes_to_close([scene], timeout_minutes=30, now=self.NOW) == [1]
+
+    def test_ignores_a_scene_with_no_npcs_attached(self):
+        scene = make_scene(
+            1,
+            participants={"characters": [1], "pending_characters": [], "npcs": []},
+            last_message_at=self.NOW - dt.timedelta(hours=2),
         )
         assert engagements_svc.scenes_to_close([scene], timeout_minutes=30, now=self.NOW) == []
 

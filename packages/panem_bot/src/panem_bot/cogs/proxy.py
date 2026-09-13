@@ -35,7 +35,7 @@ from panem_shared.db.models import (
     User,
     WorldClock,
 )
-from panem_shared.enums import ChannelKind, CharacterStatus, OwnerKind, SceneKind
+from panem_shared.enums import ChannelKind, CharacterStatus, OwnerKind
 from panem_shared.relationships import relationship_key
 
 
@@ -312,7 +312,12 @@ class ProxyCog(commands.Cog):
             webhook_row.webhook_id, webhook_row.webhook_token, client=self.bot
         )
         chunks = proxy_svc.split_for_webhook(content or "​")
-        is_engagement = scene is not None and scene.kind == SceneKind.ENGAGEMENT.value
+        # "Engaged" means this scene currently has NPC participants
+        # (`/talk`/`/engage` can attach NPCs to *any* scene -- an ambient
+        # thread, an open `/scene`, not just a dedicated `SceneKind.
+        # ENGAGEMENT` thread -- see `cogs/dialogue.py`'s docstring), not
+        # merely that the scene's `kind` is ENGAGEMENT.
+        is_engagement = scene is not None and bool(scene.participants.get("npcs"))
 
         async def send_chunk(chunk: str, files: list[discord.File], *, is_last: bool) -> None:
             sent = await webhook.send(

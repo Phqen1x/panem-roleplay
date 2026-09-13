@@ -11,10 +11,10 @@ import datetime as dt
 from collections.abc import Awaitable, Callable
 
 import discord
-import structlog
 from discord import app_commands
 from discord.ext import commands, tasks
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from panem_bot import autocomplete
@@ -37,8 +37,6 @@ from panem_shared.db.models import (
 from panem_shared.enums import ChannelKind, CharacterStatus, SceneKind, SceneStatus
 
 from .scenes import CLOSED_TAG, OPEN_TAG, _find_tag
-
-logger = structlog.get_logger()
 
 
 class _InviteResponseButton(discord.ui.Button["discord.ui.View"]):
@@ -217,14 +215,35 @@ class EngagementCog(commands.Cog):
                 await interaction.followup.send(t(exc.reason_key, **exc.fmt), ephemeral=True)
                 return
 
-            district_id = char.current_district_id
-            district = self.bot.content.district(district_id)  # type: ignore[attr-defined]
-            loc_id = location or char.location_id
-            if loc_id is None:
-                await interaction.followup.send(
-                    t("engagement_no_location", name=char.name), ephemeral=True
-                )
-                return
+            # If this is run from inside a thread that already has a scene
+            # registered (an ambient thread, an open /scene, or a prior
+            # engagement), pull the named NPCs/characters into *that*
+            # conversation instead of spinning up a separate thread -- the
+            # player is already there. `location` is ignored in that case;
+            # the existing scene's own location is what counts. Only when
+            # there's no such thread do we fall back to creating a
+            # dedicated engagement thread at the given (or default) location.
+            here_scene = None
+            if isinstance(interaction.channel, discord.Thread):
+                here_scene = (
+                    await session.execute(
+                        select(Scene).where(Scene.thread_id == interaction.channel.id)
+                    )
+                ).scalar_one_or_none()
+
+            if here_scene is not None:
+                district_id = here_scene.district_id
+                district = self.bot.content.district(district_id)  # type: ignore[attr-defined]
+                loc_id = here_scene.location_id
+            else:
+                district_id = char.current_district_id
+                district = self.bot.content.district(district_id)  # type: ignore[attr-defined]
+                loc_id = location or char.location_id
+                if loc_id is None:
+                    await interaction.followup.send(
+                        t("engagement_no_location", name=char.name), ephemeral=True
+                    )
+                    return
             loc = next((loc_ for loc_ in district.locations if loc_.id == loc_id), None)
             if loc is None:
                 await interaction.followup.send(f"Unknown location `{loc_id}`.", ephemeral=True)
@@ -260,12 +279,11 @@ class EngagementCog(commands.Cog):
                 names, list(npc_candidates)
             )
 
-            char_candidates = (
+            char_rows = (
                 (
                     await session.execute(
                         select(Character).where(
                             Character.status == CharacterStatus.APPROVED.value,
-                            Character.location_id == loc_id,
                             Character.id != char.id,
                         )
                     )
@@ -273,16 +291,27 @@ class EngagementCog(commands.Cog):
                 .scalars()
                 .all()
             )
+            # A named character doesn't need to already be standing at the
+            # location -- same district-eligibility rule `/travel`/proxying
+            # already use (`can_rp_in_district`: their home district, or
+            # wherever `/travel district:<id>` last took them). They still
+            # must accept before joining either way; on accept they're
+            # relocated to the engagement's location the same free, instant
+            # way `/travel location:<id>` already works within a district.
+            char_candidates = [c for c in char_rows if proxy_svc.can_rp_in_district(c, district_id)]
             matched_chars, unresolved_names = engagements_svc.resolve_character_participants(
-                remaining_names, list(char_candidates)
+                remaining_names, char_candidates
             )
 
-            forum_row = await self._forum_for_district(session, district_id)
-            if forum_row is None:
-                await interaction.followup.send(
-                    "This district has no forum configured.", ephemeral=True
-                )
-                return
+            forum_channel_id: int | None = None
+            if here_scene is None:
+                forum_row = await self._forum_for_district(session, district_id)
+                if forum_row is None:
+                    await interaction.followup.send(
+                        "This district has no forum configured.", ephemeral=True
+                    )
+                    return
+                forum_channel_id = forum_row.channel_id
 
             current_tick = await self._current_tick(session)
             _tick, phase, _day, _month = simtime.current(current_tick)
@@ -311,73 +340,113 @@ class EngagementCog(commands.Cog):
                 await interaction.followup.send(summary, ephemeral=True)
                 return
 
-            forum_channel_id = forum_row.channel_id
             joined_npc_names = [npc.name for npc in matched_npcs if npc.id in free_npc_ids]
             char_name, char_id = char.name, char.id
+            here_scene_id = here_scene.id if here_scene is not None else None
 
-        forum = interaction.guild.get_channel(forum_channel_id)
-        if not isinstance(forum, discord.ForumChannel):
-            await interaction.followup.send("Forum channel not found.", ephemeral=True)
-            return
+        if here_scene_id is not None:
+            assert isinstance(interaction.channel, discord.Thread)
+            thread = interaction.channel
+            async with self.bot.db() as session:  # type: ignore[attr-defined]
+                scene = await session.get(Scene, here_scene_id)
+                assert scene is not None
+                participants = dict(scene.participants or {})
+                npcs_here = list(participants.get("npcs", []))
+                for npc_id in free_npc_ids:
+                    if npc_id not in npcs_here:
+                        npcs_here.append(npc_id)
+                participants["npcs"] = npcs_here
+                chars_here = list(participants.get("characters", []))
+                if char_id not in chars_here:
+                    chars_here.append(char_id)
+                participants["characters"] = chars_here
+                pending_here = list(participants.get("pending_characters", []))
+                for c in matched_chars:
+                    if c.id not in pending_here and c.id not in chars_here:
+                        pending_here.append(c.id)
+                participants["pending_characters"] = pending_here
+                scene.participants = participants
 
-        tags = [
-            t_ for t_ in (_find_tag(forum, loc.name), _find_tag(forum, OPEN_TAG)) if t_ is not None
-        ]
-        thread_with_message = await forum.create_thread(
-            name=title,
-            content=f"*{char_name} arrives at {loc.name}.*",
-            applied_tags=tags,
-        )
-        thread = thread_with_message.thread
+                for npc_id in free_npc_ids:
+                    npc_row = await session.get(Npc, npc_id)
+                    if npc_row is None:
+                        continue
+                    placed = travel_svc.place(district, loc)
+                    npc_row.location_id = loc_id
+                    if placed is not None:
+                        npc_row.x, npc_row.y = placed
+                    npc_row.engagement_id = scene.id
 
-        async with self.bot.db() as session:  # type: ignore[attr-defined]
-            participants_json: dict[str, list[object]] = {
-                "characters": [char_id],
-                "pending_characters": [c.id for c in matched_chars],
-                "npcs": list(free_npc_ids),
-            }
-            # `thread` was just created above, so its id should never already
-            # be a `Scene.thread_id` -- but a duplicate-thread_id insert has
-            # been observed in practice (still root-causing why), and it's
-            # cheap to make this idempotent rather than crash the whole
-            # interaction on an otherwise-successfully-created thread.
-            scene = (
-                await session.execute(select(Scene).where(Scene.thread_id == thread.id))
-            ).scalar_one_or_none()
-            if scene is None:
-                scene = Scene(
-                    district_id=district_id,
-                    location_id=loc_id,
-                    thread_id=thread.id,
-                    forum_channel_id=forum.id,
-                    kind=SceneKind.ENGAGEMENT.value,
-                    title=title,
-                    created_by_character_id=char_id,
-                    status=SceneStatus.OPEN.value,
-                    last_message_at=dt.datetime.now(dt.UTC),
-                    participants=participants_json,
-                )
-                session.add(scene)
-                await session.flush()
-            else:
-                logger.warning(
-                    "engagement_thread_id_reused", thread_id=thread.id, scene_id=scene.id
-                )
-                scene.status = SceneStatus.OPEN.value
-                scene.participants = participants_json
+                scene_id = scene.id
+                pending_chars = [(c.id, c.name, c.user_id) for c in matched_chars]
+        else:
+            assert forum_channel_id is not None
+            forum = interaction.guild.get_channel(forum_channel_id)
+            if not isinstance(forum, discord.ForumChannel):
+                await interaction.followup.send("Forum channel not found.", ephemeral=True)
+                return
 
-            for npc_id in free_npc_ids:
-                npc_row = await session.get(Npc, npc_id)
-                if npc_row is None:
-                    continue
-                placed = travel_svc.place(district, loc)
-                npc_row.location_id = loc_id
-                if placed is not None:
-                    npc_row.x, npc_row.y = placed
-                npc_row.engagement_id = scene.id
+            tags = [
+                t_
+                for t_ in (_find_tag(forum, loc.name), _find_tag(forum, OPEN_TAG))
+                if t_ is not None
+            ]
+            thread_with_message = await forum.create_thread(
+                name=title,
+                content=f"*{char_name} arrives at {loc.name}.*",
+                applied_tags=tags,
+            )
+            thread = thread_with_message.thread
 
-            scene_id = scene.id
-            pending_chars = [(c.id, c.name, c.user_id) for c in matched_chars]
+            async with self.bot.db() as session:  # type: ignore[attr-defined]
+                participants_json: dict[str, list[object]] = {
+                    "characters": [char_id],
+                    "pending_characters": [c.id for c in matched_chars],
+                    "npcs": list(free_npc_ids),
+                }
+                # forum.create_thread() dispatches a gateway `on_thread_create`
+                # event the moment the thread exists on Discord's side
+                # (`SceneCog.on_thread_create`), which races this insert and can
+                # get there first, registering the thread as an ordinary
+                # SceneKind.PLAYER scene -- upsert, exactly like `/scene start`
+                # does, so this command's data (the real kind, creator, title,
+                # and participants) always wins regardless of which one lands
+                # first. (This used to be a plain insert that crashed with a
+                # duplicate-key error when the listener won the race; worse, an
+                # earlier fix that merely adopted the existing row left `kind`
+                # wrong, so `/engage end`/`/engage join` and NPC replies all
+                # silently treated the thread as a non-engagement scene.)
+                values = {
+                    "district_id": district_id,
+                    "location_id": loc_id,
+                    "thread_id": thread.id,
+                    "forum_channel_id": forum.id,
+                    "kind": SceneKind.ENGAGEMENT.value,
+                    "title": title,
+                    "created_by_character_id": char_id,
+                    "status": SceneStatus.OPEN.value,
+                    "last_message_at": dt.datetime.now(dt.UTC),
+                    "participants": participants_json,
+                }
+                stmt = pg_insert(Scene).values(**values)
+                stmt = stmt.on_conflict_do_update(index_elements=["thread_id"], set_=values)
+                await session.execute(stmt)
+                scene = (
+                    await session.execute(select(Scene).where(Scene.thread_id == thread.id))
+                ).scalar_one()
+
+                for npc_id in free_npc_ids:
+                    npc_row = await session.get(Npc, npc_id)
+                    if npc_row is None:
+                        continue
+                    placed = travel_svc.place(district, loc)
+                    npc_row.location_id = loc_id
+                    if placed is not None:
+                        npc_row.x, npc_row.y = placed
+                    npc_row.engagement_id = scene.id
+
+                scene_id = scene.id
+                pending_chars = [(c.id, c.name, c.user_id) for c in matched_chars]
 
         lines = [t("engagement_started_ok", thread=thread.mention)]
         if joined_npc_names:
@@ -511,7 +580,11 @@ class EngagementCog(commands.Cog):
             scene = (
                 await session.execute(select(Scene).where(Scene.thread_id == thread.id))
             ).scalar_one_or_none()
-            if scene is None or scene.kind != SceneKind.ENGAGEMENT.value:
+            # "Engaged" means NPC participants are actually present, not
+            # merely `kind == ENGAGEMENT` -- `/talk`/`/engage start` can
+            # attach NPCs to any scene (an ambient thread, an open
+            # `/scene`), not just a dedicated engagement thread.
+            if scene is None or not scene.participants.get("npcs"):
                 await interaction.response.send_message(
                     "Not a registered engagement.", ephemeral=True
                 )
@@ -526,7 +599,20 @@ class EngagementCog(commands.Cog):
                 npc_row = await session.get(Npc, npc_id)
                 if npc_row is not None:
                     npc_row.engagement_id = None
-            scene.status = SceneStatus.ARCHIVED.value
+            participants = dict(scene.participants)
+            participants["npcs"] = []
+            scene.participants = participants
+            # Only a dedicated engagement thread gets archived -- an
+            # ambient thread or an ordinary `/scene` that merely had NPCs
+            # attached is permanent and stays open once they're released.
+            is_dedicated_engagement = scene.kind == SceneKind.ENGAGEMENT.value
+            if is_dedicated_engagement:
+                scene.status = SceneStatus.ARCHIVED.value
+
+        await thread.send(t("engagement_closing_line"))
+        if not is_dedicated_engagement:
+            await interaction.response.send_message(t("engagement_ended_ok"), ephemeral=True)
+            return
 
         closed_tag = (
             _find_tag(thread.parent, CLOSED_TAG)
@@ -536,7 +622,6 @@ class EngagementCog(commands.Cog):
         new_tags = [tg for tg in thread.applied_tags if tg.name != OPEN_TAG]
         if closed_tag is not None:
             new_tags.append(closed_tag)
-        await thread.send(t("engagement_closing_line"))
         await interaction.response.send_message(t("engagement_ended_ok"), ephemeral=True)
         await thread.edit(archived=True, applied_tags=new_tags, reason="Engagement ended")
 
@@ -554,7 +639,7 @@ class EngagementCog(commands.Cog):
             scene = (
                 await session.execute(select(Scene).where(Scene.thread_id == thread.id))
             ).scalar_one_or_none()
-            if scene is None or scene.kind != SceneKind.ENGAGEMENT.value:
+            if scene is None or not scene.participants.get("npcs"):
                 await interaction.response.send_message(
                     "Not a registered engagement.", ephemeral=True
                 )
@@ -606,12 +691,13 @@ class EngagementCog(commands.Cog):
                 if settings_row is not None
                 else constants.ENGAGEMENT_DEFAULT_IDLE_TIMEOUT_MINUTES
             )
+            # Not filtered to `kind == ENGAGEMENT` -- `/talk`/`/engage
+            # start` can attach NPCs to any open scene (an ambient thread,
+            # an open `/scene`), so idle-release has to scan all of them;
+            # `scenes_to_close` itself is what actually checks for NPC
+            # participants.
             scenes = (
-                (
-                    await session.execute(
-                        select(Scene).where(Scene.kind == SceneKind.ENGAGEMENT.value)
-                    )
-                )
+                (await session.execute(select(Scene).where(Scene.status == SceneStatus.OPEN.value)))
                 .scalars()
                 .all()
             )
@@ -624,13 +710,23 @@ class EngagementCog(commands.Cog):
                     npc_row = await session.get(Npc, npc_id)
                     if npc_row is not None:
                         npc_row.engagement_id = None
-                scene.status = SceneStatus.ARCHIVED.value
+                participants = dict(scene.participants)
+                participants["npcs"] = []
+                scene.participants = participants
+                # Only a dedicated engagement thread gets archived -- an
+                # ambient thread or an ordinary `/scene` that merely had
+                # NPCs attached is permanent and stays open once released.
+                is_dedicated_engagement = scene.kind == SceneKind.ENGAGEMENT.value
+                if is_dedicated_engagement:
+                    scene.status = SceneStatus.ARCHIVED.value
 
                 thread = self.bot.get_channel(scene.thread_id)
                 if not isinstance(thread, discord.Thread):
                     continue
                 try:
                     await thread.send(t("engagement_closing_line"))
+                    if not is_dedicated_engagement:
+                        continue
                     closed_tag = (
                         _find_tag(thread.parent, CLOSED_TAG)
                         if isinstance(thread.parent, discord.ForumChannel)
