@@ -370,3 +370,33 @@ tick`/`mortgage_missed_payments` are meaningful."""
 AUCTION_DURATION_TICKS_DEFAULT = TICKS_PER_DAY * 3
 """How long a `PropertyAuction` (voluntary or foreclosure) stays open for
 bids before `panem_sim.systems.housing` resolves it."""
+
+# NPC engagements: group RP threads with one or more NPCs, plus NPCs
+# occasionally chatting with each other unprompted.
+ENGAGEMENT_DEFAULT_IDLE_TIMEOUT_MINUTES = 30
+"""Seed value for the `EngagementSettings` singleton row on first migrate
+-- staff can change the live value afterward with `/staff engagement
+set-timeout`; this constant is never read again once that row exists."""
+ENGAGEMENT_IDLE_CHECK_INTERVAL_MINUTES = 5
+"""How often `EngagementCog`'s background task scans open engagements for
+`last_message_at` past the current timeout, mirroring `SceneCog.
+archive_idle_scenes`'s own `tasks.loop` cadence pattern."""
+MAX_ENGAGEMENT_HISTORY_TURNS = 12
+"""How many prior `SceneMessage` rows (player lines and NPC replies alike)
+get fed back to the LLM as conversation history for an engagement reply
+-- caps prompt size without losing the immediate back-and-forth."""
+NPC_NAME_MATCH_MIN_LEN = 3
+"""In a multi-participant engagement, an NPC only replies to a message
+naming them -- but matching a first/last name shorter than this many
+characters (e.g. "Al") risks firing on an unrelated word that happens to
+contain it, so a name below this length is skipped as a match candidate
+(the NPC just won't be addressable by that name alone in a crowd; a
+longer name-part still works)."""
+NPC_CHATTER_CHANCE_PER_TICK = 0.01
+"""Per (district, location) with 2+ co-located, unengaged NPCs, the
+per-tick odds `panem_sim.systems.npc_chatter` rolls for a short,
+unprompted NPC-to-NPC conversation -- "not happen particularly often"."""
+NPC_CHATTER_MIN_LINES = 2
+NPC_CHATTER_MAX_LINES = 4
+"""A random NPC-NPC exchange runs this many lines total, alternating
+speakers -- "should only last a few messages"."""

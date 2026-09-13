@@ -17,6 +17,7 @@ class SceneKind(enum.StrEnum):
     AMBIENT = "ambient"
     PLAYER = "player"
     STAFF = "staff"
+    ENGAGEMENT = "engagement"
 
 
 class SceneStatus(enum.StrEnum):

@@ -213,6 +213,12 @@ class Npc(TimestampMixin, Base):
     importance: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     alive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     provider_override: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    engagement_id: Mapped[int | None] = mapped_column(ForeignKey("scenes.id"), nullable=True)
+    """The `ENGAGEMENT`-kind `Scene` this NPC has been pulled into, if any --
+    set when they join (`panem_bot.services.engagements`), cleared when the
+    engagement ends. `panem_sim.systems.schedule` skips an NPC entirely
+    while this is set, which is what keeps them at the engagement's
+    location instead of wandering off on their normal weighted schedule."""
 
 
 class NpcSchedule(Base):
@@ -331,6 +337,19 @@ class WorldClock(Base):
     (e.g. `/time`) compute real seconds remaining until the next tick from
     `tick_interval_seconds`, without the bot needing to talk to the sim
     process directly."""
+
+
+class EngagementSettings(Base):
+    """Single-row staff-tunable settings for NPC engagements, mirroring
+    `WorldClock`'s singleton shape. A code constant would need a redeploy
+    to change; `/staff engagement set-timeout` edits this row directly, and
+    `EngagementCog`'s idle-close background task reads it fresh every
+    pass, so a change takes effect on the very next check."""
+
+    __tablename__ = "engagement_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    idle_timeout_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
 class Shift(Base):
