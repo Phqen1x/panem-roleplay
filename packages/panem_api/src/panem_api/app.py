@@ -43,7 +43,7 @@ from panem_shared.content.loader import ContentBundle
 from panem_shared.db.models import Character, Shift, WorldClock
 from panem_shared.db.session import session_scope
 from panem_shared.logging import get_logger
-from panem_shared.redis_keys import positions_key
+from panem_shared.redis_keys import positions_key, work_pending_key
 from panem_shared.shifts import apply_shift_outcome, resolve_shift_game
 
 logger = get_logger(component="api")
@@ -113,6 +113,10 @@ class WorkResultResponse(BaseModel):
     wage: int
     won: bool
     character_name: str
+
+
+class WorkPendingShift(BaseModel):
+    shift_id: int
 
 
 async def _read_positions(redis_client: redis.Redis, district_id: int) -> Positions:
@@ -237,6 +241,19 @@ def create_app(
             )
             raise HTTPException(status_code=502, detail="Discord token exchange failed")
         return TokenExchangeResponse(access_token=response.json()["access_token"])
+
+    @app.get("/activity/work/for-channel/{channel_id}", response_model=WorkPendingShift)
+    async def work_pending_shift(channel_id: int) -> WorkPendingShift:
+        """`work.html` launched as a real embedded Discord Activity has no
+        `?shift_id=` to read (Discord only ever loads the Activity's one
+        configured root URL, appending its own `channel_id` among other
+        params) -- this resolves it from what `/work` stashed in Redis for
+        the voice channel the launch invite was made on
+        (`panem_shared.redis_keys.work_pending_key`)."""
+        raw = await redis_client.get(work_pending_key(channel_id))
+        if raw is None:
+            raise HTTPException(status_code=404, detail="No pending work shift for this channel")
+        return WorkPendingShift(shift_id=int(raw))
 
     @app.get("/activity/work/{shift_id}", response_model=WorkShiftStatus)
     async def work_shift_status(shift_id: int) -> WorkShiftStatus:

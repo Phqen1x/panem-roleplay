@@ -19,6 +19,7 @@ from panem_shared.content.schemas import (
 )
 from panem_shared.db.models import Character, Shift, User
 from panem_shared.enums import CharacterStatus
+from panem_shared.redis_keys import work_pending_key
 
 
 class FakeRedis:
@@ -297,6 +298,24 @@ class TestDistrictPositionsWebSocket:
             client.websocket_connect("/ws/districts/99/positions") as websocket,
         ):
             websocket.receive_json()
+
+
+class TestWorkPendingShift:
+    async def test_404_when_nothing_pending_for_the_channel(self):
+        app = create_app(content=make_content_with_job(), redis_client=FakeRedis())
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/activity/work/for-channel/999")
+        assert response.status_code == 404
+
+    async def test_returns_the_pending_shift_id(self):
+        redis_client = FakeRedis({work_pending_key(42): "7"})
+        app = create_app(content=make_content_with_job(), redis_client=redis_client)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/activity/work/for-channel/42")
+        assert response.status_code == 200
+        assert response.json() == {"shift_id": 7}
 
 
 class TestWorkShiftStatus:

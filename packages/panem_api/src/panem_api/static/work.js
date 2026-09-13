@@ -1,10 +1,18 @@
 // `/work`'s minigame (Plan §9-adjacent): a small, classic Minesweeper
 // board. No Discord SDK handshake here (unlike app.js) -- this page
-// doesn't read any Discord-scoped data, only `shift_id` from its own
-// query string, so it has nothing to authenticate for. Winning/losing
-// posts to panem_api's work-result endpoint, which pays the shift the
-// same way panem_bot's classic /work option-select flow does, just with
-// a win/lose wage multiplier instead of a chosen option's
+// doesn't read any Discord-scoped data itself, it just needs to know
+// *which shift*, which arrives one of two ways depending on how /work
+// launched this page:
+//   1. The plain-browser fallback link: `?shift_id=<id>` directly.
+//   2. A real embedded Discord Activity launch (an `embedded_application`
+//      invite): Discord loads this app's one configured root URL,
+//      appending its own params (`channel_id`, `guild_id`, `instance_id`,
+//      ...) -- never a custom `?shift_id=`. `resolveShiftId` falls back to
+//      asking panem_api which shift is pending for that `channel_id`
+//      (`panem_shared.redis_keys.work_pending_key`, written by /work).
+// Winning/losing posts to panem_api's work-result endpoint, which pays
+// the shift the same way panem_bot's classic /work option-select flow
+// does, just with a win/lose wage multiplier instead of a chosen option's
 // (`panem_shared.shifts.resolve_shift_game`).
 
 const GRID_SIZE = 8;
@@ -14,8 +22,7 @@ const statusEl = document.getElementById("status");
 const boardEl = document.getElementById("board");
 const resultEl = document.getElementById("result");
 
-const shiftId = new URLSearchParams(location.search).get("shift_id");
-
+let shiftId = null;
 let cells = []; // flat array of {mine, count, revealed, flagged}
 let firstClick = true;
 let gameOver = false;
@@ -164,7 +171,26 @@ function onCellFlag(index) {
   render();
 }
 
+async function resolveShiftId() {
+  const params = new URLSearchParams(location.search);
+  const direct = params.get("shift_id");
+  if (direct) {
+    return direct;
+  }
+  const channelId = params.get("channel_id");
+  if (!channelId) {
+    return null;
+  }
+  try {
+    const body = await fetchJson(`/activity/work/for-channel/${channelId}`);
+    return String(body.shift_id);
+  } catch {
+    return null;
+  }
+}
+
 async function main() {
+  shiftId = await resolveShiftId();
   if (!shiftId) {
     setStatus("No shift given -- use the link from /work in Discord.");
     return;

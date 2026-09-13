@@ -17,8 +17,12 @@ from panem_bot.services import jobs as jobs_svc
 from panem_bot.services import shifts as shifts_svc
 from panem_bot.strings import t
 from panem_bot.views import WorkOptionView
+from panem_shared import redis_keys
 from panem_shared.content.schemas import Job
 from panem_shared.db.models import Character, JobHistory, Shift, WorldClock
+from panem_shared.logging import get_logger
+
+logger = get_logger(component="jobs")
 
 
 class JobsCog(commands.Cog):
@@ -38,6 +42,57 @@ class JobsCog(commands.Cog):
     async def _current_tick(self, session: AsyncSession) -> int:
         clock = await session.get(WorldClock, 1)
         return clock.tick if clock is not None else 0
+
+    async def _activity_launch_view(
+        self, interaction: discord.Interaction, activity_url: str, shift_id: int
+    ) -> tuple[discord.ui.View, bool]:
+        """Prefer a real in-Discord Activity launch over a plain browser
+        link: an `embedded_application` invite on the player's current
+        voice channel, which Discord's client renders as a "Join Activity"
+        launch rather than opening an external tab. Discord only ever
+        loads the Activity's one configured root URL for that launch,
+        appending its own `channel_id`/`guild_id`/`instance_id` query
+        params -- never a custom `?shift_id=` -- so the shift is instead
+        stashed in Redis keyed by that voice channel
+        (`panem_shared.redis_keys.work_pending_key`) for `work.html` to
+        look up once it loads. Falls back to the plain link (returning
+        `False`) whenever the player isn't in a voice channel, the bot
+        lacks permission to create an invite there, or Activities aren't
+        enabled for this application in the Developer Portal."""
+        member = interaction.user
+        voice_state = member.voice if isinstance(member, discord.Member) else None
+        voice_channel = voice_state.channel if voice_state is not None else None
+        application_id = self.bot.application_id
+
+        if voice_channel is not None and application_id is not None:
+            try:
+                invite = await voice_channel.create_invite(
+                    max_age=redis_keys.WORK_PENDING_TTL_S,
+                    target_type=discord.InviteTarget.embedded_application,
+                    target_application_id=application_id,
+                )
+                await self.bot.redis.set(  # type: ignore[attr-defined]
+                    redis_keys.work_pending_key(voice_channel.id),
+                    str(shift_id),
+                    ex=redis_keys.WORK_PENDING_TTL_S,
+                )
+            except discord.HTTPException:
+                logger.warning("work_activity_invite_failed", channel_id=voice_channel.id)
+            else:
+                view = discord.ui.View()
+                view.add_item(
+                    discord.ui.Button(
+                        label="Launch in Discord", url=invite.url, style=discord.ButtonStyle.link
+                    )
+                )
+                return view, True
+
+        url = f"{activity_url.rstrip('/')}/work.html?shift_id={shift_id}"
+        view = discord.ui.View()
+        view.add_item(
+            discord.ui.Button(label="Play for your shift", url=url, style=discord.ButtonStyle.link)
+        )
+        return view, False
 
     # ------------------------------------------------------------------ /work
 
@@ -83,15 +138,12 @@ class JobsCog(commands.Cog):
                 labels = [option.label for option in job.options]
 
         if activity_url:
-            url = f"{activity_url.rstrip('/')}/work.html?shift_id={shift_id}"
-            view = discord.ui.View()
-            view.add_item(
-                discord.ui.Button(
-                    label="Play for your shift", url=url, style=discord.ButtonStyle.link
-                )
+            view, launched_in_discord = await self._activity_launch_view(
+                interaction, activity_url, shift_id
             )
+            key = "work_game_ready_activity" if launched_in_discord else "work_game_ready"
             await interaction.response.send_message(
-                t("work_game_ready", name=char_name, title=job_title), view=view, ephemeral=True
+                t(key, name=char_name, title=job_title), view=view, ephemeral=True
             )
             return
 

@@ -1003,18 +1003,35 @@ by `panem_api`'s Activity frontend (`work.html`/`work.js`, no build step, matchi
   `panem_sim`). No auth here either, same as the rest of Phase 5 -- the result endpoint
   trusts the client's reported `won` outright, consistent with this phase's existing,
   documented no-auth posture.
-- **The "Activity" link is a plain URL, not a verified embedded-Activity launch.** A real
-  Discord Activity normally launches inside a voice channel via Discord's own UI/invite
-  mechanism, which this session had no way to test (same unverified-OAuth caveat as
-  Milestone H/J); what `/work` actually sends is a `discord.ui.Button` link, which opens
-  `work.html` in an external browser/webview when clicked from Discord, not an inlined
-  iframe. Treat "plays in the Activity" as "plays on the same static frontend Discord's
-  Activity would otherwise embed," not as a proven in-Discord embedded launch.
+- **`/work` now sends a real in-Discord Activity launch when it can, not just a plain
+  link.** If the player is in a voice channel when they run `/work`, the bot creates an
+  `embedded_application` invite on that channel
+  (`discord.VoiceChannel.create_invite(target_type=..., target_application_id=...)`) --
+  Discord's client renders that as a "Launch Activity" join, opening `work.html` inside
+  the voice channel's embedded iframe rather than an external browser tab. This requires
+  the bot's Discord application to have Activities enabled and an Activity URL Mapping
+  configured in the Developer Portal (pointing at `ACTIVITY_PUBLIC_URL`), which this
+  session has no way to configure or verify against a real Discord client. If the player
+  isn't in a voice channel, or the invite fails (missing `CREATE_INSTANT_INVITE`
+  permission, Activities not enabled for the app), `/work` falls back to the plain
+  `work.html?shift_id=...` browser link as before.
+- **A real Activity launch can't carry a custom `?shift_id=`** -- Discord always loads
+  the app's one configured root URL for every launch, only ever appending its own
+  `channel_id`/`guild_id`/`instance_id` (confirmed from this session's own earlier
+  server logs of a real launch). So `/work` instead stashes the shift it just opened in
+  Redis, keyed by the voice channel the invite was made for
+  (`panem_shared.redis_keys.work_pending_key`, `WORK_PENDING_TTL_S` = 10 minutes); once
+  `work.html` loads, it reads Discord's own `channel_id` query param and asks
+  `GET /activity/work/for-channel/{channel_id}` which shift that resolves to, falling
+  back to a direct `?shift_id=` when present (the plain-link path still works exactly as
+  before).
 - **What's verified**: `resolve_shift_game`'s wage math, the grace-period logic (unit
-  tests), and the full `work.html` round trip -- loaded in a real headless Chromium
-  browser against a live `panem_api` instance backed by the dev Postgres database, played
-  to a loss, and confirmed the shift resolved with the correct wage in the DB via the
-  actual HTTP endpoints (not mocked). Winning was exercised directly against the API
+  tests), the `?channel_id=`-only launch path (a real headless-Chromium browser loading
+  `work.html` with no `shift_id` at all, only `channel_id`, correctly resolving the shift
+  via `GET /activity/work/for-channel/{channel_id}` against a live `panem_api` and
+  Postgres), and the full `work.html` round trip -- played to a loss, and confirmed the
+  shift resolved with the correct wage in the DB via the actual HTTP endpoints (not
+  mocked). Winning was exercised directly against the API
   (`POST .../result` with `won: true`) rather than forced through the browser, since a
   fair board's outcome isn't fully controllable from outside; the code path is identical
   either way (`finish(won)`), so this is not a meaningfully weaker check.
