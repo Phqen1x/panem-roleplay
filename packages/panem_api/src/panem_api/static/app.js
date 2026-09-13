@@ -14,15 +14,20 @@
 // layout from each location's map coordinates rather than a background
 // image.
 //
-// The embedded-app-sdk is loaded from a CDN via a *dynamic* import inside
-// the same try/catch as the handshake itself, deliberately not a static
-// top-level `import` -- a static import that fails to fetch (offline dev,
-// a restrictive local network, an ad/tracker blocker) would throw before
-// any of this module's code runs at all, permanently stuck on "Connecting…"
-// with no fallback. A dynamic import failure is just another reason to
-// fall back to preview mode.
+// The embedded-app-sdk is vendored at /vendor/discord-embedded-app-sdk.js
+// (bundled from the real npm package with esbuild -- see that file's own
+// header) rather than loaded from a CDN: this used to dynamic-import
+// https://cdn.jsdelivr.net/npm/@discord/embedded-app-sdk@1/+esm, which
+// fails outright (and falls back to preview mode) on any deployment whose
+// network can't reach jsdelivr.net -- a real, reported failure mode, not
+// just a hypothetical one. Still a *dynamic* import inside the same
+// try/catch as the handshake itself, deliberately not a static top-level
+// `import` -- a failed import (a bad deploy missing the vendored file,
+// say) would otherwise throw before any of this module's code runs at
+// all, permanently stuck on "Connecting…" with no fallback. A dynamic
+// import failure is just another reason to fall back to preview mode.
 
-const DISCORD_SDK_URL = "https://cdn.jsdelivr.net/npm/@discord/embedded-app-sdk@1/+esm";
+const DISCORD_SDK_URL = "/vendor/discord-embedded-app-sdk.js";
 
 const statusEl = document.getElementById("status");
 const districtSelect = document.getElementById("district-select");

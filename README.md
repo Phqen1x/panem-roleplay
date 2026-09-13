@@ -787,6 +787,42 @@ for staff to hand out special jobs (Mentor) outside the normal apply flow.
   job` has something concrete to grant. No Capitol mentor exists --
   the Capitol doesn't send tributes.
 
+## Notes on vendoring the Activity's embedded-app-sdk
+
+Not a milestone -- a reported bug fix.
+
+- **The Activity frontend used to dynamic-import
+  `@discord/embedded-app-sdk` from `cdn.jsdelivr.net`** (`+esm`, a
+  jsdelivr-bundled build). On a deployment whose network can't reach that
+  CDN (a restrictive Docker network, a corporate firewall, an offline
+  dev box), the import itself fails with "Failed to fetch dynamically
+  imported module" -- a real, reported failure, not a hypothetical one --
+  and the page falls back to preview mode citing that fetch error rather
+  than anything about Discord auth.
+- **Fixed by vendoring the SDK as a static file**
+  (`packages/panem_api/src/panem_api/static/vendor/
+  discord-embedded-app-sdk.js`) instead of fetching it at runtime: the
+  real npm package (`@discord/embedded-app-sdk@1.9.0`, MIT --
+  `discord-embedded-app-sdk.LICENSE.md` sits alongside it) bundled with
+  `esbuild --bundle --format=esm --platform=browser --target=es2020
+  --minify` against its own `output/index.mjs`, the same thing jsdelivr's
+  `/+esm` endpoint was doing on the fly. `app.js`'s `DISCORD_SDK_URL` now
+  points at this same-origin path; no CDN, no external network
+  dependency, same `DiscordSDK` export either way.
+- Verified in a real headless-Chromium browser against a live `panem_api`
+  instance: the vendored bundle loads (`import()` resolves `DiscordSDK` as
+  a real constructor) and the page falls through to preview mode for the
+  *expected* reason outside a real Activity iframe (`DiscordSDK`'s own
+  constructor rejecting a missing `frame_id` query param, which a real
+  Discord Activity launch supplies) -- not the CDN-fetch failure this was
+  meant to fix. `tests/unit/test_api_app.py` also asserts `/app.js`
+  imports the vendored path and that path is actually served.
+- To pick up a newer SDK version later: `npm pack
+  @discord/embedded-app-sdk@<version>`, extract it, then re-run the same
+  `esbuild` command above against its `output/index.mjs` and overwrite
+  the vendored file (keep the header comment, update the version it
+  names).
+
 ## Notes on the log channel and the Activity's OAuth handshake
 
 Two support fixes, not a milestone.

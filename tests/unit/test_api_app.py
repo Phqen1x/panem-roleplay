@@ -264,6 +264,16 @@ class TestActivityFrontend:
         response = client.get("/app.js")
         assert response.status_code == 200
 
+    def test_serves_the_vendored_discord_sdk_not_a_cdn_url(self, client: TestClient):
+        """The Activity frontend must not depend on a CDN being reachable
+        at runtime (see the README's Activity-frontend notes) -- app.js
+        imports the SDK from this same-origin path."""
+        app_js = client.get("/app.js").text
+        assert 'DISCORD_SDK_URL = "/vendor/discord-embedded-app-sdk.js"' in app_js
+        response = client.get("/vendor/discord-embedded-app-sdk.js")
+        assert response.status_code == 200
+        assert "DiscordSDK" in response.text
+
     def test_api_routes_still_take_priority_over_the_static_mount(self, client: TestClient):
         response = client.get("/health")
         assert response.status_code == 200
