@@ -1437,7 +1437,15 @@ just another `Scene` row.
   else's character. On accept, their character is relocated to the engagement's location
   the same free, instant way `/travel location:<id>` already moves someone within a
   district (never across districts -- that still costs a ticket and takes real transit
-  time, so an invite never bypasses that economy).
+  time, so an invite never bypasses that economy) -- and, since an invitee is eligible by
+  home district alone (`can_rp_in_district`), accepting also pins `current_district_id` to
+  the engagement's district, since they may not have been considered "in" it at all until
+  now. The Accept/Decline buttons' handler originally had two paths (the scene already
+  gone, the invite already answered by a double-click or a stale message) that returned
+  without ever calling `interaction.response...` at all -- Discord surfaces an
+  unacknowledged interaction as "the application did not respond," not a normal error
+  message, so this looked like the bot hanging rather than a handled case. Both paths now
+  edit the message with an explanation instead of silently returning.
 - **Run `/engage start` or `/talk` from inside a thread that already has a scene
   registered** (an ambient thread, an open `/scene`, or a prior engagement) and the named
   NPCs/characters are pulled into *that* conversation instead of a new thread being
@@ -1550,10 +1558,16 @@ and a wholly new NPC created by a command has no YAML entry to read from in the 
   `traits` and `speech_style` already lived on the `Npc` row itself (no content-vs-DB split
   to work around), so renaming and re-tagging traits/tone just update those columns directly.
 - **`/staff npc rename`, `set-background`, `set-appearance`, `set-traits`, `set-speech`**
-  each look the NPC up by name (`autocomplete.any_npc`, a new global-not-district-scoped
+  each look the NPC up (`autocomplete.any_npc`, a new global-not-district-scoped
   autocomplete since staff need to reach any resident, not just ones near their own
   character) and update exactly one thing, mirroring `/staff give money`/`housing
-  set-price`'s single-purpose shape rather than one big edit-everything command.
+  set-price`'s single-purpose shape rather than one big edit-everything command. Lookup is
+  by `Npc.id`, not name: the synthetic name pool is sampled independently per district, so
+  the same name showing up in two different districts is expected, and an early version of
+  this that matched on name crashed (`MultipleResultsFound`) the first time it hit a real
+  duplicate. `any_npc`'s suggestions carry the id as the choice's `value` (the name plus
+  district is only the display label), so picking a suggestion always resolves to exactly
+  the one NPC shown.
 - **`/staff npc add`** creates a genuinely new `Npc` row from scratch -- name, district,
   age, home location (validated against that district's real locations), comma-separated
   traits (speech tone auto-derived from them via the same `speech_tone` helper synthetic

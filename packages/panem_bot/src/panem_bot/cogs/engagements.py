@@ -134,10 +134,16 @@ class EngagementCog(commands.Cog):
             async with self.bot.db() as session:  # type: ignore[attr-defined]
                 scene = await session.get(Scene, scene_id)
                 if scene is None:
+                    await interaction.response.edit_message(
+                        content=t("engagement_invite_gone"), view=None
+                    )
                     return
                 participants = dict(scene.participants)
                 pending = list(participants.get("pending_characters", []))
                 if character_id not in pending:
+                    await interaction.response.edit_message(
+                        content=t("engagement_invite_already_handled"), view=None
+                    )
                     return
                 pending.remove(character_id)
                 participants["pending_characters"] = pending
@@ -146,6 +152,28 @@ class EngagementCog(commands.Cog):
                         *participants.get("characters", []),
                         character_id,
                     ]
+                    # The invitee doesn't need to have already traveled here
+                    # (`can_rp_in_district` at invite time only required
+                    # their home district or wherever they'd last traveled
+                    # to match) -- accepting relocates them the same free,
+                    # instant way `/travel location:<id>` moves someone
+                    # within a district, and pins current_district_id to
+                    # match since they may not have been considered "in"
+                    # this district at all until now.
+                    character = await session.get(Character, character_id)
+                    if character is not None:
+                        content_bundle = self.bot.content  # type: ignore[attr-defined]
+                        district = content_bundle.district(scene.district_id)
+                        loc = next(
+                            (loc_ for loc_ in district.locations if loc_.id == scene.location_id),
+                            None,
+                        )
+                        if loc is not None:
+                            placed = travel_svc.place(district, loc)
+                            character.current_district_id = scene.district_id
+                            character.location_id = scene.location_id
+                            if placed is not None:
+                                character.x, character.y = placed
                 scene.participants = participants
             key = "engagement_invite_accepted" if accepted else "engagement_invite_declined"
             await interaction.response.edit_message(

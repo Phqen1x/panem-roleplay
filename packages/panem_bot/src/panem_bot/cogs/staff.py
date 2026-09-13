@@ -658,11 +658,18 @@ class StaffCog(commands.Cog):
 
     # ------------------------------------------------------------------ npc
 
-    async def _find_npc(self, session: AsyncSession, name: str) -> Npc | None:
-        return (await session.execute(select(Npc).where(Npc.name == name))).scalar_one_or_none()
+    async def _find_npc(self, session: AsyncSession, npc_id: str) -> Npc | None:
+        """Looked up by `Npc.id`, not name -- the synthetic name pool is
+        sampled independently per district, so two different districts
+        having a resident with the same name is expected, and a
+        name-based lookup can match more than one row. `autocomplete.
+        any_npc`'s suggestions carry the real id as their value, so a
+        staff member picking a suggestion (rather than typing free text)
+        always resolves to exactly the one NPC shown."""
+        return await session.get(Npc, npc_id)
 
     @npc_group.command(name="rename", description="Rename an NPC")
-    @app_commands.describe(npc="Resident's current name", new_name="New name")
+    @app_commands.describe(npc="Resident (pick a suggestion)", new_name="New name")
     @app_commands.autocomplete(npc=autocomplete.any_npc)
     @app_commands.check(_is_staff)
     async def npc_rename(self, interaction: discord.Interaction, npc: str, new_name: str) -> None:
@@ -688,7 +695,7 @@ class StaffCog(commands.Cog):
     @npc_group.command(
         name="set-background", description="Set (or replace) an NPC's backstory, retroactively"
     )
-    @app_commands.describe(npc="Resident's name", backstory="New backstory text")
+    @app_commands.describe(npc="Resident (pick a suggestion)", backstory="New backstory text")
     @app_commands.autocomplete(npc=autocomplete.any_npc)
     @app_commands.check(_is_staff)
     async def npc_set_background(
@@ -703,6 +710,7 @@ class StaffCog(commands.Cog):
                 await interaction.response.send_message(t("resident_not_found"), ephemeral=True)
                 return
             row.backstory_override = backstory
+            name = row.name
             await log_staff_action(
                 session,
                 bot=self.bot,
@@ -712,13 +720,13 @@ class StaffCog(commands.Cog):
                 payload={"backstory": backstory},
             )
         await interaction.response.send_message(
-            f"**{npc}**'s backstory has been updated.", ephemeral=True
+            f"**{name}**'s backstory has been updated.", ephemeral=True
         )
 
     @npc_group.command(
         name="set-appearance", description="Set (or replace) an NPC's appearance, retroactively"
     )
-    @app_commands.describe(npc="Resident's name", appearance="New appearance text")
+    @app_commands.describe(npc="Resident (pick a suggestion)", appearance="New appearance text")
     @app_commands.autocomplete(npc=autocomplete.any_npc)
     @app_commands.check(_is_staff)
     async def npc_set_appearance(
@@ -733,6 +741,7 @@ class StaffCog(commands.Cog):
                 await interaction.response.send_message(t("resident_not_found"), ephemeral=True)
                 return
             row.appearance_override = appearance
+            name = row.name
             await log_staff_action(
                 session,
                 bot=self.bot,
@@ -742,11 +751,11 @@ class StaffCog(commands.Cog):
                 payload={"appearance": appearance},
             )
         await interaction.response.send_message(
-            f"**{npc}**'s appearance has been updated.", ephemeral=True
+            f"**{name}**'s appearance has been updated.", ephemeral=True
         )
 
     @npc_group.command(name="set-traits", description="Replace an NPC's personality traits")
-    @app_commands.describe(npc="Resident's name", traits="Comma-separated traits")
+    @app_commands.describe(npc="Resident (pick a suggestion)", traits="Comma-separated traits")
     @app_commands.autocomplete(npc=autocomplete.any_npc)
     @app_commands.check(_is_staff)
     async def npc_set_traits(self, interaction: discord.Interaction, npc: str, traits: str) -> None:
@@ -760,6 +769,7 @@ class StaffCog(commands.Cog):
                 await interaction.response.send_message(t("resident_not_found"), ephemeral=True)
                 return
             row.traits = trait_list
+            name = row.name
             await log_staff_action(
                 session,
                 bot=self.bot,
@@ -769,11 +779,13 @@ class StaffCog(commands.Cog):
                 payload={"traits": trait_list},
             )
         await interaction.response.send_message(
-            f"**{npc}**'s traits are now: {', '.join(trait_list)}.", ephemeral=True
+            f"**{name}**'s traits are now: {', '.join(trait_list)}.", ephemeral=True
         )
 
     @npc_group.command(name="set-speech", description="Set an NPC's speech tone")
-    @app_commands.describe(npc="Resident's name", tone="e.g. warm, blunt, reserved, plain")
+    @app_commands.describe(
+        npc="Resident (pick a suggestion)", tone="e.g. warm, blunt, reserved, plain"
+    )
     @app_commands.autocomplete(npc=autocomplete.any_npc)
     @app_commands.check(_is_staff)
     async def npc_set_speech(self, interaction: discord.Interaction, npc: str, tone: str) -> None:
@@ -783,6 +795,7 @@ class StaffCog(commands.Cog):
                 await interaction.response.send_message(t("resident_not_found"), ephemeral=True)
                 return
             row.speech_style = {**row.speech_style, "tone": tone}
+            name = row.name
             await log_staff_action(
                 session,
                 bot=self.bot,
@@ -792,7 +805,7 @@ class StaffCog(commands.Cog):
                 payload={"tone": tone},
             )
         await interaction.response.send_message(
-            f"**{npc}**'s speech tone is now **{tone}**.", ephemeral=True
+            f"**{name}**'s speech tone is now **{tone}**.", ephemeral=True
         )
 
     @npc_group.command(name="add", description="Add a brand new NPC to a district")

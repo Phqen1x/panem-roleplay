@@ -183,6 +183,8 @@ STRINGS: dict[str, str] = {
     "engagement_invite_not_yours": "That invitation isn't for you.",
     "engagement_invite_accepted": "**{character}** joined the engagement.",
     "engagement_invite_declined": "**{character}** declined to join.",
+    "engagement_invite_gone": "This engagement no longer exists.",
+    "engagement_invite_already_handled": "This invitation has already been answered.",
     "engagement_join_not_here": "**{name}** needs to `/travel` to **{location}** first.",
     "engagement_join_already_in": "**{name}** is already part of this engagement.",
     "engagement_join_ok": "**{name}** joins the engagement.",
