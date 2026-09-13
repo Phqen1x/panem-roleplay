@@ -30,7 +30,7 @@
 // <script> tag (and its /work.css?v= link, for CSS-only changes like the
 // games/*.js modules use) to match -- changing the URL is what actually
 // forces every cache layer to refetch, restarting the server does not.
-const ASSET_VERSION = "2";
+const ASSET_VERSION = "3";
 
 const [coinflip, connect4, minesweeper, poison, snake, solitaire] = await Promise.all([
   import(`./games/coinflip.js?v=${ASSET_VERSION}`),

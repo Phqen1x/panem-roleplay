@@ -7,7 +7,7 @@ const TICK_MS = 130;
 const WIN_SCORE = 8;
 
 export const label = "Snake";
-export const instructions = `Eat ${WIN_SCORE} to clear the shift -- arrow keys or WASD, don't hit a wall or yourself.`;
+export const instructions = `Eat ${WIN_SCORE} to clear the shift -- arrow keys or WASD to start, don't hit a wall or yourself.`;
 
 const DIRECTIONS = {
   ArrowUp: { x: 0, y: -1 },
@@ -40,6 +40,7 @@ export function mount(boardEl, { onFinish, setStatus }) {
   let score = 0;
   let gameOver = false;
   let timer = null;
+  let started = false;
 
   function placeFood() {
     while (true) {
@@ -57,6 +58,10 @@ export function mount(boardEl, { onFinish, setStatus }) {
     event.preventDefault();
     if (next.x === -direction.x && next.y === -direction.y) return;
     pendingDirection = next;
+    if (!started) {
+      started = true;
+      timer = setInterval(tick, TICK_MS);
+    }
   }
 
   function draw() {
@@ -113,5 +118,4 @@ export function mount(boardEl, { onFinish, setStatus }) {
 
   document.addEventListener("keydown", onKeyDown);
   draw();
-  timer = setInterval(tick, TICK_MS);
 }
