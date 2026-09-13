@@ -1131,15 +1131,21 @@ job, and extends the district economy to react to it.
 
 **The `/character create` crash fix.** After the job system rework above, creating any
 character crashed Discord-side: `JobTitleModal` (the modal that asks for a free-typed job
-title, opened from inside `CharacterDetailsModal.on_submit` -- i.e. one modal opening
-another in response to that first modal's own submission) got a 400 from Discord
-("In type: Value must be one of {4, 5, 6, 7, 10, 12}"). discord.py 2.7's `send_modal`
-rejects the legacy Action-Row-wrapped `TextInput` schema specifically when the modal being
-sent is itself a response to a `MODAL_SUBMIT` interaction (chaining a second modal off the
-first) -- Discord requires the newer schema for that case, where each field is a
-`discord.ui.Label` wrapping its input rather than a bare `TextInput` with a `label=` kwarg.
-`CharacterDetailsModal` itself doesn't need this (it opens in response to the plain
-district-select component, not a modal submission), so only `JobTitleModal` changed.
+title) was opened from inside `CharacterDetailsModal.on_submit` -- i.e. one modal opening
+another directly in response to that first modal's own `MODAL_SUBMIT` interaction -- and
+Discord returned a 400 ("In type: Value must be one of {4, 5, 6, 7, 10, 12}"). An initial
+attempt tried satisfying that with discord.py's newer `discord.ui.Label`-wrapped field
+schema instead of the legacy Action-Row-wrapped `TextInput`, but that didn't hold up under
+live testing -- Discord still rejected the chained modal either way. The actual fix drops
+modal-chaining entirely: `_prompt_job_title` (`panem_bot/cogs/characters.py`) now responds
+to `CharacterDetailsModal`'s submission with a message and a single button
+(`JobTitlePromptView`, `panem_bot/views.py`), and only that button's own click -- a plain
+component interaction, not a modal submission -- opens `JobTitleModal`. This is the same
+proven pattern already used everywhere else a modal opens in this codebase (the district
+select opening `CharacterDetailsModal` itself; `ApprovalView`'s buttons opening
+`ChangesNoteModal`/`RejectReasonModal`), so `JobTitleModal` reverted to the plain
+`TextInput` schema -- the Label workaround was only ever needed for the chained case this
+no longer does.
 
 **The multi-game `/work` minigame.** `/work`'s Activity-hosted minigame was previously
 always the same Minesweeper board (`work.js`). It's now a random pick, per shift, from six
