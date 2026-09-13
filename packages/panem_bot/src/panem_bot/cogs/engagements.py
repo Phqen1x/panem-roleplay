@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,8 +23,16 @@ from panem_bot.services import engagements as engagements_svc
 from panem_bot.services import proxy as proxy_svc
 from panem_bot.services import travel as travel_svc
 from panem_bot.strings import t
-from panem_shared import simtime
-from panem_shared.db.models import Character, DiscordChannel, Npc, Scene, User, WorldClock
+from panem_shared import constants, simtime
+from panem_shared.db.models import (
+    Character,
+    DiscordChannel,
+    EngagementSettings,
+    Npc,
+    Scene,
+    User,
+    WorldClock,
+)
 from panem_shared.enums import ChannelKind, CharacterStatus, SceneKind, SceneStatus
 
 from .scenes import CLOSED_TAG, OPEN_TAG, _find_tag
@@ -58,6 +66,12 @@ class _InviteResponseButton(discord.ui.Button["discord.ui.View"]):
 class EngagementCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
+
+    async def cog_load(self) -> None:
+        self.close_idle_engagements.start()
+
+    async def cog_unload(self) -> None:
+        self.close_idle_engagements.cancel()
 
     # ------------------------------------------------------------- helpers
 
@@ -483,6 +497,66 @@ class EngagementCog(commands.Cog):
             scene.participants = participants
             name = char.name
         await interaction.response.send_message(t("engagement_join_ok", name=name))
+
+    # --------------------------------------------------------------- upkeep
+
+    @tasks.loop(minutes=constants.ENGAGEMENT_IDLE_CHECK_INTERVAL_MINUTES)
+    async def close_idle_engagements(self) -> None:
+        """Mirrors `SceneCog.archive_idle_scenes`'s `tasks.loop` pattern,
+        but closes *every* idle engagement (no district cap) once no
+        player has spoken in `EngagementSettings.idle_timeout_minutes` --
+        read fresh every pass, so a staff change via `/staff engagement
+        set-timeout` takes effect on the very next check, not just for
+        engagements started afterward."""
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            settings_row = await session.get(EngagementSettings, 1)
+            timeout_minutes = (
+                settings_row.idle_timeout_minutes
+                if settings_row is not None
+                else constants.ENGAGEMENT_DEFAULT_IDLE_TIMEOUT_MINUTES
+            )
+            scenes = (
+                (
+                    await session.execute(
+                        select(Scene).where(Scene.kind == SceneKind.ENGAGEMENT.value)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            to_close = engagements_svc.scenes_to_close(
+                list(scenes), timeout_minutes=timeout_minutes, now=dt.datetime.now(dt.UTC)
+            )
+            for scene_id in to_close:
+                scene = next(s for s in scenes if s.id == scene_id)
+                for npc_id in scene.participants.get("npcs", []):
+                    npc_row = await session.get(Npc, npc_id)
+                    if npc_row is not None:
+                        npc_row.engagement_id = None
+                scene.status = SceneStatus.ARCHIVED.value
+
+                thread = self.bot.get_channel(scene.thread_id)
+                if not isinstance(thread, discord.Thread):
+                    continue
+                try:
+                    await thread.send(t("engagement_closing_line"))
+                    closed_tag = (
+                        _find_tag(thread.parent, CLOSED_TAG)
+                        if isinstance(thread.parent, discord.ForumChannel)
+                        else None
+                    )
+                    new_tags = [tg for tg in thread.applied_tags if tg.name != OPEN_TAG]
+                    if closed_tag is not None:
+                        new_tags.append(closed_tag)
+                    await thread.edit(
+                        archived=True, applied_tags=new_tags, reason="Engagement idle timeout"
+                    )
+                except discord.HTTPException:
+                    continue
+
+    @close_idle_engagements.before_loop
+    async def _before_close_idle_engagements(self) -> None:
+        await self.bot.wait_until_ready()
 
 
 async def setup(bot: commands.Bot) -> None:

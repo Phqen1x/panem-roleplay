@@ -19,7 +19,15 @@ from panem_bot.services import jobs as jobs_svc
 from panem_bot.services.staff import log_staff_action
 from panem_bot.strings import t
 from panem_shared import constants, job_levels
-from panem_shared.db.models import Character, DistrictState, Inventory, Property, Scene, User
+from panem_shared.db.models import (
+    Character,
+    DistrictState,
+    EngagementSettings,
+    Inventory,
+    Property,
+    Scene,
+    User,
+)
 from panem_shared.enums import CharacterStatus, DayPhase, JobLevel, OwnerKind, Position, SceneStatus
 
 MESSAGE_LINK_RE = re.compile(r"/channels/(\d+)/(\d+)/(\d+)$")
@@ -51,6 +59,9 @@ class StaffCog(commands.Cog):
     )
     housing_group = app_commands.Group(
         name="housing", description="Override housing prices", parent=group
+    )
+    engagement_group = app_commands.Group(
+        name="engagement", description="Tune NPC engagement settings", parent=group
     )
 
     @group.command(name="whois", description="Look up who a proxied message belongs to")
@@ -608,6 +619,36 @@ class StaffCog(commands.Cog):
             await interaction.response.send_message(
                 f"Property `#{property_id}` now asks **{round(price)}** money.", ephemeral=True
             )
+
+    @engagement_group.command(
+        name="set-timeout",
+        description="Set how long an engagement can sit idle before it auto-closes",
+    )
+    @app_commands.describe(minutes="Minutes of no player message before an engagement closes")
+    @app_commands.check(_is_staff)
+    async def engagement_set_timeout(self, interaction: discord.Interaction, minutes: int) -> None:
+        if minutes < 1:
+            await interaction.response.send_message("Minutes must be at least 1.", ephemeral=True)
+            return
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            settings_row = await session.get(EngagementSettings, 1)
+            if settings_row is None:
+                settings_row = EngagementSettings(id=1, idle_timeout_minutes=minutes)
+                session.add(settings_row)
+            else:
+                settings_row.idle_timeout_minutes = minutes
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="engagement_set_timeout",
+                target="engagement_settings",
+                payload={"minutes": minutes},
+            )
+        await interaction.response.send_message(
+            f"Engagements now auto-close after **{minutes}** minute(s) of no player message.",
+            ephemeral=True,
+        )
 
 
 async def setup(bot: commands.Bot) -> None:

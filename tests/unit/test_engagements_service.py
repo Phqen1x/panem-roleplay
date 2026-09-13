@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import datetime as dt
+
 import pytest
 
 from panem_bot.errors import NotAllowed
 from panem_bot.services import engagements as engagements_svc
 from panem_shared.content.schemas import Job, JobOption
-from panem_shared.db.models import Character, Npc
-from panem_shared.enums import CharacterStatus, DayPhase
+from panem_shared.db.models import Character, Npc, Scene
+from panem_shared.enums import CharacterStatus, DayPhase, SceneKind, SceneStatus
 
 
 def make_job(**overrides: object) -> Job:
@@ -36,6 +38,24 @@ def make_npc(**overrides: object) -> Npc:
     )
     defaults.update(overrides)
     return Npc(**defaults)  # type: ignore[arg-type]
+
+
+def make_scene(id_: int, **overrides: object) -> Scene:
+    defaults: dict[str, object] = dict(
+        district_id=1,
+        location_id="hob",
+        thread_id=1000 + id_,
+        forum_channel_id=1,
+        kind=SceneKind.ENGAGEMENT.value,
+        title="An Engagement",
+        status=SceneStatus.OPEN.value,
+        last_message_at=dt.datetime(2026, 1, 1, tzinfo=dt.UTC),
+        participants={"characters": [1], "pending_characters": [], "npcs": ["npc-1"]},
+    )
+    defaults.update(overrides)
+    scene = Scene(**defaults)  # type: ignore[arg-type]
+    scene.id = id_
+    return scene
 
 
 def make_character(**overrides: object) -> Character:
@@ -186,3 +206,41 @@ class TestCheckCanStart:
     def test_allows_an_approved_character(self):
         character = make_character(status=CharacterStatus.APPROVED.value)
         engagements_svc.check_can_start(character=character)
+
+
+class TestScenesToClose:
+    NOW = dt.datetime(2026, 1, 1, 1, 0, tzinfo=dt.UTC)
+
+    def test_closes_a_scene_past_the_timeout(self):
+        scene = make_scene(1, last_message_at=self.NOW - dt.timedelta(minutes=31))
+        assert engagements_svc.scenes_to_close([scene], timeout_minutes=30, now=self.NOW) == [1]
+
+    def test_leaves_a_recently_active_scene_open(self):
+        scene = make_scene(1, last_message_at=self.NOW - dt.timedelta(minutes=5))
+        assert engagements_svc.scenes_to_close([scene], timeout_minutes=30, now=self.NOW) == []
+
+    def test_ignores_a_non_engagement_scene(self):
+        scene = make_scene(
+            1, kind=SceneKind.PLAYER.value, last_message_at=self.NOW - dt.timedelta(hours=2)
+        )
+        assert engagements_svc.scenes_to_close([scene], timeout_minutes=30, now=self.NOW) == []
+
+    def test_ignores_an_already_archived_scene(self):
+        scene = make_scene(
+            1,
+            status=SceneStatus.ARCHIVED.value,
+            last_message_at=self.NOW - dt.timedelta(hours=2),
+        )
+        assert engagements_svc.scenes_to_close([scene], timeout_minutes=30, now=self.NOW) == []
+
+    def test_ignores_a_scene_with_no_messages_yet(self):
+        scene = make_scene(1, last_message_at=None)
+        assert engagements_svc.scenes_to_close([scene], timeout_minutes=30, now=self.NOW) == []
+
+    def test_closes_every_idle_engagement_not_just_one(self):
+        scene_a = make_scene(1, last_message_at=self.NOW - dt.timedelta(hours=1))
+        scene_b = make_scene(2, last_message_at=self.NOW - dt.timedelta(hours=2))
+        result = engagements_svc.scenes_to_close(
+            [scene_a, scene_b], timeout_minutes=30, now=self.NOW
+        )
+        assert set(result) == {1, 2}
