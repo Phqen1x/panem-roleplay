@@ -105,6 +105,10 @@ class WorkShiftStatus(BaseModel):
     job_title: str
     character_name: str
     already_resolved: bool
+    # The character's current JobLevel value (apprentice..expert) --
+    # work.js uses this to pick which minigames are available and how
+    # hard the harder ones are (Snake's win score, Minesweeper's grid).
+    level: str
 
 
 class WorkResultRequest(BaseModel):
@@ -284,7 +288,9 @@ def create_app(
     @app.get("/activity/work/{shift_id}", response_model=WorkShiftStatus)
     async def work_shift_status(shift_id: int) -> WorkShiftStatus:
         """Lets `work.html` show the player who/what they're playing for
-        (and refuse a stale link) before they've played anything. Jobs are
+        (and refuse a stale link) before they've played anything, and
+        tells it the character's job level so it can pick/scale a
+        minigame accordingly (`work.js`'s `LEVELS` array). Jobs are
         free-typed (`Character.job_title`) rather than a catalog entry
         now, so this reads the character directly instead of joining
         through `content.jobs`."""
@@ -299,6 +305,7 @@ def create_app(
                 job_title=character.job_title,
                 character_name=character.name,
                 already_resolved=shift.result is not None,
+                level=job_level_for_shifts(character.shifts_completed).value,
             )
 
     @app.post("/activity/work/{shift_id}/result", response_model=WorkResultResponse)

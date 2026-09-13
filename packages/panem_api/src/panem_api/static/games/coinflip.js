@@ -3,7 +3,9 @@
 // apparently also play on slow shifts.
 
 export const label = "Coin Flip";
-export const instructions = "Call it -- heads keeps the shift, tails ends it.";
+export function instructions() {
+  return "Call it -- heads keeps the shift, tails ends it.";
+}
 
 export function mount(boardEl, { onFinish }) {
   let done = false;

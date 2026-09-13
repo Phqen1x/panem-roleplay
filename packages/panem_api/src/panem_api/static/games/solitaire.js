@@ -16,8 +16,9 @@ const RED_SUITS = new Set(["H", "D"]);
 const RANK_LABEL = { 1: "A", 11: "J", 12: "Q", 13: "K" };
 
 export const label = "Solitaire";
-export const instructions =
-  "Klondike -- click a card, then click where to move it. Build foundations Ace to King.";
+export function instructions() {
+  return "Klondike -- click a card, then click where to move it. Build foundations Ace to King.";
+}
 
 function rankLabel(rank) {
   return RANK_LABEL[rank] || String(rank);

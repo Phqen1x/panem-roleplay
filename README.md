@@ -1189,6 +1189,31 @@ matching `views.py`'s `ShiftPhaseSelect`/`ChangesNoteModal` pattern) rather than
 to `Button.callback` directly, which mypy's `strict` mode rejects (`method-assign`) since
 `callback` is a real method on the base class, not a plain instance attribute.
 
+**Minigame difficulty now scales with job mastery.** `/activity/work/{shift_id}`
+(`WorkShiftStatus`) gained a `level` field (`job_level_for_shifts`'s value), which `work.js`
+maps to a `levelIndex` (0 = Apprentice .. 4 = Expert) and passes into every game's
+`mount(boardEl, { ..., levelIndex })` and `instructions(levelIndex)` (every game's
+`instructions` export changed from a plain string to a function, even the ones that don't
+vary by level, so the contract stays uniform). Three concrete effects, matching what a
+"harder game at a higher level" can actually mean per game:
+- **Coin Flip and Pick Your Poison are phased out** past Apprentice (`levelIndex > 0`) --
+  fixed-odds games have no real difficulty knob to turn, so rather than pretending a 50/50
+  coin gets "harder," `gamesForLevel()` just drops both from the pool entirely once a
+  character isn't brand new.
+- **Snake's win score climbs**: `BASE_WIN_SCORE (8) + WIN_SCORE_GROWTH_PER_LEVEL (4) *
+  levelIndex` -- 8/12/16/20/24 across the five levels. Same board, same speed, just more to
+  survive for.
+- **Minesweeper's grid grows by 2 squares a level**: `BASE_GRID_SIZE (8) +
+  GRID_GROWTH_PER_LEVEL (2) * levelIndex` -- 8x8 up to 16x16 at Expert. Mine count scales
+  with the grid to hold mine density roughly constant (`BASE_MINE_DENSITY = 10/64`), so a
+  bigger board isn't just bigger, it's proportionally as mine-dense as the original.
+
+Connect 4 and Solitaire are unchanged by level -- their difficulty already comes from real
+play (the robot opponent, the deal dealt), not a single tunable constant the way a grid size
+or a win score is. Verified with headless-Chromium checks confirming the pool actually
+excludes Coin Flip/Pick Your Poison past Apprentice, and that Minesweeper's cell count and
+Snake's on-screen win target match the expected value at all five levels.
+
 ## Upgrading past duplicate character names
 
 The migration that adds the name-uniqueness index (`7116c3213f6e`) will

@@ -3,7 +3,9 @@
 // here: the client alone decides `won` and reports it).
 
 export const label = "Pick Your Poison";
-export const instructions = "Three bottles, one is poisoned. Pick one to drink.";
+export function instructions() {
+  return "Three bottles, one is poisoned. Pick one to drink.";
+}
 
 export function mount(boardEl, { onFinish }) {
   let done = false;

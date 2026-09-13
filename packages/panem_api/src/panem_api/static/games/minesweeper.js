@@ -2,14 +2,34 @@
 // random for a shift. Every game module in this directory exports a
 // `mount(boardEl, { onFinish })` that renders itself into `boardEl` and
 // calls `onFinish(won)` exactly once when the shift's outcome is decided.
+//
+// Grid grows by 2 squares per job level (`levelIndex`, 0 = Apprentice..
+// 4 = Expert) -- mine count scales with it to hold mine density roughly
+// constant, so a higher-level board isn't just bigger, it's actually
+// harder to read at a glance too.
 
-const GRID_SIZE = 8;
-const MINE_COUNT = 10;
+const BASE_GRID_SIZE = 8;
+const GRID_GROWTH_PER_LEVEL = 2;
+const BASE_MINE_DENSITY = 10 / (8 * 8);
+
+function gridSizeForLevel(levelIndex) {
+  return BASE_GRID_SIZE + GRID_GROWTH_PER_LEVEL * Math.max(0, levelIndex);
+}
+
+function mineCountForLevel(levelIndex) {
+  const size = gridSizeForLevel(levelIndex);
+  return Math.round(size * size * BASE_MINE_DENSITY);
+}
 
 export const label = "Minesweeper";
-export const instructions = "Clear the board (right-click to flag) --";
+export function instructions(levelIndex = 0) {
+  const size = gridSizeForLevel(levelIndex);
+  return `Clear the ${size}x${size} board (right-click to flag) --`;
+}
 
-export function mount(boardEl, { onFinish }) {
+export function mount(boardEl, { onFinish, levelIndex = 0 }) {
+  const GRID_SIZE = gridSizeForLevel(levelIndex);
+  const MINE_COUNT = mineCountForLevel(levelIndex);
   let cells = [];
   let firstClick = true;
   let gameOver = false;

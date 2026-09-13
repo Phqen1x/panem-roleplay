@@ -351,6 +351,7 @@ class TestWorkShiftStatus:
             "job_title": "Miner",
             "character_name": "Wren",
             "already_resolved": False,
+            "level": "apprentice",
         }
 
     async def test_already_resolved_is_true_once_the_shift_is_worked(
@@ -362,6 +363,17 @@ class TestWorkShiftStatus:
             await client.post(f"/activity/work/{shift_id}/result", json={"won": True})
             response = await client.get(f"/activity/work/{shift_id}")
         assert response.json()["already_resolved"] is True
+
+    async def test_level_reflects_the_characters_shifts_completed(
+        self, work_app, db_session_factory
+    ):
+        shift_id = await seed_shift(
+            db_session_factory, character_overrides={"shifts_completed": 84}
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(f"/activity/work/{shift_id}")
+        assert response.json()["level"] == "journeyman"
 
 
 class TestWorkShiftResult:

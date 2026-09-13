@@ -11,7 +11,7 @@
 //      asking panem_api which shift is pending for that `channel_id`
 //      (`panem_shared.redis_keys.work_pending_key`, written by /work).
 //
-// Every game module exports `mount(boardEl, { onFinish, setStatus })`,
+// Every game module exports `mount(boardEl, { onFinish, setStatus, levelIndex })`,
 // which renders itself into `#board` and calls `onFinish(won, options?)`
 // exactly once when the shift's outcome is decided -- this file doesn't
 // care how a game reaches that decision, only what it reports. Winning/
@@ -23,6 +23,15 @@
 // start) skips the lose-wage penalty a real misplay/bad-luck loss in any
 // other game still carries.
 //
+// `levelIndex` (0 = Apprentice .. 4 = Expert, from the shift status's
+// `level`) scales difficulty with job mastery: Minesweeper's grid grows
+// and Snake's win score climbs (each module's own `instructions(levelIndex)`
+// describes the current difficulty), while Coin Flip and Pick Your Poison
+// -- fixed-odds games with no real difficulty knob to turn -- are phased
+// out entirely past Apprentice rather than pretending to get "harder".
+// Connect 4 and Solitaire are unchanged by level; their difficulty already
+// comes from genuine play (the robot, the deal), not a tunable constant.
+//
 // `?v=` cache-busting: there's no build step here (matching
 // index.html/app.js's existing no-build pattern), so browsers and --
 // worse -- Discord's own Activity CDN can go on serving a stale cached
@@ -33,7 +42,7 @@
 // <script> tag (and its /work.css?v= link, for CSS-only changes like the
 // games/*.js modules use) to match -- changing the URL is what actually
 // forces every cache layer to refetch, restarting the server does not.
-const ASSET_VERSION = "4";
+const ASSET_VERSION = "5";
 
 const [coinflip, connect4, minesweeper, poison, snake, solitaire] = await Promise.all([
   import(`./games/coinflip.js?v=${ASSET_VERSION}`),
@@ -45,6 +54,13 @@ const [coinflip, connect4, minesweeper, poison, snake, solitaire] = await Promis
 ]);
 
 const GAMES = [minesweeper, snake, connect4, coinflip, poison, solitaire];
+const EASY_ONLY_GAMES = new Set([coinflip, poison]);
+const LEVELS = ["apprentice", "novice", "journeyman", "master", "expert"];
+
+function gamesForLevel(levelIndex) {
+  if (levelIndex <= 0) return GAMES;
+  return GAMES.filter((game) => !EASY_ONLY_GAMES.has(game));
+}
 
 const statusEl = document.getElementById("status");
 const boardEl = document.getElementById("board");
@@ -122,10 +138,12 @@ async function main() {
     return;
   }
 
-  const game = GAMES[Math.floor(Math.random() * GAMES.length)];
-  setStatus(`${info.character_name} works as ${info.job_title}. ${game.instructions}`);
+  const levelIndex = Math.max(0, LEVELS.indexOf(info.level));
+  const pool = gamesForLevel(levelIndex);
+  const game = pool[Math.floor(Math.random() * pool.length)];
+  setStatus(`${info.character_name} works as ${info.job_title}. ${game.instructions(levelIndex)}`);
   boardEl.hidden = false;
-  game.mount(boardEl, { onFinish: finish, setStatus });
+  game.mount(boardEl, { onFinish: finish, setStatus, levelIndex });
 }
 
 main();

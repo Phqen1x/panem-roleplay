@@ -1,13 +1,23 @@
 // Snake. Arrow keys or WASD steer; eating `WIN_SCORE` food clears the
-// shift, crashing into a wall or yourself before then loses it.
+// shift, crashing into a wall or yourself before then loses it. The
+// target score climbs with job level (`levelIndex`, 0 = Apprentice..
+// 4 = Expert) -- same board, same speed, just more to survive for.
 
 const GRID_SIZE = 20;
 const CELL_PX = 20;
 const TICK_MS = 130;
-const WIN_SCORE = 8;
+const BASE_WIN_SCORE = 8;
+const WIN_SCORE_GROWTH_PER_LEVEL = 4;
+
+function winScoreForLevel(levelIndex) {
+  return BASE_WIN_SCORE + WIN_SCORE_GROWTH_PER_LEVEL * Math.max(0, levelIndex);
+}
 
 export const label = "Snake";
-export const instructions = `Eat ${WIN_SCORE} to clear the shift -- arrow keys or WASD to start, don't hit a wall or yourself.`;
+export function instructions(levelIndex = 0) {
+  const winScore = winScoreForLevel(levelIndex);
+  return `Eat ${winScore} to clear the shift -- arrow keys or WASD to start, don't hit a wall or yourself.`;
+}
 
 const DIRECTIONS = {
   ArrowUp: { x: 0, y: -1 },
@@ -20,7 +30,8 @@ const DIRECTIONS = {
   d: { x: 1, y: 0 },
 };
 
-export function mount(boardEl, { onFinish, setStatus }) {
+export function mount(boardEl, { onFinish, setStatus, levelIndex = 0 }) {
+  const WIN_SCORE = winScoreForLevel(levelIndex);
   boardEl.className = "board-snake";
   boardEl.innerHTML = `<canvas id="snake-canvas" width="${GRID_SIZE * CELL_PX}" height="${
     GRID_SIZE * CELL_PX

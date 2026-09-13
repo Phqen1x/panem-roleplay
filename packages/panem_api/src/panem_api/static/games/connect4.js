@@ -10,7 +10,9 @@ const PLAYER = 1;
 const ROBOT = 2;
 
 export const label = "Connect 4";
-export const instructions = "Connect four in a row before the robot foreman does.";
+export function instructions() {
+  return "Connect four in a row before the robot foreman does.";
+}
 
 function emptyBoard() {
   return Array.from({ length: ROWS }, () => Array(COLS).fill(EMPTY));
