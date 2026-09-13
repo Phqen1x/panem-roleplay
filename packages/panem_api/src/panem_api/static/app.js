@@ -66,7 +66,6 @@ async function authenticateWithDiscord() {
       client_id: clientId,
       response_type: "code",
       state: "",
-      prompt: "none",
       scope: ["identify"],
     });
     const { access_token: accessToken } = await fetchJson("/activity/token", {
@@ -78,9 +77,16 @@ async function authenticateWithDiscord() {
     setStatus("Connected via Discord.");
   } catch (err) {
     // Expected whenever this page isn't actually running inside a Discord
-    // Activity iframe (e.g. a plain browser tab during local testing).
-    console.warn("Not running as an authenticated Discord Activity:", err);
-    setStatus("Preview mode -- not running inside Discord (or auth failed). Showing the live map anyway.");
+    // Activity iframe (e.g. a plain browser tab during local testing) --
+    // but also where a real misconfiguration (bad client secret, Activities
+    // not enabled for this app, ...) surfaces. Logged in full so the
+    // browser console -- reachable via the Activity's own "Inspect
+    // Element"/devtools -- shows the real reason, not just "it failed".
+    console.error("Discord Activity authentication failed:", err);
+    setStatus(
+      `Preview mode -- Discord auth failed (${err instanceof Error ? err.message : err}). ` +
+        "Showing the live map anyway; see the browser console for details."
+    );
   }
 }
 

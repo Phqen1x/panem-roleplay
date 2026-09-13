@@ -184,7 +184,11 @@ def create_app(
                     status_code=502, detail="Could not reach Discord's token endpoint"
                 ) from exc
         if response.status_code != 200:
-            logger.warning("activity_token_exchange_failed", status=response.status_code)
+            logger.warning(
+                "activity_token_exchange_failed",
+                status=response.status_code,
+                body=response.text,
+            )
             raise HTTPException(status_code=502, detail="Discord token exchange failed")
         return TokenExchangeResponse(access_token=response.json()["access_token"])
 
