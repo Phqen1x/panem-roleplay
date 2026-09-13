@@ -76,7 +76,43 @@ def _build_categories(
     return categories
 
 
+def _split_sections(
+    key: str, entries: list[tuple[str, str, str]]
+) -> list[tuple[str, list[tuple[str, str, str]]]]:
+    """Splits a category's entries by the immediate subgroup a command sits
+    under -- every `/staff give ...` command lands in one "Give" section,
+    every `/staff scene ...` command in one "Scene" section, and so on;
+    bare top-level commands in the category (`/staff whois`, `/staff kill`,
+    ...) share one section labeled after the category itself. A category
+    with no nested subgroups (`/job`, `/market`, ...) ends up as a single
+    section, same as before this split existed."""
+    prefix = f"{key} "
+    bare: list[tuple[str, str, str]] = []
+    subgroups: dict[str, list[tuple[str, str, str]]] = {}
+    for entry in entries:
+        name = entry[0]
+        remainder = name[len(prefix) :] if name.startswith(prefix) else name
+        if " " in remainder:
+            subgroup, _, _ = remainder.partition(" ")
+            subgroups.setdefault(subgroup, []).append(entry)
+        else:
+            bare.append(entry)
+
+    sections: list[tuple[str, list[tuple[str, str, str]]]] = []
+    if bare:
+        sections.append((_label_for(key), bare))
+    for subgroup in sorted(subgroups):
+        sections.append((_label_for(subgroup), subgroups[subgroup]))
+    return sections
+
+
 def _build_embed(key: str, entries: list[tuple[str, str, str]]) -> discord.Embed:
+    """One embed field per section (see `_split_sections`) rather than one
+    giant block of text in `embed.description` -- the latter is what this
+    used to do, silently cutting the Staff category off partway through
+    once `/staff give ...`/`/staff job ...`/`/staff scene ...` pushed it
+    past `FIELD_VALUE_LIMIT`. Fields also read better once a category has
+    more than a handful of commands, staff or not."""
     embed = discord.Embed(
         title=f"Commands -- {_label_for(key)}",
         description="`<required>` / `[optional]` show each command's arguments.",
@@ -85,11 +121,14 @@ def _build_embed(key: str, entries: list[tuple[str, str, str]]) -> discord.Embed
     if not entries:
         embed.description = "No commands in this category."
         return embed
-    lines = [f"**/{name}** {usage}\n{desc}".strip() for name, desc, usage in sorted(entries)]
-    value = "\n\n".join(lines)
-    if len(value) > FIELD_VALUE_LIMIT:
-        value = value[: FIELD_VALUE_LIMIT - 1] + "…"
-    embed.description = f"{embed.description}\n\n{value}"
+    for label, section_entries in _split_sections(key, entries):
+        lines = [
+            f"**/{name}** {usage}\n{desc}".strip() for name, desc, usage in sorted(section_entries)
+        ]
+        value = "\n\n".join(lines)
+        if len(value) > FIELD_VALUE_LIMIT:
+            value = value[: FIELD_VALUE_LIMIT - 1] + "…"
+        embed.add_field(name=label, value=value, inline=False)
     return embed
 
 

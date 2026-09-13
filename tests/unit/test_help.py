@@ -113,7 +113,46 @@ class TestBuildEmbed:
         embed = _build_embed(GENERAL_KEY, [])
         assert "No commands" in (embed.description or "")
 
-    def test_nonempty_category_lists_each_command(self):
+    def test_nonempty_category_lists_each_command_in_a_field(self):
         embed = _build_embed("job", [("job list", "List jobs", "<character>")])
-        assert "/job list" in (embed.description or "")
-        assert "List jobs" in (embed.description or "")
+        assert len(embed.fields) == 1
+        assert "/job list" in (embed.fields[0].value or "")
+        assert "List jobs" in (embed.fields[0].value or "")
+
+    def test_category_with_no_subgroups_is_a_single_field(self):
+        embed = _build_embed(
+            "job",
+            [
+                ("job list", "List jobs", ""),
+                ("job apply", "Apply for a job", "<job_id>"),
+                ("job quit", "Quit your job", ""),
+            ],
+        )
+        assert len(embed.fields) == 1
+        assert embed.fields[0].name == "Jobs"
+
+    def test_category_with_subgroups_splits_into_one_field_per_subgroup(self):
+        embed = _build_embed(
+            "staff",
+            [
+                ("staff whois", "Look up a proxy", ""),
+                ("staff kill", "Kill a character", "<character>"),
+                ("staff give money", "Grant money", "<character> <amount>"),
+                ("staff give item", "Grant an item", "<character> <good> <qty>"),
+                ("staff scene lock", "Lock a scene", ""),
+            ],
+        )
+        field_names = [f.name for f in embed.fields]
+        assert field_names == ["Staff", "Give", "Scenes"]
+        staff_field = embed.fields[0]
+        assert "/staff whois" in (staff_field.value or "")
+        assert "/staff kill" in (staff_field.value or "")
+        give_field = embed.fields[1]
+        assert "/staff give money" in (give_field.value or "")
+        assert "/staff give item" in (give_field.value or "")
+        assert "/staff give" not in (staff_field.value or "")
+
+    def test_bare_only_category_has_no_extra_sections(self):
+        embed = _build_embed(GENERAL_KEY, [("where", "Show location", "<character>")])
+        assert len(embed.fields) == 1
+        assert embed.fields[0].name == "General"
