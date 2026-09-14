@@ -1589,7 +1589,10 @@ and a wholly new NPC created by a command has no YAML entry to read from in the 
   this that matched on name crashed (`MultipleResultsFound`) the first time it hit a real
   duplicate. `any_npc`'s suggestions carry the id as the choice's `value` (the name plus
   district is only the display label), so picking a suggestion always resolves to exactly
-  the one NPC shown.
+  the one NPC shown. `_find_npc` still falls back to a plain-name lookup for a staff member
+  who ignores the suggestions and types a name directly (the common case, since most names
+  are in fact unique) -- it only comes up empty, with a message pointing at the
+  suggestions, when that typed name is genuinely ambiguous.
 - **`/staff npc add`** creates a genuinely new `Npc` row from scratch -- name, district,
   age, home location (validated against that district's real locations), comma-separated
   traits (speech tone auto-derived from them via the same `speech_tone` helper synthetic
@@ -1600,3 +1603,25 @@ and a wholly new NPC created by a command has no YAML entry to read from in the 
   skips any NPC with no schedule weights for the current phase, the same safe no-op it
   already does for an NPC that's `engagement_id`-locked) -- they stay exactly where placed
   until staff moves them or a future NPC-schedule command exists.
+
+## Notes on stale NPC job/bio drift
+
+A player reported an NPC whose authored bio described one profession while the LLM's
+`[NPC] job: ...` header (built from the live `Npc.job_id`) named a different one entirely,
+confusing the NPC's own dialogue about their day. `seed_npcs`/`world.py`'s own docstring
+already documents why: seeding is per-district and one-time -- "a district already holding
+`district_state`/`npcs` rows is left untouched." That's the right call for anything a
+player or the sim has since changed about an NPC, but it also means `data/npcs/*.yaml`
+being hand-edited or regenerated *after* a district was first seeded silently strands the
+already-seeded rows on whatever `job_id` they started with, forever, even once the content
+file (and that NPC's own `backstory`, which names a profession) has moved on.
+
+`world.sync_authored_npc_jobs`, called from `seed_world` right after `seed_npcs` on every
+boot (not just the first), closes that gap: for every authored `NpcContent` entry whose id
+already exists as an `Npc` row, if the row's `job_id` doesn't match the content's, it's
+corrected. Deliberately narrow in scope -- unlike `job_id`, `traits`/`speech_style`/`name`
+are all things `/staff npc set-traits`/`set-speech`/`rename` can now deliberately change,
+and this sync has no way to tell a deliberate staff edit apart from stale content, so it
+leaves them alone entirely. `job_id` has no such staff command (an NPC's job comes only
+from content or from being freshly generated), so it's the one field guaranteed to only
+ever drift by accident.

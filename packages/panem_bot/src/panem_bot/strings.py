@@ -193,6 +193,9 @@ STRINGS: dict[str, str] = {
     "world_paused": "The world is paused.",
     "unexpected_error": "Something went wrong (ref `{ref}`).",
     "staff_only": "Staff only.",
+    "staff_npc_not_found": "No resident found -- if two residents share a name (the "
+    "generator samples names per district, so that happens), pick one from the "
+    "autocomplete suggestions to tell them apart.",
     "staff_good_not_found": "Not a valid good id.",
 }
 

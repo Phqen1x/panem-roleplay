@@ -286,9 +286,37 @@ async def seed_npcs(session: AsyncSession, content: ContentBundle, world_seed: s
             _seed_synthetic_npcs(session, content, district, world_seed)
 
 
+async def sync_authored_npc_jobs(session: AsyncSession, content: ContentBundle) -> None:
+    """`seed_npcs` only ever seeds a district once (see this module's
+    docstring) -- if `data/npcs/*.yaml` is hand-edited or regenerated
+    after a district has already been seeded, an existing `Npc` row's
+    `job_id` silently keeps whatever it was seeded with forever, even
+    though the content file (and that NPC's own authored `backstory`,
+    which describes a profession by name) has since moved on. That
+    produces exactly the confusing case a player reported: an NPC whose
+    bio says one job while the `[NPC] job: ...` header built from the
+    live `job_id` says another, giving the LLM two contradictory facts
+    about the same person.
+
+    Run on every boot, not just first seed, to correct that drift: for
+    every authored `NpcContent` entry whose id already exists as an
+    `Npc` row, if the row's `job_id` doesn't match the content's, fix
+    it. Deliberately narrow -- `traits`/`speech_style`/`name` are not
+    touched here even though they're also sourced from content, because
+    staff can now deliberately edit those via `/staff npc set-traits`/
+    `set-speech`/`rename` and this sync has no way to tell a deliberate
+    edit apart from stale content; `job_id` has no such staff command,
+    so it's the one field guaranteed to only ever drift by accident."""
+    for npc_content in content.npcs.values():
+        npc_row = await session.get(Npc, npc_content.id)
+        if npc_row is not None and npc_row.job_id != npc_content.job_id:
+            npc_row.job_id = npc_content.job_id
+
+
 async def seed_world(session: AsyncSession, content: ContentBundle, world_seed: str) -> None:
     await seed_district_state(session, content)
     await seed_npcs(session, content, world_seed)
+    await sync_authored_npc_jobs(session, content)
     await seed_properties(session, content)
 
 

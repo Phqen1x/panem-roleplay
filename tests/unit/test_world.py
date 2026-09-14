@@ -390,6 +390,71 @@ class TestSeedNpcsFromAuthoredContent:
         assert len(rows) == 1
 
 
+class TestSyncAuthoredNpcJobs:
+    async def test_corrects_a_stale_job_id(self, db_session):
+        """`seed_npcs` only ever seeds a district once -- if `data/npcs/
+        *.yaml` is edited afterward, an already-seeded row's `job_id`
+        would otherwise drift from its own authored backstory forever,
+        confusing the LLM with a bio describing one profession and a
+        `[NPC] job: ...` header naming another."""
+        npc = make_npc_content(id="d1_hero", district=1, home_location_id="home", job_id="old_job")
+        content = make_content(make_district(1), npcs=(npc,))
+        await world.seed_npcs(db_session, content, "test-seed")
+        await db_session.flush()
+
+        updated = make_npc_content(
+            id="d1_hero", district=1, home_location_id="home", job_id="new_job"
+        )
+        updated_content = make_content(make_district(1), npcs=(updated,))
+        await world.sync_authored_npc_jobs(db_session, updated_content)
+        await db_session.flush()
+
+        row = await db_session.get(Npc, "d1_hero")
+        assert row.job_id == "new_job"
+
+    async def test_leaves_an_already_matching_job_id_alone(self, db_session):
+        npc = make_npc_content(id="d1_hero", district=1, home_location_id="home", job_id="job")
+        content = make_content(make_district(1), npcs=(npc,))
+        await world.seed_npcs(db_session, content, "test-seed")
+        await db_session.flush()
+
+        await world.sync_authored_npc_jobs(db_session, content)
+        await db_session.flush()
+
+        row = await db_session.get(Npc, "d1_hero")
+        assert row.job_id == "job"
+
+    async def test_ignores_an_npc_id_not_yet_in_the_database(self, db_session):
+        npc = make_npc_content(id="d1_ghost", district=1, home_location_id="home", job_id="job")
+        content = make_content(make_district(1), npcs=(npc,))
+
+        await world.sync_authored_npc_jobs(db_session, content)
+        await db_session.flush()
+
+        row = await db_session.get(Npc, "d1_ghost")
+        assert row is None
+
+    async def test_never_touches_a_staff_added_npc_with_no_content_entry(self, db_session):
+        db_session.add(
+            Npc(
+                id="staff_1_deadbeef",
+                district_id=1,
+                name="Staff Added",
+                age=30,
+                job_id="whatever_staff_picked",
+                home_location_id="home",
+            )
+        )
+        await db_session.flush()
+        content = make_content(make_district(1))
+
+        await world.sync_authored_npc_jobs(db_session, content)
+        await db_session.flush()
+
+        row = await db_session.get(Npc, "staff_1_deadbeef")
+        assert row.job_id == "whatever_staff_picked"
+
+
 class TestSeedWorld:
     async def test_seeds_both_district_state_and_npcs(self, db_session):
         content = make_content(make_district(1), make_district(2))

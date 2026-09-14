@@ -658,15 +658,24 @@ class StaffCog(commands.Cog):
 
     # ------------------------------------------------------------------ npc
 
-    async def _find_npc(self, session: AsyncSession, npc_id: str) -> Npc | None:
-        """Looked up by `Npc.id`, not name -- the synthetic name pool is
-        sampled independently per district, so two different districts
-        having a resident with the same name is expected, and a
-        name-based lookup can match more than one row. `autocomplete.
-        any_npc`'s suggestions carry the real id as their value, so a
-        staff member picking a suggestion (rather than typing free text)
-        always resolves to exactly the one NPC shown."""
-        return await session.get(Npc, npc_id)
+    async def _find_npc(self, session: AsyncSession, npc_id_or_name: str) -> Npc | None:
+        """`autocomplete.any_npc`'s suggestions carry the real `Npc.id` as
+        their value, so a staff member who picks a suggestion always
+        resolves to exactly the one NPC shown -- tried first. A staff
+        member who ignores the suggestions and types a plain name
+        instead still resolves if that name happens to be unique (the
+        common case); it's only ambiguous names (the synthetic name pool
+        is sampled independently per district, so the same name showing
+        up twice is expected, not a bug) that fall through to `None`
+        here, same as no match at all -- the caller's error message
+        tells them to use a suggestion to disambiguate."""
+        by_id = await session.get(Npc, npc_id_or_name)
+        if by_id is not None:
+            return by_id
+        rows = (
+            (await session.execute(select(Npc).where(Npc.name == npc_id_or_name))).scalars().all()
+        )
+        return rows[0] if len(rows) == 1 else None
 
     @npc_group.command(name="rename", description="Rename an NPC")
     @app_commands.describe(npc="Resident (pick a suggestion)", new_name="New name")
@@ -676,7 +685,7 @@ class StaffCog(commands.Cog):
         async with self.bot.db() as session:
             row = await self._find_npc(session, npc)
             if row is None:
-                await interaction.response.send_message(t("resident_not_found"), ephemeral=True)
+                await interaction.response.send_message(t("staff_npc_not_found"), ephemeral=True)
                 return
             old_name = row.name
             row.name = new_name
@@ -707,7 +716,7 @@ class StaffCog(commands.Cog):
         async with self.bot.db() as session:
             row = await self._find_npc(session, npc)
             if row is None:
-                await interaction.response.send_message(t("resident_not_found"), ephemeral=True)
+                await interaction.response.send_message(t("staff_npc_not_found"), ephemeral=True)
                 return
             row.backstory_override = backstory
             name = row.name
@@ -738,7 +747,7 @@ class StaffCog(commands.Cog):
         async with self.bot.db() as session:
             row = await self._find_npc(session, npc)
             if row is None:
-                await interaction.response.send_message(t("resident_not_found"), ephemeral=True)
+                await interaction.response.send_message(t("staff_npc_not_found"), ephemeral=True)
                 return
             row.appearance_override = appearance
             name = row.name
@@ -766,7 +775,7 @@ class StaffCog(commands.Cog):
         async with self.bot.db() as session:
             row = await self._find_npc(session, npc)
             if row is None:
-                await interaction.response.send_message(t("resident_not_found"), ephemeral=True)
+                await interaction.response.send_message(t("staff_npc_not_found"), ephemeral=True)
                 return
             row.traits = trait_list
             name = row.name
@@ -792,7 +801,7 @@ class StaffCog(commands.Cog):
         async with self.bot.db() as session:
             row = await self._find_npc(session, npc)
             if row is None:
-                await interaction.response.send_message(t("resident_not_found"), ephemeral=True)
+                await interaction.response.send_message(t("staff_npc_not_found"), ephemeral=True)
                 return
             row.speech_style = {**row.speech_style, "tone": tone}
             name = row.name
