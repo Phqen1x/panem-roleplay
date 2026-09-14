@@ -190,13 +190,14 @@ class TestMissedShifts:
         assert shift.result is None
         assert len(state.open_shifts) == 1
 
-    def test_fires_character_once_misses_to_fire_is_reached(self):
+    def test_job_is_kept_but_mastery_slips_once_misses_to_mastery_penalty_is_reached(self):
         content = make_content()
         character = make_character(
             1,
             job_title="Miner",
             shift_phase="morning",
-            consecutive_missed=constants.MISSES_TO_FIRE - 1,
+            consecutive_missed=constants.MISSES_TO_MASTERY_PENALTY - 1,
+            shifts_completed=10,
         )
         shift = Shift(
             character_id=1,
@@ -217,15 +218,107 @@ class TestMissedShifts:
             state, make_ctx(content, tick=constants.SHIFT_DURATION_TICKS, phase=DayPhase.AFTERNOON)
         )
 
-        assert character.job_title is None
-        assert character.shift_phase is None
-        assert character.consecutive_missed == 0
-        assert len(state.new_job_history) == 1
-        assert state.new_job_history[0].reason == "fired"
-        assert state.new_job_history[0].character_id == 1
+        assert character.job_title == "Miner"
+        assert character.shift_phase == "morning"
+        assert character.consecutive_missed == constants.MISSES_TO_MASTERY_PENALTY
+        assert character.shifts_completed == 10 - constants.SHIFT_MASTERY_MISS_PENALTY
+        assert state.new_job_history == []
         assert len(state.notable_events) == 1
         assert state.notable_events[0].owner_id == "1"
-        assert state.notable_events[0].kind == "fired"
+        assert state.notable_events[0].kind == "mastery_slip"
+
+    def test_mastery_penalty_never_drops_shifts_completed_below_zero(self):
+        content = make_content()
+        character = make_character(
+            1,
+            job_title="Miner",
+            shift_phase="morning",
+            consecutive_missed=constants.MISSES_TO_MASTERY_PENALTY - 1,
+            shifts_completed=0,
+        )
+        shift = Shift(
+            character_id=1,
+            job_id="Miner",
+            tick_opened=1,
+            tick_due=constants.SHIFT_DURATION_TICKS,
+            result=None,
+        )
+        state = WorldState(
+            districts={},
+            npcs={},
+            npc_schedules={},
+            characters={1: character},
+            open_shifts=[shift],
+        )
+
+        jobs.run(
+            state, make_ctx(content, tick=constants.SHIFT_DURATION_TICKS, phase=DayPhase.AFTERNOON)
+        )
+
+        assert character.shifts_completed == 0
+
+    def test_mastery_penalty_keeps_applying_for_every_miss_past_the_threshold(self):
+        content = make_content()
+        character = make_character(
+            1,
+            job_title="Miner",
+            shift_phase="morning",
+            consecutive_missed=constants.MISSES_TO_MASTERY_PENALTY,
+            shifts_completed=10,
+        )
+        shift = Shift(
+            character_id=1,
+            job_id="Miner",
+            tick_opened=1,
+            tick_due=constants.SHIFT_DURATION_TICKS,
+            result=None,
+        )
+        state = WorldState(
+            districts={},
+            npcs={},
+            npc_schedules={},
+            characters={1: character},
+            open_shifts=[shift],
+        )
+
+        jobs.run(
+            state, make_ctx(content, tick=constants.SHIFT_DURATION_TICKS, phase=DayPhase.AFTERNOON)
+        )
+
+        assert character.job_title == "Miner"
+        assert character.shifts_completed == 10 - constants.SHIFT_MASTERY_MISS_PENALTY
+        assert len(state.notable_events) == 1
+
+    def test_no_mastery_penalty_below_the_threshold(self):
+        content = make_content()
+        character = make_character(
+            1,
+            job_title="Miner",
+            shift_phase="morning",
+            consecutive_missed=constants.MISSES_TO_MASTERY_PENALTY - 2,
+            shifts_completed=10,
+        )
+        shift = Shift(
+            character_id=1,
+            job_id="Miner",
+            tick_opened=1,
+            tick_due=constants.SHIFT_DURATION_TICKS,
+            result=None,
+        )
+        state = WorldState(
+            districts={},
+            npcs={},
+            npc_schedules={},
+            characters={1: character},
+            open_shifts=[shift],
+        )
+
+        jobs.run(
+            state, make_ctx(content, tick=constants.SHIFT_DURATION_TICKS, phase=DayPhase.AFTERNOON)
+        )
+
+        assert character.shifts_completed == 10
+        assert state.notable_events == []
 
 
 class TestWorkedShiftsCloseAsCompleted:
@@ -461,12 +554,12 @@ class TestNpcJobCompletion:
 
 
 class TestT22ScriptedLifecycle:
-    """T-2.2: complete a shift, miss five in a row, lose the job, get
-    reassigned by staff (no more player self-service `/job apply` since
-    the job rework -- only `/staff give job` sets `job_title`/
-    `shift_phase` now)."""
+    """T-2.2: complete a shift, then miss several in a row -- the job is
+    kept (no more player self-service `/job apply` since the job rework,
+    and no more sim-driven firing either), but mastery progress erodes the
+    longer the streak runs."""
 
-    def test_complete_then_miss_streak_fires_then_staff_reassigns(self):
+    def test_complete_then_miss_streak_erodes_mastery_but_keeps_the_job(self):
         content = make_content()
         district = make_district()
         character = make_character(1, job_title="Miner", shift_phase="morning", job_started_tick=0)
@@ -483,13 +576,15 @@ class TestT22ScriptedLifecycle:
         outcome = resolve_shift_game(character, district, won=True)
         apply_shift_outcome(shift, character, outcome, won=True, tick=PHASE_TICKS)
         assert character.consecutive_missed == 0
+        assert character.shifts_completed == 1
 
         jobs.run(state, make_ctx(content, tick=shift.tick_due, phase=DayPhase.AFTERNOON))
         assert shift.result == ShiftResult.COMPLETED.value
         assert state.open_shifts == []
 
         # Days 2-6: the shift opens and is never resolved -- five straight
-        # misses fires the character.
+        # misses, the last three (once the streak reaches
+        # MISSES_TO_MASTERY_PENALTY) each costing mastery instead of the job.
         day_start = PHASE_TICKS + constants.TICKS_PER_DAY
         for day in range(5):
             open_tick = day_start + day * constants.TICKS_PER_DAY
@@ -497,17 +592,16 @@ class TestT22ScriptedLifecycle:
             due_tick = open_tick + constants.SHIFT_DURATION_TICKS
             jobs.run(state, make_ctx(content, tick=due_tick, phase=DayPhase.AFTERNOON))
 
-        assert character.job_title is None
-        assert character.shift_phase is None
-        assert character.consecutive_missed == 0
-        assert len(state.new_job_history) == 1
-        assert state.new_job_history[0].reason == "fired"
+        assert character.job_title == "Miner"
+        assert character.shift_phase == "morning"
+        assert character.consecutive_missed == 5
+        assert character.shifts_completed == 0  # 1 - 3 penalties, floored at 0
+        assert state.new_job_history == []
+        assert len(state.notable_events) == 3
+        assert all(event.kind == "mastery_slip" for event in state.notable_events)
 
-        # Staff reassigns: a fresh cycle starts clean.
-        character.job_title = "Miner"
-        character.shift_phase = "morning"
-        assert character.consecutive_missed == 0
-
+        # The character can still work the very next shift -- no
+        # reassignment needed, since the job was never taken away.
         reapply_open_tick = due_tick + PHASE_TICKS
         jobs.run(state, make_ctx(content, tick=reapply_open_tick, phase=DayPhase.MORNING))
         assert len(state.open_shifts) == 1

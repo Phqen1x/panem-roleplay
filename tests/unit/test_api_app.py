@@ -402,7 +402,7 @@ class TestWorkShiftResult:
             response = await client.post(f"/activity/work/{shift_id}/result", json={"won": True})
         assert response.status_code == 200
         assert response.json() == {
-            "wage": 30,
+            "wage": 5,
             "won": True,
             "character_name": "Wren",
             "leveled_up": False,
@@ -415,7 +415,7 @@ class TestWorkShiftResult:
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(f"/activity/work/{shift_id}/result", json={"won": False})
         assert response.status_code == 200
-        assert response.json()["wage"] == 8
+        assert response.json()["wage"] == 1
 
     async def test_reports_leveling_up(self, work_app, db_session_factory):
         from panem_shared import constants

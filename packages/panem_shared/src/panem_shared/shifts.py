@@ -58,7 +58,11 @@ def resolve_shift_game(
     character's job-level multiplier, the minigame's win/lose multiplier,
     and `market_multiplier` (the home district's current quota-good price
     over its base price, from `panem_sim.systems.economy`'s pricing --
-    `1.0` for a caller that doesn't have a live price, e.g. in tests).
+    `1.0` for a caller that doesn't have a live price, e.g. in tests), then
+    divided by `SHIFT_DURATION_TICKS` since this is called once per `/work`
+    resolution and a shift can be resolved once per tick across its whole
+    window now, not just once total -- see `PLAYER_JOB_BASE_WAGE`'s own
+    docstring.
     Output is one unit of the district's own quota good per completed
     shift (win or lose -- they still did the work), feeding
     `panem_sim.systems.economy`'s supply the way `Job.produces` used to;
@@ -104,7 +108,13 @@ def resolve_shift_game(
             rep_delta = 0
             if new_streak % constants.REP_STREAK_LEN == 0:
                 rep_delta -= constants.REP_STREAK_PENALTY
-    wage = constants.PLAYER_JOB_BASE_WAGE * level_mult * outcome_mult * market_multiplier
+    wage = (
+        constants.PLAYER_JOB_BASE_WAGE
+        * level_mult
+        * outcome_mult
+        * market_multiplier
+        / constants.SHIFT_DURATION_TICKS
+    )
     output = {district.quota.good: constants.PLAYER_SHIFT_OUTPUT_QTY} if district.quota else {}
     return ShiftOutcome(wage=wage, output=output, rep_delta=rep_delta)
 

@@ -301,9 +301,10 @@ def render_world_rules() -> str:
         [
             f"- Time: a world day has {c.TICKS_PER_DAY} hours split into night, morning, afternoon "
             f"and evening; a month has {c.DAYS_PER_MONTH} days. The sim tells you the current phase.",
-            f"- Work: a shift lasts {c.SHIFT_DURATION_TICKS} hours. Missing {c.MISSES_TO_WARN} shifts "
-            f"earns a warning, {c.MISSES_TO_FIRE} gets you fired; new hires get {c.NEW_HIRE_GRACE_DAYS} "
-            "days of grace. Foremen and shift bosses notice who shows up.",
+            f"- Work: a shift lasts {c.SHIFT_DURATION_TICKS} hours. Missing "
+            f"{c.MISSES_TO_MASTERY_PENALTY} shifts in a row costs you skill, not the job itself -- "
+            f"new hires get {c.NEW_HIRE_GRACE_DAYS} days of grace. Foremen and shift bosses notice "
+            "who shows up.",
             f"- Money: newcomers start with {c.STARTING_MONEY}. Wages are paid per shift. Market prices "
             f"swing between {c.PRICE_CLAMP_MIN:g}x and {c.PRICE_CLAMP_MAX:g}x the base price with "
             f"supply; selling to a market pays {int(c.SELL_DISCOUNT * 100)}% of the price and illicit "

@@ -1,5 +1,5 @@
 """Shift lifecycle: opening shifts, NPC job completion, and
-consecutive-miss tracking -> firing (Spec FR-JOB-2/6/7/10).
+consecutive-miss tracking -> a mastery penalty (Spec FR-JOB-2/6/7/10).
 
 Two populations, handled differently:
 
@@ -8,30 +8,33 @@ Two populations, handled differently:
   `/work` or an RP-credited proxy message (both outside the tick loop,
   in `panem_bot.services.shifts`) resolve it; a shift whose `tick_due`
   passes still unresolved is marked MISSED here, which increments
-  `Character.consecutive_missed` and fires the character past
-  `MISSES_TO_FIRE` (job cleared, a `JobHistory` row recorded).
-  `consecutive_missed` resets to 0 on any resolution outside this system
-  (a completed or excused shift), so this system only ever increments it.
+  `Character.consecutive_missed`. Missing shifts no longer costs a
+  character their job -- once the streak reaches
+  `MISSES_TO_MASTERY_PENALTY` (3) or more, every further miss instead
+  costs `SHIFT_MASTERY_MISS_PENALTY` off `Character.shifts_completed`
+  (floored at 0), eroding job-level progress the same way working a
+  shift builds it up. `consecutive_missed` resets to 0 on any resolution
+  outside this system (a completed or excused shift), so this system
+  only ever increments it.
 - NPCs have no `Shift` rows at all (`shifts.character_id` is a FK to
   `characters`, not `npcs`) and no player to notify, so an NPC with a
   matching job just probabilistically "completes" it in place each
   phase boundary -- feeding `Npc.money` -- with no miss-tracking at all.
 
-Job-status changes (a shift missed, a firing) are pure DB-state changes
-in this milestone; there's no player-facing push notification yet (that
-would need a new DM-capable `WorldEvent` kind, which is more than this
-milestone's scope) -- a fired character finds out from `/character
-status` or by `/work` refusing next time, not a proactive DM. Firing
-clears `Character.job_title`/`shift_phase` (the job rework's free-typed
-fields) rather than a catalog `job_id` -- only staff can set them again
-(`/staff give job`), same as at character creation.
+Job-status changes (a shift missed, a mastery penalty) are pure DB-state
+changes in this milestone; there's no player-facing push notification yet
+(that would need a new DM-capable `WorldEvent` kind, which is more than
+this milestone's scope) -- a character finds out from `/character status`
+(shifts_completed/level dropping) rather than a proactive DM. A missed
+streak never touches `Character.job_title`/`shift_phase` -- a job is only
+ever cleared or changed by staff (`/staff give job`), never by the sim.
 """
 
 from __future__ import annotations
 
 from panem_shared import constants
 from panem_shared.content.schemas import Job
-from panem_shared.db.models import Character, JobHistory, Shift
+from panem_shared.db.models import Character, Shift
 from panem_shared.enums import OwnerKind, ShiftResult
 from panem_shared.events import AnyWorldEvent
 from panem_sim.state import NotableEvent, TickContext, WorldState
@@ -49,7 +52,7 @@ def _is_within_travel_grace(character: Character, ctx: TickContext) -> bool:
     excused; one missed while visiting another district still is, for
     `AWAY_GRACE_DAYS` from the tick they first left home -- long enough
     to cover a short trip, not so long that leaving home is a permanent
-    way to dodge `MISSES_TO_FIRE`."""
+    way to dodge the missed-shift mastery penalty."""
     if character.in_transit_until_tick is not None and character.in_transit_until_tick >= ctx.tick:
         return True
     if character.away_since_tick is None:
@@ -101,34 +104,30 @@ def _resolve_missed_shifts(state: WorldState, ctx: TickContext) -> None:
             continue
         character.consecutive_missed += 1
         character.reputation -= constants.REP_MISS_PENALTY
-        if character.consecutive_missed >= constants.MISSES_TO_FIRE:
-            _fire(state, character, shift.job_id, ctx)
+        if character.consecutive_missed >= constants.MISSES_TO_MASTERY_PENALTY:
+            _apply_mastery_penalty(state, character)
 
     state.open_shifts = still_open
 
 
-def _fire(state: WorldState, character: Character, job_id: str, ctx: TickContext) -> None:
-    state.new_job_history.append(
-        JobHistory(
-            character_id=character.id,
-            job_id=job_id,
-            started_tick=character.job_started_tick or ctx.tick,
-            ended_tick=ctx.tick,
-            reason="fired",
-        )
+def _apply_mastery_penalty(state: WorldState, character: Character) -> None:
+    """Replaces the old firing behavior: once `consecutive_missed` reaches
+    `MISSES_TO_MASTERY_PENALTY` (3) or more, every further miss chips
+    `SHIFT_MASTERY_MISS_PENALTY` off the character's `shifts_completed`
+    instead of taking their job away -- the same counter `/work` builds up
+    one at a time, so a habitual no-show's job-level progress erodes for as
+    long as the streak continues rather than resetting once and stopping."""
+    character.shifts_completed = max(
+        0, character.shifts_completed - constants.SHIFT_MASTERY_MISS_PENALTY
     )
-    character.job_title = None
-    character.shift_phase = None
-    character.job_started_tick = None
-    character.consecutive_missed = 0
     state.notable_events.append(
         NotableEvent(
             owner_kind=OwnerKind.CHARACTER.value,
             owner_id=str(character.id),
-            kind="fired",
-            importance=3,
-            text=f"{character.name} was let go after too many missed shifts.",
-            tags=["job", "fired"],
+            kind="mastery_slip",
+            importance=2,
+            text=f"{character.name}'s skills have grown rusty after missing too many shifts.",
+            tags=["job", "mastery"],
         )
     )
 

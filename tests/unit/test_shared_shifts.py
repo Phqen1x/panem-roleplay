@@ -75,7 +75,11 @@ class TestResolveShiftGame:
         character = make_character(shifts_completed=0)
         district = make_district()
         outcome = shared_shifts.resolve_shift_game(character, district, won=True)
-        assert outcome.wage == constants.PLAYER_JOB_BASE_WAGE * constants.WORK_GAME_WIN_WAGE_MULT
+        assert outcome.wage == (
+            constants.PLAYER_JOB_BASE_WAGE
+            * constants.WORK_GAME_WIN_WAGE_MULT
+            / constants.SHIFT_DURATION_TICKS
+        )
 
     def test_higher_job_level_pays_more_for_the_same_outcome(self):
         district = make_district()
@@ -146,7 +150,7 @@ class TestResolveShiftGame:
         character = make_character()
         district = make_district()
         neutral = shared_shifts.resolve_shift_game(character, district, won=False, neutral=True)
-        assert neutral.wage == constants.PLAYER_JOB_BASE_WAGE
+        assert neutral.wage == constants.PLAYER_JOB_BASE_WAGE / constants.SHIFT_DURATION_TICKS
 
     def test_neutral_loss_pays_more_than_a_regular_loss(self):
         character = make_character()
@@ -169,7 +173,9 @@ class TestResolveShiftGame:
         outcome = shared_shifts.resolve_shift_game(
             expert, district, won=False, neutral=True, market_multiplier=2.0
         )
-        assert outcome.wage == constants.PLAYER_JOB_BASE_WAGE * 3.0 * 2.0
+        assert outcome.wage == (
+            constants.PLAYER_JOB_BASE_WAGE * 3.0 * 2.0 / constants.SHIFT_DURATION_TICKS
+        )
 
 
 class TestMarketWageMultiplier:

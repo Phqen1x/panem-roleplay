@@ -475,7 +475,7 @@ Completes Phase 2 (Plan §5.5/5.6, FR-LOC-7/8/9, T-2.1).
   return; `panem_sim/systems/jobs.py::_resolve_missed_shifts` excuses a
   shift due while still en route, or within `AWAY_GRACE_DAYS` of that
   departure -- long enough for a short trip, not a permanent way to dodge
-  `MISSES_TO_FIRE` by never going home. This is the one place
+  the missed-shift mastery penalty by never going home. This is the one place
   `jailed_until_tick` gates anything at all in the whole codebase today
   (checked in `check_can_travel_district`) -- otherwise-unenforced
   elsewhere, but leaving a jailed character free to hop a train away
@@ -1134,8 +1134,10 @@ job, and extends the district economy to react to it.
 - **`/job apply|list|quit` are retired**, along with `/staff job set|option|remove|show`
   (the `JobOverride` DB table they edited is dropped by the same migration) -- there's no
   more catalog for a player to browse or apply to, and no per-job options to edit. A
-  character with no job (never assigned, or fired for missing shifts) can only be given
-  one again by staff; there's no player self-service anymore. `/staff job list` survives
+  character with no job (never assigned yet) can only be given one by staff; there's no
+  player self-service anymore, and missing shifts no longer takes an assigned job away
+  (see "Notes on shift timing, wages, and missed-shift consequences" below). `/staff job
+  list` survives
   unchanged -- it's read-only and still useful for seeing what catalog jobs *NPCs* hold
   (NPCs are entirely untouched by this rework: `Npc.job_id`/`data/jobs.yaml`/
   `JobOption`/`Job.wage`/`Job.produces` all still work exactly as before for them).
@@ -1149,7 +1151,9 @@ job, and extends the district economy to react to it.
 - **Wage formula**: `PLAYER_JOB_BASE_WAGE` (20, flat -- there's no more per-job authored
   wage) x the level multiplier above x the minigame's win/lose multiplier
   (`WORK_GAME_WIN_WAGE_MULT`/`LOSE`, unchanged from the Minesweeper build) x a market
-  multiplier (below). The old catalog-authored 3-option "work hard / play safe / cover a
+  multiplier (below), divided by `SHIFT_DURATION_TICKS` (6) -- see "Notes on shift
+  timing, wages, and missed-shift consequences" below for why. The old catalog-authored
+  3-option "work hard / play safe / cover a
   crewmate" menu is gone with the catalog it was defined in -- `/work` without
   `ACTIVITY_PUBLIC_URL` configured now resolves immediately via a coin-flip
   (`NO_ACTIVITY_WORK_WIN_PROBABILITY`, 0.6) using the same win/lose math the minigame
@@ -1657,3 +1661,55 @@ labeling every field after the first "(cont.)" -- so a long subgroup spans two o
 fields rather than losing its tail end. Only a single line that's somehow longer than the
 limit all on its own (not something any current command description does) still falls
 back to truncation, since there's no line boundary left to split it across.
+
+## Notes on shift timing, wages, and missed-shift consequences
+
+A player reported being able to `/work` well outside their assigned `shift_phase`, and
+asked for two related changes: stop taking a character's job away for missing shifts
+(dock mastery progress instead, once misses start piling up), and pay less per `/work`
+call now that a shift can be worked more than once.
+
+**The out-of-shift bug** was `WORK_GAME_GRACE_TICKS`. It's meant to let a player who
+launched `/work`'s minigame (Minesweeper, etc.) before the shift's `tick_due` finish the
+board afterwards rather than losing the shift the instant the clock rolls over --
+`panem_sim.systems.jobs._is_within_work_game_grace` keeps a *started*
+(`Shift.started_at_tick` set) shift open for this many extra ticks past `tick_due`. It
+was set to `TICKS_PER_DAY` (24 ticks -- a full extra day), which meant a shift merely
+*started* before its deadline stayed callable via `/work` for a whole day afterwards,
+drifting through every other `shift_phase` in the meantime (a "morning" shift's grace
+window ran straight through afternoon, evening, and the next night) and, since
+`SHIFT_DURATION_TICKS` (6) evenly divides `TICKS_PER_DAY` (24), landing almost exactly on
+the next day's own shift-open boundary -- blocking the next day's shift from ever opening
+for as long as the stale one sat un-resolved (`_open_shifts_for_due_characters` skips a
+character who already has an open shift). `WORK_GAME_GRACE_TICKS` is now `1` tick (10
+real minutes at the default `TICK_INTERVAL_SECONDS`) -- long enough to actually finish an
+in-progress board, far too short to spill into a different `shift_phase` or collide with
+the next day's shift.
+
+**Firing is retired.** `panem_sim.systems.jobs._fire` used to clear
+`Character.job_title`/`shift_phase` once `consecutive_missed` reached `MISSES_TO_FIRE`
+(5) and record a `JobHistory` row -- a character kept missing work, they lost the job
+outright and needed staff to hand them a new one. That's gone: `_apply_mastery_penalty`
+replaces it, triggered at the lower `MISSES_TO_MASTERY_PENALTY` (3, the old unused
+`MISSES_TO_WARN` threshold, renamed now that it actually does something) and re-applied
+on *every* further miss in the streak rather than firing once and resetting -- there's no
+more firing event to reset toward, so a character who simply never comes back keeps
+losing `SHIFT_MASTERY_MISS_PENALTY` (1) off `Character.shifts_completed` (floored at 0,
+same counter `panem_shared.job_levels` reads for job-level progression) for as long as
+the streak runs, the same one-at-a-time rate that counter builds up by actually working.
+No `JobHistory` row is written (the job never ends, so there's nothing to close out), but
+a `mastery_slip` `NotableEvent` still records each occurrence for `/resident profile`-style
+memory. `job_title`/`shift_phase` are untouched by any of this now -- the sim never clears
+a job; only `/staff give job` does.
+
+**Wages are now divided by `SHIFT_DURATION_TICKS`.** Since "Notes on working a shift
+multiple times per tick" above, a shift can be resolved once per tick across its whole
+`tick_opened`..`tick_due` window (6 ticks) rather than once total, but
+`resolve_shift_game` still paid the full `PLAYER_JOB_BASE_WAGE`-derived wage on *every*
+one of those resolutions -- up to 6x the intended pay for one shift if a player kept
+coming back each tick. `resolve_shift_game` now divides its final wage by
+`SHIFT_DURATION_TICKS`, so working every tick of a shift totals to roughly the same pay
+the old single-resolution design intended, while still rewarding checking in more often
+(more resolutions still means more reputation streak progress and one more unit of
+output each time -- only the wage itself is time-sliced). Output quantity and reputation
+deltas are untouched; the user asked specifically about wages.

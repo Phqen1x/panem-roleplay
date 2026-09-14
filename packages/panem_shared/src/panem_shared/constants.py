@@ -13,8 +13,18 @@ DAYS_PER_MONTH = 30
 STARTING_MONEY = 40
 
 SHIFT_DURATION_TICKS = 6
-MISSES_TO_WARN = 3
-MISSES_TO_FIRE = 5
+MISSES_TO_MASTERY_PENALTY = 3
+"""Missing this many shifts in a row (or more) costs the character mastery
+progress -- see `SHIFT_MASTERY_MISS_PENALTY` -- rather than the job itself;
+jobs are no longer taken away for missed work (`panem_sim.systems.jobs` used
+to fire a character at `MISSES_TO_FIRE`, a constant retired along with that
+behavior)."""
+SHIFT_MASTERY_MISS_PENALTY = 1
+"""`Character.shifts_completed` lost (floored at 0) for every missed shift
+once a character's `consecutive_missed` streak reaches
+`MISSES_TO_MASTERY_PENALTY` -- so a habitual no-show's job-level progress
+erodes for as long as the streak continues, the same way working a shift
+builds it up one at a time."""
 NEW_HIRE_GRACE_DAYS = 10
 PLAYER_OUTPUT_WEIGHT = 0.35
 
@@ -24,12 +34,20 @@ WORK_GAME_LOSE_WAGE_MULT = 0.4
 winning pays `job.wage * WIN`, losing pays `job.wage * LOSE` -- replacing
 the option-multiplier axis a player's free choice used to control (see
 `panem_shared.shifts.resolve_shift_game`)."""
-WORK_GAME_GRACE_TICKS = TICKS_PER_DAY
+WORK_GAME_GRACE_TICKS = 1
 """How long past a shift's `tick_due` a *started* (`Shift.started_at_tick`
 set) minigame stays open rather than being marked missed -- long enough
 to actually go finish a Minesweeper board without racing the clock, short
-enough that an abandoned game doesn't block a new shift from ever
-opening."""
+enough that an abandoned game doesn't block a new shift from ever opening
+or let `/work` be called well outside the character's own shift period.
+This used to be a full `TICKS_PER_DAY` (24 ticks -- a whole extra day),
+which let a player who'd merely launched the Activity once keep working
+that same shift on later ticks long after it was due, drifting through
+phases that had nothing to do with their assigned `shift_phase` and
+blocking the next day's shift from ever opening (it stayed "still open"
+right through the next occurrence of that phase). A short grace still
+covers finishing the board in progress; it no longer doubles as an
+open-ended extra work window."""
 
 NO_ACTIVITY_WORK_WIN_PROBABILITY = 0.6
 """`/work` without `ACTIVITY_PUBLIC_URL` configured (no Minesweeper board to
@@ -43,7 +61,14 @@ PLAYER_JOB_BASE_WAGE = 20.0
 free-typed title (`Character.job_title`) rather than a catalog entry with
 its own authored wage -- `panem_shared.job_levels`' level multiplier and
 `WORK_GAME_WIN_WAGE_MULT`/`LOSE` stack on top of it, and
-`panem_sim.systems.economy`'s market price on top of that again."""
+`panem_sim.systems.economy`'s market price on top of that again.
+`panem_shared.shifts.resolve_shift_game` divides the final result by
+`SHIFT_DURATION_TICKS`: this is meant as one shift's total pay, but a
+shift can now be worked once per tick across its whole `SHIFT_DURATION_
+TICKS`-tick window (see "Notes on working a shift multiple times per
+tick" in the README) rather than once total, so paying the full base
+wage on every one of those works would pay up to `SHIFT_DURATION_TICKS`x
+too much for the same shift."""
 
 PLAYER_SHIFT_OUTPUT_QTY = 1.0
 """FR-ECO rework: every completed player shift (win or lose -- they still
