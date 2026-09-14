@@ -125,6 +125,7 @@ export function mount(boardEl, { onFinish, levelIndex = 0 }) {
       firstClick = false;
     }
     const cell = cells[index];
+    if (cell.flagged) return;
     if (cell.mine) {
       gameOver = true;
       cells.forEach((c) => {

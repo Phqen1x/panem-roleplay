@@ -1728,3 +1728,36 @@ can't drift out of sync with the district list the way 13 separately-authored nu
 eventually would. It only touches the player wage formula; NPC wages
 (`Job.wage` in `data/jobs.yaml`, resolved by `panem_sim.systems.jobs._apply_npc_job_completion`)
 are a separate, already-per-job-authored system the request didn't ask to change.
+
+## Notes on two minigame bugs: flagged Minesweeper squares, Solitaire stack moves
+
+Both `panem_api/static/games/minesweeper.js` and `.../solitaire.js` are plain static
+modules with no build step and no test harness in this repo (there's no `package.json`
+or JS test runner at all) -- these two fixes were verified by tracing the logic by hand
+and, for Solitaire's run-matching rule, running the pure `isValidRun` logic standalone
+under Node against the exact example reported, rather than through the Python
+`pytest`/`mypy` loop that covers everything else in this repository.
+
+**Minesweeper: flagging didn't actually protect a square.** `onCellClick` checked
+`cell.mine` before it checked `cell.flagged` -- so left-clicking a flagged square that
+happened to be a mine still ended the game immediately, even though flagging exists
+specifically to mark a square as "don't click this." (A flagged *non*-mine already
+silently no-opped, since `reveal()` itself skips flagged cells -- only the mine case was
+actually broken.) Fixed by returning immediately on `cell.flagged` before the mine check
+runs at all, so a flagged square can no longer be resolved by a left click either way;
+it still has to be unflagged (right-click) first.
+
+**Solitaire could only ever move one card at a time.** The tableau only let a player pick
+up `pile[pile.length - 1]` (the single exposed card) and drop it elsewhere -- a core
+Klondike rule was missing: an already-validly-stacked run of cards (each one rank lower
+and the opposite color of the card above it, e.g. a red 9 on a black 10, with black 8 and
+red 7 already sitting on that 9) should move together as a unit onto any pile whose
+exposed card fits the *run's own top card* (the highest-rank one, e.g. that 9), not just
+the frontmost single card. Fixed with `isValidRun(pile, cardIndex)`, which checks that
+`pile[cardIndex..]` is entirely face-up and correctly alternating/descending; clicking any
+card in a tableau column that starts a valid run (not only the exposed top card) now
+selects that whole run -- highlighted together in `render()` -- and `tryMove` moves it as
+one `splice`/`push` unit when dropped on a compatible pile, preserving the run's internal
+order. A run can only ever be dropped on another tableau pile, never a foundation --
+foundations still take exactly one card at a time (`fromIndex !== pile.length - 1` refuses
+the drop), which is also how real Klondike works.

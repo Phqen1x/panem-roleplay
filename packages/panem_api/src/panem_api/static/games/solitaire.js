@@ -1,8 +1,11 @@
 // Simplified Klondike solitaire. Click-based (no drag/drop): click a
 // movable card to select it, then click the pile you want to move it to.
-// Only the top face-up card of a pile is ever movable -- a deliberate
-// simplification over full run-dragging, kept because "select then place"
-// is the only interaction model this minigame needs to support.
+// Clicking any face-up tableau card that starts a valid descending,
+// alternating-color run down to the top of its pile selects that whole
+// run -- not just the single topmost card -- so a stacked 9(red)-8(black)-
+// 7(red)-6(black) can be picked up together by clicking the 9 and dropped
+// as a unit onto a black 10 elsewhere, same as real Klondike. Only a
+// single card may ever go to a foundation.
 //
 // Win: all four foundations completed (Ace..King). Lose: the player gives
 // up (a genuinely unwinnable Klondike deal can happen, and detecting that
@@ -55,7 +58,7 @@ export function mount(boardEl, { onFinish }) {
   const stock = deck;
   const waste = [];
   const foundations = { S: [], H: [], D: [], C: [] };
-  let selected = null; // { type: "tableau" | "waste", index }
+  let selected = null; // { type: "tableau", index, cardIndex } | { type: "waste" }
   let gameOver = false;
 
   function sourcePile(sel) {
@@ -68,12 +71,43 @@ export function mount(boardEl, { onFinish }) {
     return SUITS.every((suit) => foundations[suit].length === 13);
   }
 
+  // The card actually offered up to a destination pile -- for a tableau
+  // selection this is the run's own top (highest-rank, back-most) card,
+  // the one whose rank/color must fit under the destination's exposed
+  // card, exactly like a single-card move; the rest of the run is already
+  // validly stacked beneath it and just comes along.
+  function fromCardIndex(sel, pile) {
+    return sel.type === "tableau" ? sel.cardIndex : pile.length - 1;
+  }
+
+  // Whether `pile[cardIndex..]` is a legal run to pick up together: every
+  // card in it face-up, each one exactly one rank below (and the opposite
+  // color of) the card before it. A lone card (cardIndex at the pile's
+  // own top) is trivially a run of one.
+  function isValidRun(pile, cardIndex) {
+    for (let i = cardIndex; i < pile.length; i++) {
+      if (!pile[i].faceUp) return false;
+      if (i > cardIndex) {
+        const upper = pile[i - 1];
+        const lower = pile[i];
+        if (upper.rank !== lower.rank + 1 || isRed(upper.suit) === isRed(lower.suit)) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
   function tryMove(from, toType, toIndex) {
     const pile = sourcePile(from);
     if (!pile || pile.length === 0) return;
-    const card = pile[pile.length - 1];
+    const fromIndex = fromCardIndex(from, pile);
+    const card = pile[fromIndex];
 
     if (toType === "foundation") {
+      // A run can't go to a foundation as a unit -- only its own single
+      // top card, same as picking up just that one card.
+      if (fromIndex !== pile.length - 1) return;
       const suit = SUITS[toIndex];
       if (card.suit !== suit) return;
       const foundation = foundations[suit];
@@ -92,8 +126,8 @@ export function mount(boardEl, { onFinish }) {
           return;
         }
       }
-      pile.pop();
-      dest.push(card);
+      const moving = pile.splice(fromIndex);
+      dest.push(...moving);
     } else {
       return;
     }
@@ -122,7 +156,7 @@ export function mount(boardEl, { onFinish }) {
     }
   }
 
-  function onPileClick(type, index) {
+  function onPileClick(type, index, event) {
     if (gameOver) return;
     if (selected) {
       const from = selected;
@@ -135,8 +169,16 @@ export function mount(boardEl, { onFinish }) {
       return;
     }
     const pile = type === "tableau" ? tableau[index] : type === "waste" ? waste : null;
-    if (pile && pile.length > 0 && pile[pile.length - 1].faceUp) {
-      selected = { type, index };
+    if (!pile || pile.length === 0) return;
+    let cardIndex = pile.length - 1;
+    if (type === "tableau" && event) {
+      const clickedCard = event.target.closest(".card");
+      if (clickedCard && clickedCard.dataset.cardIndex !== undefined) {
+        cardIndex = Number(clickedCard.dataset.cardIndex);
+      }
+    }
+    if (isValidRun(pile, cardIndex)) {
+      selected = type === "tableau" ? { type, index, cardIndex } : { type, index };
       render();
     }
   }
@@ -206,18 +248,18 @@ export function mount(boardEl, { onFinish }) {
       const colEl = document.createElement("div");
       colEl.className = "tableau-column";
       pile.forEach((card, cardIndex) => {
-        const isTop = cardIndex === pile.length - 1;
-        const el = cardEl(
-          card,
-          isTop && selected && selected.type === "tableau" && selected.index === colIndex
-            ? "selected"
-            : ""
-        );
+        const isSelected =
+          selected &&
+          selected.type === "tableau" &&
+          selected.index === colIndex &&
+          cardIndex >= selected.cardIndex;
+        const el = cardEl(card, isSelected ? "selected" : "");
+        el.dataset.cardIndex = String(cardIndex);
         el.style.top = `${cardIndex * 18}px`;
         colEl.appendChild(el);
       });
       colEl.style.minHeight = `${100 + pile.length * 18}px`;
-      colEl.addEventListener("click", () => onPileClick("tableau", colIndex));
+      colEl.addEventListener("click", (event) => onPileClick("tableau", colIndex, event));
       tableauRow.appendChild(colEl);
     });
     boardEl.appendChild(tableauRow);
