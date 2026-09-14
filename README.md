@@ -1149,11 +1149,11 @@ job, and extends the district economy to react to it.
   Expert (+112 = 280), each level a further +0.5x wage multiplier (1.0x/1.5x/2.0x/2.5x/
   3.0x). `/character status` shows the current level and shifts left to the next one.
 - **Wage formula**: `PLAYER_JOB_BASE_WAGE` (20, flat -- there's no more per-job authored
-  wage) x the level multiplier above x the minigame's win/lose multiplier
-  (`WORK_GAME_WIN_WAGE_MULT`/`LOSE`, unchanged from the Minesweeper build) x a market
-  multiplier (below), divided by `SHIFT_DURATION_TICKS` (6) -- see "Notes on shift
-  timing, wages, and missed-shift consequences" below for why. The old catalog-authored
-  3-option "work hard / play safe / cover a
+  wage) x the level multiplier above x `district_wealth_multiplier(district.id)` (see
+  "Notes on shift timing, wages, and missed-shift consequences" below) x the minigame's
+  win/lose multiplier (`WORK_GAME_WIN_WAGE_MULT`/`LOSE`, unchanged from the Minesweeper
+  build) x a market multiplier (below), divided by `SHIFT_DURATION_TICKS` (6) -- see the
+  same notes section for why. The old catalog-authored 3-option "work hard / play safe / cover a
   crewmate" menu is gone with the catalog it was defined in -- `/work` without
   `ACTIVITY_PUBLIC_URL` configured now resolves immediately via a coin-flip
   (`NO_ACTIVITY_WORK_WIN_PROBABILITY`, 0.6) using the same win/lose math the minigame
@@ -1713,3 +1713,18 @@ the old single-resolution design intended, while still rewarding checking in mor
 (more resolutions still means more reputation streak progress and one more unit of
 output each time -- only the wage itself is time-sliced). Output quantity and reputation
 deltas are untouched; the user asked specifically about wages.
+
+**Different districts now pay different base wages**, poorer districts less, following a
+later request in the same conversation: "the higher the district number the poorer they
+are." `panem_shared.shifts.district_wealth_multiplier(district_id)` is a straight line
+from `DISTRICT_WEALTH_WAGE_MULT_MAX` (1.5) at the Capitol (`district_id == 0`) down to
+`DISTRICT_WEALTH_WAGE_MULT_MIN` (0.5) at District Twelve (`district_id == 12`), and
+`resolve_shift_game` multiplies it in alongside the job-level and market multipliers.
+This is a pure function of `District.id` rather than a value authored per district in
+`data/*.yaml`: canon's wealth ordering is already exactly `id` itself (Capitol richest,
+career districts next, District Twelve poorest), so there's nothing to hand-tune and no
+new content field, migration, or per-district authoring pass needed -- and a formula
+can't drift out of sync with the district list the way 13 separately-authored numbers
+eventually would. It only touches the player wage formula; NPC wages
+(`Job.wage` in `data/jobs.yaml`, resolved by `panem_sim.systems.jobs._apply_npc_job_completion`)
+are a separate, already-per-job-authored system the request didn't ask to change.

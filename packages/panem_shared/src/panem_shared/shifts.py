@@ -46,6 +46,18 @@ def market_wage_multiplier(price: float, base_price: float) -> float:
     return price / base_price
 
 
+def district_wealth_multiplier(district_id: int) -> float:
+    """A straight line from `DISTRICT_WEALTH_WAGE_MULT_MAX` at the Capitol
+    (`district_id == 0`) down to `DISTRICT_WEALTH_WAGE_MULT_MIN` at
+    District Twelve (`district_id == 12`) -- canon's own wealth ordering,
+    the higher the district number the poorer it is, with no per-district
+    value to author or keep in sync as districts change. `District.id` is
+    schema-validated to `0..12` (`panem_shared.content.schemas.District`),
+    so this never needs its own clamp."""
+    span = constants.DISTRICT_WEALTH_WAGE_MULT_MAX - constants.DISTRICT_WEALTH_WAGE_MULT_MIN
+    return constants.DISTRICT_WEALTH_WAGE_MULT_MAX - span * (district_id / 12)
+
+
 def resolve_shift_game(
     character: Character,
     district: District,
@@ -55,11 +67,13 @@ def resolve_shift_game(
     neutral: bool = False,
 ) -> ShiftOutcome:
     """FR-JOB-3/4 (reworked): `PLAYER_JOB_BASE_WAGE` scaled by the
-    character's job-level multiplier, the minigame's win/lose multiplier,
-    and `market_multiplier` (the home district's current quota-good price
-    over its base price, from `panem_sim.systems.economy`'s pricing --
-    `1.0` for a caller that doesn't have a live price, e.g. in tests), then
-    divided by `SHIFT_DURATION_TICKS` since this is called once per `/work`
+    character's job-level multiplier, `district_wealth_multiplier(district.
+    id)` (richer districts simply pay more for the same shift), the
+    minigame's win/lose multiplier, and `market_multiplier` (the home
+    district's current quota-good price over its base price, from
+    `panem_sim.systems.economy`'s pricing -- `1.0` for a caller that
+    doesn't have a live price, e.g. in tests), then divided by
+    `SHIFT_DURATION_TICKS` since this is called once per `/work`
     resolution and a shift can be resolved once per tick across its whole
     window now, not just once total -- see `PLAYER_JOB_BASE_WAGE`'s own
     docstring.
@@ -111,6 +125,7 @@ def resolve_shift_game(
     wage = (
         constants.PLAYER_JOB_BASE_WAGE
         * level_mult
+        * district_wealth_multiplier(district.id)
         * outcome_mult
         * market_multiplier
         / constants.SHIFT_DURATION_TICKS

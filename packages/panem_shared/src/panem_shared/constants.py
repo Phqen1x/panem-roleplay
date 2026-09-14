@@ -56,10 +56,21 @@ probability instead -- the classic 3-option choose-your-risk menu was
 retired along with the `jobs.yaml` catalog it was authored against, so
 win/lose is now the only outcome axis `/work` has, configured or not."""
 
+DISTRICT_WEALTH_WAGE_MULT_MAX = 1.5
+DISTRICT_WEALTH_WAGE_MULT_MIN = 0.5
+"""The two ends of the per-district wage scale `panem_shared.shifts.
+district_wealth_multiplier` interpolates between, keyed purely on
+`District.id` (0..12, canon's own wealth ordering -- the Capitol is
+richest, District Twelve poorest, with the career/luxury districts ahead
+of the outlying ones in between). No content authoring needed: this is a
+straight line from `MAX` at id 0 to `MIN` at id 12, not a per-district
+value someone has to hand-tune and keep in sync as new districts change."""
+
 PLAYER_JOB_BASE_WAGE = 20.0
 """Every player job pays from this same flat base now that a job is a
 free-typed title (`Character.job_title`) rather than a catalog entry with
-its own authored wage -- `panem_shared.job_levels`' level multiplier and
+its own authored wage -- `panem_shared.job_levels`' level multiplier,
+`district_wealth_multiplier`'s per-district scale, and
 `WORK_GAME_WIN_WAGE_MULT`/`LOSE` stack on top of it, and
 `panem_sim.systems.economy`'s market price on top of that again.
 `panem_shared.shifts.resolve_shift_game` divides the final result by

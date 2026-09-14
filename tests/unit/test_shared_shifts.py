@@ -23,15 +23,15 @@ from panem_shared.db.models import Character, Shift
 from panem_shared.enums import CharacterStatus, JobLevel
 
 
-def make_district(*, quota_good: str | None = "coal") -> District:
+def make_district(*, quota_good: str | None = "coal", district_id: int = 12) -> District:
     locations = [
         Location(id="square", name="The Square", kind="public"),
         Location(id="station", name="Station", kind="station"),
     ]
     coords = {loc.id: (0, 0) for loc in locations}
     return District(
-        id=12,
-        name="District Twelve",
+        id=district_id,
+        name=f"District {district_id}",
         industry="coal",
         locations=locations,
         culture=DistrictCulture(),
@@ -73,11 +73,12 @@ class TestResolveShiftGame:
 
     def test_wage_at_apprentice_matches_base_win_multiplier(self):
         character = make_character(shifts_completed=0)
-        district = make_district()
+        district = make_district()  # District Twelve -> DISTRICT_WEALTH_WAGE_MULT_MIN
         outcome = shared_shifts.resolve_shift_game(character, district, won=True)
         assert outcome.wage == (
             constants.PLAYER_JOB_BASE_WAGE
             * constants.WORK_GAME_WIN_WAGE_MULT
+            * constants.DISTRICT_WEALTH_WAGE_MULT_MIN
             / constants.SHIFT_DURATION_TICKS
         )
 
@@ -150,7 +151,11 @@ class TestResolveShiftGame:
         character = make_character()
         district = make_district()
         neutral = shared_shifts.resolve_shift_game(character, district, won=False, neutral=True)
-        assert neutral.wage == constants.PLAYER_JOB_BASE_WAGE / constants.SHIFT_DURATION_TICKS
+        assert neutral.wage == (
+            constants.PLAYER_JOB_BASE_WAGE
+            * constants.DISTRICT_WEALTH_WAGE_MULT_MIN
+            / constants.SHIFT_DURATION_TICKS
+        )
 
     def test_neutral_loss_pays_more_than_a_regular_loss(self):
         character = make_character()
@@ -174,8 +179,45 @@ class TestResolveShiftGame:
             expert, district, won=False, neutral=True, market_multiplier=2.0
         )
         assert outcome.wage == (
-            constants.PLAYER_JOB_BASE_WAGE * 3.0 * 2.0 / constants.SHIFT_DURATION_TICKS
+            constants.PLAYER_JOB_BASE_WAGE
+            * 3.0
+            * constants.DISTRICT_WEALTH_WAGE_MULT_MIN
+            * 2.0
+            / constants.SHIFT_DURATION_TICKS
         )
+
+    def test_a_poorer_district_pays_less_for_the_same_outcome(self):
+        character = make_character()
+        rich = make_district(district_id=1)
+        poor = make_district(district_id=12)
+        rich_wage = shared_shifts.resolve_shift_game(character, rich, won=True).wage
+        poor_wage = shared_shifts.resolve_shift_game(character, poor, won=True).wage
+        assert rich_wage > poor_wage
+
+    def test_the_capitol_pays_the_most(self):
+        character = make_character()
+        capitol = make_district(district_id=0, quota_good=None)
+        district_one = make_district(district_id=1)
+        capitol_wage = shared_shifts.resolve_shift_game(character, capitol, won=True).wage
+        district_one_wage = shared_shifts.resolve_shift_game(character, district_one, won=True).wage
+        assert capitol_wage > district_one_wage
+
+
+class TestDistrictWealthMultiplier:
+    def test_the_capitol_gets_the_max_multiplier(self):
+        assert (
+            shared_shifts.district_wealth_multiplier(0) == constants.DISTRICT_WEALTH_WAGE_MULT_MAX
+        )
+
+    def test_district_twelve_gets_the_min_multiplier(self):
+        assert (
+            shared_shifts.district_wealth_multiplier(12) == constants.DISTRICT_WEALTH_WAGE_MULT_MIN
+        )
+
+    def test_strictly_decreases_as_district_id_increases(self):
+        multipliers = [shared_shifts.district_wealth_multiplier(i) for i in range(13)]
+        assert multipliers == sorted(multipliers, reverse=True)
+        assert len(set(multipliers)) == 13
 
 
 class TestMarketWageMultiplier:
