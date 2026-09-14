@@ -915,6 +915,19 @@ today's `data/` rather than copied) and its deploy-file diffs re-adapted by hand
   surroundings (weather, time of day, a bell, who's nearby) on the NPC's own initiative at
   all -- that's `[MODE: narrate]`'s job -- except when the NPC is actually remarking on it
   out loud to whoever they're talking to.
+- **Economic non-sequiturs.** A District One jeweler explained wanting money for trinkets
+  as needing "to keep the workshop lights warm during the winter nights" -- buying jewelry
+  doesn't heat anything, a nonsensical cause-and-effect the model reached for instead of
+  just stating the plain reason (a gift for family). The existing produce-vs-consume rule
+  (coal isn't a meal) already covered a good's category not matching what it's used for,
+  but not this: a worker doesn't get free or discounted use of what their own district
+  produces either -- a jeweler buys jewelry same as anyone else, since the workshop's
+  output belongs to the Capitol's order, not to them. Both are now spelled out in "Voicing
+  an NPC": a new sentence extends the produce-vs-consume rule to "making a good doesn't
+  mean you keep it," and a separate new bullet says outright not to invent a
+  cause-and-effect link between two things that don't actually connect, especially when
+  explaining why an NPC wants money or a good -- if the reason doesn't hold up stated
+  plainly, drop it rather than reach for a poetic one that doesn't make sense.
 - **Grounding a reply in more than just stance.** The system prompt has always documented
   `[NPC] ... job or role; ... personality`, `[SCENE] ... crisis level if any`, and
   `[SPEAKER] ... district, job, reputation` header lines, but `build_request_context` never
