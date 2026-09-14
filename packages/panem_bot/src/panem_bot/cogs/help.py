@@ -106,13 +106,45 @@ def _split_sections(
     return sections
 
 
+def _chunk_lines(lines: list[str], limit: int = FIELD_VALUE_LIMIT) -> list[str]:
+    """Greedily packs `lines` into as few `\\n\\n`-joined chunks as fit
+    under `limit` each, splitting a section across multiple embed fields
+    instead of truncating it with an ellipsis and losing every command
+    past the cutoff -- what a single, hard-truncated field used to do
+    once a subgroup (`/staff give ...`, `/staff npc ...`) grew past
+    `FIELD_VALUE_LIMIT`. A single entry that's somehow longer than
+    `limit` all on its own (not possible with today's descriptions, but
+    not assumed away either) still gets truncated -- there's no line to
+    split it across."""
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for line in lines:
+        extra = len(line) + (2 if current else 0)  # "\n\n" joiner
+        if current and current_len + extra > limit:
+            chunks.append("\n\n".join(current))
+            current = [line]
+            current_len = len(line)
+        else:
+            current.append(line)
+            current_len += extra
+    if current:
+        chunks.append("\n\n".join(current))
+    return [c if len(c) <= limit else c[: limit - 1] + "…" for c in chunks]
+
+
 def _build_embed(key: str, entries: list[tuple[str, str, str]]) -> discord.Embed:
     """One embed field per section (see `_split_sections`) rather than one
     giant block of text in `embed.description` -- the latter is what this
     used to do, silently cutting the Staff category off partway through
     once `/staff give ...`/`/staff job ...`/`/staff scene ...` pushed it
     past `FIELD_VALUE_LIMIT`. Fields also read better once a category has
-    more than a handful of commands, staff or not."""
+    more than a handful of commands, staff or not. A section itself can
+    still outgrow one field's `FIELD_VALUE_LIMIT` (`/staff give ...`/
+    `/staff npc ...` both do) -- `_chunk_lines` splits it across as many
+    fields as it needs (labeled "(cont.)") rather than truncating it and
+    silently dropping the commands past the cutoff.
+    """
     embed = discord.Embed(
         title=f"Commands -- {_label_for(key)}",
         description="`<required>` / `[optional]` show each command's arguments.",
@@ -125,10 +157,9 @@ def _build_embed(key: str, entries: list[tuple[str, str, str]]) -> discord.Embed
         lines = [
             f"**/{name}** {usage}\n{desc}".strip() for name, desc, usage in sorted(section_entries)
         ]
-        value = "\n\n".join(lines)
-        if len(value) > FIELD_VALUE_LIMIT:
-            value = value[: FIELD_VALUE_LIMIT - 1] + "…"
-        embed.add_field(name=label, value=value, inline=False)
+        for i, value in enumerate(_chunk_lines(lines)):
+            field_label = label if i == 0 else f"{label} (cont.)"
+            embed.add_field(name=field_label, value=value, inline=False)
     return embed
 
 

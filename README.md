@@ -1638,3 +1638,22 @@ and this sync has no way to tell a deliberate staff edit apart from stale conten
 leaves them alone entirely. `job_id` has no such staff command (an NPC's job comes only
 from content or from being freshly generated), so it's the one field guaranteed to only
 ever drift by accident.
+
+## Notes on `/help` embeds cutting commands off
+
+A player reported some `/help` embeds getting cut off. `_build_embed` already puts each
+subgroup (`/staff give ...`, `/staff npc ...`, ...) in its own embed field specifically to
+avoid Discord's 1024-character-per-field limit truncating the whole category's
+description text (an earlier version of this file did exactly that) -- but a subgroup that
+had since grown past that same limit on its own (`/staff give ...` at 5 commands,
+`/staff npc ...` at 6) hit the identical problem one level down: the field's own value got
+hard-truncated with an ellipsis, silently dropping whichever commands landed past the
+1024-character cutoff.
+
+`_chunk_lines` fixes this the same way the field-per-subgroup split already did at the
+category level: instead of truncating an oversized section's text, it greedily packs the
+section's lines into as many `FIELD_VALUE_LIMIT`-sized embed fields as it actually needs,
+labeling every field after the first "(cont.)" -- so a long subgroup spans two or more
+fields rather than losing its tail end. Only a single line that's somehow longer than the
+limit all on its own (not something any current command description does) still falls
+back to truncation, since there's no line boundary left to split it across.

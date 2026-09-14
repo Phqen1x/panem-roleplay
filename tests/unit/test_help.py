@@ -3,7 +3,15 @@ from __future__ import annotations
 import discord
 from discord import app_commands
 
-from panem_bot.cogs.help import GENERAL_KEY, _build_categories, _build_embed, _label_for, _usage
+from panem_bot.cogs.help import (
+    FIELD_VALUE_LIMIT,
+    GENERAL_KEY,
+    _build_categories,
+    _build_embed,
+    _chunk_lines,
+    _label_for,
+    _usage,
+)
 
 
 async def _noop(interaction: discord.Interaction) -> None:
@@ -156,3 +164,43 @@ class TestBuildEmbed:
         embed = _build_embed(GENERAL_KEY, [("where", "Show location", "<character>")])
         assert len(embed.fields) == 1
         assert embed.fields[0].name == "General"
+
+    def test_a_subgroup_too_big_for_one_field_splits_instead_of_truncating(self):
+        # A subgroup with enough commands to exceed FIELD_VALUE_LIMIT used
+        # to get hard-truncated with an ellipsis, silently dropping every
+        # command past the cutoff -- it should split across fields instead.
+        entries = [
+            (f"staff give cmd{i}", "A " + "long " * 40 + "description", "<character> <amount>")
+            for i in range(10)
+        ]
+        embed = _build_embed("staff", entries)
+        give_fields = [f for f in embed.fields if f.name.startswith("Give")]
+        assert len(give_fields) > 1
+        assert [f.name for f in give_fields] == [
+            "Give",
+            *(["Give (cont.)"] * (len(give_fields) - 1)),
+        ]
+        combined = "\n\n".join(f.value or "" for f in give_fields)
+        for i in range(10):
+            assert f"/staff give cmd{i}" in combined
+        for field in give_fields:
+            assert len(field.value or "") <= FIELD_VALUE_LIMIT
+
+
+class TestChunkLines:
+    def test_short_lines_stay_in_one_chunk(self):
+        assert _chunk_lines(["a", "b", "c"]) == ["a\n\nb\n\nc"]
+
+    def test_splits_once_the_limit_is_exceeded(self):
+        lines = ["x" * 600, "y" * 600]
+        chunks = _chunk_lines(lines, limit=1024)
+        assert chunks == ["x" * 600, "y" * 600]
+
+    def test_a_single_oversized_line_is_truncated_as_a_last_resort(self):
+        chunks = _chunk_lines(["z" * 2000], limit=1024)
+        assert len(chunks) == 1
+        assert len(chunks[0]) == 1024
+        assert chunks[0].endswith("…")
+
+    def test_no_lines_returns_no_chunks(self):
+        assert _chunk_lines([]) == []
