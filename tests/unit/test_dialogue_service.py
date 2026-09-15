@@ -302,6 +302,54 @@ class TestBuildRequestContext:
         assert ctx.speaker["district"] == "District 12"
         assert ctx.speaker["reputation"] == "4.5"
 
+    def test_known_is_included_in_speaker_when_given(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[],
+            known="Traded her a heater shield once; she paid the debt back early.",
+        )
+        assert ctx.speaker["known"] == (
+            "Traded her a heater shield once; she paid the debt back early."
+        )
+
+    def test_known_omitted_when_not_given(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[],
+        )
+        assert "known" not in ctx.speaker
+
+    def test_constraints_default_to_empty(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[],
+        )
+        assert ctx.constraints == {}
+
+    def test_constraints_are_passed_through_when_given(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[],
+            constraints={"max_words": "12"},
+        )
+        assert ctx.constraints == {"max_words": "12"}
+
 
 class TestTemplateReply:
     def test_mentions_the_npc_and_is_non_empty(self):
@@ -364,6 +412,40 @@ class TestGenerateReply:
             settings=make_settings(dialogue_provider="llm"),
         )
         assert reply == dialogue.template_reply(npc, "likes", "hello")
+
+
+class TestLengthMatchedMaxWords:
+    def test_short_message_clamps_to_the_floor(self):
+        assert dialogue._length_matched_max_words("hi") == constants.MIN_WORDS_REPLY
+
+    def test_mid_length_message_scales_by_the_ratio(self):
+        message = " ".join(["word"] * 20)
+        expected = round(20 * constants.REPLY_LENGTH_RATIO)
+        assert dialogue._length_matched_max_words(message) == expected
+
+    def test_long_message_clamps_to_the_overall_ceiling(self):
+        message = " ".join(["word"] * 200)
+        assert dialogue._length_matched_max_words(message) == constants.MAX_WORDS_REPLY
+
+    async def test_generate_reply_passes_the_computed_max_words_through(self, monkeypatch):
+        captured: dict[str, object] = {}
+
+        async def fake_llm(ctx, message, settings, *, history=()):
+            captured["max_words"] = ctx.constraints["max_words"]
+            return "ok"
+
+        monkeypatch.setattr(dialogue, "generate_llm_reply", fake_llm)
+        await dialogue.generate_reply(
+            npc=make_npc(provider_override="llm"),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[],
+            message="hi",
+            settings=make_settings(),
+        )
+        assert captured["max_words"] == str(constants.MIN_WORDS_REPLY)
 
 
 class TestGenerateLlmReply:
@@ -445,6 +527,17 @@ class TestNpcToNpcReply:
         assert ctx.npc == {"name": "Old Ferro", "stance": "neutral", "tone": "blunt"}
         assert ctx.speaker == {"name": "Greasy Sae"}
         assert ctx.memories == ()
+        assert ctx.constraints == {}
+
+    def test_context_sets_length_matched_constraints_when_message_given(self):
+        ctx = dialogue.build_npc_to_npc_context(
+            npc=make_npc(),
+            other_npc=make_npc(id="npc2", name="Greasy Sae"),
+            district=make_district(),
+            location=make_district().locations[-1],
+            message="hi",
+        )
+        assert ctx.constraints == {"max_words": str(constants.MIN_WORDS_REPLY)}
 
     async def test_template_provider_never_calls_the_llm(self):
         ferro = make_npc()
@@ -475,3 +568,97 @@ class TestNpcToNpcReply:
             settings=make_settings(dialogue_provider="llm"),
         )
         assert reply == dialogue.template_reply(ferro, "neutral", "(( opener ))")
+
+
+class TestSummarizeEngagement:
+    async def test_empty_transcript_returns_previous_summary_unchanged(self):
+        result = await dialogue.summarize_engagement(
+            npc=make_npc(provider_override="llm"),
+            transcript=[],
+            previous_summary="Already knows her from the market.",
+            settings=make_settings(),
+        )
+        assert result == "Already knows her from the market."
+
+    async def test_template_provider_never_calls_the_llm(self, monkeypatch):
+        async def fail_if_called(*args, **kwargs):
+            raise AssertionError("should not call the LLM on the template provider")
+
+        monkeypatch.setattr(dialogue, "generate_llm_reply", fail_if_called)
+        result = await dialogue.summarize_engagement(
+            npc=make_npc(),
+            transcript=["Kat: Hello.", "Old Ferro: Yeah?"],
+            previous_summary="Knows her a little.",
+            settings=make_settings(dialogue_provider="template"),
+        )
+        assert result == "Knows her a little."
+
+    async def test_llm_result_is_returned_and_the_prompt_includes_prior_knowledge(
+        self, monkeypatch
+    ):
+        captured: dict[str, object] = {}
+
+        async def fake_llm(ctx, message, settings, *, history=()):
+            captured["ctx"] = ctx
+            captured["message"] = message
+            return "Kat traded Ferro a heater shield; he trusts her a bit now."
+
+        monkeypatch.setattr(dialogue, "generate_llm_reply", fake_llm)
+        result = await dialogue.summarize_engagement(
+            npc=make_npc(provider_override="llm"),
+            transcript=["Kat: Got a heater shield for you.", "Old Ferro: Much obliged."],
+            previous_summary="Never met before.",
+            settings=make_settings(),
+        )
+        assert result == "Kat traded Ferro a heater shield; he trusts her a bit now."
+        ctx = captured["ctx"]
+        assert ctx.mode is omni.RequestMode.SUMMARIZE
+        assert ctx.constraints == {"max_words": str(constants.RELATIONSHIP_SUMMARY_MAX_WORDS)}
+        assert "Never met before." in captured["message"]
+        assert "Got a heater shield for you." in captured["message"]
+
+    async def test_first_ever_summary_notes_nothing_was_known_before(self, monkeypatch):
+        captured: dict[str, object] = {}
+
+        async def fake_llm(ctx, message, settings, *, history=()):
+            captured["message"] = message
+            return "They just met."
+
+        monkeypatch.setattr(dialogue, "generate_llm_reply", fake_llm)
+        await dialogue.summarize_engagement(
+            npc=make_npc(provider_override="llm"),
+            transcript=["Kat: Hello."],
+            previous_summary=None,
+            settings=make_settings(),
+        )
+        assert "nothing yet" in captured["message"]
+
+    async def test_llm_failure_returns_previous_summary_unchanged(self, monkeypatch):
+        async def failing_llm(ctx, message, settings, *, history=()):
+            raise httpx.ConnectError("no route to host")
+
+        monkeypatch.setattr(dialogue, "generate_llm_reply", failing_llm)
+        result = await dialogue.summarize_engagement(
+            npc=make_npc(provider_override="llm"),
+            transcript=["Kat: Hello."],
+            previous_summary="Knows her a little.",
+            settings=make_settings(),
+        )
+        assert result == "Knows her a little."
+
+    async def test_overlong_reply_is_truncated_to_the_word_cap(self, monkeypatch):
+        long_reply = " ".join(["word"] * (constants.RELATIONSHIP_SUMMARY_MAX_WORDS + 50))
+
+        async def fake_llm(ctx, message, settings, *, history=()):
+            return long_reply
+
+        monkeypatch.setattr(dialogue, "generate_llm_reply", fake_llm)
+        result = await dialogue.summarize_engagement(
+            npc=make_npc(provider_override="llm"),
+            transcript=["Kat: Hello."],
+            previous_summary=None,
+            settings=make_settings(),
+        )
+        assert result is not None
+        assert result.endswith("…")
+        assert len(result[:-1].split()) == constants.RELATIONSHIP_SUMMARY_MAX_WORDS

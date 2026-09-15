@@ -411,6 +411,7 @@ class RequestMode(enum.StrEnum):
     NPC_GENERATE = "npc_generate"
     REVIEW_CHARACTER = "review_character"
     STAFF = "staff"
+    SUMMARIZE = "summarize"
 
 
 @dataclass(frozen=True, slots=True)

@@ -18,7 +18,7 @@ immersion-breaking silently beats a visible error for a roleplay bot.
 from __future__ import annotations
 
 import random
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import httpx
 import structlog
@@ -81,6 +81,8 @@ def build_request_context(
     district_state: DistrictState | None = None,
     character_job_title: str | None = None,
     character_home_district: District | None = None,
+    known: str | None = None,
+    constraints: Mapping[str, str] | None = None,
 ) -> omni.RequestContext:
     """`present` lists everyone else in the scene besides `character`
     (other engaged NPCs, other joined characters) -- the system prompt
@@ -98,7 +100,15 @@ def build_request_context(
     district's state never reached the model at all. `None`/empty
     callers (npc-to-npc chatter, any caller that skips them) simply don't
     get those header lines -- `render_request_header` already omits an
-    empty block."""
+    empty block.
+
+    `known` is `RelationshipRow.summary` for this NPC-character pair -- a
+    running recap of every past engagement between them, already trimmed
+    to `RELATIONSHIP_SUMMARY_MAX_WORDS` by `summarize_engagement`. It fills
+    the `[SPEAKER] ... what the NPC knows of them` line the system prompt
+    has always documented but nothing populated before this. `constraints`
+    lets a caller override `render_request_header`'s default `max_words`
+    (see `_length_matched_max_words`) without touching anything else."""
     relevant = retrieve_memories(memories, "npc", npc.id)
     tone = (npc.speech_style or {}).get("tone", "plain")
 
@@ -133,6 +143,8 @@ def build_request_context(
     if character_home_district is not None:
         speaker["district"] = character_home_district.name
     speaker["reputation"] = f"{character.reputation or 0.0:.1f}"
+    if known:
+        speaker["known"] = known
 
     return omni.RequestContext(
         mode=omni.RequestMode.DIALOGUE,
@@ -140,6 +152,7 @@ def build_request_context(
         scene=scene,
         speaker=speaker,
         memories=tuple(m.text for m in relevant),
+        constraints=constraints or {},
     )
 
 
@@ -213,8 +226,20 @@ async def generate_llm_reply(
     return reply.strip()
 
 
+def _length_matched_max_words(message: str) -> int:
+    """How long a reply should be allowed to run, scaled off how much the
+    message it's answering actually said: `REPLY_LENGTH_RATIO` words of
+    reply per word of message, clamped to `[MIN_WORDS_REPLY,
+    MAX_WORDS_REPLY]`. A "hey" gets a short answer, a few sentences of
+    news get real room to respond -- the reply tracks the speaker instead
+    of sitting at the same flat cap regardless of what was just said."""
+    word_count = len(message.split())
+    target = round(word_count * constants.REPLY_LENGTH_RATIO)
+    return max(constants.MIN_WORDS_REPLY, min(constants.MAX_WORDS_REPLY, target))
+
+
 def build_npc_to_npc_context(
-    *, npc: Npc, other_npc: Npc, district: District, location: Location
+    *, npc: Npc, other_npc: Npc, district: District, location: Location, message: str = ""
 ) -> omni.RequestContext:
     """The NPC-to-NPC counterpart of `build_request_context`: `speaker`
     is another NPC rather than a player `Character` (no reputation/job
@@ -223,11 +248,13 @@ def build_npc_to_npc_context(
     npc_chatter`) is pure world flavor, not a tracked relationship the
     way `/talk`'s stance and memories are."""
     tone = (npc.speech_style or {}).get("tone", "plain")
+    constraints = {"max_words": str(_length_matched_max_words(message))} if message else {}
     return omni.RequestContext(
         mode=omni.RequestMode.DIALOGUE,
         npc={"name": npc.name, "stance": "neutral", "tone": tone},
         scene={"location": location.name, "district": district.name},
         speaker={"name": other_npc.name},
+        constraints=constraints,
     )
 
 
@@ -252,7 +279,7 @@ async def generate_npc_to_npc_reply(
         return template_reply(npc, "neutral", message)
 
     ctx = build_npc_to_npc_context(
-        npc=npc, other_npc=other_npc, district=district, location=location
+        npc=npc, other_npc=other_npc, district=district, location=location, message=message
     )
     try:
         return await generate_llm_reply(ctx, message, settings, history=history)
@@ -278,6 +305,7 @@ async def generate_reply(
     district_state: DistrictState | None = None,
     character_job_title: str | None = None,
     character_home_district: District | None = None,
+    known: str | None = None,
 ) -> str:
     provider = resolve_provider(npc, settings)
     if provider == "template":
@@ -296,9 +324,61 @@ async def generate_reply(
         district_state=district_state,
         character_job_title=character_job_title,
         character_home_district=character_home_district,
+        known=known,
+        constraints={"max_words": str(_length_matched_max_words(message))},
     )
     try:
         return await generate_llm_reply(ctx, message, settings, history=history)
     except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
         logger.warning("dialogue_llm_failed", npc_id=npc.id, error=str(exc))
         return template_reply(npc, stance, message)
+
+
+async def summarize_engagement(
+    *,
+    npc: Npc,
+    transcript: Sequence[str],
+    previous_summary: str | None,
+    settings: Settings,
+) -> str | None:
+    """Folds a just-closed engagement's transcript (`"Name: line"` strings,
+    oldest first -- player lines and every joined NPC's own replies alike)
+    into an updated `RelationshipRow.summary` for `npc`, from `npc`'s own
+    perspective. `previous_summary` is whatever was already stored for
+    this pair; the request hands the model both so it merges rather than
+    only describing what's new, keeping the result a bounded, running
+    recap instead of an ever-growing transcript (`lemonade/system_prompt.
+    md`'s `summarize` mode documents this contract).
+
+    No template fallback -- there's no sensible canned summary of an
+    actual conversation. `provider == "template"`, an empty transcript, or
+    any LLM failure all just return `previous_summary` unchanged, exactly
+    as if this engagement had never been summarized; the caller persists
+    whatever comes back, so a `None` in and a `None` out both mean 'still
+    nothing known'."""
+    if not transcript:
+        return previous_summary
+    provider = resolve_provider(npc, settings)
+    if provider == "template":
+        return previous_summary
+
+    ctx = omni.RequestContext(
+        mode=omni.RequestMode.SUMMARIZE,
+        npc={"name": npc.name},
+        constraints={"max_words": str(constants.RELATIONSHIP_SUMMARY_MAX_WORDS)},
+    )
+    prompt = (
+        f"What you already knew before this conversation: "
+        f"{previous_summary or 'nothing yet -- this is the first time.'}\n\n"
+        "The conversation that just happened:\n" + "\n".join(transcript)
+    )
+    try:
+        summary = await generate_llm_reply(ctx, prompt, settings)
+    except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
+        logger.warning("dialogue_summarize_failed", npc_id=npc.id, error=str(exc))
+        return previous_summary
+
+    words = summary.split()
+    if len(words) > constants.RELATIONSHIP_SUMMARY_MAX_WORDS:
+        summary = " ".join(words[: constants.RELATIONSHIP_SUMMARY_MAX_WORDS]) + "…"
+    return summary

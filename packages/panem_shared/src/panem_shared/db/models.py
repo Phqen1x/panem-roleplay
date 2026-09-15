@@ -264,6 +264,17 @@ class RelationshipRow(TimestampMixin, Base):
     stance: Mapped[str] = mapped_column(String(16), nullable=False, default=Stance.NEUTRAL.value)
     stance_updated_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    """A compacted, running recap of every engagement `subject` and `object`
+    have had together -- `dialogue.summarize_engagement` folds each closed
+    engagement's transcript into an updated version of this on top of
+    whatever it already said, so it stays roughly `RELATIONSHIP_SUMMARY_
+    MAX_WORDS` long rather than growing without bound. Read back into the
+    `[SPEAKER] ... known` field of the next dialogue request between this
+    same pair, so the NPC keeps a real memory of them across days, bot
+    restarts, and any number of separate conversations -- not just the
+    fact-bullet `Memory` rows the sim itself forms from notable events."""
+
 
 class Memory(Base):
     __tablename__ = "memories"

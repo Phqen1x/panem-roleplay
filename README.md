@@ -1761,3 +1761,52 @@ one `splice`/`push` unit when dropped on a compatible pile, preserving the run's
 order. A run can only ever be dropped on another tableau pile, never a foundation --
 foundations still take exactly one card at a time (`fromIndex !== pile.length - 1` refuses
 the drop), which is also how real Klondike works.
+
+## Notes on NPC long-term memory and reply pacing
+
+A player asked for a third-party architecture sketch (persona injection, a vector-DB lore
+library, dual short/long-term memory) to be checked against what this repo actually does.
+Most of it turned out to already exist under different names from the Phase 6 dialogue work
+and the NPC Engagements milestone: `dialogue.build_request_context` is the persona engine,
+the world atlas baked into the collection's system prompt (`omni.render_world_atlas`) is the
+lore library (no vector DB or embedding search actually runs anywhere, despite the `nomic-
+embed`/`Qwen3-Embedding` components being bundled and described as powering memory recall --
+`memory.retrieve()` just sorts by importance and recency), and `lemonade/system_prompt.md`
+already told the model not to volunteer unrelated facts or narrate on its own initiative. Two
+real gaps came out of the comparison, addressed here:
+
+**Short-term memory only covered the last 12 turns of an engagement, not the whole thing.**
+`proxy.py`'s `post_engagement_replies` capped its `SceneMessage` history query at
+`MAX_ENGAGEMENT_HISTORY_TURNS`. Renamed to `ENGAGEMENT_HISTORY_HARD_CAP` and raised to 200 --
+a defensive ceiling rather than a working limit, since an engagement already auto-closes on
+its own idle timeout long before a real conversation could approach that many turns. In
+practice this means every message since the engagement opened rides along as history now, not
+just the last dozen.
+
+**Nothing summarized a finished conversation into anything an NPC could recall later.** The
+`Memory` table only holds event-derived fact bullets the sim forms from `notable_events`, and
+`RelationshipRow` only tracked affinity/trust/stance numbers -- there was no mechanism for "the
+NPC remembers what you two actually talked about" across separate engagements, days, or bot
+restarts. Added `RelationshipRow.summary` (nullable `Text`, migration `d4e8f1a6c3b9`): a
+compacted, running recap of every engagement a character and an NPC have had together. Both
+places an engagement closes (`EngagementCog.end` and `close_idle_engagements`) now call
+`dialogue.summarize_engagement`, a new `omni.RequestMode.SUMMARIZE` LLM request (documented as
+its own mode in `system_prompt.md`, alongside the existing `staff`/`review_character` OOC
+modes) that's handed both the closing engagement's transcript *and* whatever was already
+stored, and asked to fold them into one updated recap rather than only describing what's new --
+the standard running-summary pattern, so the stored text stays bounded
+(`RELATIONSHIP_SUMMARY_MAX_WORDS`, defensively hard-truncated on top of the model's own
+instruction) instead of growing forever. One summarization call per joined NPC per closed
+engagement, not per character: the result is that NPC's own recap of the scene, written
+identically onto every joined character's relationship row with them. The stored summary rides
+in the next dialogue request's `[SPEAKER] ... known` field -- a header block the system prompt
+had always documented ("what the NPC knows of them") but that nothing had ever populated
+before this. A new prompt rule tells the model to treat it as quiet background for recognition
+and continuity, the same "sparingly, never verbatim" restraint already applied to `[MEMORIES]`.
+
+**Reply length was a flat 90-word cap regardless of what it was replying to.** Added
+`_length_matched_max_words` (`dialogue.py`): `REPLY_LENGTH_RATIO` words of reply per word of
+the incoming message, clamped to `[MIN_WORDS_REPLY, MAX_WORDS_REPLY]`. A one-word greeting now
+gets a short answer instead of room to ramble up to the old flat cap, while a longer message
+still gets real room to respond, up to the same overall ceiling as before. Applied to both
+`/talk`/`/engage` replies and NPC-to-NPC ambient chatter.

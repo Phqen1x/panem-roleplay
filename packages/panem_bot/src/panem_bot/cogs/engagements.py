@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from panem_bot import autocomplete
 from panem_bot.errors import ServiceError
 from panem_bot.services import characters as characters_svc
+from panem_bot.services import dialogue as dialogue_svc
 from panem_bot.services import engagements as engagements_svc
 from panem_bot.services import proxy as proxy_svc
 from panem_bot.services import travel as travel_svc
@@ -30,11 +31,21 @@ from panem_shared.db.models import (
     DiscordChannel,
     EngagementSettings,
     Npc,
+    RelationshipRow,
     Scene,
+    SceneMessage,
     User,
     WorldClock,
 )
-from panem_shared.enums import ChannelKind, CharacterStatus, SceneKind, SceneStatus
+from panem_shared.enums import (
+    ChannelKind,
+    CharacterStatus,
+    OwnerKind,
+    SceneKind,
+    SceneStatus,
+    Stance,
+)
+from panem_shared.relationships import relationship_key
 
 from .scenes import CLOSED_TAG, OPEN_TAG, _find_tag
 
@@ -119,6 +130,95 @@ class EngagementCog(commands.Cog):
             )
         ).scalar_one_or_none()
         return owned is not None
+
+    async def _persist_engagement_summaries(self, session: AsyncSession, scene: Scene) -> None:
+        """Folds this closing engagement's transcript into `RelationshipRow.
+        summary` for every joined NPC, from that NPC's own perspective, so
+        the next time any of these characters approach them again the NPC
+        still remembers -- not just the event-derived `Memory` bullets
+        `panem_sim` forms on its own. One `summarize_engagement` call per
+        NPC (not per character): the result is a same-scene recap from
+        that NPC's single point of view, so it's written identically onto
+        every joined character's relationship row with them. When more
+        than one of those characters already has a stored summary with
+        this NPC, only the first one found seeds `previous_summary` --
+        picking one is unavoidable since the call produces one merged
+        recap, and which pre-existing summary is used to seed it barely
+        matters once the fresh transcript folds in. A no-op for an
+        NPC-only scene (nobody to remember) or one nobody ever spoke in."""
+        participants = scene.participants
+        npc_ids = participants.get("npcs", [])
+        character_ids = participants.get("characters", [])
+        if not npc_ids or not character_ids:
+            return
+        message_rows = (
+            (
+                await session.execute(
+                    select(SceneMessage)
+                    .where(SceneMessage.scene_id == scene.id)
+                    .order_by(SceneMessage.ts.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not message_rows:
+            return
+        transcript = [f"{row.author_name}: {row.content}" for row in message_rows]
+        characters = (
+            (await session.execute(select(Character).where(Character.id.in_(character_ids))))
+            .scalars()
+            .all()
+        )
+        if not characters:
+            return
+
+        for npc_id in npc_ids:
+            npc_row = await session.get(Npc, npc_id)
+            if npc_row is None:
+                continue
+            keys = {
+                character.id: relationship_key(
+                    (OwnerKind.CHARACTER.value, str(character.id)), (OwnerKind.NPC.value, npc_id)
+                )
+                for character in characters
+            }
+            existing = {
+                character_id: await session.get(RelationshipRow, key)
+                for character_id, key in keys.items()
+            }
+            previous_summary = next(
+                (row.summary for row in existing.values() if row is not None and row.summary),
+                None,
+            )
+            summary = await dialogue_svc.summarize_engagement(
+                npc=npc_row,
+                transcript=transcript,
+                previous_summary=previous_summary,
+                settings=self.bot.settings,  # type: ignore[attr-defined]
+            )
+            if summary is None:
+                continue
+            for character_id, key in keys.items():
+                relationship = existing[character_id]
+                if relationship is None:
+                    # Column defaults only apply at flush, not on a plain
+                    # transient object (see `panem_sim.systems.social.
+                    # _get_or_create`'s own note) -- spelled out
+                    # explicitly since nothing else in this request
+                    # touches these fields before the session commits.
+                    relationship = RelationshipRow(
+                        subject_kind=key[0],
+                        subject_id=key[1],
+                        object_kind=key[2],
+                        object_id=key[3],
+                        affinity=0,
+                        trust=0.0,
+                        interaction_count=0,
+                        stance=Stance.NEUTRAL.value,
+                    )
+                    session.add(relationship)
+                relationship.summary = summary
 
     def _invite_view(
         self, *, scene_id: int, character_id: int, character_name: str, target_discord_id: int
@@ -633,6 +733,8 @@ class EngagementCog(commands.Cog):
                 await interaction.response.send_message(t("engagement_not_yours"), ephemeral=True)
                 return
 
+            await self._persist_engagement_summaries(session, scene)
+
             for npc_id in scene.participants.get("npcs", []):
                 npc_row = await session.get(Npc, npc_id)
                 if npc_row is not None:
@@ -744,6 +846,7 @@ class EngagementCog(commands.Cog):
             )
             for scene_id in to_close:
                 scene = next(s for s in scenes if s.id == scene_id)
+                await self._persist_engagement_summaries(session, scene)
                 for npc_id in scene.participants.get("npcs", []):
                     npc_row = await session.get(Npc, npc_id)
                     if npc_row is not None:

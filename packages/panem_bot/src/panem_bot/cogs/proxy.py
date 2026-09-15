@@ -443,7 +443,7 @@ class ProxyCog(commands.Cog):
                             select(SceneMessage)
                             .where(SceneMessage.scene_id == scene.id)
                             .order_by(SceneMessage.ts.desc())
-                            .limit(constants.MAX_ENGAGEMENT_HISTORY_TURNS)
+                            .limit(constants.ENGAGEMENT_HISTORY_HARD_CAP)
                         )
                     )
                     .scalars()
@@ -486,6 +486,7 @@ class ProxyCog(commands.Cog):
                 )
                 relationship = await session.get(RelationshipRow, key)
                 stance = relationship.stance if relationship is not None else "stranger"
+                known = relationship.summary if relationship is not None else None
                 memory_rows = (
                     (
                         await session.execute(
@@ -543,6 +544,7 @@ class ProxyCog(commands.Cog):
                     district_state=district_state,
                     character_job_title=character_job_title,
                     character_home_district=character_home_district,
+                    known=known,
                 )
 
                 sent = await webhook.send(

@@ -150,6 +150,26 @@ dialogue reply resends the whole request header -- so the LLM's `[NPC]
 ... background` line gets only this many characters of it (truncated with
 an ellipsis), enough to color a reply without dominating the prompt."""
 
+MIN_WORDS_REPLY = 6
+"""The floor `dialogue.generate_reply`'s length-matching clamps to -- a
+one-word message ("Hey") shouldn't force the NPC down to a one-word reply,
+just a short one."""
+REPLY_LENGTH_RATIO = 2.0
+"""How many words of reply per word of the message being replied to,
+before clamping to `[MIN_WORDS_REPLY, MAX_WORDS_REPLY]` -- an NPC's line
+should track how much the speaker just said, not sit at a flat cap
+regardless of whether they were greeted with "hey" or given three
+sentences of news."""
+
+RELATIONSHIP_SUMMARY_MAX_WORDS = 120
+"""The target length `dialogue.summarize_engagement`'s prompt asks for,
+and the hard word-count this module truncates the LLM's answer to
+defensively (mirroring `NPC_BACKGROUND_PROMPT_MAX_LEN`'s truncate-with-
+ellipsis pattern) -- `RelationshipRow.summary` rides in every future
+dialogue request's `[SPEAKER]` block for this pair, so it has to stay
+short enough not to dominate the prompt the way an ever-growing transcript
+would."""
+
 TICKET_BASE = 20
 TRANSIT_TICKS = 4
 AWAY_GRACE_DAYS = 18
@@ -443,10 +463,16 @@ ENGAGEMENT_MAX_PARTICIPANTS = 5
 don't support one), so participants are `ENGAGEMENT_MAX_PARTICIPANTS`
 individually autocompleted, optional slots (`participant_1` required, the
 rest optional) rather than one free-text field."""
-MAX_ENGAGEMENT_HISTORY_TURNS = 12
-"""How many prior `SceneMessage` rows (player lines and NPC replies alike)
-get fed back to the LLM as conversation history for an engagement reply
--- caps prompt size without losing the immediate back-and-forth."""
+ENGAGEMENT_HISTORY_HARD_CAP = 200
+"""A defensive outer ceiling on how many prior `SceneMessage` rows (player
+lines and NPC replies alike) `proxy.py` will ever fetch as conversation
+history for an engagement reply -- short-term memory is meant to cover the
+*whole* current engagement (every message since it opened), not a rolling
+window, since engagements already auto-close on their own idle timeout
+(`EngagementSettings.idle_timeout_minutes`) long before a real
+conversation could approach this many turns. This only exists so a
+pathological engagement that somehow never closes can't grow the LLM
+request without bound; it should never be hit in normal play."""
 NPC_NAME_MATCH_MIN_LEN = 3
 """In a multi-participant engagement, an NPC only replies to a message
 naming them -- but matching a first/last name shorter than this many
