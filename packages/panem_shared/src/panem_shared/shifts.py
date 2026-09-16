@@ -20,6 +20,7 @@ from the catalog directly.
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 
 from panem_shared import constants, job_levels
@@ -65,6 +66,7 @@ def resolve_shift_game(
     won: bool,
     market_multiplier: float = 1.0,
     neutral: bool = False,
+    rng: random.Random | None = None,
 ) -> ShiftOutcome:
     """FR-JOB-3/4 (reworked): `PLAYER_JOB_BASE_WAGE` scaled by the
     character's job-level multiplier, `district_wealth_multiplier(district.
@@ -77,10 +79,20 @@ def resolve_shift_game(
     resolution and a shift can be resolved once per tick across its whole
     window now, not just once total -- see `PLAYER_JOB_BASE_WAGE`'s own
     docstring.
-    Output is one unit of the district's own quota good per completed
-    shift (win or lose -- they still did the work), feeding
-    `panem_sim.systems.economy`'s supply the way `Job.produces` used to;
-    a district with no `quota` (the Capitol) produces nothing.
+
+    Output tracks the outcome, not just "did work happen" -- a district
+    with no `quota` (the Capitol) always produces nothing, regardless of
+    outcome:
+    - `won`: one unit of the district's quota good, plus a second unit if
+      `rng` rolls under `JOB_LEVEL_BONUS_GOOD_CHANCE[level]` -- a better
+      shift at the job earns a real chance at extra output on top of the
+      wage boost, scaled by mastery the same way the wage ladder is.
+      `rng` defaults to a fresh `random.Random()` per call (only a test
+      needs to inject a seeded one for a deterministic roll).
+    - `neutral`: exactly one unit, same as before -- doing the work
+      without playing the minigame still counts as a completed shift.
+    - a real loss (`won=False`, `neutral=False`): no output at all -- a
+      failed shift produces nothing, on top of the lose wage penalty.
 
     `neutral=True` (always paired with `won=False`) skips the lose
     penalty and pays the unmodified level/market wage instead -- for a
@@ -130,7 +142,15 @@ def resolve_shift_game(
         * market_multiplier
         / constants.SHIFT_DURATION_TICKS
     )
-    output = {district.quota.good: constants.PLAYER_SHIFT_OUTPUT_QTY} if district.quota else {}
+    output: dict[str, float] = {}
+    if district.quota and (won or neutral):
+        qty = constants.PLAYER_SHIFT_OUTPUT_QTY
+        if won:
+            bonus_chance = constants.JOB_LEVEL_BONUS_GOOD_CHANCE[level.value]
+            roller = rng if rng is not None else random.Random()
+            if roller.random() < bonus_chance:
+                qty += constants.PLAYER_SHIFT_OUTPUT_QTY
+        output = {district.quota.good: qty}
     return ShiftOutcome(wage=wage, output=output, rep_delta=rep_delta)
 
 

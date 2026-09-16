@@ -23,6 +23,17 @@ from panem_shared.db.models import Character, Shift
 from panem_shared.enums import CharacterStatus, JobLevel
 
 
+class FixedRng:
+    """A stand-in for `random.Random` that always returns a fixed draw, so
+    bonus-good-chance tests don't depend on the real thresholds."""
+
+    def __init__(self, value: float) -> None:
+        self._value = value
+
+    def random(self) -> float:
+        return self._value
+
+
 def make_district(*, quota_good: str | None = "coal", district_id: int = 12) -> District:
     locations = [
         Location(id="square", name="The Square", kind="public"),
@@ -99,10 +110,53 @@ class TestResolveShiftGame:
         ).wage
         assert boosted == base * 2.0
 
-    def test_output_is_one_unit_of_the_districts_quota_good(self):
+    def test_output_is_one_unit_of_the_districts_quota_good_when_no_bonus_rolled(self):
         character = make_character()
         district = make_district(quota_good="coal")
-        outcome = shared_shifts.resolve_shift_game(character, district, won=True)
+        outcome = shared_shifts.resolve_shift_game(
+            character, district, won=True, rng=FixedRng(0.99)
+        )
+        assert outcome.output == {"coal": constants.PLAYER_SHIFT_OUTPUT_QTY}
+
+    def test_win_produces_a_bonus_unit_when_the_chance_rolls_hit(self):
+        character = make_character()
+        district = make_district(quota_good="coal")
+        outcome = shared_shifts.resolve_shift_game(character, district, won=True, rng=FixedRng(0.0))
+        assert outcome.output == {"coal": constants.PLAYER_SHIFT_OUTPUT_QTY * 2}
+
+    def test_bonus_chance_scales_with_job_level(self):
+        district = make_district(quota_good="coal")
+        apprentice = make_character(shifts_completed=0)
+        expert = make_character(shifts_completed=constants.JOB_LEVEL_SHIFT_THRESHOLDS["expert"])
+        # A roll that clears an apprentice's chance but not an expert's --
+        # only the higher-level character should get the bonus unit.
+        roll = (
+            constants.JOB_LEVEL_BONUS_GOOD_CHANCE["apprentice"]
+            + constants.JOB_LEVEL_BONUS_GOOD_CHANCE["expert"]
+        ) / 2
+        apprentice_outcome = shared_shifts.resolve_shift_game(
+            apprentice, district, won=True, rng=FixedRng(roll)
+        )
+        expert_outcome = shared_shifts.resolve_shift_game(
+            expert, district, won=True, rng=FixedRng(roll)
+        )
+        assert apprentice_outcome.output == {"coal": constants.PLAYER_SHIFT_OUTPUT_QTY}
+        assert expert_outcome.output == {"coal": constants.PLAYER_SHIFT_OUTPUT_QTY * 2}
+
+    def test_a_real_loss_produces_no_output(self):
+        character = make_character()
+        district = make_district(quota_good="coal")
+        outcome = shared_shifts.resolve_shift_game(
+            character, district, won=False, rng=FixedRng(0.0)
+        )
+        assert outcome.output == {}
+
+    def test_neutral_still_produces_exactly_one_unit(self):
+        character = make_character()
+        district = make_district(quota_good="coal")
+        outcome = shared_shifts.resolve_shift_game(
+            character, district, won=False, neutral=True, rng=FixedRng(0.0)
+        )
         assert outcome.output == {"coal": constants.PLAYER_SHIFT_OUTPUT_QTY}
 
     def test_no_output_for_a_district_with_no_quota_good(self):
@@ -300,7 +354,9 @@ class TestApplyShiftOutcome:
         character = make_character()
         district = make_district(quota_good="coal")
         shift = Shift(character_id=1, job_id="Miner", tick_opened=1, tick_due=13)
-        outcome = shared_shifts.resolve_shift_game(character, district, won=True)
+        outcome = shared_shifts.resolve_shift_game(
+            character, district, won=True, rng=FixedRng(0.99)
+        )
 
         shared_shifts.apply_shift_outcome(shift, character, outcome, won=True, tick=2)
         shared_shifts.apply_shift_outcome(shift, character, outcome, won=True, tick=3)

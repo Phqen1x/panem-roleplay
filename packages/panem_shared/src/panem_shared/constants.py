@@ -108,6 +108,21 @@ JOB_LEVEL_WAGE_MULTIPLIERS: dict[str, float] = {
 (multiplies on top of) the win/lose outcome multiplier, per
 `panem_shared.shifts.resolve_shift_game`."""
 
+JOB_LEVEL_BONUS_GOOD_CHANCE: dict[str, float] = {
+    "apprentice": 0.05,
+    "novice": 0.15,
+    "journeyman": 0.30,
+    "master": 0.45,
+    "expert": 0.60,
+}
+"""Chance of producing a *second* unit of the district's quota good on a
+won shift, scaled by `JobLevel` the same way `JOB_LEVEL_WAGE_MULTIPLIERS`
+is -- a Master at their trade is more likely to turn a good shift into
+extra output than an Apprentice is, on top of already earning a bigger
+wage for it. Only ever rolled on a win (`panem_shared.shifts.
+resolve_shift_game`): a skipped/neutral shift always produces exactly one
+unit regardless of level, and a real loss produces none."""
+
 PRICE_EXPONENT = 0.5
 PRICE_CLAMP_MIN = 0.4
 PRICE_CLAMP_MAX = 4.0
