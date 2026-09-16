@@ -229,6 +229,66 @@ class TestBuy:
         assert result.caught is False
         assert character.jailed_until_tick is None
 
+    async def test_no_price_row_yet_means_no_stock_ceiling(self, db_session):
+        """A good `panem_sim.systems.economy` hasn't priced today yet (a
+        fresh world) has nothing allocated to check against -- buying
+        shouldn't be refused just because nobody's run the daily
+        redistribution yet."""
+        district = make_district()
+        character = make_character(money=100)
+        result = await market_svc.buy(
+            db_session,
+            character=character,
+            district=district,
+            goods=make_goods(),
+            good_id="coal",
+            qty=5,
+            tick=10,
+            rng=FixedRng(0.99),
+        )
+        assert result.qty == 5
+
+    async def test_buying_more_than_todays_stock_is_refused(self, db_session):
+        district = make_district()
+        character = make_character(money=100)
+        db_session.add(MarketPrice(district_id=1, good_id="coal", price=4.0, supply=3.0, tick=0))
+        await db_session.flush()
+
+        with pytest.raises(NotAllowed) as exc_info:
+            await market_svc.buy(
+                db_session,
+                character=character,
+                district=district,
+                goods=make_goods(),
+                good_id="coal",
+                qty=5,
+                tick=10,
+                rng=FixedRng(0.99),
+            )
+        assert exc_info.value.reason_key == "market_insufficient_stock"
+        assert character.money == 100
+        assert "Coal" in t(exc_info.value.reason_key, **exc_info.value.fmt)
+
+    async def test_buying_within_todays_stock_decrements_it(self, db_session):
+        district = make_district()
+        character = make_character(money=100)
+        db_session.add(MarketPrice(district_id=1, good_id="coal", price=4.0, supply=10.0, tick=0))
+        await db_session.flush()
+
+        await market_svc.buy(
+            db_session,
+            character=character,
+            district=district,
+            goods=make_goods(),
+            good_id="coal",
+            qty=4,
+            tick=10,
+            rng=FixedRng(0.99),
+        )
+
+        row = await db_session.get(MarketPrice, (1, "coal"))
+        assert row.supply == 6.0
+
 
 class TestSell:
     async def test_happy_path_adds_money_and_removes_inventory(self, db_session):
@@ -280,6 +340,29 @@ class TestSell:
         inv = await db_session.get(Inventory, (OwnerKind.CHARACTER.value, "1", "coal"))
         assert inv.qty == 2
         assert "Test" in t(exc_info.value.reason_key, **exc_info.value.fmt)
+
+    async def test_selling_returns_units_to_todays_local_stock(self, db_session):
+        db_session.add(
+            Inventory(owner_kind=OwnerKind.CHARACTER.value, owner_id="1", good_id="coal", qty=10)
+        )
+        db_session.add(MarketPrice(district_id=1, good_id="coal", price=4.0, supply=3.0, tick=0))
+        await db_session.flush()
+        district = make_district()
+        character = make_character(money=0)
+
+        await market_svc.sell(
+            db_session,
+            character=character,
+            district=district,
+            goods=make_goods(),
+            good_id="coal",
+            qty=4,
+            tick=10,
+            rng=FixedRng(0.99),
+        )
+
+        row = await db_session.get(MarketPrice, (1, "coal"))
+        assert row.supply == 7.0
 
 
 class TestListInventory:

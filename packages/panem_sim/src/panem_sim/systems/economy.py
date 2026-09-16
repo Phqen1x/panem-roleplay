@@ -12,7 +12,23 @@ Runs once per day (the same `ctx.tick % TICKS_PER_DAY == 0` gate as
    systems intentionally don't share bookkeeping: `jobs.py` still pays
    each NPC individually and stochastically for flavor, while this only
    needs an aggregate, deterministic supply figure for pricing.
-2. **Demand** (FR-ECO-1, job-system rework) is per active player in the
+2. **National redistribution** (`_redistribute`): this raw, per-district
+   production isn't what a district actually gets to sell -- every
+   district's production of a good is pooled nationally, the Capitol
+   takes `CAPITOL_CUT_FRACTION` off the top, and what's left is handed
+   back out to every district that trades that good (produces or
+   imports it) as a `MARKET_BASELINE_ALLOCATION_FRACTION` equal-share
+   floor plus a bonus split proportional to each trading district's
+   share of *total* national production value that day
+   (`_district_production_value`, summed across every good it produces,
+   not just this one). A district that produces a lot of everything
+   ends up with more of everything, including things it doesn't make
+   itself, and one that barely produces anything gets little even of
+   its own necessities -- this is what actually makes the market feel
+   "per-district" rather than uniform. Everything downstream (exports,
+   pricing) runs against this redistributed figure, not raw local
+   production.
+3. **Demand** (FR-ECO-1, job-system rework) is per active player in the
    district (one who's `/work`ed or proxied within
    `ACTIVE_PLAYER_WINDOW_SIM_DAYS`, `Character.last_active_tick`),
    weighted per good by whether the district produces it (baseline) or
@@ -26,32 +42,39 @@ Runs once per day (the same `ctx.tick % TICKS_PER_DAY == 0` gate as
    `README.md`'s "Notes on the job system rework" for what a fuller
    version would need (per-district/per-good need weights beyond the
    produces/imports heuristic, daily consumption tied to inventory).
-3. **Exports** (FR-ECO-6) move goods along `routes.yaml` from their
+4. **Exports** (FR-ECO-6) move goods along `routes.yaml` from their
    `from_` district, capped by each route's `capacity` and by the
-   district's remaining supply of that route's good (several routes can
-   share a `(from, good)` pair -- e.g. District 12's coal ships to five
-   different destinations -- so they're processed together against one
-   shared remaining-supply pool, in file order). Exporting reduces the
-   *local* supply used for that district's own price update (an exported
-   unit isn't for sale at home) and pays the exporting district's
-   treasury at that good's last-known local price. The Plan mentions
-   exports being "scaled by D6/D5 ratios"; that formula wasn't available
-   in this session's context, so this uses plain capacity/supply capping
-   instead -- revisit against the real spec.
-4. **Quota progress** (FR-ECO-5) is *not* total production -- it's
+   district's remaining (redistributed) supply of that route's good
+   (several routes can share a `(from, good)` pair -- e.g. District 12's
+   coal ships to five different destinations -- so they're processed
+   together against one shared remaining-supply pool, in file order).
+   Exporting reduces the *local* supply used for that district's own
+   price update (an exported unit isn't for sale at home) and pays the
+   exporting district's treasury at that good's last-known local price.
+   The Plan mentions exports being "scaled by D6/D5 ratios"; that
+   formula wasn't available in this session's context, so this uses
+   plain capacity/supply capping instead -- revisit against the real
+   spec.
+5. **Quota progress** (FR-ECO-5) is *not* total production -- it's
    specifically what a district exports to the Capitol (district 0) of
    its own quota good, matching every district's `routes.yaml` entry
    (each ships exactly its quota good to district 0). Evaluated at the
    first tick of a new month: `capitol_favor` moves up or down depending
    on whether the month's cumulative progress met `quota_target`, then
    `quota_progress` resets for the new month.
-5. **Shopkeeper top-up** (FR-ECO-9): an NPC whose job's `workplace` is a
+6. **Shopkeeper top-up** (FR-ECO-9): an NPC whose job's `workplace` is a
    `LocationKind.MARKET` location is treated as that market's shopkeeper.
    If their cash (`Npc.money`) is below their `float_target`, the
    district treasury tops them up (capped by what the treasury actually
    has) -- this is the cash a player's `/market sell` gets paid from.
-6. **Daily bulletin** (FR-ECO-8): one `Bulletin` per district summarizing
+7. **Daily bulletin** (FR-ECO-8): one `Bulletin` per district summarizing
    today's prices for its own produced/imported goods.
+
+`MarketPrice.supply` doubles as *today's remaining purchasable stock*,
+not just a pricing input -- `panem_bot.services.market.buy`/`sell` read
+and mutate it directly through the day. That's safe because this module
+fully overwrites it at the top of every day (`_update_prices`), so
+whatever a day's trading left it at never leaks into tomorrow's figure.
 """
 
 from __future__ import annotations
@@ -122,6 +145,68 @@ def _traded_goods(district: District) -> set[str]:
     """Goods this district's market deals in -- what it makes plus what
     it brings in from elsewhere (Spec §1: `produces`/`imports`)."""
     return set(district.produces) | set(district.imports)
+
+
+def _district_production_value(supply: Supply, ctx: TickContext) -> dict[int, float]:
+    """Each district's total daily production, valued at every good's
+    `base_price` and summed across everything that district made (not
+    just one good) -- the "10,000 worth of goods produced... District One
+    made 3,000 of it" ranking the redistribution below weights its bonus
+    share by. Deliberately uses raw production, before any Capitol
+    cut/redistribution, since this is what a district *made*, not what it
+    ends up able to sell."""
+    values: dict[int, float] = {}
+    for district_id, goods in supply.items():
+        total = 0.0
+        for good_id, qty in goods.items():
+            good = ctx.content.goods.get(good_id)
+            if good is not None:
+                total += qty * good.base_price
+        values[district_id] = total
+    return values
+
+
+def _redistribute(
+    raw_supply: Supply, district_values: dict[int, float], ctx: TickContext
+) -> Supply:
+    """Turns raw per-district production into what each district actually
+    gets to sell: every good's national total is pooled, the Capitol
+    takes `CAPITOL_CUT_FRACTION`, and what's left is split among the
+    districts that trade that good (produce or import it) as an equal
+    `MARKET_BASELINE_ALLOCATION_FRACTION` floor plus a bonus weighted by
+    each trading district's share of *national* production value
+    (`_district_production_value`) among just the districts trading this
+    good -- a district that makes a lot of everything outbids a poor one
+    even for goods neither of them produces. Falls back to an equal bonus
+    split if nobody trading this good produced anything of value at all
+    (a fresh world, or a good nobody's making yet), so the split stays
+    well-defined rather than dividing by zero."""
+    redistributed: Supply = {}
+    all_goods = {
+        good_id
+        for district in ctx.content.districts.values()
+        for good_id in _traded_goods(district)
+    }
+    for good_id in all_goods:
+        traders = [d for d in ctx.content.districts.values() if good_id in _traded_goods(d)]
+        if not traders:
+            continue
+        national_total = sum(raw_supply.get(d.id, {}).get(good_id, 0.0) for d in traders)
+        pool = national_total * (1 - constants.CAPITOL_CUT_FRACTION)
+        baseline_total = pool * constants.MARKET_BASELINE_ALLOCATION_FRACTION
+        bonus_total = pool - baseline_total
+        baseline_each = baseline_total / len(traders)
+
+        trader_value_total = sum(district_values.get(d.id, 0.0) for d in traders)
+        for district in traders:
+            if trader_value_total > 0:
+                bonus_share = (
+                    bonus_total * district_values.get(district.id, 0.0) / trader_value_total
+                )
+            else:
+                bonus_share = bonus_total / len(traders)
+            _add_supply(redistributed, district.id, good_id, baseline_each + bonus_share)
+    return redistributed
 
 
 def _active_player_count(state: WorldState, ctx: TickContext, district_id: int) -> int:
@@ -306,7 +391,9 @@ def run(state: WorldState, ctx: TickContext) -> list[AnyWorldEvent]:
     if ctx.tick % constants.TICKS_PER_DAY != 0:
         return []
 
-    supply = _combine_supply(_player_supply(state, ctx), _npc_supply(state, ctx))
+    raw_supply = _combine_supply(_player_supply(state, ctx), _npc_supply(state, ctx))
+    district_values = _district_production_value(raw_supply, ctx)
+    supply = _redistribute(raw_supply, district_values, ctx)
     quota_exports = _run_exports(state, ctx, supply)
     _update_prices(state, ctx, supply)
     _evaluate_quotas(state, ctx, quota_exports)

@@ -244,7 +244,9 @@ class TestPlayerSupply:
         economy.run(state, make_ctx(content))
 
         row = state.market_prices[(1, "coal")]
-        assert row.supply >= 5000.0
+        # District 1 is the only district trading coal, so it gets the
+        # whole national pool after the Capitol's cut.
+        assert row.supply == 5000.0 * (1 - constants.CAPITOL_CUT_FRACTION)
 
 
 class TestActivePlayerDemand:
@@ -343,11 +345,14 @@ class TestExports:
         economy.run(state, make_ctx(content))
 
         # NPC supply is an *expected* value (job.produces * NPC_JOB_COMPLETION_PROB
-        # = 1000 * 0.85 = 850), which comfortably exceeds the 100-capacity route,
-        # so capacity is the binding constraint here.
+        # = 1000 * 0.85 = 850), redistributed down to 850 * (1 - CAPITOL_CUT_FRACTION)
+        # = 765 since district 1 is the only district trading coal -- still
+        # comfortably exceeding the 100-capacity route, so capacity is the
+        # binding constraint here.
         assert district_row.treasury == 100.0 * 10.0  # capacity * base price (no prior row)
         row = state.market_prices[(1, "coal")]
-        assert row.supply == 850.0 - 100.0
+        redistributed = 850.0 * (1 - constants.CAPITOL_CUT_FRACTION)
+        assert row.supply == redistributed - 100.0
 
     def test_export_capped_by_available_supply_not_just_capacity(self):
         district = make_district(1, produces=["coal"], population_base=10)
@@ -361,10 +366,14 @@ class TestExports:
 
         economy.run(state, make_ctx(content))
 
-        # Expected supply (50 * NPC_JOB_COMPLETION_PROB = 42.5) is well below
-        # the route's 1000 capacity, so supply is the binding constraint.
-        expected_supply = 50.0 * constants.NPC_JOB_COMPLETION_PROB
-        assert district_row.treasury == expected_supply * 10.0
+        # Expected supply (50 * NPC_JOB_COMPLETION_PROB = 42.5), redistributed
+        # down to 42.5 * (1 - CAPITOL_CUT_FRACTION) = 38.25, is well below the
+        # route's 1000 capacity, so the redistributed supply is the binding
+        # constraint.
+        redistributed = (
+            50.0 * constants.NPC_JOB_COMPLETION_PROB * (1 - constants.CAPITOL_CUT_FRACTION)
+        )
+        assert district_row.treasury == redistributed * 10.0
         row = state.market_prices[(1, "coal")]
         assert row.supply == constants.MARKET_SUPPLY_FLOOR
 
@@ -381,9 +390,96 @@ class TestExports:
 
         economy.run(state, make_ctx(content))
 
-        # Expected supply is 100 * NPC_JOB_COMPLETION_PROB = 85. Route A (listed
-        # first) takes 80 of it, leaving only 5 for route B.
-        assert district_row.treasury == (80.0 + 5.0) * 10.0
+        # Redistributed supply is 100 * NPC_JOB_COMPLETION_PROB * (1 -
+        # CAPITOL_CUT_FRACTION) = 76.5. Route A (listed first) takes all of
+        # it, leaving nothing for route B.
+        redistributed = (
+            100.0 * constants.NPC_JOB_COMPLETION_PROB * (1 - constants.CAPITOL_CUT_FRACTION)
+        )
+        assert district_row.treasury == redistributed * 10.0
+
+
+class TestRedistribution:
+    def test_capitol_cut_removes_a_fixed_fraction_of_national_production(self):
+        district = make_district(1, produces=["coal"], population_base=1)
+        good = make_good("coal", base_price=10.0)
+        job = make_job(id="miner", district=1, produces={"coal": 1000.0})
+        content = make_content([district], [good], [job])
+        npc = make_npc("n1", district_id=1, job_id="miner")
+        state = make_state(districts={1: make_district_row(1)}, npcs={"n1": npc})
+
+        economy.run(state, make_ctx(content))
+
+        raw = 1000.0 * constants.NPC_JOB_COMPLETION_PROB
+        row = state.market_prices[(1, "coal")]
+        # District 1 is the only district trading coal, so its whole
+        # allocation is the post-cut national pool.
+        assert row.supply == raw * (1 - constants.CAPITOL_CUT_FRACTION)
+
+    def test_baseline_split_is_equal_across_trading_districts_regardless_of_value(self):
+        producer = make_district(1, produces=["coal"], population_base=1)
+        importer = make_district(2, imports=["coal"], population_base=1)
+        good = make_good("coal", base_price=10.0)
+        job = make_job(id="miner", district=1, produces={"coal": 1000.0})
+        content = make_content([producer, importer], [good], [job])
+        npc = make_npc("n1", district_id=1, job_id="miner")
+        state = make_state(
+            districts={1: make_district_row(1), 2: make_district_row(2)}, npcs={"n1": npc}
+        )
+
+        economy.run(state, make_ctx(content))
+
+        raw = 1000.0 * constants.NPC_JOB_COMPLETION_PROB
+        pool = raw * (1 - constants.CAPITOL_CUT_FRACTION)
+        expected_baseline_each = pool * constants.MARKET_BASELINE_ALLOCATION_FRACTION / 2
+        importer_row = state.market_prices[(2, "coal")]
+        # District 2 produced none of the national value, so its whole
+        # allocation is the equal baseline share -- not zero, even though
+        # it made nothing of this good itself.
+        assert importer_row.supply == expected_baseline_each
+
+    def test_bonus_share_tracks_national_production_value_not_local_production(self):
+        rich = make_district(1, produces=["coal"], imports=["grain"], population_base=1)
+        poor = make_district(2, produces=["grain"], imports=["coal"], population_base=1)
+        coal = make_good("coal", base_price=10.0)
+        grain = make_good("grain", base_price=1.0)
+        coal_job = make_job(id="miner", district=1, produces={"coal": 900.0})
+        grain_job = make_job(id="farmer", district=2, produces={"grain": 100.0})
+        content = make_content([rich, poor], [coal, grain], [coal_job, grain_job])
+        state = make_state(
+            districts={1: make_district_row(1), 2: make_district_row(2)},
+            npcs={
+                "n1": make_npc("n1", district_id=1, job_id="miner"),
+                "n2": make_npc("n2", district_id=2, job_id="farmer"),
+            },
+        )
+
+        economy.run(state, make_ctx(content))
+
+        # District 1's coal production is worth far more (900 * 10 = 9000)
+        # than district 2's grain (100 * 1 = 100), so district 1 gets the
+        # bulk of the bonus share of *every* good, including grain -- which
+        # it doesn't produce at all.
+        rich_grain_row = state.market_prices[(1, "grain")]
+        poor_grain_row = state.market_prices[(2, "grain")]
+        assert rich_grain_row.supply > poor_grain_row.supply
+
+    def test_no_national_production_falls_back_to_an_equal_split(self):
+        a = make_district(1, imports=["coal"], population_base=1)
+        b = make_district(2, imports=["coal"], population_base=1)
+        good = make_good("coal", base_price=10.0)
+        content = make_content([a, b], [good])
+        state = make_state(districts={1: make_district_row(1), 2: make_district_row(2)})
+
+        economy.run(state, make_ctx(content))
+
+        row_a = state.market_prices[(1, "coal")]
+        row_b = state.market_prices[(2, "coal")]
+        # No one produced any coal at all, so both districts' redistributed
+        # allocation is 0 -- `_update_prices` floors that at
+        # MARKET_SUPPLY_FLOOR for pricing purposes, same as any other good
+        # nobody's making yet.
+        assert row_a.supply == row_b.supply == constants.MARKET_SUPPLY_FLOOR
 
 
 class TestQuotas:

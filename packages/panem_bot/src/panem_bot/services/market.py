@@ -71,6 +71,31 @@ async def get_price(session: AsyncSession, district_id: int, good: Good) -> floa
     return row.price if row is not None else good.base_price
 
 
+async def _reserve_stock(session: AsyncSession, district_id: int, good: Good, qty: int) -> None:
+    """`MarketPrice.supply` doubles as today's remaining purchasable stock
+    (`panem_sim.systems.economy`'s module docstring), so a buy has to
+    check and consume it -- "a finite amount of goods each day" means a
+    district that's already sold out of something today can't sell more
+    of it, however much money a buyer has. No row yet (a fresh world, or
+    a good `panem_sim.systems.economy` hasn't priced today) means nothing
+    has been allocated to check against yet, so this is a no-op rather
+    than manufacturing a stock figure of its own."""
+    row = await session.get(MarketPrice, (district_id, good.id))
+    if row is None:
+        return
+    if row.supply < qty:
+        raise NotAllowed("market_insufficient_stock", good=good.name)
+    row.supply -= qty
+
+
+async def _return_stock(session: AsyncSession, district_id: int, good: Good, qty: int) -> None:
+    """The other half of `_reserve_stock` -- a sale puts units back into
+    local circulation for someone else to buy the same day."""
+    row = await session.get(MarketPrice, (district_id, good.id))
+    if row is not None:
+        row.supply += qty
+
+
 async def _adjust_inventory(
     session: AsyncSession, character: Character, good_id: str, delta: int
 ) -> int:
@@ -130,6 +155,7 @@ async def buy(
     total = round(qty * price)
     if character.money < total:
         raise NotAllowed("market_insufficient_funds", name=character.name)
+    await _reserve_stock(session, district.id, good, qty)
 
     character.money -= total
     await _adjust_inventory(session, character, good_id, qty)
@@ -170,6 +196,7 @@ async def sell(
     total = round(qty * price)
 
     await _adjust_inventory(session, character, good_id, -qty)
+    await _return_stock(session, district.id, good, qty)
     character.money += total
     session.add(
         MarketOrder(

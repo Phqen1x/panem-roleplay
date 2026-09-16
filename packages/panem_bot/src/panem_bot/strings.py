@@ -109,6 +109,7 @@ STRINGS: dict[str, str] = {
     "market_good_not_traded": "That good isn't bought or sold in this district.",
     "market_insufficient_funds": "**{name}** can't afford that.",
     "market_insufficient_inventory": "**{name}** doesn't have that many to sell.",
+    "market_insufficient_stock": "The market doesn't have that much {good} left today.",
     "market_no_goods_traded": "Nothing is bought or sold in this district yet.",
     "market_bought_ok": "**{name}** buys {qty}x {good} for {total} money.",
     "market_sold_ok": "**{name}** sells {qty}x {good} for {total} money.",

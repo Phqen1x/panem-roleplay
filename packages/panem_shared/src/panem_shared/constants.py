@@ -130,6 +130,26 @@ PRICE_EMA_ALPHA = 0.2
 SELL_DISCOUNT = 0.85
 ILLICIT_PRICE_MULT = 0.6
 
+CAPITOL_CUT_FRACTION = 0.10
+"""The Capitol's off-the-top skim of every good's *national* daily
+production (`panem_sim.systems.economy`'s redistribution pass), before
+what's left is divided back up among the districts that trade it. Applies
+uniformly to every good -- there's no per-good tax rate to author or keep
+in sync as goods change."""
+
+MARKET_BASELINE_ALLOCATION_FRACTION = 0.10
+"""Of what's left after `CAPITOL_CUT_FRACTION`, this share of a good's
+national pool is split *equally* across every district that trades it
+(produces or imports it) regardless of how much any of them actually
+produced -- a floor so even a district that made none of a good itself
+still gets some. The remaining `1 - MARKET_BASELINE_ALLOCATION_FRACTION`
+is split proportional to each trading district's share of *total*
+national production value that day (`panem_sim.systems.economy.
+_district_production_value`) -- a district that produces a lot of
+everything gets more of everything, including goods it doesn't make
+itself, the same way a real wealthy region can outbid a poor one for
+imports."""
+
 CRISIS_THRESHOLDS = [0.15, 0.35, 0.55, 0.75]
 CRISIS_RECOVERY_DAYS = 3
 
