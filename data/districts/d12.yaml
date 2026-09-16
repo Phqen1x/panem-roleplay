@@ -11,6 +11,7 @@ imports:
 - power
 - produce
 - textiles
+- transport
 quota:
   good: coal
   amount: 1200

@@ -3,12 +3,14 @@ name: District Four
 industry: fish
 produces:
 - fish
+- career_training
 imports:
 - grain
 - medicine
 - power
 - produce
 - textiles
+- transport
 population_base: 7500
 culture:
   tone:
@@ -59,6 +61,12 @@ locations:
   access_jobs:
   - d4_netcaster
   - d4_smoker
+- id: academy
+  name: The Academy
+  kind: workplace
+  capacity: 60
+  job_ids:
+  - d4_academy_trainer
 map:
   image: maps/d4.png
   width: 1600
@@ -85,6 +93,9 @@ map:
     outskirts:
     - 1400
     - 800
+    academy:
+    - 1000
+    - 300
 quota:
   good: fish
   amount: 1000

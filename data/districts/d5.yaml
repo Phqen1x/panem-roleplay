@@ -10,6 +10,7 @@ imports:
 - medicine
 - produce
 - textiles
+- transport
 population_base: 6500
 culture:
   tone:

@@ -11,6 +11,7 @@ imports:
 - medicine
 - power
 - produce
+- transport
 population_base: 8500
 culture:
   tone:

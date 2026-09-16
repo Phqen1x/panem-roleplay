@@ -13,6 +13,7 @@ imports:
 - power
 - produce
 - textiles
+- transport
 - weapons
 population_base: 150000
 culture:

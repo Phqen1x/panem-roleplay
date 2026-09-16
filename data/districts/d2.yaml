@@ -1,9 +1,10 @@
 id: 2
 name: District Two
-industry: masonry
+industry: stone
 produces:
 - masonry
 - weapons
+- career_training
 imports:
 - fish
 - grain
@@ -12,6 +13,7 @@ imports:
 - power
 - produce
 - textiles
+- transport
 population_base: 9000
 culture:
   tone:

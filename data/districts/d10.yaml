@@ -10,6 +10,7 @@ imports:
 - power
 - produce
 - textiles
+- transport
 population_base: 7500
 culture:
   tone:

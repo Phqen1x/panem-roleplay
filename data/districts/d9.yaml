@@ -3,6 +3,7 @@ name: District Nine
 industry: grain
 produces:
 - grain
+- career_training
 imports:
 - coal
 - fish
@@ -10,6 +11,7 @@ imports:
 - power
 - produce
 - textiles
+- transport
 population_base: 8500
 culture:
   tone:
@@ -60,6 +62,12 @@ locations:
   access_jobs:
   - d9_thresher
   - d9_miller
+- id: academy
+  name: The Academy
+  kind: workplace
+  capacity: 60
+  job_ids:
+  - d9_academy_trainer
 map:
   image: maps/d9.png
   width: 1600
@@ -86,6 +94,9 @@ map:
     outskirts:
     - 1400
     - 800
+    academy:
+    - 1000
+    - 300
 quota:
   good: grain
   amount: 1400

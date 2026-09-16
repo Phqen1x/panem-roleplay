@@ -52,6 +52,18 @@ class TestRealContentFiles:
             "station",
         } <= location_ids
 
+    def test_career_districts_produce_career_training_via_an_academy_job(self):
+        bundle = load_content(REPO_DATA_DIR)
+        for district_id in (1, 2, 4, 9):
+            district = bundle.district(district_id)
+            assert "career_training" in district.produces
+            location_ids = {loc.id for loc in district.locations}
+            assert "academy" in location_ids
+            academy_jobs = [j for j in bundle.jobs.values() if j.workplace == "academy"]
+            assert any(
+                j.district == district_id and "career_training" in j.produces for j in academy_jobs
+            )
+
     def test_every_district_has_authored_npcs(self):
         """`scripts/npc_generate.py` has been run for every shipped
         district (Phase 3 content authoring) -- a district with none

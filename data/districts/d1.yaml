@@ -3,6 +3,7 @@ name: District One
 industry: luxury_goods
 produces:
 - luxury_goods
+- career_training
 imports:
 - fish
 - grain
@@ -11,6 +12,7 @@ imports:
 - power
 - produce
 - textiles
+- transport
 population_base: 6000
 culture:
   tone:
