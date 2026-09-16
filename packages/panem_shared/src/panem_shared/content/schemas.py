@@ -119,15 +119,6 @@ class Good(BaseModel):
     perishable: bool = False
     category: str
     rationed: bool = False
-    kind: str = "commodity"  # "commodity" | "ticket" (Spec §2.4)
-
-    @model_validator(mode="after")
-    def _check_kind(self) -> Good:
-        if self.kind not in {"commodity", "ticket"}:
-            raise ValueError(
-                f"good {self.id}: kind must be 'commodity' or 'ticket', got {self.kind!r}"
-            )
-        return self
 
 
 class JobOption(BaseModel):

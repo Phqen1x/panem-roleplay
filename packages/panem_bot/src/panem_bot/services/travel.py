@@ -6,12 +6,15 @@ from __future__ import annotations
 
 import random
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from panem_bot.errors import NotAllowed, NotFound
 from panem_bot.services.proxy import has_location_access
+from panem_shared import constants
 from panem_shared.constants import CAPITOL_DISTRICT_ID
 from panem_shared.content.schemas import District, Location
-from panem_shared.db.models import Character
-from panem_shared.enums import CharacterStatus, LocationKind, Position
+from panem_shared.db.models import Character, Inventory
+from panem_shared.enums import CharacterStatus, LocationKind, OwnerKind, Position
 
 
 def resolve_location(district: District, location_id: str) -> Location:
@@ -56,10 +59,6 @@ def resolve_station(district: District) -> Location:
     return station
 
 
-def ticket_good_id(destination_id: int) -> str:
-    return f"train_ticket_d{destination_id}"
-
-
 def is_free_victor_route(character: Character, origin_id: int, destination_id: int) -> bool:
     """A Victor's ticket between their home district and the Capitol is
     free in either direction -- Victors are expected to move between the
@@ -95,10 +94,9 @@ def check_can_travel_district(
 ) -> None:
     """FR-LOC-7/8/9. `district` is the character's current district
     (`current_district_id`'s content), not their home. Raises
-    `NotAllowed`/`NotFound` on refusal; doesn't check money -- the ticket
-    price depends on content the caller already has to look up
-    separately (`ticket_good_id` + `ContentBundle.goods`), so that check
-    stays in the cog alongside the actual deduction."""
+    `NotAllowed`/`NotFound` on refusal; doesn't check transport stock --
+    that's a DB-backed `Inventory` lookup, so it stays in `spend_transport`
+    below rather than duplicated here."""
     if character.status == CharacterStatus.DEAD.value:
         raise NotAllowed("character_dead")
     if character.status != CharacterStatus.APPROVED.value:
@@ -115,3 +113,25 @@ def check_can_travel_district(
     station = resolve_station(district)
     if character.location_id != station.id:
         raise NotAllowed("travel_not_at_station", name=character.name, station=station.name)
+
+
+async def spend_transport(session: AsyncSession, character: Character) -> None:
+    """Deducts `TRANSPORT_UNITS_PER_TRIP` units of the `transport` good
+    from `character`'s `Inventory` to cover one cross-district round trip
+    -- the replacement for the old flat per-destination cash ticket price.
+    Raises `NotAllowed` if they haven't banked enough (bought at a
+    district market like any other good, via `/market buy transport`).
+    The caller skips calling this entirely for a free route (`is_free_
+    route`/`is_free_victor_route`), same as it used to skip the cash
+    deduction."""
+    row = await session.get(
+        Inventory,
+        (OwnerKind.CHARACTER.value, str(character.id), constants.TRANSPORT_GOOD_ID),
+    )
+    if row is None or row.qty < constants.TRANSPORT_UNITS_PER_TRIP:
+        raise NotAllowed(
+            "travel_insufficient_transport",
+            name=character.name,
+            qty=constants.TRANSPORT_UNITS_PER_TRIP,
+        )
+    row.qty -= constants.TRANSPORT_UNITS_PER_TRIP

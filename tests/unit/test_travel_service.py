@@ -4,9 +4,10 @@ import pytest
 
 from panem_bot.errors import NotAllowed, NotFound
 from panem_bot.services import travel as travel_svc
+from panem_shared import constants
 from panem_shared.content.schemas import District, DistrictCulture, DistrictMap, Location
-from panem_shared.db.models import Character
-from panem_shared.enums import CharacterStatus
+from panem_shared.db.models import Character, Inventory
+from panem_shared.enums import CharacterStatus, OwnerKind
 
 
 def make_district() -> District:
@@ -100,10 +101,55 @@ class TestResolveStation:
         assert station.id == "station"
 
 
-class TestTicketGoodId:
-    def test_builds_the_per_district_ticket_id(self):
-        assert travel_svc.ticket_good_id(0) == "train_ticket_d0"
-        assert travel_svc.ticket_good_id(12) == "train_ticket_d12"
+class TestSpendTransport:
+    async def test_insufficient_transport_raises_and_changes_nothing(self, db_session):
+        character = make_character()
+        character.id = 1
+        db_session.add(
+            Inventory(
+                owner_kind=OwnerKind.CHARACTER.value,
+                owner_id="1",
+                good_id=constants.TRANSPORT_GOOD_ID,
+                qty=1,
+            )
+        )
+        await db_session.flush()
+
+        with pytest.raises(NotAllowed) as exc_info:
+            await travel_svc.spend_transport(db_session, character)
+        assert exc_info.value.reason_key == "travel_insufficient_transport"
+
+        row = await db_session.get(
+            Inventory, (OwnerKind.CHARACTER.value, "1", constants.TRANSPORT_GOOD_ID)
+        )
+        assert row.qty == 1
+
+    async def test_no_inventory_row_at_all_is_treated_as_zero(self, db_session):
+        character = make_character()
+        character.id = 1
+        with pytest.raises(NotAllowed) as exc_info:
+            await travel_svc.spend_transport(db_session, character)
+        assert exc_info.value.reason_key == "travel_insufficient_transport"
+
+    async def test_sufficient_transport_is_deducted(self, db_session):
+        character = make_character()
+        character.id = 1
+        db_session.add(
+            Inventory(
+                owner_kind=OwnerKind.CHARACTER.value,
+                owner_id="1",
+                good_id=constants.TRANSPORT_GOOD_ID,
+                qty=5,
+            )
+        )
+        await db_session.flush()
+
+        await travel_svc.spend_transport(db_session, character)
+
+        row = await db_session.get(
+            Inventory, (OwnerKind.CHARACTER.value, "1", constants.TRANSPORT_GOOD_ID)
+        )
+        assert row.qty == 5 - constants.TRANSPORT_UNITS_PER_TRIP
 
 
 class TestIsFreeVictorRoute:

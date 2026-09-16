@@ -264,10 +264,8 @@ def _district_block(district: District, bundle: ContentBundle) -> str:
 
 
 def _goods_line(goods: Mapping[str, Good]) -> str:
-    commodities = [g for g in goods.values() if g.kind == "commodity"]
-    tickets = [g for g in goods.values() if g.kind == "ticket"]
     parts: list[str] = []
-    for good in sorted(commodities, key=lambda g: g.base_price):
+    for good in sorted(goods.values(), key=lambda g: g.base_price):
         note = [good.category]
         if good.rationed:
             note.append("rationed")
@@ -277,11 +275,9 @@ def _goods_line(goods: Mapping[str, Good]) -> str:
     line = "Goods and their base prices: " + " | ".join(parts) + "."
     line += (
         " Only the food-category goods here are things a person eats -- fuel, materials, "
-        "industrial and utility goods are shipped or used, never consumed."
+        "industrial and utility goods are shipped or used, never consumed; transport is spent "
+        "on train travel."
     )
-    if tickets:
-        price = tickets[0].base_price
-        line += f" A train ticket to any district costs {price:g}."
     return line
 
 
@@ -312,9 +308,11 @@ def render_world_rules() -> str:
             f"- Quotas and crises: each district owes the Capitol a monthly quota. Shortfalls escalate "
             f"through four crisis levels (at {crisis} short) and take about {c.CRISIS_RECOVERY_DAYS} "
             "days to recover from; crises mean hunger, blackouts, layoffs and more Peacekeepers.",
-            f"- Travel: a train ticket costs {c.TICKET_BASE} and the journey takes {c.TRANSIT_TICKS} "
-            f"hours; a job tolerates {c.AWAY_GRACE_DAYS} days away before counting you absent. "
-            "Travel needs a ticket and Peacekeeper paperwork; most district folk never leave.",
+            f"- Travel: a round trip costs {c.TRANSPORT_UNITS_PER_TRIP} units of transport, bought at "
+            f"a district market like any other good, and the journey takes {c.TRANSIT_TICKS} hours; a "
+            f"job tolerates {c.AWAY_GRACE_DAYS} days away before counting you absent. A poor district "
+            "can run short of transport the same way it runs short of anything else; most district "
+            "folk never leave.",
             f"- Stances: every NPC holds an affinity toward each character. Below {stance_lo} they hate, "
             f"below {stance_dis} they dislike, above {stance_like} they like, above {stance_love} they "
             f"love; anything else is neutral, and 'stranger' means you have never met. Love and hate "

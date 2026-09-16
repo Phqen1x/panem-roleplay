@@ -79,7 +79,7 @@ class TestRenderedPrompt:
         assert f"at most {constants.MAX_WORDS_REPLY} words" in prompt
         assert f"start with {constants.STARTING_MONEY}" in prompt
         assert f"up to {constants.MEMORY_CAP_PER_NPC} memories" in prompt
-        assert str(constants.TICKET_BASE) in prompt
+        assert str(constants.TRANSPORT_UNITS_PER_TRIP) in prompt
 
     def test_every_request_mode_is_taught(self, prompt):
         for mode in omni.RequestMode:

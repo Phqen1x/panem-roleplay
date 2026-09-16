@@ -205,7 +205,23 @@ dialogue request's `[SPEAKER]` block for this pair, so it has to stay
 short enough not to dominate the prompt the way an ever-growing transcript
 would."""
 
-TICKET_BASE = 20
+TRANSPORT_GOOD_ID = "transport"
+"""The one good every cross-district trip spends units of -- District
+Six's own quota good (`data/districts/d6.yaml`) -- replacing the old
+flat per-destination cash ticket (`train_ticket_d{N}`, one synthetic good
+per district that never participated in real supply/demand at all).
+Buying it at a district market like any other good, then spending it to
+travel, means a district's access to travel is subject to the same
+national redistribution (`CAPITOL_CUT_FRACTION`/`MARKET_BASELINE_
+ALLOCATION_FRACTION`) as everything else -- a poor district can end up
+with genuinely scarce, pricier tickets, not just a fixed toll."""
+TRANSPORT_UNITS_PER_TRIP = 2
+"""How many units of `TRANSPORT_GOOD_ID` one `/travel district:<id>` costs
+-- covers the whole round trip (there and back) in one purchase, per "you
+need to purchase 2 units of transportation to go anywhere and then back
+home." A free route (`panem_bot.services.travel.is_free_route`/
+`is_free_victor_route`) skips this entirely, same as it used to skip the
+cash price."""
 TRANSIT_TICKS = 4
 AWAY_GRACE_DAYS = 18
 """In sim-days, not real ones -- at the default `TICK_INTERVAL_SECONDS`

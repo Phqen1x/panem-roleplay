@@ -107,16 +107,8 @@ class TravelCog(commands.Cog):
                     destination_id=destination_id,
                     current_tick=current_tick,
                 )
-                good = self.bot.content.goods.get(  # type: ignore[attr-defined]
-                    travel_svc.ticket_good_id(destination_id)
-                )
-                if good is None:
-                    raise NotFound("travel_no_route")
-                price = round(good.base_price)
-                if travel_svc.is_free_route(char, origin_district.id, destination_id):
-                    price = 0
-                if char.money < price:
-                    raise NotAllowed("travel_insufficient_funds", name=char.name, price=price)
+                if not travel_svc.is_free_route(char, origin_district.id, destination_id):
+                    await travel_svc.spend_transport(session, char)
             except (NotFound, NotAllowed) as exc:
                 await interaction.response.send_message(
                     t(exc.reason_key, **exc.fmt), ephemeral=True
@@ -124,7 +116,6 @@ class TravelCog(commands.Cog):
                 return
 
             destination_district = self.bot.content.district(destination_id)  # type: ignore[attr-defined]
-            char.money -= price
             char.in_transit_until_tick = current_tick + constants.TRANSIT_TICKS
             char.transit_destination_id = destination_id
             if char.current_district_id == char.district_id:

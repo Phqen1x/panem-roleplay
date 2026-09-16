@@ -69,8 +69,10 @@ STRINGS: dict[str, str] = {
     "travel_already_in_transit": "**{name}** is already on a train -- check `/character status`.",
     "travel_same_district": "**{name}** is already there.",
     "travel_not_at_station": "**{name}** needs to be at **{station}** to catch a train.",
-    "travel_no_route": "There's no train route to that district.",
-    "travel_insufficient_funds": "**{name}** can't afford the {price}-coin ticket.",
+    "travel_insufficient_transport": (
+        "**{name}** doesn't have {qty} units of transport banked for the trip -- "
+        "buy some at a district market first."
+    ),
     "travel_district_ok": (
         "**{name}** boards a train for **{district}** -- arriving in {ticks} ticks."
     ),
