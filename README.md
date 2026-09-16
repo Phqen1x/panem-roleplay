@@ -1810,3 +1810,82 @@ the incoming message, clamped to `[MIN_WORDS_REPLY, MAX_WORDS_REPLY]`. A one-wor
 gets a short answer instead of room to ramble up to the old flat cap, while a longer message
 still gets real room to respond, up to the same overall ceiling as before. Applied to both
 `/talk`/`/engage` replies and NPC-to-NPC ambient chatter.
+
+## Notes on the economy rework (minigame-tied production, national redistribution, career districts, transport-as-a-good travel, poaching)
+
+A detailed spec covering five things, delivered as five milestones/commits:
+
+**1. Good production now tracks the minigame's outcome, not just whether a shift got
+worked.** `resolve_shift_game` (`panem_shared/shifts.py`) used to produce exactly one unit of
+the district's quota good on every completed shift, win or lose. Now: a win produces one unit
+plus a job-level-scaled chance (`JOB_LEVEL_BONUS_GOOD_CHANCE`, 5% Apprentice up to 60% Expert)
+at a second unit, on top of the existing win wage boost; a real loss produces nothing, on top
+of the existing lose wage penalty; a skipped/neutral shift is unchanged -- exactly one unit at
+the unmodified wage. `resolve_shift_game` takes an optional `rng: random.Random` for the bonus
+roll (defaults to a fresh one per call, same shape `market.py`'s `buy`/`sell` already use).
+
+**2. The market is now a genuinely finite, per-district, nationally-redistributed pool, not
+just locally-priced local production.** `panem_sim.systems.economy.run()` used to feed a
+district's own raw production straight into its own price update -- what District One made was
+the only thing that mattered for District One's market. Added a redistribution pass
+(`_district_production_value`, `_redistribute`) that runs between computing raw supply and
+everything downstream of it: every good's national total (summed across every district that
+makes it) has `CAPITOL_CUT_FRACTION` (10%) taken off the top, and what's left is split among
+every district that trades that good (produces or imports it) as an equal
+`MARKET_BASELINE_ALLOCATION_FRACTION` (10%) floor plus a bonus weighted by each trading
+district's share of *total national production value that day* (summed across everything it
+makes, not just this one good) -- a district that produces a lot of everything ends up with
+more of everything, including things it doesn't make itself, and a poor one gets little even of
+its own necessities. Exports and pricing (`_run_exports`, `_update_prices`) run against this
+redistributed figure now, not raw local production -- several `TestExports` assertions moved
+accordingly (the same capacity/supply-capping logic, just against smaller, post-cut numbers).
+`MarketPrice.supply` also stopped being purely informational: it's now today's actual
+remaining purchasable stock, checked and decremented by `/market buy` (a new
+`market_insufficient_stock` refusal once a district's daily allocation of a good runs out) and
+incremented by `/market sell`. This is what makes "a finite amount of goods each day" concrete
+rather than just a price signal.
+
+**3. District goods realigned to the canon list, plus a new Career Training resource.**
+`data/goods.yaml` display names updated to match (Fish -> Seafood, Livestock -> Meats, Produce
+-> Fruits/Drinks, Masonry -> Stone) without touching any `id`s, so `routes.yaml`/jobs/tests
+keep working unchanged -- the underlying industries already matched the requested list
+one-for-one otherwise. Added a `career_training` good, produced only by the four career
+districts (1, 2, 4, 9) via a new academy job in each (`d1_academy_trainer`/`d2_academy_trainer`
+already existed; District Four and Nine got their own new `academy` location + trainer job to
+match). It's never added to any district's `imports`, so it only ever trades within its four
+producing districts, but still counts in full toward their national production-value ranking
+from part 2 above -- "converted to value" without a special-cased value path. Every district's
+`imports` also gained `transport` (needed for part 4 below, and for its own sake: everyone
+needs some baseline transport allocation even if they don't produce any).
+
+**4. Travel now spends units of a real good instead of a flat cash ticket.** The old system
+charged cash at one of 13 synthetic per-destination `train_ticket_d{N}` goods' flat
+`base_price` -- goods that were never in any district's `produces`/`imports`, so they never
+participated in real supply/demand at all, just a fixed toll. Retired all 13 (and the now-
+pointless `Good.kind` "commodity"/"ticket" discriminator they existed for) in favor of the one
+`transport` good District Six already produces: `/travel district:<id>` now spends
+`TRANSPORT_UNITS_PER_TRIP` (2, covering the round trip) from the character's `Inventory`
+(`travel_svc.spend_transport`), bought at a district market like any other good. A free route
+(home return, a Victor's home<->Capitol route) still skips this entirely, same as it used to
+skip the cash deduction. This plugs travel into the same national redistribution as everything
+else -- a poor district's transport allocation can run genuinely short, not just cost a fixed
+amount.
+
+**5. `/poach`: illegal hunting/gathering when the market allocation isn't enough.** New command,
+new `panem_bot/services/poaching.py` -- a character at their district's `kind: outskirts`
+location (the Capitol has none, so poaching is unavailable there) can attempt to poach a unit
+of the district's primary food good (whatever it produces, falling back to whatever food it
+imports) instead of buying it. Reuses the exact detection/consequence shape
+`market.py`'s illicit-market catch already established: a probability roll
+(`POACH_DETECTION_PROB`), then on a catch a fine, jail time, a reputation hit, and a district
+`peacekeeper_pressure` bump (`POACH_FINE`/`POACH_JAIL_TICKS`/`POACH_REP_PENALTY`); on success,
+`POACH_YIELD_QTY` units land in `Inventory`, no roleplay judgment call needed. Deliberately
+scoped to just this mechanic -- "stealing from NPCs" stays something a GM/player narrates,
+since fairly automating theft from a specific NPC needs judgment a formula can't make well.
+
+**What this pass does not build**: "NPCs also need to comment only briefly... unless it's
+specifically relevant" and "don't volunteer unrelated information" were already covered by
+existing `system_prompt.md` rules from the dialogue/memory work above and needed no change. No
+new UI surfaces a district's daily production-value rank directly (it only drives the
+redistribution math internally) -- a `/district rank` command or similar is real follow-up
+scope if players want to see it.
