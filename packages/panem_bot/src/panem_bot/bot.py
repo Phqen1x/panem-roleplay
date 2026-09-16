@@ -42,6 +42,7 @@ COGS = (
     "panem_bot.cogs.jobs",
     "panem_bot.cogs.residents",
     "panem_bot.cogs.market",
+    "panem_bot.cogs.poaching",
     "panem_bot.cogs.dialogue",
     "panem_bot.cogs.housing",
     "panem_bot.cogs.engagements",

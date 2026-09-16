@@ -119,6 +119,13 @@ STRINGS: dict[str, str] = {
         " A peacekeeper notices -- fined {fine} money and held for {jail_ticks} ticks."
     ),
     "inventory_empty": "**{name}** isn't carrying anything.",
+    "poach_no_outskirts": "There's nowhere to poach in this district.",
+    "poach_not_at_outskirts": "**{name}** needs to be at **{location}** to try poaching.",
+    "poach_nothing_to_poach": "There's nothing worth poaching here.",
+    "poach_ok": "**{name}** slips back with {qty}x {good}, unseen.",
+    "poach_caught": (
+        "**{name}** is caught poaching -- fined {fine} money and held for {jail_ticks} ticks."
+    ),
     # Housing (buying/renting houses/apartments/inns, fatigue, sleep)
     "housing_not_found": "No property by that id.",
     "housing_nothing_available": "Nothing is available in this district right now.",

@@ -539,3 +539,19 @@ NPC_CHATTER_MIN_LINES = 2
 NPC_CHATTER_MAX_LINES = 4
 """A random NPC-NPC exchange runs this many lines total, alternating
 speakers -- "should only last a few messages"."""
+
+POACH_DETECTION_PROB = 0.1
+POACH_FINE = 30
+POACH_JAIL_TICKS = 12
+POACH_REP_PENALTY = 15
+"""Illegal hunting/gathering at a district's outskirts -- the coping
+mechanism for a national good allocation (`panem_sim.systems.economy`'s
+redistribution) too thin to live on. Mirrors `MARKET_ILLICIT_DETECTION_
+PROB`/`MARKET_ILLICIT_FINE`/`MARKET_ILLICIT_JAIL_TICKS`/`REP_ILLICIT_
+CAUGHT_PENALTY` exactly -- getting caught poaching is no better or worse
+than getting caught at an illicit market stall."""
+POACH_YIELD_QTY = 1
+"""Units of the district's primary food good a successful, uncaught
+attempt yields -- deliberately modest (an /work shift's `PLAYER_SHIFT_
+OUTPUT_QTY` is the same order of magnitude), so poaching supplements a
+short market allocation rather than replacing it outright."""
