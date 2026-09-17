@@ -74,6 +74,15 @@ class TestRealContentFiles:
             assert any(loc.illicit for loc in district.locations), district_id
         assert bundle.district(0).illicit_produces == []
 
+    def test_every_district_with_illicit_goods_has_exactly_one_fence_npc(self):
+        bundle = load_content(REPO_DATA_DIR)
+        for district_id in range(1, 13):
+            fences = [
+                npc for npc in bundle.npcs_for_district(district_id) if npc.black_market_contact
+            ]
+            assert len(fences) == 1, district_id
+        assert not any(npc.black_market_contact for npc in bundle.npcs_for_district(0))
+
     def test_every_district_has_authored_npcs(self):
         """`scripts/npc_generate.py` has been run for every shipped
         district (Phase 3 content authoring) -- a district with none

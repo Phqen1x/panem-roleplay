@@ -2,6 +2,7 @@
   district: 6
   name: Kellan Marrow
   age: 53
+  black_market_contact: true
   job_id: d6_dispatcher
   home_location_id: residential
   traits:

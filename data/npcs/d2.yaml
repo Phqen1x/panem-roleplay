@@ -2,6 +2,7 @@
   district: 2
   name: Fenn Wilder
   age: 63
+  black_market_contact: true
   job_id: d2_quarrier
   home_location_id: residential
   traits:

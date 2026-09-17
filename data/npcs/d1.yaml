@@ -2,6 +2,7 @@
   district: 1
   name: Zinnia Grimshaw
   age: 36
+  black_market_contact: true
   job_id: d1_jeweler
   home_location_id: residential
   traits:

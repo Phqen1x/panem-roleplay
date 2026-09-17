@@ -2,6 +2,7 @@
   district: 11
   name: Briar Oakes
   age: 39
+  black_market_contact: true
   job_id: d11_picker
   home_location_id: residential
   traits:

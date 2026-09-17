@@ -2,6 +2,7 @@
   district: 12
   name: Beatrix Fenwick
   age: 58
+  black_market_contact: true
   job_id: hob_trader
   home_location_id: seam
   traits:

@@ -2,6 +2,7 @@
   district: 4
   name: Jory Drummond
   age: 26
+  black_market_contact: true
   job_id: d4_clerk
   home_location_id: residential
   traits:

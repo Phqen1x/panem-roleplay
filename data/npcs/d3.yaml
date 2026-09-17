@@ -2,6 +2,7 @@
   district: 3
   name: Rosalind Underhill
   age: 27
+  black_market_contact: true
   job_id: d3_assembler
   home_location_id: residential
   traits:

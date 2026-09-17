@@ -2,6 +2,7 @@
   district: 8
   name: Corvin Everhart
   age: 28
+  black_market_contact: true
   job_id: d8_weaver
   home_location_id: residential
   traits:

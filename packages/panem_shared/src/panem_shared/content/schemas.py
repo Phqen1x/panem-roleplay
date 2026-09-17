@@ -198,3 +198,8 @@ class NpcContent(BaseModel):
     traits: list[str] = Field(default_factory=list)
     backstory: str = Field(max_length=1500)
     appearance: str = Field(default="", max_length=400)
+    black_market_contact: bool = False
+    """Marks this NPC as their district's black-market "fence" (contraband
+    system) -- `panem_bot.services.blackmarket.resolve_fence` gates
+    `/blackmarket` access behind a character's `RelationshipRow` stance
+    with *this specific* NPC, not just anyone in the district."""

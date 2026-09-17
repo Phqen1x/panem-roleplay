@@ -2,6 +2,7 @@
   district: 9
   name: Emrys Pryce
   age: 39
+  black_market_contact: true
   job_id: d9_miller
   home_location_id: residential
   traits:

@@ -137,6 +137,14 @@ STRINGS: dict[str, str] = {
     "lockpick_no_tries_left": "**{name}** is out of lockpicking attempts for this stay.",
     "lockpick_success": "**{name}** works the lock loose and slips out.",
     "lockpick_fail": "The lock holds. **{name}** has {tries_left} attempt(s) left.",
+    # Black market (contraband system: /blackmarket)
+    "blackmarket_no_fence": "This district has no black market contact.",
+    "blackmarket_not_at_market": "**{name}** needs to be at the district's black market to trade.",
+    "blackmarket_not_trusted": (
+        "**{name}** isn't on good enough terms with {fence} to be shown the black market."
+    ),
+    "blackmarket_good_not_traded": "That good isn't traded on this district's black market.",
+    "blackmarket_insufficient_stock": "The black market doesn't have that much {good} left today.",
     # Housing (buying/renting houses/apartments/inns, fatigue, sleep)
     "housing_not_found": "No property by that id.",
     "housing_nothing_available": "Nothing is available in this district right now.",

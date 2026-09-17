@@ -2,6 +2,7 @@
   district: 7
   name: Briar Ironside
   age: 57
+  black_market_contact: true
   job_id: d7_lumberjack
   home_location_id: residential
   traits:
