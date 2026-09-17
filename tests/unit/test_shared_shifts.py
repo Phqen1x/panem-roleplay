@@ -34,7 +34,12 @@ class FixedRng:
         return self._value
 
 
-def make_district(*, quota_good: str | None = "coal", district_id: int = 12) -> District:
+def make_district(
+    *,
+    quota_good: str | None = "coal",
+    district_id: int = 12,
+    illicit_produces: list[str] | None = None,
+) -> District:
     locations = [
         Location(id="square", name="The Square", kind="public"),
         Location(id="station", name="Station", kind="station"),
@@ -48,6 +53,7 @@ def make_district(*, quota_good: str | None = "coal", district_id: int = 12) -> 
         culture=DistrictCulture(),
         population_base=100,
         quota=DistrictQuota(good=quota_good, amount=100) if quota_good else None,
+        illicit_produces=illicit_produces or [],
         map=DistrictMap(image="x.png", width=10, height=10, location_coords=coords),
     )
 
@@ -440,6 +446,42 @@ class TestApplyShiftOutcome:
 
         assert character.consecutive_wins == 2
         assert character.consecutive_losses == 1
+
+
+class TestIllicitShiftOutput:
+    def test_win_produces_one_unit_of_the_illicit_good(self):
+        character = make_character()
+        district = make_district(illicit_produces=["contraband_weapons"])
+        output = shared_shifts.illicit_shift_output(
+            district, character, won=True, rng=FixedRng(0.99)
+        )
+        assert output == {"contraband_weapons": constants.PLAYER_SHIFT_OUTPUT_QTY}
+
+    def test_win_can_roll_a_bonus_unit(self):
+        character = make_character()
+        district = make_district(illicit_produces=["contraband_weapons"])
+        output = shared_shifts.illicit_shift_output(
+            district, character, won=True, rng=FixedRng(0.0)
+        )
+        assert output == {"contraband_weapons": constants.PLAYER_SHIFT_OUTPUT_QTY * 2}
+
+    def test_neutral_produces_one_unit(self):
+        character = make_character()
+        district = make_district(illicit_produces=["contraband_weapons"])
+        output = shared_shifts.illicit_shift_output(district, character, won=False, neutral=True)
+        assert output == {"contraband_weapons": constants.PLAYER_SHIFT_OUTPUT_QTY}
+
+    def test_real_loss_produces_nothing(self):
+        character = make_character()
+        district = make_district(illicit_produces=["contraband_weapons"])
+        output = shared_shifts.illicit_shift_output(district, character, won=False)
+        assert output == {}
+
+    def test_district_with_no_illicit_good_produces_nothing(self):
+        character = make_character()
+        district = make_district(illicit_produces=[])
+        output = shared_shifts.illicit_shift_output(district, character, won=True)
+        assert output == {}
 
 
 class TestAlreadyWorkedThisTick:

@@ -10,6 +10,7 @@ universal Apprentice->Expert progression replaced it.
 
 from __future__ import annotations
 
+import dataclasses
 import random
 from collections.abc import Awaitable, Callable
 
@@ -256,10 +257,21 @@ class JobsCog(commands.Cog):
         outcome = shifts_svc.resolve_shift_game(
             char, district, won=won, market_multiplier=market_multiplier, neutral=neutral
         )
+        if char.job_is_illicit:
+            illicit_output = shifts_svc.illicit_shift_output(
+                district, char, won=won, neutral=neutral
+            )
+            outcome = dataclasses.replace(outcome, output=illicit_output)
         shifts_svc.apply_shift_outcome(
             shift, char, outcome, won=won, neutral=neutral, tick=current_tick
         )
         after_level = job_levels.job_level_for_shifts(char.shifts_completed)
+
+        arrested = False
+        if char.job_is_illicit and not neutral:
+            arrested = await shifts_svc.resolve_illicit_heat(
+                session, character=char, district_id=district.id, lost=not won
+            )
 
         if neutral:
             outcome_word = "skips the shift's minigame"
@@ -276,6 +288,8 @@ class JobsCog(commands.Cog):
         )
         if after_level != before_level:
             text += t("level_up", name=char.name, level=after_level.value.title())
+        if arrested:
+            text += t("illicit_work_arrested", name=char.name)
         return text
 
 

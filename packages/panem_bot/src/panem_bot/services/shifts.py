@@ -21,14 +21,19 @@ or quit by the player.
 
 from __future__ import annotations
 
+import random
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from panem_bot.services import market as market_svc
 from panem_shared import constants
 from panem_shared.content.loader import ContentBundle
 from panem_shared.content.schemas import District
-from panem_shared.db.models import Character, Shift
+from panem_shared.db.models import Character, DistrictState, Shift
 from panem_shared.enums import Position
+from panem_shared.jail import (
+    resolve_illicit_heat as _resolve_illicit_heat,
+)
 from panem_shared.shifts import (
     ShiftOutcome as ShiftOutcome,
 )
@@ -37,6 +42,9 @@ from panem_shared.shifts import (
 )
 from panem_shared.shifts import (
     apply_shift_outcome as apply_shift_outcome,
+)
+from panem_shared.shifts import (
+    illicit_shift_output as illicit_shift_output,
 )
 from panem_shared.shifts import (
     market_wage_multiplier as market_wage_multiplier,
@@ -113,3 +121,21 @@ def meets_rp_credit(content: str) -> bool:
     working a shift. Whether the *scene* is the right one is the caller's
     job -- this only checks length."""
     return len(content) >= constants.RP_CREDIT_MIN_CHARS
+
+
+async def resolve_illicit_heat(
+    session: AsyncSession,
+    *,
+    character: Character,
+    district_id: int,
+    lost: bool,
+    rng: random.Random | None = None,
+) -> bool:
+    """Thin session-fetching wrapper around `panem_shared.jail.
+    resolve_illicit_heat` (the actual heat/arrest logic, shared with
+    `panem_api`'s `/work` minigame result endpoint) -- looks up
+    `district_id`'s `DistrictState` row for the arrest-consequence
+    pressure bump, then delegates. Returns whether an arrest happened,
+    for `/work`'s reply text."""
+    district_row = await session.get(DistrictState, district_id)
+    return _resolve_illicit_heat(character, district_row, lost=lost, rng=rng)

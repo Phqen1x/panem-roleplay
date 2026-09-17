@@ -407,6 +407,7 @@ class TestWorkShiftResult:
             "character_name": "Wren",
             "leveled_up": False,
             "level": "apprentice",
+            "arrested": False,
         }
 
     async def test_loss_pays_the_loss_multiplier(self, work_app, db_session_factory):

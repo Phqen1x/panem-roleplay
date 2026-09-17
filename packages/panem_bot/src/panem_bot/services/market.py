@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from panem_bot.errors import NotAllowed, NotFound
+from panem_bot.services import jail as jail_svc
 from panem_shared import constants
 from panem_shared.content.schemas import District, Good, Location
 from panem_shared.db.models import Character, DistrictState, Inventory, MarketOrder, MarketPrice
@@ -126,8 +127,7 @@ async def _apply_illicit_consequence(
     session: AsyncSession, character: Character, district_id: int
 ) -> None:
     character.money = max(0, character.money - constants.MARKET_ILLICIT_FINE)
-    base_tick = character.jailed_until_tick or 0
-    character.jailed_until_tick = base_tick + constants.MARKET_ILLICIT_JAIL_TICKS
+    jail_svc.commit_to_jail(character, constants.MARKET_ILLICIT_JAIL_TICKS)
     character.reputation -= constants.REP_ILLICIT_CAUGHT_PENALTY
 
     district_row = await session.get(DistrictState, district_id)

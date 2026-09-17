@@ -555,3 +555,47 @@ POACH_YIELD_QTY = 1
 attempt yields -- deliberately modest (an /work shift's `PLAYER_SHIFT_
 OUTPUT_QTY` is the same order of magnitude), so poaching supplements a
 short market allocation rather than replacing it outright."""
+
+JAIL_PRIOR_TICKS_PER_COUNT = 6
+"""Extra jail ticks added to a base sentence per prior jailing
+(`Character.jail_count`) -- `panem_bot.services.jail.commit_to_jail`,
+shared by every illicit-consequence path (market, poaching, illicit
+work, stealing) so repeat offenders serve consistently longer."""
+BAIL_BASE_COST = 40
+BAIL_COST_PER_REMAINING_TICK = 3
+"""`/bail`'s price: a flat base plus this much per tick still left on
+the sentence at the moment of paying -- bailing out early costs more
+than waiting it out almost the whole way."""
+LOCKPICK_MAX_TRIES = 3
+LOCKPICK_BASE_SUCCESS_PROB = 0.55
+LOCKPICK_DIFFICULTY_PER_TICK = 0.01
+LOCKPICK_MIN_SUCCESS_PROB = 0.05
+"""`/lockpick`: up to `LOCKPICK_MAX_TRIES` probability-roll attempts per
+jailing, odds fixed at `Character.jail_sentence_ticks`' length (not the
+counting-down `jailed_until_tick`) so difficulty doesn't ease up near
+release -- `LOCKPICK_BASE_SUCCESS_PROB` minus `LOCKPICK_DIFFICULTY_PER_
+TICK` per sentence tick, floored at `LOCKPICK_MIN_SUCCESS_PROB` so a very
+long sentence is hard, never literally unpickable."""
+
+ILLICIT_HEAT_PER_SHIFT = 8.0
+ILLICIT_HEAT_PER_LOSS = 25.0
+"""Per-character peacekeeper suspicion (`Character.illicit_heat`) added
+by working an illicit job (`Character.job_is_illicit`) -- a real minigame
+loss attracts much more attention than a clean or skipped shift, per
+spec."""
+ILLICIT_HEAT_ARREST_THRESHOLD = 100.0
+ILLICIT_HEAT_RECOVERY_DAYS = 3
+"""Heat decays back toward 0 over this many days absent new illicit
+shifts (`panem_sim.systems.crisis`), mirroring `peacekeeper_pressure`'s
+own decay-to-baseline right next to it."""
+ARREST_EVASION_BASE_PROB = 0.5
+"""Odds of talking/slipping your way out once `illicit_heat` clears
+`ILLICIT_HEAT_ARREST_THRESHOLD` -- scaled down further under an active
+district crackdown (`DistrictState.crackdown_until_tick`)."""
+ILLICIT_ARREST_FINE = 40
+ILLICIT_ARREST_JAIL_TICKS = 16
+ILLICIT_ARREST_REP_PENALTY = 20
+"""The consequence of losing the arrest-evasion roll -- a heavier fine/
+sentence/reputation hit than a single illicit-market catch
+(`MARKET_ILLICIT_*`), since this only fires after heat has already
+built up across multiple illicit shifts."""

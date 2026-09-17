@@ -154,6 +154,37 @@ def resolve_shift_game(
     return ShiftOutcome(wage=wage, output=output, rep_delta=rep_delta)
 
 
+def illicit_shift_output(
+    district: District,
+    character: Character,
+    *,
+    won: bool,
+    neutral: bool = False,
+    rng: random.Random | None = None,
+) -> dict[str, float]:
+    """The contraband counterpart to `resolve_shift_game`'s legal output
+    calc, for a character with `Character.job_is_illicit` set -- same
+    won/neutral/loss shape (a win's bonus-good chance included), just
+    keyed to the district's first `illicit_produces` good instead of its
+    `quota.good`. A district with no illicit good at all (only the
+    Capitol) produces nothing, same as a quota-less district does
+    legally. Deliberately separate from `resolve_shift_game` rather than
+    a branch inside it, since it reads a different good list off
+    `district` -- `panem_bot.cogs.jobs._finish_shift` calls this instead
+    of (not in addition to) the legal path when a shift is illicit."""
+    if not district.illicit_produces or not (won or neutral):
+        return {}
+    good_id = district.illicit_produces[0]
+    qty = constants.PLAYER_SHIFT_OUTPUT_QTY
+    if won:
+        level = job_levels.job_level_for_shifts(character.shifts_completed)
+        bonus_chance = constants.JOB_LEVEL_BONUS_GOOD_CHANCE[level.value]
+        roller = rng if rng is not None else random.Random()
+        if roller.random() < bonus_chance:
+            qty += constants.PLAYER_SHIFT_OUTPUT_QTY
+    return {good_id: qty}
+
+
 def already_worked_this_tick(shift: Shift, tick: int) -> bool:
     """A shift can be worked at most once per in-game tick -- a player
     still gets multiple goes at it across its `tick_opened`..`tick_due`

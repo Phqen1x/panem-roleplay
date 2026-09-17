@@ -94,6 +94,10 @@ STRINGS: dict[str, str] = {
     "minigame in Discord below -- you're paid based on how it goes, even if you finish after "
     "the shift ends. Not in the mood? Skip it for a flat, neutral wage instead.",
     "level_up": " **{name}** is now a **{level}** -- wages just went up!",
+    "illicit_work_arrested": (
+        " Peacekeepers finally catch up with **{name}** -- fined, jailed, and their name is "
+        "known now."
+    ),
     # Residents (FR-NPC)
     "no_residents_in_district": "No residents are seeded for that district yet.",
     "resident_not_found": "No resident by that name in this district.",

@@ -27,6 +27,7 @@ same trust level as every other unauthenticated endpoint here.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -41,14 +42,16 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from panem_shared.content.loader import ContentBundle
 from panem_shared.content.schemas import District
-from panem_shared.db.models import Character, MarketPrice, Shift, WorldClock
+from panem_shared.db.models import Character, DistrictState, MarketPrice, Shift, WorldClock
 from panem_shared.db.session import session_scope
+from panem_shared.jail import resolve_illicit_heat
 from panem_shared.job_levels import job_level_for_shifts
 from panem_shared.logging import get_logger
 from panem_shared.redis_keys import positions_key, work_pending_key
 from panem_shared.shifts import (
     already_worked_this_tick,
     apply_shift_outcome,
+    illicit_shift_output,
     market_wage_multiplier,
     resolve_shift_game,
 )
@@ -135,6 +138,7 @@ class WorkResultResponse(BaseModel):
     character_name: str
     leveled_up: bool
     level: str
+    arrested: bool = False
 
 
 class WorkPendingShift(BaseModel):
@@ -366,10 +370,22 @@ def create_app(
                 market_multiplier=market_multiplier,
                 neutral=body.neutral,
             )
+            if character.job_is_illicit:
+                outcome = dataclasses.replace(
+                    outcome,
+                    output=illicit_shift_output(
+                        district, character, won=body.won, neutral=body.neutral
+                    ),
+                )
             apply_shift_outcome(
                 shift, character, outcome, won=body.won, neutral=body.neutral, tick=tick
             )
             after_level = job_level_for_shifts(character.shifts_completed)
+
+            arrested = False
+            if character.job_is_illicit and not body.neutral:
+                district_row = await session.get(DistrictState, character.district_id)
+                arrested = resolve_illicit_heat(character, district_row, lost=not body.won)
             wage, character_name = round(outcome.wage), character.name
         logger.info("work_game_resolved", shift_id=shift_id, won=body.won, wage=wage)
         return WorkResultResponse(
@@ -378,6 +394,7 @@ def create_app(
             character_name=character_name,
             leveled_up=after_level != before_level,
             level=after_level.value,
+            arrested=arrested,
         )
 
     if STATIC_DIR.exists():

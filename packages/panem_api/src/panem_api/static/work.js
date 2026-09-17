@@ -102,6 +102,9 @@ async function finish(won, { neutral = false } = {}) {
     if (body.leveled_up) {
       resultEl.textContent += ` Now a ${body.level}!`;
     }
+    if (body.arrested) {
+      resultEl.textContent += " Peacekeepers catch up with them -- fined and jailed.";
+    }
   } catch (err) {
     resultEl.hidden = false;
     resultEl.className = "lose";

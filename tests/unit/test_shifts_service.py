@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from panem_bot.services import shifts as shifts_svc
+from panem_shared import constants
 from panem_shared.content.loader import ContentBundle
 from panem_shared.content.schemas import (
     District,
@@ -10,8 +11,18 @@ from panem_shared.content.schemas import (
     Good,
     Location,
 )
-from panem_shared.db.models import Character, MarketPrice, Shift
+from panem_shared.db.models import Character, DistrictState, MarketPrice, Shift
 from panem_shared.enums import CharacterStatus
+
+
+class FixedRng:
+    """A stand-in for `random.Random` that always returns a fixed draw."""
+
+    def __init__(self, value: float) -> None:
+        self._value = value
+
+    def random(self) -> float:
+        return self._value
 
 
 def make_character(**overrides: object) -> Character:
@@ -166,3 +177,38 @@ class TestMarketMultiplierForDistrict:
         multiplier = await shifts_svc.market_multiplier_for_district(db_session, content, district)
 
         assert multiplier == 2.0
+
+
+class TestResolveIllicitHeat:
+    async def test_looks_up_the_district_row_and_bumps_pressure_on_arrest(self, db_session):
+        character = make_character(illicit_heat=99.0, jail_count=0, jailed_until_tick=None)
+        db_session.add(DistrictState(district_id=1, peacekeeper_pressure=0.3))
+        await db_session.flush()
+
+        arrested = await shifts_svc.resolve_illicit_heat(
+            db_session, character=character, district_id=1, lost=False, rng=FixedRng(0.99)
+        )
+
+        assert arrested is True
+        assert character.jailed_until_tick == constants.ILLICIT_ARREST_JAIL_TICKS
+        district_row = await db_session.get(DistrictState, 1)
+        assert district_row.peacekeeper_pressure == 0.3 + 0.05
+
+    async def test_below_threshold_never_touches_jail(self, db_session):
+        character = make_character(illicit_heat=0.0, jail_count=0, jailed_until_tick=None)
+
+        arrested = await shifts_svc.resolve_illicit_heat(
+            db_session, character=character, district_id=1, lost=False, rng=FixedRng(0.99)
+        )
+
+        assert arrested is False
+        assert character.jailed_until_tick is None
+
+    async def test_missing_district_row_does_not_raise(self, db_session):
+        character = make_character(illicit_heat=99.0, jail_count=0, jailed_until_tick=None)
+
+        arrested = await shifts_svc.resolve_illicit_heat(
+            db_session, character=character, district_id=999, lost=False, rng=FixedRng(0.99)
+        )
+
+        assert arrested is True
