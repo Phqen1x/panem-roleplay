@@ -64,6 +64,16 @@ class TestRealContentFiles:
                 j.district == district_id and "career_training" in j.produces for j in academy_jobs
             )
 
+    def test_every_non_capitol_district_has_exactly_one_illicit_good_and_market(self):
+        bundle = load_content(REPO_DATA_DIR)
+        contraband_goods = {g.id for g in bundle.goods.values() if g.category == "contraband"}
+        for district_id in range(1, 13):
+            district = bundle.district(district_id)
+            assert len(district.illicit_produces) == 1, district_id
+            assert district.illicit_produces[0] in contraband_goods
+            assert any(loc.illicit for loc in district.locations), district_id
+        assert bundle.district(0).illicit_produces == []
+
     def test_every_district_has_authored_npcs(self):
         """`scripts/npc_generate.py` has been run for every shipped
         district (Phase 3 content authoring) -- a district with none

@@ -62,6 +62,12 @@ class District(BaseModel):
     industry: str
     produces: list[str] = Field(default_factory=list)
     imports: list[str] = Field(default_factory=list)
+    illicit_produces: list[str] = Field(default_factory=list)
+    """Contraband goods this district's illicit jobs (`Character.job_is_
+    illicit`) can produce -- unlike `produces`/`imports`, these never flow
+    through the national Capitol-cut/redistribution pipeline
+    (`panem_sim.systems.economy`): a district's black market only ever
+    stocks what its own illicit workers made that day."""
     quota: DistrictQuota | None = None
     population_base: int
     culture: DistrictCulture

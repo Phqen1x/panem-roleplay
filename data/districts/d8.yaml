@@ -12,6 +12,8 @@ imports:
 - power
 - produce
 - transport
+illicit_produces:
+- smuggled_luxuries
 population_base: 8500
 culture:
   tone:

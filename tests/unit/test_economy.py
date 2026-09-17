@@ -27,6 +27,7 @@ def make_district(
     *,
     produces: list[str] | None = None,
     imports: list[str] | None = None,
+    illicit_produces: list[str] | None = None,
     quota: DistrictQuota | None = None,
     population_base: int = 1000,
     market_kind_at: str | None = "market",
@@ -44,6 +45,7 @@ def make_district(
         industry="x",
         produces=produces or [],
         imports=imports or [],
+        illicit_produces=illicit_produces or [],
         quota=quota,
         population_base=population_base,
         culture=DistrictCulture(),
@@ -603,3 +605,105 @@ class TestBulletin:
         events = economy.run(state, make_ctx(content))
 
         assert events == []
+
+
+class TestIllicitGoods:
+    def test_illicit_production_carries_forward_with_no_capitol_cut(self):
+        district = make_district(1, illicit_produces=["contraband_weapons"], population_base=10)
+        good = make_good("contraband_weapons", base_price=35.0)
+        content = make_content([district], [good])
+        character = Character(
+            id=1,
+            user_id=1,
+            district_id=1,
+            current_district_id=1,
+            name="Gale",
+            age=18,
+            status="approved",
+            job_title="Fence",
+            shift_phase="night",
+            job_is_illicit=True,
+        )
+        shift = Shift(
+            character_id=1,
+            job_id="Fence",
+            tick_opened=1,
+            tick_due=6,
+            completed_at=5,
+            result="completed",
+            output={"contraband_weapons": 3.0},
+        )
+        state = make_state(
+            districts={1: make_district_row(1)},
+            characters={1: character},
+            completed_shifts=[shift],
+        )
+
+        economy.run(state, make_ctx(content))
+
+        row = state.market_prices[(1, "contraband_weapons")]
+        # No Capitol cut, no baseline/bonus split -- exactly what was made.
+        assert row.supply == 3.0
+        assert row.price == 35.0
+
+    def test_no_illicit_work_means_zero_stock_not_a_floor(self):
+        district = make_district(1, illicit_produces=["contraband_weapons"], population_base=10)
+        good = make_good("contraband_weapons", base_price=35.0)
+        content = make_content([district], [good])
+        state = make_state(districts={1: make_district_row(1)})
+
+        economy.run(state, make_ctx(content))
+
+        row = state.market_prices[(1, "contraband_weapons")]
+        assert row.supply == 0.0
+
+    def test_illicit_goods_are_not_shared_across_districts(self):
+        d1 = make_district(1, illicit_produces=["contraband_weapons"], population_base=10)
+        d2 = make_district(2, illicit_produces=["contraband_weapons"], population_base=10)
+        good = make_good("contraband_weapons", base_price=35.0)
+        content = make_content([d1, d2], [good])
+        character = Character(
+            id=1,
+            user_id=1,
+            district_id=1,
+            current_district_id=1,
+            name="Gale",
+            age=18,
+            status="approved",
+            job_title="Fence",
+            shift_phase="night",
+            job_is_illicit=True,
+        )
+        shift = Shift(
+            character_id=1,
+            job_id="Fence",
+            tick_opened=1,
+            tick_due=6,
+            completed_at=5,
+            result="completed",
+            output={"contraband_weapons": 10.0},
+        )
+        state = make_state(
+            districts={1: make_district_row(1), 2: make_district_row(2)},
+            characters={1: character},
+            completed_shifts=[shift],
+        )
+
+        economy.run(state, make_ctx(content))
+
+        assert state.market_prices[(1, "contraband_weapons")].supply == 10.0
+        assert state.market_prices[(2, "contraband_weapons")].supply == 0.0
+
+    def test_illicit_goods_excluded_from_the_public_bulletin(self):
+        district = make_district(
+            1, produces=["coal"], illicit_produces=["contraband_weapons"], population_base=10
+        )
+        goods = [make_good("coal"), make_good("contraband_weapons")]
+        content = make_content([district], goods)
+        state = make_state(districts={1: make_district_row(1)})
+
+        events = economy.run(state, make_ctx(content))
+
+        assert len(events) == 1
+        assert "Contraband" not in events[0].text
+        assert "contraband_weapons" not in events[0].text

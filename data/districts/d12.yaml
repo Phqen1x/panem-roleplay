@@ -12,6 +12,8 @@ imports:
 - produce
 - textiles
 - transport
+illicit_produces:
+- forbidden_literature
 quota:
   good: coal
   amount: 1200

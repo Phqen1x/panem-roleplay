@@ -75,6 +75,20 @@ not just a pricing input -- `panem_bot.services.market.buy`/`sell` read
 and mutate it directly through the day. That's safe because this module
 fully overwrites it at the top of every day (`_update_prices`), so
 whatever a day's trading left it at never leaks into tomorrow's figure.
+
+8. **Illicit goods** (`District.illicit_produces`, contraband system)
+   deliberately skip steps 2-3 above entirely: the Capitol doesn't know
+   these exist, so there's no cut to take and no national pool to draw
+   from -- a district's black market only ever stocks exactly what its
+   own illicit workers (`Character.job_is_illicit`) produced *that day*,
+   carried forward 1:1 by `_carry_forward_illicit`. `_update_illicit_
+   prices` writes that straight into the same `MarketPrice` table
+   (`panem_bot.services.blackmarket` reads/mutates it the same way the
+   legal market does) at a flat `Good.base_price` -- no demand model,
+   since nothing tracks who wants contraband the way `_demand_for_good`
+   tracks legal necessities. Unlike legal supply, a quiet day really does
+   mean zero stock (no `MARKET_SUPPLY_FLOOR`), matching the spec: "the
+   only way more goods appear... is if people with illicit jobs work."
 """
 
 from __future__ import annotations
@@ -207,6 +221,49 @@ def _redistribute(
                 bonus_share = bonus_total / len(traders)
             _add_supply(redistributed, district.id, good_id, baseline_each + bonus_share)
     return redistributed
+
+
+def _carry_forward_illicit(raw_supply: Supply, ctx: TickContext) -> Supply:
+    """The illicit counterpart to `_redistribute` -- see module docstring
+    point 8. Each district's `illicit_produces` goods carry forward
+    exactly what was made locally that day, no Capitol cut, no
+    cross-district sharing."""
+    illicit: Supply = {}
+    for district in ctx.content.districts.values():
+        for good_id in district.illicit_produces:
+            qty = raw_supply.get(district.id, {}).get(good_id, 0.0)
+            _add_supply(illicit, district.id, good_id, qty)
+    return illicit
+
+
+def _update_illicit_prices(state: WorldState, ctx: TickContext, illicit_supply: Supply) -> None:
+    """Writes today's contraband stock straight into `MarketPrice` at a
+    flat `Good.base_price` -- no EMA, no demand model (module docstring
+    point 8). A district that produced none of a good today gets `0.0`
+    stock, not `MARKET_SUPPLY_FLOOR`: an empty black market is the point."""
+    for district in ctx.content.districts.values():
+        district_supply = illicit_supply.get(district.id, {})
+        for good_id in district.illicit_produces:
+            good = ctx.content.goods.get(good_id)
+            if good is None:
+                continue
+            qty_supplied = district_supply.get(good_id, 0.0)
+
+            row = state.market_prices.get((district.id, good_id))
+            if row is None:
+                row = MarketPrice(
+                    district_id=district.id,
+                    good_id=good_id,
+                    price=good.base_price,
+                    tick=ctx.tick,
+                )
+                state.market_prices[(district.id, good_id)] = row
+                state.new_market_prices.append(row)
+
+            row.price = good.base_price
+            row.supply = qty_supplied
+            row.demand = 0.0
+            row.tick = ctx.tick
 
 
 def _active_player_count(state: WorldState, ctx: TickContext, district_id: int) -> int:
@@ -394,8 +451,10 @@ def run(state: WorldState, ctx: TickContext) -> list[AnyWorldEvent]:
     raw_supply = _combine_supply(_player_supply(state, ctx), _npc_supply(state, ctx))
     district_values = _district_production_value(raw_supply, ctx)
     supply = _redistribute(raw_supply, district_values, ctx)
+    illicit_supply = _carry_forward_illicit(raw_supply, ctx)
     quota_exports = _run_exports(state, ctx, supply)
     _update_prices(state, ctx, supply)
+    _update_illicit_prices(state, ctx, illicit_supply)
     _evaluate_quotas(state, ctx, quota_exports)
     _restock_shopkeepers(state, ctx)
 

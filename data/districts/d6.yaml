@@ -12,6 +12,8 @@ imports:
 - power
 - produce
 - textiles
+illicit_produces:
+- counterfeit_papers
 population_base: 6000
 culture:
   tone:

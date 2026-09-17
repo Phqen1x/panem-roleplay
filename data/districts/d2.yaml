@@ -14,6 +14,8 @@ imports:
 - produce
 - textiles
 - transport
+illicit_produces:
+- contraband_weapons
 population_base: 9000
 culture:
   tone:
@@ -76,6 +78,11 @@ locations:
   capacity: 40
   job_ids:
   - d2_peacekeeper_aux
+- id: black_market
+  name: The Black Armory
+  kind: market
+  capacity: 30
+  illicit: true
 map:
   image: maps/d2.png
   width: 1600
@@ -108,6 +115,9 @@ map:
     garrison:
     - 1100
     - 150
+    black_market:
+    - 1200
+    - 650
 quota:
   good: weapons
   amount: 900

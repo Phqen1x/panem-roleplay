@@ -11,6 +11,8 @@ imports:
 - produce
 - textiles
 - transport
+illicit_produces:
+- forbidden_literature
 population_base: 7000
 culture:
   tone:
@@ -61,6 +63,11 @@ locations:
   access_jobs:
   - d7_lumberjack
   - d7_sawyer
+- id: black_market
+  name: The Hollow Stump
+  kind: market
+  capacity: 30
+  illicit: true
 map:
   image: maps/d7.png
   width: 1600
@@ -87,6 +94,9 @@ map:
     outskirts:
     - 1400
     - 800
+    black_market:
+    - 1200
+    - 650
 quota:
   good: lumber
   amount: 900

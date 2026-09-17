@@ -11,6 +11,8 @@ imports:
 - power
 - textiles
 - transport
+illicit_produces:
+- forbidden_literature
 population_base: 9500
 culture:
   tone:

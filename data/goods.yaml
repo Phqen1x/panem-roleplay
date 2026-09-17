@@ -79,3 +79,23 @@
   base_price: 30.0
   perishable: false
   category: training
+- id: contraband_weapons
+  name: Contraband Weapons
+  base_price: 35.0
+  perishable: false
+  category: contraband
+- id: forbidden_literature
+  name: Forbidden Literature
+  base_price: 20.0
+  perishable: false
+  category: contraband
+- id: smuggled_luxuries
+  name: Smuggled Luxuries
+  base_price: 45.0
+  perishable: false
+  category: contraband
+- id: counterfeit_papers
+  name: Counterfeit Papers
+  base_price: 25.0
+  perishable: false
+  category: contraband
