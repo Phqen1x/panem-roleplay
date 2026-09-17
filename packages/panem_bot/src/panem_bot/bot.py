@@ -45,6 +45,7 @@ COGS = (
     "panem_bot.cogs.poaching",
     "panem_bot.cogs.jail",
     "panem_bot.cogs.blackmarket",
+    "panem_bot.cogs.stealing",
     "panem_bot.cogs.dialogue",
     "panem_bot.cogs.housing",
     "panem_bot.cogs.engagements",

@@ -599,3 +599,25 @@ ILLICIT_ARREST_REP_PENALTY = 20
 sentence/reputation hit than a single illicit-market catch
 (`MARKET_ILLICIT_*`), since this only fires after heat has already
 built up across multiple illicit shifts."""
+
+STEAL_FROM_NPC_BASE_SUCCESS = 0.6
+STEAL_FROM_PLAYER_BASE_SUCCESS = 0.4
+"""A player target is a harder mark than an NPC -- more likely to
+notice, matching the spec's own "different levels of difficulty"
+framing without needing a full per-target skill rating."""
+STEAL_ALERT_PROB = 0.5
+"""On a failed steal, the odds the mark actually notices at all -- the
+rest of the time it's a clean, consequence-free miss."""
+STEAL_ESCAPE_BASE_PROB = 0.5
+"""Once alerted, the odds of getting away before peacekeepers catch up."""
+STEAL_YIELD_MONEY_RANGE = (5, 25)
+STEAL_FINE = 25
+STEAL_JAIL_TICKS = 14
+REP_STEAL_CAUGHT_GENERAL_PENALTY = 10
+"""Always applied when caught stealing -- "word gets around the
+district", independent of who the victim was."""
+REP_STEAL_CAUGHT_VICTIM_PENALTY = 20
+"""An additional `RelationshipRow.affinity` hit with the specific NPC
+victim, on top of the general reputation penalty above -- stealing from
+a player has no equivalent relationship row to dock (Spec §6's model
+only covers NPC standing)."""

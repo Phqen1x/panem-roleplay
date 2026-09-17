@@ -145,6 +145,17 @@ STRINGS: dict[str, str] = {
     ),
     "blackmarket_good_not_traded": "That good isn't traded on this district's black market.",
     "blackmarket_insufficient_stock": "The black market doesn't have that much {good} left today.",
+    # Stealing (contraband system: /steal)
+    "steal_target_not_found": "No one by that name is here to steal from.",
+    "steal_not_here": "**{name}** needs to be at the same location as the mark to try this.",
+    "steal_on_cooldown": "**{name}** already tried to steal something this phase of the day.",
+    "steal_ok": "**{name}** lifts {amount} money off {target}, unnoticed.",
+    "steal_miss": "**{name}** comes up empty-handed -- and, as far as they can tell, unnoticed.",
+    "steal_alerted_escape": "**{name}** is spotted going for {target}'s pocket -- and bolts clear.",
+    "steal_caught": (
+        "**{name}** is caught stealing from {target} -- fined {fine} money and held for "
+        "{jail_ticks} ticks."
+    ),
     # Housing (buying/renting houses/apartments/inns, fatigue, sleep)
     "housing_not_found": "No property by that id.",
     "housing_nothing_available": "Nothing is available in this district right now.",
