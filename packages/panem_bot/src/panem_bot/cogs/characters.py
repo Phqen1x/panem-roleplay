@@ -17,6 +17,7 @@ from panem_bot.views import (
     CHAR_ID_FOOTER_PREFIX,
     SHIFT_PHASE_LABELS,
     ApprovalView,
+    IllicitDeclareView,
     JobTitlePromptView,
     ShiftPhaseSelectView,
 )
@@ -197,7 +198,7 @@ class CharacterCog(commands.Cog):
             return
 
         async def on_phase_chosen(phase_interaction: discord.Interaction, shift_phase: str) -> None:
-            await self._finish_create(
+            await self._prompt_illicit(
                 phase_interaction,
                 district_id,
                 name,
@@ -215,6 +216,41 @@ class CharacterCog(commands.Cog):
             ephemeral=True,
         )
 
+    async def _prompt_illicit(
+        self,
+        interaction: discord.Interaction,
+        district_id: int,
+        name: str,
+        age: int,
+        appearance: str,
+        backstory: str,
+        avatar_url: str,
+        job_title: str,
+        shift_phase: str,
+    ) -> None:
+        async def on_illicit_chosen(
+            illicit_interaction: discord.Interaction, job_is_illicit: bool
+        ) -> None:
+            await self._finish_create(
+                illicit_interaction,
+                district_id,
+                name,
+                age,
+                appearance,
+                backstory,
+                avatar_url,
+                job_title,
+                shift_phase,
+                job_is_illicit,
+            )
+
+        await interaction.response.send_message(
+            "Is this job illicit -- under-the-table work the Capitol doesn't sanction "
+            "(smuggling, black-market trading, and the like)?",
+            view=IllicitDeclareView(on_illicit_chosen),
+            ephemeral=True,
+        )
+
     async def _finish_create(
         self,
         interaction: discord.Interaction,
@@ -226,6 +262,7 @@ class CharacterCog(commands.Cog):
         avatar_url: str,
         job_title: str,
         shift_phase: str,
+        job_is_illicit: bool,
     ) -> None:
         async with self.bot.db() as session:
             user = await characters_svc.get_or_create_user(session, interaction.user.id)
@@ -241,6 +278,7 @@ class CharacterCog(commands.Cog):
                     avatar_url=avatar_url or None,
                     job_title=job_title,
                     shift_phase=shift_phase,
+                    job_is_illicit=job_is_illicit,
                     max_characters=characters_svc.effective_max_characters(user, self.bot.settings),
                 )
             except ServiceError as exc:
@@ -269,9 +307,10 @@ class CharacterCog(commands.Cog):
             embed.add_field(name="District", value=district.name, inline=True)
             embed.add_field(name="Age", value=str(character.age), inline=True)
             shift_label = SHIFT_PHASE_LABELS.get(character.shift_phase or "", character.shift_phase)
+            illicit_suffix = " [illicit]" if character.job_is_illicit else ""
             embed.add_field(
                 name="Desired Job",
-                value=f"{character.job_title} ({shift_label} shift)",
+                value=f"{character.job_title} ({shift_label} shift){illicit_suffix}",
                 inline=True,
             )
             embed.add_field(name="Appearance", value=character.appearance or "-", inline=False)
@@ -559,6 +598,8 @@ class CharacterCog(commands.Cog):
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
             job_name = row.job_title or "Unemployed"
+            if row.job_title and row.job_is_illicit:
+                job_name += " (illicit)"
             location_name = "-"
             if row.location_id:
                 district = self.bot.content.district(row.current_district_id)

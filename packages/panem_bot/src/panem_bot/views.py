@@ -74,6 +74,29 @@ class JobTitlePromptView(discord.ui.View):
         await interaction.response.send_modal(JobTitleModal(on_submit=self._on_submit))
 
 
+class IllicitDeclareView(discord.ui.View):
+    """The last step of character creation, right after `ShiftPhaseSelect`
+    -- self-declares `Character.job_is_illicit`. A plain two-button choice
+    (not a `Select`, there's only ever two options) mirroring
+    `ApprovalView`'s button shape."""
+
+    def __init__(self, on_choose: Callable[[discord.Interaction, bool], Awaitable[None]]) -> None:
+        super().__init__(timeout=300)
+        self._on_choose = on_choose
+
+    @discord.ui.button(label="No, it's legal work", style=discord.ButtonStyle.secondary)
+    async def legal(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[IllicitDeclareView]
+    ) -> None:
+        await self._on_choose(interaction, False)
+
+    @discord.ui.button(label="Yes, it's illicit", style=discord.ButtonStyle.danger)
+    async def illicit(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[IllicitDeclareView]
+    ) -> None:
+        await self._on_choose(interaction, True)
+
+
 class ChangesNoteModal(discord.ui.Modal, title="Request Changes"):
     note = discord.ui.TextInput(
         label="Note to applicant", style=discord.TextStyle.paragraph, max_length=1000

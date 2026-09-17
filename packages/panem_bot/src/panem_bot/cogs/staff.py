@@ -505,6 +505,7 @@ class StaffCog(commands.Cog):
         character="Character name",
         job_title="Free-typed job title -- same field the player set at character creation",
         shift_phase="When they work their shift",
+        illicit="Whether this job counts as illicit work -- defaults to whatever it already was",
     )
     @app_commands.autocomplete(character=autocomplete.any_approved)
     @app_commands.check(_is_staff)
@@ -514,6 +515,7 @@ class StaffCog(commands.Cog):
         character: str,
         job_title: str,
         shift_phase: DayPhase,
+        illicit: bool | None = None,
     ) -> None:
         try:
             characters_svc.validate_job_title(job_title)
@@ -527,6 +529,8 @@ class StaffCog(commands.Cog):
                 return
             row.job_title = job_title
             row.shift_phase = shift_phase.value
+            if illicit is not None:
+                row.job_is_illicit = illicit
             row.job_started_tick = None
             row.consecutive_missed = 0
             await log_staff_action(
@@ -535,7 +539,11 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="give_job",
                 target=str(row.id),
-                payload={"job_title": job_title, "shift_phase": shift_phase.value},
+                payload={
+                    "job_title": job_title,
+                    "shift_phase": shift_phase.value,
+                    "illicit": illicit,
+                },
             )
         await interaction.response.send_message(
             f"**{character}** is now working as **{job_title}** ({shift_phase.value} shift).",

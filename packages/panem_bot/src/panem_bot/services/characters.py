@@ -135,6 +135,7 @@ async def create_character(
     shift_phase: str,
     max_characters: int,
     avatar_url: str | None = None,
+    job_is_illicit: bool = False,
 ) -> Character:
     if user.banned_at is not None:
         raise NotAllowed("banned")
@@ -162,6 +163,7 @@ async def create_character(
         status=CharacterStatus.PENDING.value,
         job_title=job_title,
         shift_phase=shift_phase,
+        job_is_illicit=job_is_illicit,
     )
     session.add(character)
     await session.flush()

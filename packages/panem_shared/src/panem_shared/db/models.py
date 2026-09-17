@@ -91,6 +91,14 @@ class Character(TimestampMixin, Base):
     """Total shifts ever completed (`/work`, win or lose) -- drives the
     Apprentice->Expert wage-multiplier ladder in `panem_shared.job_levels`,
     which replaced the old per-job ladder (`Job.ladder_next`)."""
+    job_is_illicit: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    """Self-declared by the player alongside `job_title`/`shift_phase` at
+    character creation (staff-editable via `/staff give job`, same as
+    those two) -- whether their free-typed job counts as illicit work for
+    the contraband system (`panem_bot.cogs.jobs`'s illicit-production
+    branch, heat accumulation, arrest-evasion). Unlike `job_title` there's
+    no catalog to validate this against, so it's just what the player
+    says it is."""
     job_started_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
     consecutive_missed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     consecutive_wins: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -132,6 +140,27 @@ class Character(TimestampMixin, Base):
     hospitalized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     jailed_until_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    jail_sentence_ticks: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """The *original* length of the current jailing, set once by
+    `panem_bot.services.jail.commit_to_jail` and left alone while
+    `jailed_until_tick` counts down -- lock-picking difficulty
+    (`/lockpick`) reads this instead, so a longer sentence stays harder to
+    pick for its whole duration rather than getting easier near release."""
+    jail_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    """Total times ever jailed -- scales both the next sentence length and
+    its bail cost (`panem_bot.services.jail`), so repeat offenders serve
+    longer and pay more."""
+    illicit_heat: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    """Per-character peacekeeper suspicion (0-100ish), separate from a
+    district's own `DistrictState.peacekeeper_pressure` -- built up by
+    working an illicit job (`Character.job_is_illicit`), decayed back
+    toward 0 daily the same way district pressure decays toward its own
+    baseline (`panem_sim.systems.crisis`). Crossing `ILLICIT_HEAT_ARREST_
+    THRESHOLD` triggers an immediate arrest-evasion roll."""
+    last_steal_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """The tick of this character's last `/steal` attempt (success or
+    not) -- gates the once-per-day-phase cooldown by comparing `tick //
+    simtime.TICKS_PER_PHASE` to this same division of `last_steal_tick`."""
     in_games: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     housing_property_id: Mapped[int | None] = mapped_column(
         ForeignKey("properties.id", use_alter=True, name="fk_characters_housing_property_id"),
@@ -336,6 +365,15 @@ class DistrictState(Base):
     morale: Mapped[float] = mapped_column(Float, nullable=False, default=60.0)
     unrest: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     peacekeeper_pressure: Mapped[float] = mapped_column(Float, nullable=False, default=0.3)
+    crackdown_until_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """A moderator-triggered peacekeeper crackdown (`/staff district
+    crackdown`) -- while set and in the future, every illicit-activity
+    probability roll in the district (market/black-market detection,
+    illicit-work arrest evasion, stealing, lock-picking) is scaled harder,
+    and `dialogue.py` surfaces it as NPC nervousness. Not a new decay
+    mechanism of its own: `/staff district crackdown` also spikes
+    `peacekeeper_pressure` directly, which `crisis.py` already relaxes
+    back toward baseline once the crackdown window passes."""
     crisis_level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     crisis_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
     capitol_favor: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)

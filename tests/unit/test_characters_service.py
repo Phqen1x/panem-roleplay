@@ -177,6 +177,24 @@ class TestCreateCharacter:
         assert character.status == CharacterStatus.PENDING.value
         assert character.job_title == "Miner"
         assert character.shift_phase == "morning"
+        assert character.job_is_illicit is False
+
+    async def test_job_is_illicit_defaults_false_and_threads_through(self, db_session):
+        user = await make_user(db_session)
+        character = await characters_svc.create_character(
+            db_session,
+            user=user,
+            district_id=12,
+            name="Gale",
+            age=18,
+            appearance="",
+            backstory="",
+            job_title="Hob Trader",
+            shift_phase="night",
+            max_characters=3,
+            job_is_illicit=True,
+        )
+        assert character.job_is_illicit is True
 
     async def test_banned_user_refused(self, db_session):
         user = await make_user(db_session)
