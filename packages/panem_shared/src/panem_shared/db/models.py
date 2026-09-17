@@ -150,6 +150,11 @@ class Character(TimestampMixin, Base):
     """Total times ever jailed -- scales both the next sentence length and
     its bail cost (`panem_bot.services.jail`), so repeat offenders serve
     longer and pay more."""
+    jail_lockpick_tries_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    """`/lockpick` attempts spent on the *current* jailing -- reset to 0
+    whenever `panem_shared.jail.commit_to_jail` starts a fresh sentence;
+    capped at `LOCKPICK_MAX_TRIES` (3) before bail/waiting it out are the
+    only options left."""
     illicit_heat: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     """Per-character peacekeeper suspicion (0-100ish), separate from a
     district's own `DistrictState.peacekeeper_pressure` -- built up by

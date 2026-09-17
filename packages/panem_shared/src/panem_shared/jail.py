@@ -29,6 +29,7 @@ def commit_to_jail(character: Character, base_ticks: int) -> int:
     character.jailed_until_tick = base_tick + sentence
     character.jail_sentence_ticks = sentence
     character.jail_count = (character.jail_count or 0) + 1
+    character.jail_lockpick_tries_used = 0
     return sentence
 
 

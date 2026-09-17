@@ -130,6 +130,13 @@ STRINGS: dict[str, str] = {
     "poach_caught": (
         "**{name}** is caught poaching -- fined {fine} money and held for {jail_ticks} ticks."
     ),
+    # Jail (contraband system: /bail, /lockpick)
+    "jail_not_jailed": "**{name}** isn't locked up.",
+    "bail_insufficient_funds": "**{name}** can't cover the {cost} money bail needs.",
+    "bail_ok": "**{name}** pays {cost} money in bail and walks free.",
+    "lockpick_no_tries_left": "**{name}** is out of lockpicking attempts for this stay.",
+    "lockpick_success": "**{name}** works the lock loose and slips out.",
+    "lockpick_fail": "The lock holds. **{name}** has {tries_left} attempt(s) left.",
     # Housing (buying/renting houses/apartments/inns, fatigue, sleep)
     "housing_not_found": "No property by that id.",
     "housing_nothing_available": "Nothing is available in this district right now.",

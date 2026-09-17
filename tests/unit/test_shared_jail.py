@@ -58,6 +58,12 @@ class TestCommitToJail:
         shared_jail.commit_to_jail(character, 10)
         assert character.jailed_until_tick == 60
 
+    def test_resets_lockpick_tries_for_the_fresh_sentence(self):
+        character = make_character(jail_count=0, jailed_until_tick=None)
+        character.jail_lockpick_tries_used = 2
+        shared_jail.commit_to_jail(character, 10)
+        assert character.jail_lockpick_tries_used == 0
+
 
 class TestResolveIllicitHeat:
     def test_below_threshold_no_arrest(self):
