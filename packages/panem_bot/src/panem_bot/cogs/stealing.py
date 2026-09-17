@@ -16,8 +16,8 @@ from panem_bot.services import characters as characters_svc
 from panem_bot.services import stealing as stealing_svc
 from panem_bot.strings import t
 from panem_shared import constants
-from panem_shared.db.models import Character, Npc, WorldClock
-from panem_shared.enums import CharacterStatus
+from panem_shared.db.models import Character, Npc, Property, WorldClock
+from panem_shared.enums import CharacterStatus, OwnerKind, PropertyKind
 
 
 class StealingCog(commands.Cog):
@@ -113,6 +113,72 @@ class StealingCog(commands.Cog):
             text = t("steal_alerted_escape", name=name, target=target_name)
         else:
             text = t("steal_miss", name=name)
+        await interaction.response.send_message(text, ephemeral=True)
+
+    @app_commands.command(name="burgle", description="Try to break into another character's house")
+    @app_commands.describe(character="Character name", owner="Name of the house's owner")
+    @app_commands.autocomplete(character=autocomplete.own_approved)
+    async def burgle(self, interaction: discord.Interaction, character: str, owner: str) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            char = await self._get_character(session, interaction.user.id, character)
+            if char is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+
+            owner_char = (
+                await session.execute(
+                    select(Character).where(
+                        Character.name == owner,
+                        Character.current_district_id == char.current_district_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            house = None
+            if owner_char is not None:
+                house = (
+                    await session.execute(
+                        select(Property).where(
+                            Property.kind == PropertyKind.HOUSE.value,
+                            Property.owner_kind == OwnerKind.CHARACTER.value,
+                            Property.owner_id == owner_char.id,
+                            Property.district_id == char.current_district_id,
+                        )
+                    )
+                ).scalar_one_or_none()
+            if house is None:
+                await interaction.response.send_message(t("burgle_owner_not_found"), ephemeral=True)
+                return
+
+            current_tick = await self._current_tick(session)
+            try:
+                result = await stealing_svc.resolve_burgle(
+                    session,
+                    character=char,
+                    house=house,
+                    current_tick=current_tick,
+                    rng=random.Random(),
+                )
+            except ServiceError as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+            name = char.name
+
+        if result.success:
+            text = t("burgle_ok", name=name, owner=owner, amount=result.amount)
+        elif result.caught:
+            text = t(
+                "burgle_caught",
+                name=name,
+                owner=owner,
+                fine=constants.STEAL_FINE,
+                jail_ticks=constants.STEAL_JAIL_TICKS,
+            )
+        elif result.alerted:
+            text = t("burgle_alerted_escape", name=name, owner=owner)
+        else:
+            text = t("burgle_miss", name=name)
         await interaction.response.send_message(text, ephemeral=True)
 
 

@@ -156,6 +156,17 @@ STRINGS: dict[str, str] = {
         "**{name}** is caught stealing from {target} -- fined {fine} money and held for "
         "{jail_ticks} ticks."
     ),
+    "burgle_owner_not_found": "No character by that name owns a house here.",
+    "burgle_not_a_house": "That property isn't a house.",
+    "burgle_wrong_district": "**{name}** needs to be in the house's district to break in.",
+    "burgle_own_house": "**{name}** can't burgle their own house.",
+    "burgle_ok": "**{name}** slips out of {owner}'s house with {amount} money.",
+    "burgle_miss": "**{name}** finds nothing worth taking -- and slips out unnoticed.",
+    "burgle_alerted_escape": "**{name}** is spotted breaking into {owner}'s house -- and bolts.",
+    "burgle_caught": (
+        "**{name}** is caught breaking into {owner}'s house -- fined {fine} money and held for "
+        "{jail_ticks} ticks."
+    ),
     # Housing (buying/renting houses/apartments/inns, fatigue, sleep)
     "housing_not_found": "No property by that id.",
     "housing_nothing_available": "Nothing is available in this district right now.",

@@ -21,8 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from panem_bot.errors import NotAllowed
 from panem_bot.services import jail as jail_svc
 from panem_shared import constants
-from panem_shared.db.models import Character, DistrictState, Npc, RelationshipRow
-from panem_shared.enums import CharacterStatus, OwnerKind
+from panem_shared.db.models import Character, DistrictState, Npc, Property, RelationshipRow
+from panem_shared.enums import CharacterStatus, OwnerKind, PropertyKind
 from panem_shared.relationships import relationship_key
 from panem_shared.simtime import TICKS_PER_PHASE
 
@@ -112,6 +112,74 @@ async def resolve_steal(
         relationship.affinity -= constants.REP_STEAL_CAUGHT_VICTIM_PENALTY
 
     district_row = await session.get(DistrictState, district_id)
+    if district_row is not None:
+        district_row.peacekeeper_pressure = min(
+            1.0, district_row.peacekeeper_pressure + STEAL_PRESSURE_DELTA
+        )
+
+    return StealResult(success=False, alerted=True, caught=True, amount=0)
+
+
+def check_can_burgle(character: Character, house: Property, current_tick: int) -> None:
+    """Raises `NotAllowed` unless `character` can attempt this burglary:
+    approved, physically in the house's district (`Property` carries no
+    `location_id` the way a person does, so district presence is the
+    closest match to "same location as you"), not its own owner, and
+    hasn't already stolen or burgled this day-phase -- the same
+    `last_steal_tick` cooldown `/steal` uses."""
+    if character.status != CharacterStatus.APPROVED.value:
+        raise NotAllowed("character_not_approved")
+    if house.kind != PropertyKind.HOUSE.value:
+        raise NotAllowed("burgle_not_a_house")
+    if character.current_district_id != house.district_id:
+        raise NotAllowed("burgle_wrong_district", name=character.name)
+    if house.owner_kind == OwnerKind.CHARACTER.value and house.owner_id == character.id:
+        raise NotAllowed("burgle_own_house", name=character.name)
+    if (
+        character.last_steal_tick is not None
+        and character.last_steal_tick // TICKS_PER_PHASE == current_tick // TICKS_PER_PHASE
+    ):
+        raise NotAllowed("steal_on_cooldown", name=character.name)
+
+
+async def resolve_burgle(
+    session: AsyncSession,
+    *,
+    character: Character,
+    house: Property,
+    current_tick: int,
+    rng: random.Random,
+) -> StealResult:
+    """The house-burglary counterpart to `resolve_steal` -- same alert/
+    escape/caught shape, `BURGLE_BASE_SUCCESS` odds (flatly harder, no
+    owner to reuse `/steal`'s per-target tiers off of), and a payout
+    from the house's own value instead of a person's wallet
+    (`BURGLE_YIELD_FRACTION` of `suggested_price`, capped at `BURGLE_
+    YIELD_CAP`) rather than debiting anyone."""
+    check_can_burgle(character, house, current_tick)
+    character.last_steal_tick = current_tick
+
+    if rng.random() < constants.BURGLE_BASE_SUCCESS:
+        amount = min(
+            constants.BURGLE_YIELD_CAP,
+            round(house.suggested_price * constants.BURGLE_YIELD_FRACTION),
+        )
+        character.money += amount
+        return StealResult(success=True, alerted=False, caught=False, amount=amount)
+
+    if rng.random() >= constants.STEAL_ALERT_PROB:
+        return StealResult(success=False, alerted=False, caught=False, amount=0)  # a clean miss
+
+    if rng.random() < constants.STEAL_ESCAPE_BASE_PROB:
+        return StealResult(
+            success=False, alerted=True, caught=False, amount=0
+        )  # alerted, but got away
+
+    character.money = max(0, character.money - constants.STEAL_FINE)
+    jail_svc.commit_to_jail(character, constants.STEAL_JAIL_TICKS)
+    character.reputation -= constants.REP_STEAL_CAUGHT_GENERAL_PENALTY
+
+    district_row = await session.get(DistrictState, house.district_id)
     if district_row is not None:
         district_row.peacekeeper_pressure = min(
             1.0, district_row.peacekeeper_pressure + STEAL_PRESSURE_DELTA

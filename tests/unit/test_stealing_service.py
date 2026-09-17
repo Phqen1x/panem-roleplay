@@ -5,8 +5,8 @@ import pytest
 from panem_bot.errors import NotAllowed
 from panem_bot.services import stealing as stealing_svc
 from panem_shared import constants
-from panem_shared.db.models import Character, DistrictState, Npc, RelationshipRow
-from panem_shared.enums import CharacterStatus, OwnerKind
+from panem_shared.db.models import Character, DistrictState, Npc, Property, RelationshipRow
+from panem_shared.enums import CharacterStatus, OwnerKind, PropertyKind
 
 
 class SequenceRng:
@@ -44,6 +44,23 @@ def make_character(**overrides: object) -> Character:
     character = Character(**defaults)  # type: ignore[arg-type]
     character.id = 1
     return character
+
+
+def make_house(**overrides: object) -> Property:
+    defaults: dict[str, object] = dict(
+        district_id=1,
+        kind=PropertyKind.HOUSE.value,
+        tier="apprentice",
+        owner_kind=OwnerKind.CHARACTER.value,
+        owner_id=2,
+        for_sale=False,
+        suggested_price=1000.0,
+        created_at_tick=0,
+    )
+    defaults.update(overrides)
+    house = Property(**defaults)  # type: ignore[arg-type]
+    house.id = 1
+    return house
 
 
 def make_npc(**overrides: object) -> Npc:
@@ -206,3 +223,86 @@ class TestResolveSteal:
             rng=SequenceRng([0.99, 0.99]),
         )
         assert character.last_steal_tick == 42
+
+
+class TestCheckCanBurgle:
+    def test_raises_for_a_non_house_property(self):
+        character = make_character(current_district_id=1)
+        character.id = 1
+        house = make_house(kind=PropertyKind.APARTMENT.value)
+        with pytest.raises(NotAllowed) as exc_info:
+            stealing_svc.check_can_burgle(character, house, 10)
+        assert exc_info.value.reason_key == "burgle_not_a_house"
+
+    def test_raises_in_the_wrong_district(self):
+        character = make_character(current_district_id=2)
+        character.id = 1
+        house = make_house(district_id=1)
+        with pytest.raises(NotAllowed) as exc_info:
+            stealing_svc.check_can_burgle(character, house, 10)
+        assert exc_info.value.reason_key == "burgle_wrong_district"
+
+    def test_raises_on_your_own_house(self):
+        character = make_character(current_district_id=1)
+        character.id = 1
+        house = make_house(district_id=1, owner_id=1)
+        with pytest.raises(NotAllowed) as exc_info:
+            stealing_svc.check_can_burgle(character, house, 10)
+        assert exc_info.value.reason_key == "burgle_own_house"
+
+    def test_raises_on_cooldown(self):
+        character = make_character(current_district_id=1, last_steal_tick=0)
+        character.id = 1
+        house = make_house(district_id=1)
+        with pytest.raises(NotAllowed) as exc_info:
+            stealing_svc.check_can_burgle(character, house, 1)
+        assert exc_info.value.reason_key == "steal_on_cooldown"
+
+    def test_allowed_for_a_stranger_s_house(self):
+        character = make_character(current_district_id=1)
+        character.id = 1
+        house = make_house(district_id=1, owner_id=2)
+        stealing_svc.check_can_burgle(character, house, 10)  # no raise
+
+
+class TestResolveBurgle:
+    async def test_success_pays_a_fraction_of_the_house_value(self, db_session):
+        character = make_character(current_district_id=1, money=0)
+        character.id = 1
+        house = make_house(district_id=1, owner_id=2, suggested_price=1000.0)
+        result = await stealing_svc.resolve_burgle(
+            db_session, character=character, house=house, current_tick=10, rng=SequenceRng([0.0])
+        )
+        assert result.success is True
+        assert result.amount == round(1000.0 * constants.BURGLE_YIELD_FRACTION)
+        assert character.money == result.amount
+
+    async def test_payout_is_capped(self, db_session):
+        character = make_character(current_district_id=1, money=0)
+        character.id = 1
+        house = make_house(district_id=1, owner_id=2, suggested_price=1_000_000.0)
+        result = await stealing_svc.resolve_burgle(
+            db_session, character=character, house=house, current_tick=10, rng=SequenceRng([0.0])
+        )
+        assert result.amount == constants.BURGLE_YIELD_CAP
+
+    async def test_caught_applies_the_same_consequence_as_stealing(self, db_session):
+        character = make_character(current_district_id=1, money=100, jailed_until_tick=None)
+        character.id = 1
+        house = make_house(district_id=1, owner_id=2)
+        db_session.add(DistrictState(district_id=1, peacekeeper_pressure=0.3))
+        await db_session.flush()
+
+        result = await stealing_svc.resolve_burgle(
+            db_session,
+            character=character,
+            house=house,
+            current_tick=10,
+            rng=SequenceRng([0.99, 0.0, 0.99]),
+        )
+
+        assert result.caught is True
+        assert character.money == 100 - constants.STEAL_FINE
+        assert character.jailed_until_tick == constants.STEAL_JAIL_TICKS
+        district_row = await db_session.get(DistrictState, 1)
+        assert district_row.peacekeeper_pressure == 0.3 + stealing_svc.STEAL_PRESSURE_DELTA

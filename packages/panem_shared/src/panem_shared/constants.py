@@ -621,3 +621,13 @@ REP_STEAL_CAUGHT_VICTIM_PENALTY = 20
 victim, on top of the general reputation penalty above -- stealing from
 a player has no equivalent relationship row to dock (Spec §6's model
 only covers NPC standing)."""
+
+BURGLE_BASE_SUCCESS = 0.35
+"""A flat harder tier than either `/steal` target -- there's no owner
+physically present to read a "same location" precision off, so
+difficulty stands in for that missing signal instead."""
+BURGLE_YIELD_FRACTION = 0.05
+BURGLE_YIELD_CAP = 50
+"""A successful burglary nets `BURGLE_YIELD_FRACTION` of the property's
+`suggested_price`, capped at `BURGLE_YIELD_CAP` -- a rich house is a
+better mark, but never a jackpot."""
