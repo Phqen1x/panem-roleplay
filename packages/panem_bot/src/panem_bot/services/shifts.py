@@ -6,17 +6,18 @@ about -- played `/work`'s minigame (or its no-Activity coin-flip
 fallback), or earned RP credit by proxying in the right scene -- which
 happens outside the tick loop, on the bot's own DB session.
 
-`ShiftOutcome`/`resolve_shift_game`/`apply_shift_outcome` live in
-`panem_shared.shifts`, not here, since `panem_api`'s `/work` minigame
-result endpoint needs them too and can't depend on `panem_bot`;
-re-exported below so every existing call site (`shifts_svc.
-resolve_shift_game(...)`) keeps working unchanged. The old per-option
-`resolve_shift`, and the `/job apply|list|quit`/`check_can_apply`/
-`check_promotion_eligible` functions that went with the `jobs.yaml`
-catalog it read, are retired along with that catalog -- a player's job is
-now a free-typed `Character.job_title` + `shift_phase`, set at character
-creation and changed only by staff (`/staff give job`), not applied for
-or quit by the player.
+Everything below except `resolve_illicit_heat`/`can_earn_rp_credit_
+anywhere`/`meets_rp_credit` lives in `panem_shared.shifts` now, not here,
+re-exported so every existing call site (`shifts_svc.resolve_shift_game
+(...)`) keeps working unchanged -- `panem_api`'s dashboard Work tab and
+`/work` minigame result endpoint need the same job-eligibility/wage
+logic `panem_bot`'s own `/work` does and can't depend on `panem_bot` to
+get it. The old per-option `resolve_shift`, and the `/job apply|list|
+quit`/`check_can_apply`/`check_promotion_eligible` functions that went
+with the `jobs.yaml` catalog it read, are retired along with that
+catalog -- a player's job is now a free-typed `Character.job_title` +
+`shift_phase`, set at character creation and changed only by staff
+(`/staff give job`), not applied for or quit by the player.
 """
 
 from __future__ import annotations
@@ -25,11 +26,8 @@ import random
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from panem_bot.services import market as market_svc
 from panem_shared import constants
-from panem_shared.content.loader import ContentBundle
-from panem_shared.content.schemas import District
-from panem_shared.db.models import Character, DistrictState, Shift
+from panem_shared.db.models import Character, DistrictState
 from panem_shared.enums import Position
 from panem_shared.jail import (
     resolve_illicit_heat as _resolve_illicit_heat,
@@ -44,69 +42,26 @@ from panem_shared.shifts import (
     apply_shift_outcome as apply_shift_outcome,
 )
 from panem_shared.shifts import (
+    has_job as has_job,
+)
+from panem_shared.shifts import (
     illicit_shift_output as illicit_shift_output,
+)
+from panem_shared.shifts import (
+    market_multiplier_for_district as market_multiplier_for_district,
 )
 from panem_shared.shifts import (
     market_wage_multiplier as market_wage_multiplier,
 )
 from panem_shared.shifts import (
+    open_adhoc_shift_override as open_adhoc_shift_override,
+)
+from panem_shared.shifts import (
     resolve_shift_game as resolve_shift_game,
 )
-
-
-async def market_multiplier_for_district(
-    session: AsyncSession, content: ContentBundle, district: District
-) -> float:
-    """The wage multiplier `resolve_shift_game` should use for a shift
-    worked in `district` -- `1.0` for a district with no quota good (the
-    Capitol) or no good/price data at all."""
-    if district.quota is None:
-        return 1.0
-    good = content.goods.get(district.quota.good)
-    if good is None:
-        return 1.0
-    price = await market_svc.get_price(session, district.id, good)
-    return market_wage_multiplier(price, good.base_price)
-
-
-def has_job(character: Character) -> bool:
-    """Whether `character` has enough set to `/work` at all -- both a
-    free-typed `job_title` and a `shift_phase` are required, since staff
-    approval/`/staff give job` set them together."""
-    return character.job_title is not None and character.shift_phase is not None
-
-
-def start_shift_game(shift: Shift, tick: int) -> None:
-    """Marks `/work`'s minigame as launched for `shift` -- idempotent, so
-    re-running `/work` on an already-started shift doesn't push back its
-    `WORK_GAME_GRACE_TICKS` window."""
-    if shift.started_at_tick is None:
-        shift.started_at_tick = tick
-
-
-def open_adhoc_shift_override(
-    character: Character, tick: int, *, is_staff: bool = False
-) -> Shift | None:
-    """A Gamemaker can `/work` at any time, in any place -- not just when
-    `panem_sim` has already opened a shift for their chosen `shift_phase`.
-    `is_staff` extends the same "no open shift needed" privilege to real
-    (Discord-role) staff working their own characters, regardless of the
-    character's in-fiction `Position` -- staff shouldn't have to wait on
-    the shift schedule to test or demonstrate a job. Synthesizes a fresh
-    `Shift` on the spot instead of refusing with "no open shift"; `None`
-    if `character` has no job to work at all, or neither privilege
-    applies."""
-    if not has_job(character):
-        return None
-    if not is_staff and Position.GAMEMAKER.value not in character.positions:
-        return None
-    assert character.job_title is not None
-    return Shift(
-        character_id=character.id,
-        job_id=character.job_title,
-        tick_opened=tick,
-        tick_due=tick + constants.SHIFT_DURATION_TICKS,
-    )
+from panem_shared.shifts import (
+    start_shift_game as start_shift_game,
+)
 
 
 def can_earn_rp_credit_anywhere(character: Character) -> bool:

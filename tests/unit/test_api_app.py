@@ -1401,3 +1401,97 @@ class TestDashboardCrime:
                 json={"discord_id": 5},
             )
         assert response.status_code == 400
+
+
+class TestDashboardWork:
+    async def test_status_reports_job_and_level(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"job_title": "Miner", "shift_phase": "morning"},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/work/{char_id}", params={"discord_id": 5}
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["has_job"] is True
+        assert body["job_title"] == "Miner"
+        assert body["level"] == "apprentice"
+
+    async def test_status_reports_no_job(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/work/{char_id}", params={"discord_id": 5}
+            )
+        assert response.status_code == 200
+        assert response.json()["has_job"] is False
+
+    async def test_start_finds_the_open_shift(self, work_app, db_session_factory):
+        shift_id = await seed_shift(db_session_factory)
+        async with db_session_factory() as session:
+            rows = await session.execute(select(Character).where(Character.name == "Wren"))
+            char_id = rows.scalar_one().id
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/work/{char_id}/start", json={"discord_id": 42}
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["shift_id"] == shift_id
+        assert body["already_worked_this_tick"] is False
+        async with db_session_factory() as session:
+            shift = await session.get(Shift, shift_id)
+            assert shift.started_at_tick == 0
+
+    async def test_start_refuses_without_a_job(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/work/{char_id}/start", json={"discord_id": 5}
+            )
+        assert response.status_code == 400
+
+    async def test_start_refuses_with_no_open_shift_and_no_gamemaker_position(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"job_title": "Miner", "shift_phase": "morning"},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/work/{char_id}/start", json={"discord_id": 5}
+            )
+        assert response.status_code == 400
+
+    async def test_start_opens_an_adhoc_shift_for_a_gamemaker(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={
+                "job_title": "Miner",
+                "shift_phase": "morning",
+                "positions": ["gamemaker"],
+            },
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/work/{char_id}/start", json={"discord_id": 5}
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["job_title"] == "Miner"
+        async with db_session_factory() as session:
+            shift = await session.get(Shift, body["shift_id"])
+            assert shift is not None
+            assert shift.character_id == char_id

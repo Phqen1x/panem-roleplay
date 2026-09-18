@@ -23,9 +23,13 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from panem_shared import constants, job_levels
+from panem_shared.content.loader import ContentBundle
 from panem_shared.content.schemas import District
-from panem_shared.db.models import Character, Shift
+from panem_shared.db.models import Character, MarketPrice, Shift
+from panem_shared.enums import Position
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,6 +187,65 @@ def illicit_shift_output(
         if roller.random() < bonus_chance:
             qty += constants.PLAYER_SHIFT_OUTPUT_QTY
     return {good_id: qty}
+
+
+async def market_multiplier_for_district(
+    session: AsyncSession, content: ContentBundle, district: District
+) -> float:
+    """The wage multiplier `resolve_shift_game` should use for a shift
+    worked in `district` -- `1.0` for a district with no quota good (the
+    Capitol) or no good/price data at all. Shared (rather than only in
+    `panem_bot`) so `panem_api`'s `/work` endpoints read the exact same
+    live price `panem_bot`'s own `/work` does, instead of each process
+    keeping its own copy of this lookup in sync by hand."""
+    if district.quota is None:
+        return 1.0
+    good = content.goods.get(district.quota.good)
+    if good is None:
+        return 1.0
+    row = await session.get(MarketPrice, (district.id, good.id))
+    price = row.price if row is not None else good.base_price
+    return market_wage_multiplier(price, good.base_price)
+
+
+def has_job(character: Character) -> bool:
+    """Whether `character` has enough set to `/work` at all -- both a
+    free-typed `job_title` and a `shift_phase` are required, since staff
+    approval/`/staff give job` set them together."""
+    return character.job_title is not None and character.shift_phase is not None
+
+
+def start_shift_game(shift: Shift, tick: int) -> None:
+    """Marks `/work`'s minigame as launched for `shift` -- idempotent, so
+    re-running `/work` on an already-started shift doesn't push back its
+    `WORK_GAME_GRACE_TICKS` window."""
+    if shift.started_at_tick is None:
+        shift.started_at_tick = tick
+
+
+def open_adhoc_shift_override(
+    character: Character, tick: int, *, is_staff: bool = False
+) -> Shift | None:
+    """A Gamemaker can `/work` at any time, in any place -- not just when
+    `panem_sim` has already opened a shift for their chosen `shift_phase`.
+    `is_staff` extends the same "no open shift needed" privilege to real
+    (Discord-role) staff working their own characters, regardless of the
+    character's in-fiction `Position` -- staff shouldn't have to wait on
+    the shift schedule to test or demonstrate a job. Synthesizes a fresh
+    `Shift` on the spot instead of refusing with "no open shift"; `None`
+    if `character` has no job to work at all, or neither privilege
+    applies."""
+    if not has_job(character):
+        return None
+    if not is_staff and Position.GAMEMAKER.value not in character.positions:
+        return None
+    assert character.job_title is not None
+    return Shift(
+        character_id=character.id,
+        job_id=character.job_title,
+        tick_opened=tick,
+        tick_due=tick + constants.SHIFT_DURATION_TICKS,
+    )
 
 
 def already_worked_this_tick(shift: Shift, tick: int) -> bool:

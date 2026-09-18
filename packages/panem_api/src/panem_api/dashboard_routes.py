@@ -37,16 +37,22 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from panem_shared import characters as characters_svc
-from panem_shared import constants
+from panem_shared import constants, job_levels
 from panem_shared import jail as jail_svc
 from panem_shared import poaching as poaching_svc
 from panem_shared import stealing as stealing_svc
 from panem_shared.content.loader import ContentBundle
-from panem_shared.db.models import Character, Npc, Property, User, WorldClock
+from panem_shared.db.models import Character, Npc, Property, Shift, User, WorldClock
 from panem_shared.db.session import session_scope
-from panem_shared.enums import CharacterStatus, DayPhase, OwnerKind, PropertyKind
+from panem_shared.enums import CharacterStatus, DayPhase, OwnerKind, Position, PropertyKind
 from panem_shared.errors import NotFound, ServiceError
 from panem_shared.redis_keys import CRIME_ATTEMPT_TTL_S, crime_attempt_key
+from panem_shared.shifts import (
+    already_worked_this_tick,
+    has_job,
+    open_adhoc_shift_override,
+    start_shift_game,
+)
 
 
 class DashboardCharacterSummary(BaseModel):
@@ -704,5 +710,93 @@ def build_crime_router(
         return PoachResponse(
             caught=False, good_name=result.good.name, qty=constants.POACH_YIELD_QTY
         )
+
+    return router
+
+
+class WorkStatusResponse(BaseModel):
+    has_job: bool
+    job_title: str | None = None
+    shift_phase: str | None = None
+    level: str
+
+
+class WorkStartRequest(BaseModel):
+    discord_id: int
+
+
+class WorkStartResponse(BaseModel):
+    shift_id: int
+    job_title: str
+    level: str
+    already_worked_this_tick: bool
+
+
+def build_work_router(*, session_factory: async_sessionmaker[AsyncSession] | None) -> APIRouter:
+    """The Work tab's REST surface: mirrors `/work`'s shift-finding logic
+    only (`GET`/`POST .../start`) -- actually playing or skipping the
+    shift reuses the existing `/activity/work/{shift_id}` (status) and
+    `/activity/work/{shift_id}/result` (POST, `{won: false, neutral:
+    true}` for Skip) endpoints unchanged, the same way the dashboard's
+    Jail/Crime tabs reuse `/activity/crime/*` rather than duplicating it.
+    `open_adhoc_shift_override`'s staff privilege doesn't apply here --
+    the dashboard has no notion of a Discord staff role, only the
+    `Position.GAMEMAKER` half of that check (a real in-fiction position on
+    the character itself, not tied to Discord)."""
+    router = APIRouter(prefix="/activity/dashboard/work", tags=["dashboard"])
+
+    @router.get("/{character_id}", response_model=WorkStatusResponse)
+    async def work_status(character_id: int, discord_id: int) -> WorkStatusResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            level = job_levels.job_level_for_shifts(character.shifts_completed)
+            return WorkStatusResponse(
+                has_job=has_job(character),
+                job_title=character.job_title,
+                shift_phase=character.shift_phase,
+                level=level.value,
+            )
+
+    @router.post("/{character_id}/start", response_model=WorkStartResponse)
+    async def start_work(character_id: int, body: WorkStartRequest) -> WorkStartResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            if not has_job(character):
+                raise HTTPException(status_code=400, detail="job_none_set")
+
+            open_shift = (
+                await session.execute(
+                    select(Shift).where(Shift.character_id == character.id, Shift.result.is_(None))
+                )
+            ).scalar_one_or_none()
+            if open_shift is None:
+                is_gamemaker = Position.GAMEMAKER.value in character.positions
+                current_tick = await _current_tick(session)
+                open_shift = open_adhoc_shift_override(
+                    character, current_tick, is_staff=is_gamemaker
+                )
+                if open_shift is None:
+                    raise HTTPException(status_code=400, detail="job_no_open_shift")
+                session.add(open_shift)
+                await session.flush()
+
+            current_tick = await _current_tick(session)
+            already_worked = already_worked_this_tick(open_shift, current_tick)
+            if not already_worked:
+                start_shift_game(open_shift, current_tick)
+            level = job_levels.job_level_for_shifts(character.shifts_completed)
+            assert character.job_title is not None
+            return WorkStartResponse(
+                shift_id=open_shift.id,
+                job_title=character.job_title,
+                level=level.value,
+                already_worked_this_tick=already_worked,
+            )
 
     return router

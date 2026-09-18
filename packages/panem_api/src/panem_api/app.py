@@ -53,14 +53,13 @@ from panem_api.dashboard_routes import (
     build_crime_router,
     build_identify_router,
     build_jail_router,
+    build_work_router,
 )
 from panem_shared import constants
 from panem_shared.content.loader import ContentBundle
-from panem_shared.content.schemas import District
 from panem_shared.db.models import (
     Character,
     DistrictState,
-    MarketPrice,
     Npc,
     Property,
     Shift,
@@ -81,7 +80,7 @@ from panem_shared.shifts import (
     already_worked_this_tick,
     apply_shift_outcome,
     illicit_shift_output,
-    market_wage_multiplier,
+    market_multiplier_for_district,
     resolve_shift_game,
 )
 from panem_shared.stealing import (
@@ -206,23 +205,6 @@ class CrimeResultResponse(BaseModel):
     caught: bool = False
     amount: int = 0
     tries_left: int | None = None
-
-
-async def _market_multiplier(
-    session: AsyncSession, content: ContentBundle, district: District
-) -> float:
-    """Same wage feedback `panem_bot.services.shifts.
-    market_multiplier_for_district` gives the bot's own `/work` -- this
-    process can't import `panem_bot`, so the same small lookup is
-    duplicated here rather than shared."""
-    if district.quota is None:
-        return 1.0
-    good = content.goods.get(district.quota.good)
-    if good is None:
-        return 1.0
-    row = await session.get(MarketPrice, (district.id, good.id))
-    price = row.price if row is not None else good.base_price
-    return market_wage_multiplier(price, good.base_price)
 
 
 async def _read_positions(redis_client: redis.Redis, district_id: int) -> Positions:
@@ -488,7 +470,7 @@ def create_app(
             if already_worked_this_tick(shift, tick):
                 raise HTTPException(status_code=409, detail="Already worked this shift this tick")
             district = content.district(character.district_id)
-            market_multiplier = await _market_multiplier(session, content, district)
+            market_multiplier = await market_multiplier_for_district(session, content, district)
             before_level = job_level_for_shifts(character.shifts_completed)
             outcome = resolve_shift_game(
                 character,
@@ -685,6 +667,7 @@ def create_app(
             content=content, session_factory=session_factory, redis_client=redis_client
         )
     )
+    app.include_router(build_work_router(session_factory=session_factory))
 
     if STATIC_DIR.exists():
         # Mounted last so it only ever catches paths none of the routes
