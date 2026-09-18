@@ -49,7 +49,15 @@
 // <script> tag (and its /work.css?v= link, for CSS-only changes like the
 // games/*.js modules use) to match -- changing the URL is what actually
 // forces every cache layer to refetch, restarting the server does not.
-const ASSET_VERSION = "6";
+//
+// When this page is opened inside an `<iframe>` (the dashboard's Work tab
+// embeds it exactly this way, same-origin, to reuse this whole file rather
+// than duplicating minigame-mounting logic -- see static/tabs/work.js), it
+// posts its result to the parent window so the host tab can refresh its
+// own status without the player having to reload anything. A no-op when
+// there's no parent to hear it (the normal Discord-launched/plain-link
+// case).
+const ASSET_VERSION = "7";
 
 const [coinflip, connect4, minesweeper, poison, snake, solitaire] = await Promise.all([
   import(`./games/coinflip.js?v=${ASSET_VERSION}`),
@@ -88,6 +96,15 @@ async function fetchJson(path, options) {
   return body;
 }
 
+function notifyParent(payload) {
+  if (window.parent === window) return;
+  try {
+    window.parent.postMessage({ source: "panem-activity", type: "work-result", ...payload }, "*");
+  } catch {
+    // Embedded in a cross-origin frame this can't reach -- nothing to do.
+  }
+}
+
 async function finish(won, { neutral = false } = {}) {
   setStatus(won ? "Shift cleared!" : "The shift got away from you.");
   try {
@@ -105,6 +122,7 @@ async function finish(won, { neutral = false } = {}) {
     if (body.arrested) {
       resultEl.textContent += " Peacekeepers catch up with them -- fined and jailed.";
     }
+    notifyParent({ shiftId, ...body });
   } catch (err) {
     resultEl.hidden = false;
     resultEl.className = "lose";

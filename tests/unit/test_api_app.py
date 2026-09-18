@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from panem_api.app import create_app
 from panem_shared.content.loader import ContentBundle
@@ -140,9 +141,12 @@ async def seed_character(
     session_factory, *, discord_id: int = 42, character_overrides: dict[str, object] | None = None
 ) -> int:
     async with session_factory() as session, session.begin():
-        user = User(discord_id=discord_id)
-        session.add(user)
-        await session.flush()
+        existing = await session.execute(select(User).where(User.discord_id == discord_id))
+        user = existing.scalar_one_or_none()
+        if user is None:
+            user = User(discord_id=discord_id)
+            session.add(user)
+            await session.flush()
         character_kwargs: dict[str, object] = dict(
             user_id=user.id,
             district_id=1,
@@ -824,3 +828,55 @@ class TestCrimeAttemptResult:
         assert response.status_code == 200
         mock_patch.assert_called_once()
         assert crime_interaction_key("a1") not in redis_client.store
+
+
+class TestDashboardIdentify:
+    async def test_503s_when_not_configured(self, client: TestClient):
+        response = client.post("/activity/dashboard/identify", json={"discord_id": 42})
+        assert response.status_code == 503
+
+    async def test_unknown_discord_id_returns_no_characters(self, work_app):
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/activity/dashboard/identify", json={"discord_id": 999999}
+            )
+        assert response.status_code == 200
+        assert response.json() == {"characters": []}
+
+    async def test_returns_only_approved_characters_for_that_discord_id(
+        self, work_app, db_session_factory
+    ):
+        approved_id = await seed_character(
+            db_session_factory,
+            discord_id=42,
+            character_overrides={"name": "Wren", "status": CharacterStatus.APPROVED.value},
+        )
+        await seed_character(
+            db_session_factory,
+            discord_id=42,
+            character_overrides={"name": "Pending One", "status": CharacterStatus.PENDING.value},
+        )
+        await seed_character(
+            db_session_factory,
+            discord_id=43,
+            character_overrides={"name": "Someone Else", "status": CharacterStatus.APPROVED.value},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/activity/dashboard/identify", json={"discord_id": 42})
+        assert response.status_code == 200
+        body = response.json()
+        assert [c["name"] for c in body["characters"]] == ["Wren"]
+        assert body["characters"][0]["id"] == approved_id
+
+    async def test_surfaces_jailed_until_tick_for_the_jail_tab(self, work_app, db_session_factory):
+        await seed_character(
+            db_session_factory,
+            discord_id=42,
+            character_overrides={"jailed_until_tick": 500},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/activity/dashboard/identify", json={"discord_id": 42})
+        assert response.json()["characters"][0]["jailed_until_tick"] == 500

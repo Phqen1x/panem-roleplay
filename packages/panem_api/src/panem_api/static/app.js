@@ -1,57 +1,91 @@
-// The Activity frontend (Plan §8, Phase 5): a live schematic map of a
-// district's NPCs/characters, served as plain static files (no build
-// step) by panem_api alongside its own REST/WebSocket data endpoints.
+// The Activity frontend's shell: header (Discord identity + character
+// picker), a tab nav, and a router that mounts one `tabs/*.js` module at a
+// time into `#tab-root`. This used to be the whole page (a single-view
+// live map with no tabs) -- that original behavior now lives, unchanged,
+// in `tabs/map.js`; this file's job is just auth + identity + routing.
 //
-// This intentionally works in two modes:
-//   1. Inside a real Discord Activity iframe -- does the embedded-app-sdk
-//      authorize()/authenticate() handshake through /activity/token.
-//   2. Opened directly in a browser (e.g. http://localhost:8000/) for local
-//      testing -- the SDK handshake fails fast outside Discord's iframe, so
-//      this falls back to "preview mode" and shows the map anyway.
+// Two auth-adjacent things happen here that didn't before:
+//   1. The embedded-app-sdk's `authenticate()` result is now actually
+//      read (it used to be discarded) -- it carries the real logged-in
+//      Discord user's `id`/`username`/`avatar`, which is what lets the
+//      dashboard know *whose* characters to offer, the same way each
+//      slash command's `character:` autocomplete already knows via
+//      Discord's own interaction context.
+//   2. Outside a real Discord Activity (this SDK handshake fails fast in
+//      a plain browser tab, same as before), a manual "Discord ID" field
+//      lets the dashboard still be used/tested in preview mode -- the
+//      same fallback spirit as the old map-only page's "preview mode",
+//      just needing one more piece of input now that there's real
+//      per-player state to look up.
 //
-// There's no real district map art yet (District.map.image in data/*.yaml
-// is a placeholder path -- see the README), so this draws a schematic
-// layout from each location's map coordinates rather than a background
-// image.
-//
-// The embedded-app-sdk is vendored at /vendor/discord-embedded-app-sdk.js
-// (bundled from the real npm package with esbuild -- see that file's own
-// header) rather than loaded from a CDN: this used to dynamic-import
-// https://cdn.jsdelivr.net/npm/@discord/embedded-app-sdk@1/+esm, which
-// fails outright (and falls back to preview mode) on any deployment whose
-// network can't reach jsdelivr.net -- a real, reported failure mode, not
-// just a hypothetical one. Still a *dynamic* import inside the same
-// try/catch as the handshake itself, deliberately not a static top-level
-// `import` -- a failed import (a bad deploy missing the vendored file,
-// say) would otherwise throw before any of this module's code runs at
-// all, permanently stuck on "Connecting…" with no fallback. A dynamic
-// import failure is just another reason to fall back to preview mode.
+// See `dashboard_routes.py`'s module docstring for the identity model
+// this feeds into server-side (POST /activity/dashboard/identify, plus
+// every other dashboard endpoint re-validating discord_id+character_id
+// together) -- there's still no cryptographic auth here, same documented
+// gap as the rest of this process.
+import { fetchJson, el } from "./tabs/_shared.js";
 
 const DISCORD_SDK_URL = "/vendor/discord-embedded-app-sdk.js";
+const STEP_TIMEOUT_MS = 8000;
+
+// Bumped whenever any file under tabs/ changes -- matches work.js's/
+// crime.js's own single-constant-for-a-whole-module-group convention.
+const ASSET_VERSION = "1";
+
+const TABS = ["map", "character", "work", "market", "travel", "social", "jail", "crime", "housing"];
+const TAB_LABELS = {
+  map: "Map",
+  character: "Character",
+  work: "Work",
+  market: "Market",
+  travel: "Travel",
+  social: "Social",
+  jail: "Jail",
+  crime: "Crime",
+  housing: "Housing",
+};
 
 const statusEl = document.getElementById("status");
-const districtSelect = document.getElementById("district-select");
-const countsEl = document.getElementById("counts");
-const canvas = document.getElementById("map");
-const ctx = canvas.getContext("2d");
+const navEl = document.getElementById("tab-nav");
+const tabRootEl = document.getElementById("tab-root");
+const discordIdInput = document.getElementById("discord-id-input");
+const characterSelect = document.getElementById("character-select");
 
-let districts = [];
-let currentDistrict = null;
-let socket = null;
+const state = {
+  discordUser: null,
+  manualDiscordId: "",
+  characters: [],
+  characterId: null,
+};
+
+let currentTabHandle = null;
 
 function setStatus(text) {
   statusEl.textContent = text;
 }
 
-async function fetchJson(path, options) {
-  const response = await fetch(path, options);
-  if (!response.ok) {
-    throw new Error(`${path} -> ${response.status}`);
-  }
-  return response.json();
+function getDiscordId() {
+  if (state.discordUser) return state.discordUser.id;
+  return state.manualDiscordId || null;
 }
 
-const STEP_TIMEOUT_MS = 8000;
+function readStorage(key) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStorage(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Private browsing / blocked storage -- selection just won't persist.
+  }
+}
+
+const STEP = { current: "" };
 
 function withTimeout(promise, label) {
   return Promise.race([
@@ -62,10 +96,6 @@ function withTimeout(promise, label) {
   ]);
 }
 
-// Best-effort: lands the failure in panem_api's own server log
-// (`activity_client_error`) so it's visible without opening the
-// Activity's devtools -- which, inside an actual Discord client, can be
-// genuinely hard to reach at all.
 async function reportClientError(step, err) {
   try {
     await fetch("/activity/debug", {
@@ -82,6 +112,9 @@ async function reportClientError(step, err) {
   }
 }
 
+// Resolves the real Discord user via the embedded-app-sdk handshake, or
+// null if this isn't running inside a real Discord Activity (falls back to
+// the manual Discord ID field for preview mode either way).
 async function authenticateWithDiscord() {
   let clientId = "";
   try {
@@ -91,18 +124,18 @@ async function authenticateWithDiscord() {
   }
   if (!clientId) {
     setStatus("Preview mode -- no DISCORD_CLIENT_ID configured on this server.");
-    return;
+    return null;
   }
 
-  let step = "loading embedded-app-sdk";
+  STEP.current = "loading embedded-app-sdk";
   try {
     const { DiscordSDK } = await import(DISCORD_SDK_URL);
     const discordSdk = new DiscordSDK(clientId);
 
-    step = "discordSdk.ready()";
-    await withTimeout(discordSdk.ready(), step);
+    STEP.current = "discordSdk.ready()";
+    await withTimeout(discordSdk.ready(), STEP.current);
 
-    step = "commands.authorize()";
+    STEP.current = "commands.authorize()";
     const { code } = await withTimeout(
       discordSdk.commands.authorize({
         client_id: clientId,
@@ -110,137 +143,161 @@ async function authenticateWithDiscord() {
         state: "",
         scope: ["identify"],
       }),
-      step
+      STEP.current
     );
 
-    step = "/activity/token exchange";
+    STEP.current = "/activity/token exchange";
     const { access_token: accessToken } = await fetchJson("/activity/token", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code }),
     });
 
-    step = "commands.authenticate()";
-    await withTimeout(discordSdk.commands.authenticate({ access_token: accessToken }), step);
+    STEP.current = "commands.authenticate()";
+    const authResult = await withTimeout(
+      discordSdk.commands.authenticate({ access_token: accessToken }),
+      STEP.current
+    );
 
     setStatus("Connected via Discord.");
+    return authResult?.user ?? null;
   } catch (err) {
     // Expected whenever this page isn't actually running inside a Discord
     // Activity iframe (e.g. a plain browser tab during local testing) --
-    // but also where a real misconfiguration (bad client secret, Activities
-    // not enabled for this app, ...) surfaces. Reported to both the
-    // browser console and the server log (see reportClientError) so the
-    // real reason shows up somewhere reachable either way.
-    console.error(`Discord Activity auth failed at step "${step}":`, err);
-    reportClientError(step, err);
+    // but also where a real misconfiguration surfaces. Reported to both
+    // the browser console and the server log so it's visible either way.
+    console.error(`Discord Activity auth failed at step "${STEP.current}":`, err);
+    reportClientError(STEP.current, err);
     setStatus(
-      `Preview mode -- Discord auth failed at "${step}" ` +
-        `(${err instanceof Error ? err.message : err}). Showing the live map anyway; ` +
-        "check the panem_api server log for details."
+      `Preview mode -- Discord auth failed at "${STEP.current}" ` +
+        `(${err instanceof Error ? err.message : err}). Enter a Discord ID below to try the ` +
+        "dashboard anyway; check the panem_api server log for details."
+    );
+    return null;
+  }
+}
+
+function renderCharacterOptions() {
+  characterSelect.innerHTML = "";
+  if (state.characters.length === 0) {
+    characterSelect.disabled = true;
+    characterSelect.append(el("option", {}, "No characters"));
+    state.characterId = null;
+    return;
+  }
+  characterSelect.disabled = false;
+  for (const character of state.characters) {
+    const label = character.jailed_until_tick ? `${character.name} (jailed)` : character.name;
+    characterSelect.append(el("option", { value: String(character.id) }, label));
+  }
+  const savedId = Number(readStorage("panem_character_id"));
+  const stillValid = state.characters.some((c) => c.id === savedId);
+  state.characterId = stillValid ? savedId : state.characters[0].id;
+  characterSelect.value = String(state.characterId);
+}
+
+async function refreshIdentity() {
+  const discordId = getDiscordId();
+  if (!discordId) {
+    state.characters = [];
+    renderCharacterOptions();
+    return;
+  }
+  try {
+    const body = await fetchJson("/activity/dashboard/identify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ discord_id: Number(discordId) }),
+    });
+    state.characters = body.characters;
+  } catch (err) {
+    console.warn("Could not load characters:", err);
+    state.characters = [];
+  }
+  renderCharacterOptions();
+}
+
+function buildCtx() {
+  return {
+    discordId: getDiscordId,
+    characterId: () => state.characterId,
+    characters: () => state.characters,
+    apiFetch: fetchJson,
+    refreshIdentity,
+  };
+}
+
+function currentTabName() {
+  const name = location.hash.replace(/^#/, "");
+  return TABS.includes(name) ? name : TABS[0];
+}
+
+async function showTab(name) {
+  if (currentTabHandle && typeof currentTabHandle.unmount === "function") {
+    currentTabHandle.unmount();
+  }
+  currentTabHandle = null;
+  tabRootEl.innerHTML = "";
+  for (const button of navEl.children) {
+    button.classList.toggle("active", button.dataset.tab === name);
+  }
+  try {
+    const mod = await import(`./tabs/${name}.js?v=${ASSET_VERSION}`);
+    currentTabHandle = mod.mount(tabRootEl, buildCtx()) || null;
+  } catch (err) {
+    console.error(`Failed to load tab "${name}":`, err);
+    tabRootEl.append(el("p", { class: "tab-status" }, `Could not load this tab: ${err.message}`));
+  }
+}
+
+function setupNav() {
+  for (const name of TABS) {
+    navEl.append(
+      el(
+        "button",
+        {
+          "data-tab": name,
+          onclick: () => {
+            location.hash = `#${name}`;
+          },
+        },
+        TAB_LABELS[name]
+      )
     );
   }
+  window.addEventListener("hashchange", () => showTab(currentTabName()));
 }
 
-function wsUrlFor(districtId) {
-  const scheme = location.protocol === "https:" ? "wss:" : "ws:";
-  return `${scheme}//${location.host}/ws/districts/${districtId}/positions`;
-}
-
-function connectToDistrict(districtId) {
-  if (socket) {
-    socket.close();
+function setupIdentityControls() {
+  const savedManualId = readStorage("panem_discord_id");
+  if (savedManualId) {
+    state.manualDiscordId = savedManualId;
+    discordIdInput.value = savedManualId;
   }
-  currentDistrict = districts.find((d) => d.id === districtId) ?? null;
-  if (!currentDistrict) {
-    return;
-  }
-  socket = new WebSocket(wsUrlFor(districtId));
-  socket.onmessage = (event) => render(JSON.parse(event.data));
-  socket.onerror = () => setStatus("Lost connection to the district feed -- retrying on reconnect.");
-}
-
-function toCanvasX(x) {
-  return (x / currentDistrict.map_width) * canvas.width;
-}
-
-function toCanvasY(y) {
-  return (y / currentDistrict.map_height) * canvas.height;
-}
-
-function render(positions) {
-  const d = currentDistrict;
-  if (!d) {
-    return;
-  }
-
-  ctx.fillStyle = "#1b1f27";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  ctx.strokeStyle = "#3a4150";
-  ctx.fillStyle = "#8b93a3";
-  ctx.font = "12px sans-serif";
-  ctx.textAlign = "center";
-  for (const loc of d.locations) {
-    const x = toCanvasX(loc.x);
-    const y = toCanvasY(loc.y);
-    ctx.beginPath();
-    ctx.arc(x, y, 28, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.fillText(loc.name, x, y - 34);
-  }
-
-  ctx.fillStyle = "#7d8597";
-  for (const npc of positions.npcs) {
-    if (npc.x == null || npc.y == null) {
-      continue;
-    }
-    ctx.beginPath();
-    ctx.arc(toCanvasX(npc.x), toCanvasY(npc.y), 3, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  for (const character of positions.characters) {
-    if (character.x == null || character.y == null) {
-      continue;
-    }
-    const x = toCanvasX(character.x);
-    const y = toCanvasY(character.y);
-    ctx.fillStyle = "#e0a72e";
-    ctx.beginPath();
-    ctx.arc(x, y, 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillText(character.name, x, y + 16);
-  }
-
-  countsEl.textContent = `${positions.npcs.length} NPCs, ${positions.characters.length} characters`;
+  discordIdInput.addEventListener("change", async () => {
+    state.manualDiscordId = discordIdInput.value.trim();
+    writeStorage("panem_discord_id", state.manualDiscordId);
+    await refreshIdentity();
+    await showTab(currentTabName());
+  });
+  characterSelect.addEventListener("change", async () => {
+    state.characterId = Number(characterSelect.value);
+    writeStorage("panem_character_id", String(state.characterId));
+    await showTab(currentTabName());
+  });
 }
 
 async function main() {
-  await authenticateWithDiscord();
+  setupNav();
+  setupIdentityControls();
 
-  try {
-    districts = await fetchJson("/districts");
-  } catch (err) {
-    setStatus(`Could not load districts: ${err}`);
-    return;
+  state.discordUser = await authenticateWithDiscord();
+  if (!state.discordUser) {
+    discordIdInput.hidden = false;
   }
 
-  districtSelect.innerHTML = "";
-  districtSelect.disabled = false;
-  for (const d of districts) {
-    const option = document.createElement("option");
-    option.value = String(d.id);
-    option.textContent = d.name;
-    districtSelect.appendChild(option);
-  }
-  districtSelect.addEventListener("change", () => {
-    connectToDistrict(Number(districtSelect.value));
-  });
-
-  if (districts.length > 0) {
-    districtSelect.value = String(districts[0].id);
-    connectToDistrict(districts[0].id);
-  }
+  await refreshIdentity();
+  await showTab(currentTabName());
 }
 
 main();

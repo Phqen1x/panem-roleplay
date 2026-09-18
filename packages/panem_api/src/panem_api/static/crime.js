@@ -17,7 +17,13 @@
 // `?v=` cache-busting matches work.js's own reasoning: bump
 // ASSET_VERSION (and crime.html's/crime.css's matching `?v=`) any time
 // this file or anything under games/lockpick.js|pickpocket.js changes.
-const ASSET_VERSION = "1";
+//
+// Like work.js, this page notifies a parent window (via postMessage) once
+// an attempt is resolved -- the dashboard's Jail/Crime tabs embed this page
+// in an `<iframe>` for the lockpick/steal/burgle minigames (see
+// static/tabs/jail.js, static/tabs/crime.js) and use it to refresh their
+// own status without a reload. A no-op outside an iframe.
+const ASSET_VERSION = "2";
 
 const [lockpick, pickpocket] = await Promise.all([
   import(`./games/lockpick.js?v=${ASSET_VERSION}`),
@@ -45,6 +51,15 @@ async function fetchJson(path, options) {
     throw new Error(body.detail || `${path} -> ${response.status}`);
   }
   return body;
+}
+
+function notifyParent(payload) {
+  if (window.parent === window) return;
+  try {
+    window.parent.postMessage({ source: "panem-activity", type: "crime-result", ...payload }, "*");
+  } catch {
+    // Embedded in a cross-origin frame this can't reach -- nothing to do.
+  }
 }
 
 function describeResult(body) {
@@ -76,6 +91,7 @@ async function finish(won) {
     resultEl.hidden = false;
     resultEl.className = body.success ? "win" : "lose";
     resultEl.textContent = describeResult(body);
+    notifyParent({ attemptId, kind, ...body });
   } catch (err) {
     resultEl.hidden = false;
     resultEl.className = "lose";

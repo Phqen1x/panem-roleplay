@@ -1,0 +1,191 @@
+/* Additive to style.css (dark theme variables), same as work.css/crime.css --
+   styles for the dashboard shell (header identity controls, tab nav) and
+   generic per-tab building blocks every tabs/*.js module can reuse. */
+
+header {
+  flex-wrap: wrap;
+}
+
+#discord-id-input {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  width: 160px;
+}
+
+#character-select {
+  margin-left: auto;
+}
+
+#tab-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+#tab-nav button {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#tab-nav button.active {
+  background: var(--accent);
+  color: #14161c;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+#tab-root {
+  padding: 16px;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.tab-status {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.tab-placeholder {
+  text-align: center;
+  color: var(--muted);
+  padding: 40px 16px;
+}
+
+.tab-placeholder h2 {
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.map-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.map-toolbar .tab-counts {
+  color: var(--muted);
+  font-size: 13px;
+  margin-left: auto;
+}
+
+#tab-root canvas {
+  display: block;
+  width: 100%;
+  max-width: 960px;
+  height: auto;
+  margin: 8px auto;
+  border: 1px solid var(--border);
+}
+
+/* Generic building blocks for the read/action tab modules that follow
+   (jail, crime, work, market, travel, social, housing, character). */
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.panel h2 {
+  margin-top: 0;
+  font-size: 15px;
+}
+
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.field-row label {
+  color: var(--muted);
+  font-size: 13px;
+  min-width: 90px;
+}
+
+.field-row input,
+.field-row select,
+.field-row textarea {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  flex: 1;
+  min-width: 120px;
+}
+
+.btn {
+  background: var(--accent);
+  color: #14161c;
+  border: none;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 700;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn.secondary {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.result-line {
+  font-size: 14px;
+  margin-top: 8px;
+}
+
+.result-line.win {
+  color: #7cd992;
+}
+
+.result-line.lose {
+  color: #e0736b;
+}
+
+table.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+table.data-table th,
+table.data-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+table.data-table th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.minigame-frame {
+  width: 100%;
+  height: 420px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #111;
+}

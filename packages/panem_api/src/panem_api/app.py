@@ -48,6 +48,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from panem_api.dashboard_routes import build_identify_router
 from panem_shared import constants
 from panem_shared.content.loader import ContentBundle
 from panem_shared.content.schemas import District
@@ -661,6 +662,8 @@ def create_app(
         await _clear_crime_launch_message(redis_client, attempt_id, banner)
         logger.info("crime_attempt_resolved", attempt_id=attempt_id, kind=kind, won=body.won)
         return response_obj
+
+    app.include_router(build_identify_router(session_factory=session_factory))
 
     if STATIC_DIR.exists():
         # Mounted last so it only ever catches paths none of the routes

@@ -5,17 +5,19 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Panem: The Long Year</title>
 <link rel="stylesheet" href="/style.css" />
+<link rel="stylesheet" href="/dashboard.css?v=1" />
 </head>
 <body>
 <header>
   <h1>Panem: The Long Year</h1>
-  <select id="district-select" disabled>
-    <option>Loading districts…</option>
+  <input id="discord-id-input" type="text" placeholder="Discord ID (preview mode)" hidden />
+  <select id="character-select" disabled>
+    <option>No characters</option>
   </select>
-  <span id="counts"></span>
 </header>
-<p id="status">Connecting…</p>
-<canvas id="map" width="960" height="600"></canvas>
-<script type="module" src="/app.js"></script>
+<nav id="tab-nav"></nav>
+<p id="status">Connecting&hellip;</p>
+<div id="tab-root"></div>
+<script type="module" src="/app.js?v=2"></script>
 </body>
 </html>
