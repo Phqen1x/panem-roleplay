@@ -10,10 +10,17 @@ here the way `world_events` has one -- a missing/stale key just means the
 sim hasn't ticked yet (a fresh world) or Redis lost it, not a bug to
 recover from.
 
-The `/activity/work/*` endpoints below are the one place this process
-*does* write game state -- `session_factory` (`None` unless
-`ACTIVITY_PUBLIC_URL` is set, see `panem_bot`'s `/work`) is this process's
-only DB access, kept separate from the read-only map endpoints above.
+The `/activity/work/*` and `/activity/crime/*` endpoints below are the
+one place this process *does* write game state -- `session_factory`
+(`None` unless `ACTIVITY_PUBLIC_URL` is set, see `panem_bot`'s `/work`)
+is this process's only DB access, kept separate from the read-only map
+endpoints above. `/activity/crime/*` resolves the `/lockpick`, `/steal`,
+and `/burgle` skill-check minigames (contraband system) the same way
+`/activity/work/*` resolves the shift minigame -- a short-lived attempt
+stashed in Redis by `panem_bot` (`panem_shared.redis_keys.crime_attempt_
+key`, no DB row of its own the way a `Shift` has) rather than a database
+id, since a crime attempt never needs to outlive the one interaction
+that launched it.
 
 No auth is enforced anywhere in this file (see `Settings.api_host`'s
 comment in `panem_shared.settings`): a real Discord Activity authenticates
@@ -29,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import random
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -40,20 +48,41 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from panem_shared import constants
 from panem_shared.content.loader import ContentBundle
 from panem_shared.content.schemas import District
-from panem_shared.db.models import Character, DistrictState, MarketPrice, Shift, WorldClock
+from panem_shared.db.models import (
+    Character,
+    DistrictState,
+    MarketPrice,
+    Npc,
+    Property,
+    Shift,
+    WorldClock,
+)
 from panem_shared.db.session import session_scope
-from panem_shared.jail import resolve_illicit_heat
+from panem_shared.jail import apply_lockpick_attempt, lockpick_difficulty, resolve_illicit_heat
 from panem_shared.job_levels import job_level_for_shifts
 from panem_shared.logging import get_logger
-from panem_shared.redis_keys import positions_key, work_interaction_key, work_pending_key
+from panem_shared.redis_keys import (
+    crime_attempt_key,
+    crime_interaction_key,
+    positions_key,
+    work_interaction_key,
+    work_pending_key,
+)
 from panem_shared.shifts import (
     already_worked_this_tick,
     apply_shift_outcome,
     illicit_shift_output,
     market_wage_multiplier,
     resolve_shift_game,
+)
+from panem_shared.stealing import (
+    apply_burgle_outcome,
+    apply_steal_outcome,
+    burgle_difficulty,
+    steal_difficulty,
 )
 
 logger = get_logger(component="api")
@@ -146,6 +175,33 @@ class WorkPendingShift(BaseModel):
     shift_id: int
 
 
+class CrimeAttemptStatus(BaseModel):
+    kind: str
+    character_name: str
+    # Set for `/steal` (who's being picked); `None` for lockpick/burgle,
+    # which have no single person to name (a cell door, a house).
+    target_name: str | None = None
+    # 0..1, purely cosmetic -- sizes the minigame's target zone/speed
+    # client-side. The server never re-checks the client's own `won`
+    # against it (same no-auth trust posture as `/activity/work`).
+    difficulty: float
+
+
+class CrimeResultRequest(BaseModel):
+    won: bool
+
+
+class CrimeResultResponse(BaseModel):
+    kind: str
+    character_name: str
+    target_name: str | None = None
+    success: bool
+    alerted: bool = False
+    caught: bool = False
+    amount: int = 0
+    tries_left: int | None = None
+
+
 async def _market_multiplier(
     session: AsyncSession, content: ContentBundle, district: District
 ) -> float:
@@ -200,6 +256,35 @@ async def _clear_launch_message(redis_client: redis.Redis, shift_id: int) -> Non
             logger.warning(
                 "work_launch_message_edit_failed",
                 shift_id=shift_id,
+                status=response.status_code,
+            )
+
+
+async def _clear_crime_launch_message(
+    redis_client: redis.Redis, attempt_id: str, banner: str
+) -> None:
+    """The crime-attempt (`/lockpick`/`/steal`/`/burgle`) counterpart to
+    `_clear_launch_message` -- same reasoning, keyed by `attempt_id`
+    instead of a shift id."""
+    key = crime_interaction_key(attempt_id)
+    raw = await redis_client.get(key)
+    if raw is None:
+        return
+    await redis_client.delete(key)
+    info = json.loads(raw)
+    url = f"{DISCORD_API_BASE}/webhooks/{info['application_id']}/{info['token']}/messages/@original"
+    async with httpx.AsyncClient() as http_client:
+        try:
+            response = await http_client.patch(url, json={"content": banner, "components": []})
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "crime_launch_message_edit_failed", attempt_id=attempt_id, error=str(exc)
+            )
+            return
+        if response.status_code != 200:
+            logger.warning(
+                "crime_launch_message_edit_failed",
+                attempt_id=attempt_id,
                 status=response.status_code,
             )
 
@@ -434,6 +519,148 @@ def create_app(
             level=after_level.value,
             arrested=arrested,
         )
+
+    @app.get("/activity/crime/{attempt_id}", response_model=CrimeAttemptStatus)
+    async def crime_attempt_status(attempt_id: str) -> CrimeAttemptStatus:
+        """Lets `crime.html` show who/what a `/lockpick`/`/steal`/`/burgle`
+        attempt is for, and how hard to size the minigame's target zone
+        (`difficulty`), before mounting a game at all."""
+        if session_factory is None:
+            raise HTTPException(status_code=503, detail="The crime minigame isn't configured")
+        raw = await redis_client.get(crime_attempt_key(attempt_id))
+        if raw is None:
+            raise HTTPException(status_code=404, detail="No such attempt")
+        attempt = json.loads(raw)
+        async with session_scope(session_factory) as session:
+            character = await session.get(Character, attempt["character_id"])
+            if character is None:
+                raise HTTPException(status_code=404, detail="No such attempt")
+            kind = attempt["kind"]
+            if kind == "lockpick":
+                return CrimeAttemptStatus(
+                    kind=kind,
+                    character_name=character.name,
+                    difficulty=lockpick_difficulty(character),
+                )
+            if kind == "steal":
+                victim_kind = attempt["victim_kind"]
+                victim = (
+                    await session.get(Npc, attempt["victim_id"])
+                    if victim_kind == "npc"
+                    else await session.get(Character, int(attempt["victim_id"]))
+                )
+                if victim is None:
+                    raise HTTPException(status_code=404, detail="No such attempt")
+                return CrimeAttemptStatus(
+                    kind=kind,
+                    character_name=character.name,
+                    target_name=victim.name,
+                    difficulty=steal_difficulty(is_npc=victim_kind == "npc"),
+                )
+            if kind == "burgle":
+                house = await session.get(Property, attempt["property_id"])
+                if house is None:
+                    raise HTTPException(status_code=404, detail="No such attempt")
+                return CrimeAttemptStatus(
+                    kind=kind, character_name=character.name, difficulty=burgle_difficulty()
+                )
+            raise HTTPException(status_code=400, detail="Unknown crime kind")
+
+    @app.post("/activity/crime/{attempt_id}/result", response_model=CrimeResultResponse)
+    async def crime_attempt_result(
+        attempt_id: str, body: CrimeResultRequest
+    ) -> CrimeResultResponse:
+        """Resolves a `/lockpick`/`/steal`/`/burgle` attempt once the
+        minigame reports whether the player won it -- the initial skill
+        check the RNG-fallback path would otherwise roll for itself
+        (`panem_bot.services.stealing.roll_and_apply_steal`/`_burgle`,
+        `panem_bot.services.jail.attempt_lockpick`). One-shot: the attempt
+        is deleted from Redis before it's applied, so a retried/duplicate
+        POST 404s instead of double-resolving. Trusts the client's `won`
+        outright -- see this module's docstring."""
+        if session_factory is None:
+            raise HTTPException(status_code=503, detail="The crime minigame isn't configured")
+        raw = await redis_client.get(crime_attempt_key(attempt_id))
+        if raw is None:
+            raise HTTPException(status_code=404, detail="This attempt was already resolved")
+        await redis_client.delete(crime_attempt_key(attempt_id))
+        attempt = json.loads(raw)
+        kind = attempt["kind"]
+        rng = random.Random()
+
+        async with session_scope(session_factory) as session:
+            character = await session.get(Character, attempt["character_id"])
+            if character is None:
+                raise HTTPException(status_code=404, detail="No such attempt")
+
+            if kind == "lockpick":
+                apply_lockpick_attempt(character, won=body.won)
+                tries_left = constants.LOCKPICK_MAX_TRIES - character.jail_lockpick_tries_used
+                banner = "This lock has already been tried!"
+                response_obj = CrimeResultResponse(
+                    kind=kind,
+                    character_name=character.name,
+                    success=body.won,
+                    tries_left=tries_left,
+                )
+            elif kind == "steal":
+                district_row = await session.get(DistrictState, attempt["district_id"])
+                victim_kind = attempt["victim_kind"]
+                victim = (
+                    await session.get(Npc, attempt["victim_id"])
+                    if victim_kind == "npc"
+                    else await session.get(Character, int(attempt["victim_id"]))
+                )
+                if victim is None:
+                    raise HTTPException(status_code=404, detail="No such attempt")
+                result = await apply_steal_outcome(
+                    session,
+                    character=character,
+                    victim=victim,
+                    district_row=district_row,
+                    current_tick=attempt["current_tick"],
+                    success=body.won,
+                    rng=rng,
+                )
+                banner = "This lift has already been tried!"
+                response_obj = CrimeResultResponse(
+                    kind=kind,
+                    character_name=character.name,
+                    target_name=victim.name,
+                    success=result.success,
+                    alerted=result.alerted,
+                    caught=result.caught,
+                    amount=result.amount,
+                )
+            elif kind == "burgle":
+                district_row = await session.get(DistrictState, attempt["district_id"])
+                house = await session.get(Property, attempt["property_id"])
+                if house is None:
+                    raise HTTPException(status_code=404, detail="No such attempt")
+                result = await apply_burgle_outcome(
+                    session,
+                    character=character,
+                    house_value=house.suggested_price,
+                    district_row=district_row,
+                    current_tick=attempt["current_tick"],
+                    success=body.won,
+                    rng=rng,
+                )
+                banner = "This break-in has already been tried!"
+                response_obj = CrimeResultResponse(
+                    kind=kind,
+                    character_name=character.name,
+                    success=result.success,
+                    alerted=result.alerted,
+                    caught=result.caught,
+                    amount=result.amount,
+                )
+            else:
+                raise HTTPException(status_code=400, detail="Unknown crime kind")
+
+        await _clear_crime_launch_message(redis_client, attempt_id, banner)
+        logger.info("crime_attempt_resolved", attempt_id=attempt_id, kind=kind, won=body.won)
+        return response_obj
 
     if STATIC_DIR.exists():
         # Mounted last so it only ever catches paths none of the routes

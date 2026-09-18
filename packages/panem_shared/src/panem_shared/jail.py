@@ -69,6 +69,41 @@ def crackdown_good_odds(
     return max(0.0, base_prob / constants.CRACKDOWN_DETECTION_MULTIPLIER)
 
 
+def release_from_jail(character: Character) -> None:
+    """Clears a served/picked/bailed sentence -- shared by `panem_bot.
+    services.jail.pay_bail` and `apply_lockpick_attempt` below so both
+    "ways out" reset the same three fields identically."""
+    character.jailed_until_tick = None
+    character.jail_sentence_ticks = None
+    character.jail_lockpick_tries_used = 0
+
+
+def lockpick_difficulty(character: Character) -> float:
+    """0..1 difficulty for the `/lockpick` minigame (contraband system),
+    derived from the same `LOCKPICK_*` constants the RNG-fallback path
+    (`panem_bot.services.jail.attempt_lockpick`, used when no Activity is
+    configured or the player hits Skip) rolls against, so a long sentence
+    reads as a genuinely harder lock in both paths rather than two
+    independently-tuned difficulty curves."""
+    sentence = character.jail_sentence_ticks or 0
+    prob = max(
+        constants.LOCKPICK_MIN_SUCCESS_PROB,
+        constants.LOCKPICK_BASE_SUCCESS_PROB - sentence * constants.LOCKPICK_DIFFICULTY_PER_TICK,
+    )
+    return 1.0 - prob
+
+
+def apply_lockpick_attempt(character: Character, *, won: bool) -> None:
+    """Applies one `/lockpick` attempt's outcome -- shared so `panem_api`'s
+    lockpick-Activity result endpoint can apply the same tries/release
+    bookkeeping the RNG-fallback path uses. Consumes one of
+    `LOCKPICK_MAX_TRIES` on a loss; a win clears the sentence outright."""
+    if won:
+        release_from_jail(character)
+    else:
+        character.jail_lockpick_tries_used = (character.jail_lockpick_tries_used or 0) + 1
+
+
 def resolve_illicit_heat(
     character: Character,
     district_row: DistrictState | None,

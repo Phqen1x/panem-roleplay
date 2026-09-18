@@ -17,9 +17,14 @@ from panem_shared.content.schemas import (
     JobOption,
     Location,
 )
-from panem_shared.db.models import Character, Shift, User
-from panem_shared.enums import CharacterStatus
-from panem_shared.redis_keys import work_interaction_key, work_pending_key
+from panem_shared.db.models import Character, Npc, Property, Shift, User
+from panem_shared.enums import CharacterStatus, OwnerKind, PropertyKind
+from panem_shared.redis_keys import (
+    crime_attempt_key,
+    crime_interaction_key,
+    work_interaction_key,
+    work_pending_key,
+)
 
 
 class FakeRedis:
@@ -129,6 +134,58 @@ async def seed_shift(
         session.add(shift)
         await session.flush()
         return shift.id
+
+
+async def seed_character(
+    session_factory, *, discord_id: int = 42, character_overrides: dict[str, object] | None = None
+) -> int:
+    async with session_factory() as session, session.begin():
+        user = User(discord_id=discord_id)
+        session.add(user)
+        await session.flush()
+        character_kwargs: dict[str, object] = dict(
+            user_id=user.id,
+            district_id=1,
+            current_district_id=1,
+            name="Wren",
+            age=20,
+            status=CharacterStatus.APPROVED.value,
+            money=100,
+            location_id="square",
+        )
+        character_kwargs.update(character_overrides or {})
+        character = Character(**character_kwargs)  # type: ignore[arg-type]
+        session.add(character)
+        await session.flush()
+        return character.id
+
+
+async def seed_npc(session_factory, **overrides: object) -> str:
+    async with session_factory() as session, session.begin():
+        npc_kwargs: dict[str, object] = dict(
+            id="d1_npc_1", district_id=1, name="Mark", age=30, money=50.0, location_id="square"
+        )
+        npc_kwargs.update(overrides)
+        session.add(Npc(**npc_kwargs))  # type: ignore[arg-type]
+        return npc_kwargs["id"]  # type: ignore[return-value]
+
+
+async def seed_house(session_factory, *, owner_id: int, **overrides: object) -> int:
+    async with session_factory() as session, session.begin():
+        house_kwargs: dict[str, object] = dict(
+            district_id=1,
+            kind=PropertyKind.HOUSE.value,
+            tier="apprentice",
+            owner_kind=OwnerKind.CHARACTER.value,
+            owner_id=owner_id,
+            for_sale=False,
+            suggested_price=1000.0,
+        )
+        house_kwargs.update(overrides)
+        house = Property(**house_kwargs)  # type: ignore[arg-type]
+        session.add(house)
+        await session.flush()
+        return house.id
 
 
 @pytest.fixture
@@ -543,3 +600,227 @@ class TestWorkShiftResult:
         async with db_session_factory() as session:
             character = await session.get(Character, character_id)
             assert character.shifts_completed == 1
+
+
+class TestCrimeAttemptStatus:
+    async def test_503s_when_not_configured(self):
+        app = create_app(content=make_content_with_job(), redis_client=FakeRedis())
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/activity/crime/nope")
+        assert response.status_code == 503
+
+    async def test_404s_for_an_unknown_attempt(self, work_app):
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/activity/crime/nope")
+        assert response.status_code == 404
+
+    async def test_lockpick_status(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory)
+        redis_client = work_app.state.fake_redis
+        redis_client.store[crime_attempt_key("a1")] = json.dumps(
+            {"kind": "lockpick", "character_id": char_id}
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/activity/crime/a1")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["kind"] == "lockpick"
+        assert body["character_name"] == "Wren"
+        assert body["target_name"] is None
+        assert 0.0 <= body["difficulty"] <= 1.0
+
+    async def test_steal_status_names_the_target(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory)
+        npc_id = await seed_npc(db_session_factory, name="Mark")
+        redis_client = work_app.state.fake_redis
+        redis_client.store[crime_attempt_key("a1")] = json.dumps(
+            {
+                "kind": "steal",
+                "character_id": char_id,
+                "district_id": 1,
+                "current_tick": 0,
+                "victim_kind": "npc",
+                "victim_id": npc_id,
+            }
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/activity/crime/a1")
+        assert response.status_code == 200
+        assert response.json()["target_name"] == "Mark"
+
+    async def test_burgle_status(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory)
+        other_id = await seed_character(
+            db_session_factory, discord_id=99, character_overrides={"name": "Owner"}
+        )
+        house_id = await seed_house(db_session_factory, owner_id=other_id)
+        redis_client = work_app.state.fake_redis
+        redis_client.store[crime_attempt_key("a1")] = json.dumps(
+            {
+                "kind": "burgle",
+                "character_id": char_id,
+                "property_id": house_id,
+                "district_id": 1,
+                "current_tick": 0,
+            }
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/activity/crime/a1")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["character_name"] == "Wren"
+        assert body["target_name"] is None
+
+
+class TestCrimeAttemptResult:
+    async def test_503s_when_not_configured(self):
+        app = create_app(content=make_content_with_job(), redis_client=FakeRedis())
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/activity/crime/nope/result", json={"won": True})
+        assert response.status_code == 503
+
+    async def test_404s_for_an_unknown_or_already_resolved_attempt(self, work_app):
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/activity/crime/nope/result", json={"won": True})
+        assert response.status_code == 404
+
+    async def test_lockpick_win_releases_the_character(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            character_overrides={"jailed_until_tick": 50, "jail_sentence_ticks": 10},
+        )
+        redis_client = work_app.state.fake_redis
+        redis_client.store[crime_attempt_key("a1")] = json.dumps(
+            {"kind": "lockpick", "character_id": char_id}
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/activity/crime/a1/result", json={"won": True})
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.jailed_until_tick is None
+        assert crime_attempt_key("a1") not in redis_client.store
+
+    async def test_lockpick_loss_consumes_a_try(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            character_overrides={
+                "jailed_until_tick": 50,
+                "jail_sentence_ticks": 10,
+                "jail_lockpick_tries_used": 0,
+            },
+        )
+        redis_client = work_app.state.fake_redis
+        redis_client.store[crime_attempt_key("a1")] = json.dumps(
+            {"kind": "lockpick", "character_id": char_id}
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/activity/crime/a1/result", json={"won": False})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is False
+        assert body["tries_left"] == 2
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.jailed_until_tick == 50
+
+    async def test_steal_win_moves_money(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, character_overrides={"money": 0})
+        npc_id = await seed_npc(db_session_factory, money=50.0)
+        redis_client = work_app.state.fake_redis
+        redis_client.store[crime_attempt_key("a1")] = json.dumps(
+            {
+                "kind": "steal",
+                "character_id": char_id,
+                "district_id": 1,
+                "current_tick": 0,
+                "victim_kind": "npc",
+                "victim_id": npc_id,
+            }
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/activity/crime/a1/result", json={"won": True})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is True
+        assert body["amount"] > 0
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.money == body["amount"]
+
+    async def test_burgle_win_pays_a_fraction_of_the_house_value(
+        self, work_app, db_session_factory
+    ):
+        from panem_shared import constants
+
+        char_id = await seed_character(db_session_factory, character_overrides={"money": 0})
+        other_id = await seed_character(
+            db_session_factory, discord_id=99, character_overrides={"name": "Owner"}
+        )
+        house_id = await seed_house(db_session_factory, owner_id=other_id, suggested_price=1000.0)
+        redis_client = work_app.state.fake_redis
+        redis_client.store[crime_attempt_key("a1")] = json.dumps(
+            {
+                "kind": "burgle",
+                "character_id": char_id,
+                "property_id": house_id,
+                "district_id": 1,
+                "current_tick": 0,
+            }
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/activity/crime/a1/result", json={"won": True})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["amount"] == round(1000.0 * constants.BURGLE_YIELD_FRACTION)
+
+    async def test_one_shot_a_second_post_404s(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            character_overrides={"jailed_until_tick": 50, "jail_sentence_ticks": 10},
+        )
+        redis_client = work_app.state.fake_redis
+        redis_client.store[crime_attempt_key("a1")] = json.dumps(
+            {"kind": "lockpick", "character_id": char_id}
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            first = await client.post("/activity/crime/a1/result", json={"won": True})
+            second = await client.post("/activity/crime/a1/result", json={"won": True})
+        assert first.status_code == 200
+        assert second.status_code == 404
+
+    async def test_edits_the_launch_message_and_forgets_it(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            character_overrides={"jailed_until_tick": 50, "jail_sentence_ticks": 10},
+        )
+        redis_client = work_app.state.fake_redis
+        redis_client.store[crime_attempt_key("a1")] = json.dumps(
+            {"kind": "lockpick", "character_id": char_id}
+        )
+        redis_client.store[crime_interaction_key("a1")] = json.dumps(
+            {"application_id": "111", "token": "tok"}
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        fake_response = httpx.Response(200, json={})
+        with patch.object(
+            httpx.AsyncClient, "patch", AsyncMock(return_value=fake_response)
+        ) as mock_patch:
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post("/activity/crime/a1/result", json={"won": True})
+        assert response.status_code == 200
+        mock_patch.assert_called_once()
+        assert crime_interaction_key("a1") not in redis_client.store

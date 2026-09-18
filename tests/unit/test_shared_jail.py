@@ -157,6 +157,54 @@ class TestResolveIllicitHeat:
         assert arrested is False
 
 
+class TestReleaseFromJail:
+    def test_clears_all_three_fields(self):
+        character = make_character(
+            jailed_until_tick=50, jail_sentence_ticks=10, jail_lockpick_tries_used=2
+        )
+        shared_jail.release_from_jail(character)
+        assert character.jailed_until_tick is None
+        assert character.jail_sentence_ticks is None
+        assert character.jail_lockpick_tries_used == 0
+
+
+class TestLockpickDifficulty:
+    def test_no_sentence_reads_as_the_base_difficulty(self):
+        character = make_character(jail_sentence_ticks=None)
+        assert (
+            shared_jail.lockpick_difficulty(character) == 1.0 - constants.LOCKPICK_BASE_SUCCESS_PROB
+        )
+
+    def test_a_longer_sentence_is_harder(self):
+        short = make_character(jail_sentence_ticks=1)
+        long = make_character(jail_sentence_ticks=1000)
+        assert shared_jail.lockpick_difficulty(long) > shared_jail.lockpick_difficulty(short)
+
+    def test_floors_at_the_minimum_success_prob(self):
+        character = make_character(jail_sentence_ticks=10_000_000)
+        assert (
+            shared_jail.lockpick_difficulty(character) == 1.0 - constants.LOCKPICK_MIN_SUCCESS_PROB
+        )
+
+
+class TestApplyLockpickAttempt:
+    def test_a_win_releases(self):
+        character = make_character(
+            jailed_until_tick=50, jail_sentence_ticks=10, jail_lockpick_tries_used=1
+        )
+        shared_jail.apply_lockpick_attempt(character, won=True)
+        assert character.jailed_until_tick is None
+        assert character.jail_lockpick_tries_used == 0
+
+    def test_a_loss_consumes_a_try_but_leaves_the_sentence(self):
+        character = make_character(
+            jailed_until_tick=50, jail_sentence_ticks=10, jail_lockpick_tries_used=1
+        )
+        shared_jail.apply_lockpick_attempt(character, won=False)
+        assert character.jailed_until_tick == 50
+        assert character.jail_lockpick_tries_used == 2
+
+
 class TestCrackdownOdds:
     def test_inactive_without_a_row(self):
         assert shared_jail.is_crackdown_active(None, 10) is False

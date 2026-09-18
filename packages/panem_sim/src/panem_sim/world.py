@@ -62,6 +62,17 @@ value that's simply never read for those two kinds, rather than making
 the column nullable for two kinds out of three."""
 
 
+def _house_locations(district: District) -> list[str]:
+    """Candidate locations for a `HOUSE` property's `location_id`
+    (contraband system: `/burgle`'s "nobody's home" check reads whether
+    the owner's own `Character.location_id` currently matches it).
+    Prefers `residential`-kind locations; every district schema-
+    guarantees at least one `public` location (FR-CHR-4) to fall back to
+    for a district authored with none."""
+    residential = [loc.id for loc in district.locations if loc.kind == LocationKind.RESIDENTIAL]
+    return residential or [loc.id for loc in district.locations if loc.kind == LocationKind.PUBLIC]
+
+
 async def seed_properties(session: AsyncSession, content: ContentBundle) -> None:
     """Procedurally seeds houses/apartments/inns per district (idempotent:
     a district already holding any `Property` row is left untouched) --
@@ -83,6 +94,8 @@ async def seed_properties(session: AsyncSession, content: ContentBundle) -> None
         if district.id in existing_districts:
             continue
 
+        house_locations = _house_locations(district)
+        house_index = 0
         for tier, base_price in constants.HOUSE_BASE_PRICE_BY_TIER.items():
             for _ in range(constants.HOUSES_PER_TIER_PER_DISTRICT):
                 session.add(
@@ -93,8 +106,10 @@ async def seed_properties(session: AsyncSession, content: ContentBundle) -> None
                         owner_kind=OwnerKind.NPC.value,
                         for_sale=True,
                         suggested_price=base_price,
+                        location_id=house_locations[house_index % len(house_locations)],
                     )
                 )
+                house_index += 1
 
         for complex_n in range(1, constants.APARTMENT_COMPLEXES_PER_DISTRICT + 1):
             complex_id = f"d{district.id}_complex_{complex_n}"

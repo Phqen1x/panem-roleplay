@@ -494,7 +494,15 @@ class Property(Base):
     maintenance-due tracking (`mortgage_payment` = the daily maintenance
     cost, `mortgage_principal` unused) -- one collection/foreclosure loop
     in `panem_sim.systems.housing` handles both rather than two parallel
-    mechanisms for "can't afford the payment"."""
+    mechanisms for "can't afford the payment".
+
+    `location_id` (contraband system) is only ever set for a `HOUSE` --
+    `panem_sim.world.seed_properties` assigns one of the district's
+    `residential` (or, failing that, `public`) locations at seeding time.
+    `/burgle`'s "nobody's home" check reads whether the owner's own
+    `Character.location_id` currently matches it; `None` (every property
+    seeded before this column existed, and every non-house kind) just
+    skips that check rather than refusing every burglary."""
 
     __tablename__ = "properties"
 
@@ -503,6 +511,7 @@ class Property(Base):
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
     tier: Mapped[str] = mapped_column(String(16), nullable=False)
     complex_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    location_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     owner_kind: Mapped[str] = mapped_column(String(16), nullable=False, default=OwnerKind.NPC.value)
     owner_id: Mapped[int | None] = mapped_column(ForeignKey("characters.id"), nullable=True)

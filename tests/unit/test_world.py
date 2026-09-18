@@ -532,6 +532,43 @@ class TestSeedProperties:
             assert house.for_sale is True
             assert house.owner_kind == OwnerKind.NPC.value
 
+    async def test_houses_get_a_residential_location(self, db_session):
+        """Contraband system: `/burgle`'s "nobody's home" check reads a
+        house's `location_id` against its owner's -- prefers a
+        `residential` location when the district has one."""
+        content = make_content(make_district(1, with_residential=True))
+
+        await world.seed_properties(db_session, content)
+        await db_session.flush()
+
+        houses = (
+            (
+                await db_session.execute(
+                    select(Property).where(Property.kind == PropertyKind.HOUSE.value)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert all(house.location_id == "home" for house in houses)
+
+    async def test_houses_fall_back_to_a_public_location(self, db_session):
+        content = make_content(make_district(1, with_residential=False))
+
+        await world.seed_properties(db_session, content)
+        await db_session.flush()
+
+        houses = (
+            (
+                await db_session.execute(
+                    select(Property).where(Property.kind == PropertyKind.HOUSE.value)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert all(house.location_id == "square" for house in houses)
+
     async def test_apartment_units_are_grouped_into_complexes(self, db_session):
         content = make_content(make_district(1))
 

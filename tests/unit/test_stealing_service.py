@@ -287,6 +287,35 @@ class TestCheckCanBurgle:
         house = make_house(district_id=1, owner_id=2)
         stealing_svc.check_can_burgle(character, house, 10)  # no raise
 
+    def test_raises_when_the_owner_is_home(self):
+        character = make_character(current_district_id=1)
+        character.id = 1
+        house = make_house(district_id=1, owner_id=2, location_id="home")
+        owner = make_character(name="Owner", location_id="home")
+        owner.id = 2
+        with pytest.raises(NotAllowed) as exc_info:
+            stealing_svc.check_can_burgle(character, house, 10, owner=owner)
+        assert exc_info.value.reason_key == "burgle_owner_home"
+
+    def test_allowed_when_the_owner_is_elsewhere(self):
+        character = make_character(current_district_id=1)
+        character.id = 1
+        house = make_house(district_id=1, owner_id=2, location_id="home")
+        owner = make_character(name="Owner", location_id="market")
+        owner.id = 2
+        stealing_svc.check_can_burgle(character, house, 10, owner=owner)  # no raise
+
+    def test_allowed_when_the_house_has_no_location(self):
+        """Every property seeded before `location_id` existed (or a
+        non-house kind) has `location_id=None` -- the occupancy check
+        just skips rather than refusing every burglary."""
+        character = make_character(current_district_id=1)
+        character.id = 1
+        house = make_house(district_id=1, owner_id=2, location_id=None)
+        owner = make_character(name="Owner", location_id="home")
+        owner.id = 2
+        stealing_svc.check_can_burgle(character, house, 10, owner=owner)  # no raise
+
 
 class TestResolveBurgle:
     async def test_success_pays_a_fraction_of_the_house_value(self, db_session):
@@ -329,3 +358,64 @@ class TestResolveBurgle:
         assert character.jailed_until_tick == constants.STEAL_JAIL_TICKS
         district_row = await db_session.get(DistrictState, 1)
         assert district_row.peacekeeper_pressure == 0.3 + stealing_svc.STEAL_PRESSURE_DELTA
+
+
+class TestRollAndApplySteal:
+    """The Activity-launch skip/fallback path: unlike `resolve_steal`,
+    this never re-validates or re-touches `last_steal_tick` -- an
+    Activity launch already did both once, up front."""
+
+    async def test_does_not_touch_the_cooldown(self, db_session):
+        character = make_character(money=0, last_steal_tick=42)
+        victim = make_npc(money=50.0)
+        await stealing_svc.roll_and_apply_steal(
+            db_session,
+            character=character,
+            victim=victim,
+            district_row=None,
+            current_tick=42,
+            rng=SequenceRng([0.0]),
+        )
+        assert character.last_steal_tick == 42
+
+    async def test_success_moves_money(self, db_session):
+        character = make_character(money=0)
+        victim = make_npc(money=50.0)
+        result = await stealing_svc.roll_and_apply_steal(
+            db_session,
+            character=character,
+            victim=victim,
+            district_row=None,
+            current_tick=10,
+            rng=SequenceRng([0.0]),
+        )
+        assert result.success is True
+        assert character.money == result.amount
+
+
+class TestRollAndApplyBurgle:
+    async def test_does_not_touch_the_cooldown(self, db_session):
+        character = make_character(money=0, last_steal_tick=42)
+        await stealing_svc.roll_and_apply_burgle(
+            db_session,
+            character=character,
+            house_value=1000.0,
+            district_row=None,
+            current_tick=42,
+            rng=SequenceRng([0.0]),
+        )
+        assert character.last_steal_tick == 42
+
+    async def test_success_pays_a_fraction_of_the_house_value(self, db_session):
+        character = make_character(money=0)
+        result = await stealing_svc.roll_and_apply_burgle(
+            db_session,
+            character=character,
+            house_value=1000.0,
+            district_row=None,
+            current_tick=10,
+            rng=SequenceRng([0.0]),
+        )
+        assert result.success is True
+        assert result.amount == round(1000.0 * constants.BURGLE_YIELD_FRACTION)
+        assert character.money == result.amount

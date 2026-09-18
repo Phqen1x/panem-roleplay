@@ -54,6 +54,36 @@ lookup that survives past that point couldn't be used to edit the
 original message anyway, so there's no reason to keep it longer."""
 
 
+def crime_attempt_key(attempt_id: str) -> str:
+    """A pending `/lockpick`/`/steal`/`/burgle` skill-check Activity
+    launch (contraband system), keyed by an opaque id rather than a
+    database row -- unlike a `Shift`, a crime attempt has no reason to
+    outlive the single interaction that launched it, so it lives
+    entirely in Redis. `panem_bot` writes the attempt's context here
+    (who, against what, at which tick) right before linking to
+    `crime.html`; `panem_api`'s `POST /activity/crime/{attempt_id}/
+    result` reads it back once, deletes it, and resolves the attempt --
+    one-shot, matching the "no Skip after Play" semantics the message's
+    buttons already enforce."""
+    return f"crime:attempt:{attempt_id}"
+
+
+CRIME_ATTEMPT_TTL_S = 14 * 60
+"""Just under Discord's 15-minute interaction-token validity window --
+matches `WORK_INTERACTION_TTL_S`'s own reasoning."""
+
+
+def crime_interaction_key(attempt_id: str) -> str:
+    """Mirrors `work_interaction_key`, keyed by `attempt_id` instead of a
+    shift id -- what `panem_api`'s crime-result endpoint needs to edit
+    the original launch message (removing its now-stale Play/Skip
+    buttons) via Discord's webhook-edit REST endpoint."""
+    return f"crime:interaction:{attempt_id}"
+
+
+CRIME_INTERACTION_TTL_S = 14 * 60
+
+
 SIM_ALERTS_CHANNEL = "sim:alerts"
 """Published to by `panem_sim.tick` (FR-TCK-3) when a tick fails twice in
 a row and the loop pauses -- `panem_bot.narrator.run` forwards whatever's

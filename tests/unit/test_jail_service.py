@@ -86,6 +86,27 @@ class TestPayBail:
         assert character.money == 0
 
 
+class TestCheckCanAttemptLockpick:
+    def test_raises_when_not_jailed(self):
+        character = make_character(jailed_until_tick=None)
+        with pytest.raises(NotAllowed) as exc_info:
+            jail_svc.check_can_attempt_lockpick(character, 10)
+        assert exc_info.value.reason_key == "jail_not_jailed"
+
+    def test_raises_when_out_of_tries(self):
+        character = make_character(
+            jailed_until_tick=110, jail_lockpick_tries_used=constants.LOCKPICK_MAX_TRIES
+        )
+        with pytest.raises(NotAllowed) as exc_info:
+            jail_svc.check_can_attempt_lockpick(character, 10)
+        assert exc_info.value.reason_key == "lockpick_no_tries_left"
+
+    def test_no_raise_and_no_side_effect_when_allowed(self):
+        character = make_character(jailed_until_tick=110, jail_lockpick_tries_used=0)
+        jail_svc.check_can_attempt_lockpick(character, 10)  # no raise
+        assert character.jail_lockpick_tries_used == 0
+
+
 class TestAttemptLockpick:
     def test_raises_when_not_jailed(self):
         character = make_character(jailed_until_tick=None)

@@ -17,6 +17,9 @@ from panem_bot.errors import NotAllowed
 from panem_shared import constants
 from panem_shared.db.models import Character
 from panem_shared.jail import (
+    apply_lockpick_attempt as apply_lockpick_attempt,
+)
+from panem_shared.jail import (
     commit_to_jail as commit_to_jail,
 )
 from panem_shared.jail import (
@@ -27,6 +30,12 @@ from panem_shared.jail import (
 )
 from panem_shared.jail import (
     is_crackdown_active as is_crackdown_active,
+)
+from panem_shared.jail import (
+    lockpick_difficulty as lockpick_difficulty,
+)
+from panem_shared.jail import (
+    release_from_jail as release_from_jail,
 )
 
 
@@ -46,12 +55,6 @@ def bail_cost(character: Character, current_tick: int) -> int:
     return round(constants.BAIL_BASE_COST + constants.BAIL_COST_PER_REMAINING_TICK * remaining)
 
 
-def _release(character: Character) -> None:
-    character.jailed_until_tick = None
-    character.jail_sentence_ticks = None
-    character.jail_lockpick_tries_used = 0
-
-
 def pay_bail(character: Character, current_tick: int) -> int:
     """Pays `bail_cost` to clear `character`'s sentence immediately.
     Raises `NotAllowed` if not jailed or if funds are short. Returns the
@@ -60,35 +63,33 @@ def pay_bail(character: Character, current_tick: int) -> int:
     if character.money < cost:
         raise NotAllowed("bail_insufficient_funds", name=character.name, cost=cost)
     character.money -= cost
-    _release(character)
+    release_from_jail(character)
     return cost
 
 
-def attempt_lockpick(
-    character: Character, current_tick: int, *, rng: random.Random | None = None
-) -> bool:
-    """One `/lockpick` attempt: a probability roll whose odds are fixed
-    from `jail_sentence_ticks` (the sentence's *original* length, not the
-    counting-down `jailed_until_tick`, so difficulty doesn't ease up near
-    release) -- `LOCKPICK_BASE_SUCCESS_PROB` minus `LOCKPICK_DIFFICULTY_
-    PER_TICK` per sentence tick, floored at `LOCKPICK_MIN_SUCCESS_PROB`.
-    Consumes one of `LOCKPICK_MAX_TRIES` tries whether it succeeds or
-    fails; raises `NotAllowed` if not jailed or already out of tries. A
-    success clears the sentence outright (same as `pay_bail`, minus the
-    cost)."""
+def check_can_attempt_lockpick(character: Character, current_tick: int) -> None:
+    """Raises `NotAllowed` unless `character` has a lockpick attempt left
+    to spend -- validation only, no roll, so `/lockpick` can refuse up
+    front before launching the Activity (an attempt is spent only once a
+    result -- minigame or the RNG-fallback roll below -- actually comes
+    back)."""
     check_is_jailed(character, current_tick)
     tries_used = character.jail_lockpick_tries_used or 0
     if tries_used >= constants.LOCKPICK_MAX_TRIES:
         raise NotAllowed("lockpick_no_tries_left", name=character.name)
 
-    sentence = character.jail_sentence_ticks or 0
-    prob = max(
-        constants.LOCKPICK_MIN_SUCCESS_PROB,
-        constants.LOCKPICK_BASE_SUCCESS_PROB - sentence * constants.LOCKPICK_DIFFICULTY_PER_TICK,
-    )
-    character.jail_lockpick_tries_used = tries_used + 1
+
+def attempt_lockpick(
+    character: Character, current_tick: int, *, rng: random.Random | None = None
+) -> bool:
+    """The RNG-fallback path (no `ACTIVITY_PUBLIC_URL` configured, or the
+    player hits Skip): one probability roll at `lockpick_difficulty`'s
+    odds, then `apply_lockpick_attempt` for the tries/release bookkeeping
+    -- the same function `panem_api`'s lockpick-Activity result endpoint
+    calls with the minigame's own win/lose instead of a roll."""
+    check_can_attempt_lockpick(character, current_tick)
+    prob = 1.0 - lockpick_difficulty(character)
     roller = rng if rng is not None else random.Random()
-    if roller.random() < prob:
-        _release(character)
-        return True
-    return False
+    won = roller.random() < prob
+    apply_lockpick_attempt(character, won=won)
+    return won

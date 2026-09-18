@@ -2017,3 +2017,72 @@ money) from a player or NPC was considered and dropped: NPCs don't carry real `I
 today (`Npc`'s `shop_goods` is flavor-only), so there'd be nothing to actually take from most
 targets -- `/steal`/`/burgle` move money only. No `/character status` line surfaces `illicit_
 heat`/`jail_count` directly; a player finds out about heat when the arrest roll actually fires.
+(A later pass, "Notes on the contraband skill-check Activity minigames" below, replaces the
+probability-roll-only posture above with a real playable minigame for `/lockpick`, `/steal`,
+and `/burgle` -- read that section for the current behavior; the RNG rolls described here still
+run as the fallback when no Activity is configured or the player hits Skip.)
+
+## Notes on the contraband skill-check Activity minigames (lockpick/pickpocket)
+
+A follow-up feature request: give `/lockpick`, `/steal`, and `/burgle` a real, playable skill
+check -- the same in-Discord Activity mechanism `/work`'s minigames already use -- instead of
+only ever rolling a probability, and make stealing from a player (including their house)
+naturally harder than from an NPC, and make burgling a house impossible while its owner is
+actually home.
+
+- **The requested reference game couldn't be embedded as-is.** The request named a specific
+  GitHub lockpicking project as a base to embed "the same way the work minigames are embedded."
+  That project turned out to be a Unity/C# game (GPLv3-licensed code, CC BY-SA assets) -- not a
+  browser page, so it can't load in the iframe `work.html`'s minigames use, and porting its code
+  in would pull GPLv3 copyleft into this repository. Built instead: two original, from-scratch
+  canvas minigames matching the same *feel* (a moving needle, strike when it's in the lit zone)
+  without copying any of that project's code or assets -- `games/lockpick.js` (a dial with a
+  bobby-pin-style pick, shared by `/lockpick` and `/burgle`: picking a lock is picking a lock
+  whether it's a cell door or a house door) and `games/pickpocket.js` (a timing strike on the
+  mark's pocket for `/steal`, adapted from a canvas sketch supplied with the request).
+- **Same launch/result round trip `/work` already established**, generalized rather than
+  duplicated per command: `panem_bot.activity_launch` (new) holds `/lockpick`'s, `/steal`'s, and
+  `/burgle`'s shared "create an attempt, remember the interaction, offer Play + Skip" plumbing,
+  mirroring `cogs/jobs.py`'s own `_activity_launch_view`/`_remember_interaction` pair. Unlike a
+  `Shift`, a crime attempt has no reason to outlive the one interaction that launched it, so it
+  lives entirely in Redis (`redis_keys.crime_attempt_key`/`crime_interaction_key`, ~14 minute
+  TTL, matching Discord's own interaction-token window) rather than getting a new DB table.
+  `panem_api` gained `GET /activity/crime/{attempt_id}` (who/what, and a `difficulty` float for
+  sizing the minigame's target zone) and `POST /activity/crime/{attempt_id}/result` (one-shot --
+  the attempt is deleted from Redis before it's applied, so a retried POST 404s instead of
+  double-resolving), served from a new `crime.html`/`crime.js` page pair alongside `work.html`/
+  `work.js`.
+- **Discord's Activity URL Mapping is a single fixed root already pointed at `work.html`**, an
+  external Developer Portal setting this session has no way to change -- so unlike `/work`, a
+  crime attempt never attempts the `embedded_application` voice-channel invite launch (that
+  would open the wrong game entirely). It always uses a plain link instead, which Discord still
+  opens in the client's in-app browser overlay rather than a bare external tab -- the same
+  fallback path `/work` itself uses when the player isn't in a voice channel.
+- **The RNG-driven skill check didn't go away -- it moved.** `panem_shared.stealing` (new) holds
+  `apply_steal_outcome`/`apply_burgle_outcome`, the alert/escape/caught chain factored out of
+  `panem_bot.services.stealing`'s `resolve_steal`/`resolve_burgle` so `panem_api`'s result
+  endpoint can call it directly with the minigame's own win/lose instead of rolling
+  `STEAL_FROM_*_BASE_SUCCESS`/`BURGLE_BASE_SUCCESS` itself. Those constants still drive the RNG
+  fallback (`roll_and_apply_steal`/`_burgle`, used when no `ACTIVITY_PUBLIC_URL` is configured or
+  the player hits Skip) *and* the minigame's difficulty (`steal_difficulty`/`burgle_difficulty`,
+  `1 - success_prob`, read by `games/pickpocket.js`/`lockpick.js` to size the target zone/needle
+  speed) -- the same tuning surface drives both paths, so a player mark stays a harder skill
+  check than an NPC one whichever way it's resolved, and a house stays the hardest tier of all.
+  `panem_shared.jail` similarly gained `apply_lockpick_attempt`/`lockpick_difficulty`, and
+  `panem_bot.services.jail.attempt_lockpick` (the RNG fallback) now calls the former instead of
+  duplicating the tries/release bookkeeping.
+- **`/burgle`'s "nobody's home" check** (the other half of this request): `Property` gained a
+  `location_id` column, set for every `HOUSE`-kind property at seeding time
+  (`panem_sim.world.seed_properties`, preferring a `residential`-kind location, falling back to
+  `public` for a district authored with none -- every district schema-guarantees at least one).
+  `check_can_burgle` now takes the owner `Character` the cog already looked up and refuses
+  (`burgle_owner_home`) when the owner is both approved and physically at that same
+  `location_id` right now. A property seeded before this column existed (or any non-`HOUSE`
+  kind) has `location_id=None`, which just skips the check rather than refusing every burglary
+  against old content.
+- **What this doesn't change**: `/steal`'s own difficulty tiering (NPC easier, player harder,
+  per the original pass above) and the alert/escape/caught chain after a failed check are
+  unchanged -- only the *initial* "did the lift/pick/break-in itself succeed" step moved from a
+  pure roll to a real minigame when one's available. The "3 tries" lockpick jail-escape limit is
+  still 3 separate `/lockpick` invocations (each one launches its own Activity attempt), not a
+  single session with 3 in-game chances.

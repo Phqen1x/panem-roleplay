@@ -138,6 +138,8 @@ STRINGS: dict[str, str] = {
     "lockpick_no_tries_left": "**{name}** is out of lockpicking attempts for this stay.",
     "lockpick_success": "**{name}** works the lock loose and slips out.",
     "lockpick_fail": "The lock holds. **{name}** has {tries_left} attempt(s) left.",
+    "lockpick_game_ready": "**{name}** kneels at the cell door, pick in hand -- go pick the lock!",
+    "lockpick_already_tried": "This lock has already been tried!",
     # Black market (contraband system: /blackmarket)
     "blackmarket_no_fence": "This district has no black market contact.",
     "blackmarket_not_at_market": "**{name}** needs to be at the district's black market to trade.",
@@ -157,10 +159,13 @@ STRINGS: dict[str, str] = {
         "**{name}** is caught stealing from {target} -- fined {fine} money and held for "
         "{jail_ticks} ticks."
     ),
+    "steal_game_ready": "**{name}** eyes {target}'s pocket -- go make the lift!",
+    "steal_already_tried": "This lift has already been tried!",
     "burgle_owner_not_found": "No character by that name owns a house here.",
     "burgle_not_a_house": "That property isn't a house.",
     "burgle_wrong_district": "**{name}** needs to be in the house's district to break in.",
     "burgle_own_house": "**{name}** can't burgle their own house.",
+    "burgle_owner_home": "{owner} is home right now -- **{name}** can't break in undetected.",
     "burgle_ok": "**{name}** slips out of {owner}'s house with {amount} money.",
     "burgle_miss": "**{name}** finds nothing worth taking -- and slips out unnoticed.",
     "burgle_alerted_escape": "**{name}** is spotted breaking into {owner}'s house -- and bolts.",
@@ -168,6 +173,8 @@ STRINGS: dict[str, str] = {
         "**{name}** is caught breaking into {owner}'s house -- fined {fine} money and held for "
         "{jail_ticks} ticks."
     ),
+    "burgle_game_ready": "**{name}** kneels at {owner}'s door, pick in hand -- go pick the lock!",
+    "burgle_already_tried": "This break-in has already been tried!",
     # Housing (buying/renting houses/apartments/inns, fatigue, sleep)
     "housing_not_found": "No property by that id.",
     "housing_nothing_available": "Nothing is available in this district right now.",
