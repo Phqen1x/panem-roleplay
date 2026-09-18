@@ -50,6 +50,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from panem_api.dashboard_routes import (
     build_characters_router,
+    build_crime_router,
     build_identify_router,
     build_jail_router,
 )
@@ -678,6 +679,11 @@ def create_app(
     )
     app.include_router(
         build_jail_router(session_factory=session_factory, redis_client=redis_client)
+    )
+    app.include_router(
+        build_crime_router(
+            content=content, session_factory=session_factory, redis_client=redis_client
+        )
     )
 
     if STATIC_DIR.exists():

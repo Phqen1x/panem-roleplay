@@ -27,6 +27,7 @@ crime, work, market, travel, residents, housing, characters) adds its own
 from __future__ import annotations
 
 import json
+import random
 import secrets
 
 import redis.asyncio as redis
@@ -38,10 +39,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from panem_shared import characters as characters_svc
 from panem_shared import constants
 from panem_shared import jail as jail_svc
+from panem_shared import poaching as poaching_svc
+from panem_shared import stealing as stealing_svc
 from panem_shared.content.loader import ContentBundle
-from panem_shared.db.models import Character, User, WorldClock
+from panem_shared.db.models import Character, Npc, Property, User, WorldClock
 from panem_shared.db.session import session_scope
-from panem_shared.enums import CharacterStatus, DayPhase
+from panem_shared.enums import CharacterStatus, DayPhase, OwnerKind, PropertyKind
 from panem_shared.errors import NotFound, ServiceError
 from panem_shared.redis_keys import CRIME_ATTEMPT_TTL_S, crime_attempt_key
 
@@ -429,5 +432,277 @@ def build_jail_router(
             ex=CRIME_ATTEMPT_TTL_S,
         )
         return LockpickStartResponse(attempt_id=attempt_id, difficulty=difficulty)
+
+    return router
+
+
+class CrimeTargetOption(BaseModel):
+    name: str
+    kind: str  # "player" | "npc"
+
+
+class StealTargetsResponse(BaseModel):
+    targets: list[CrimeTargetOption]
+
+
+class BurgleTargetsResponse(BaseModel):
+    owners: list[str]
+
+
+class StealStartRequest(BaseModel):
+    discord_id: int
+    target: str
+
+
+class BurgleStartRequest(BaseModel):
+    discord_id: int
+    owner: str
+
+
+class CrimeStartResponse(BaseModel):
+    attempt_id: str
+    difficulty: float
+    target_name: str
+
+
+class PoachRequest(BaseModel):
+    discord_id: int
+
+
+class PoachResponse(BaseModel):
+    caught: bool
+    good_name: str | None = None
+    qty: int | None = None
+    fine: int | None = None
+
+
+def build_crime_router(
+    *,
+    content: ContentBundle,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    redis_client: redis.Redis,
+) -> APIRouter:
+    """The Crime tab's REST surface: mirrors `/steal`, `/burgle`, `/poach`.
+    Steal/burgle-start mint a crime attempt exactly like their Discord
+    commands do (same Redis shape `/activity/crime/{id}` reads) for the
+    dashboard to embed in an iframe; `/poach` never launches an Activity on
+    the bot side either, so this resolves it instantly, same as there."""
+    router = APIRouter(prefix="/activity/dashboard/crime", tags=["dashboard"])
+
+    @router.get("/{character_id}/steal-targets", response_model=StealTargetsResponse)
+    async def steal_targets(character_id: int, discord_id: int) -> StealTargetsResponse:
+        """Players and NPCs sharing both district and exact location with
+        `character_id` -- mirrors `/steal`'s own target autocomplete."""
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            char_names = (
+                (
+                    await session.execute(
+                        select(Character.name).where(
+                            Character.status == CharacterStatus.APPROVED.value,
+                            Character.current_district_id == character.current_district_id,
+                            Character.location_id == character.location_id,
+                            Character.id != character.id,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            npc_names = (
+                (
+                    await session.execute(
+                        select(Npc.name).where(
+                            Npc.district_id == character.current_district_id,
+                            Npc.location_id == character.location_id,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        targets = [CrimeTargetOption(name=n, kind="player") for n in char_names] + [
+            CrimeTargetOption(name=n, kind="npc") for n in npc_names
+        ]
+        return StealTargetsResponse(targets=sorted(targets, key=lambda t: t.name))
+
+    @router.get("/{character_id}/burgle-targets", response_model=BurgleTargetsResponse)
+    async def burgle_targets(character_id: int, discord_id: int) -> BurgleTargetsResponse:
+        """Owners of a house in `character_id`'s current district (not
+        their own) -- an improvement over `/burgle`'s bare-string `owner`
+        param, which has no autocomplete on the bot side at all."""
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            owners = (
+                (
+                    await session.execute(
+                        select(Character.name)
+                        .join(Property, Property.owner_id == Character.id)
+                        .where(
+                            Property.kind == PropertyKind.HOUSE.value,
+                            Property.owner_kind == OwnerKind.CHARACTER.value,
+                            Property.district_id == character.current_district_id,
+                            Character.id != character.id,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return BurgleTargetsResponse(owners=sorted(set(owners)))
+
+    async def _resolve_steal_victim(
+        session: AsyncSession, character: Character, target_name: str
+    ) -> Character | Npc | None:
+        target_char = (
+            await session.execute(
+                select(Character).where(
+                    Character.name == target_name,
+                    Character.status == CharacterStatus.APPROVED.value,
+                    Character.current_district_id == character.current_district_id,
+                    Character.location_id == character.location_id,
+                    Character.id != character.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if target_char is not None:
+            return target_char
+        return (
+            await session.execute(
+                select(Npc).where(
+                    Npc.name == target_name,
+                    Npc.district_id == character.current_district_id,
+                    Npc.location_id == character.location_id,
+                )
+            )
+        ).scalar_one_or_none()
+
+    @router.post("/{character_id}/steal/start", response_model=CrimeStartResponse)
+    async def start_steal(character_id: int, body: StealStartRequest) -> CrimeStartResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            victim = await _resolve_steal_victim(session, character, body.target)
+            if victim is None:
+                raise HTTPException(status_code=404, detail="steal_target_not_found")
+            current_tick = await _current_tick(session)
+            try:
+                stealing_svc.check_can_steal(character, victim, current_tick)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            character.last_steal_tick = current_tick
+            district_id = character.current_district_id
+            victim_kind = "npc" if isinstance(victim, Npc) else "character"
+            victim_id, victim_name = str(victim.id), victim.name
+            difficulty = stealing_svc.steal_difficulty(is_npc=victim_kind == "npc")
+
+        attempt_id = secrets.token_urlsafe(16)
+        await redis_client.set(
+            crime_attempt_key(attempt_id),
+            json.dumps(
+                {
+                    "kind": "steal",
+                    "character_id": character_id,
+                    "district_id": district_id,
+                    "current_tick": current_tick,
+                    "victim_kind": victim_kind,
+                    "victim_id": victim_id,
+                }
+            ),
+            ex=CRIME_ATTEMPT_TTL_S,
+        )
+        return CrimeStartResponse(
+            attempt_id=attempt_id, difficulty=difficulty, target_name=victim_name
+        )
+
+    @router.post("/{character_id}/burgle/start", response_model=CrimeStartResponse)
+    async def start_burgle(character_id: int, body: BurgleStartRequest) -> CrimeStartResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            owner_char = (
+                await session.execute(
+                    select(Character).where(
+                        Character.name == body.owner,
+                        Character.current_district_id == character.current_district_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            house = None
+            if owner_char is not None:
+                house = (
+                    await session.execute(
+                        select(Property).where(
+                            Property.kind == PropertyKind.HOUSE.value,
+                            Property.owner_kind == OwnerKind.CHARACTER.value,
+                            Property.owner_id == owner_char.id,
+                            Property.district_id == character.current_district_id,
+                        )
+                    )
+                ).scalar_one_or_none()
+            if house is None:
+                raise HTTPException(status_code=404, detail="burgle_owner_not_found")
+
+            current_tick = await _current_tick(session)
+            try:
+                stealing_svc.check_can_burgle(character, house, current_tick, owner=owner_char)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            character.last_steal_tick = current_tick
+            house_id, district_id = house.id, house.district_id
+            difficulty = stealing_svc.burgle_difficulty()
+
+        attempt_id = secrets.token_urlsafe(16)
+        await redis_client.set(
+            crime_attempt_key(attempt_id),
+            json.dumps(
+                {
+                    "kind": "burgle",
+                    "character_id": character_id,
+                    "property_id": house_id,
+                    "district_id": district_id,
+                    "current_tick": current_tick,
+                }
+            ),
+            ex=CRIME_ATTEMPT_TTL_S,
+        )
+        return CrimeStartResponse(
+            attempt_id=attempt_id, difficulty=difficulty, target_name=body.owner
+        )
+
+    @router.post("/{character_id}/poach", response_model=PoachResponse)
+    async def poach(character_id: int, body: PoachRequest) -> PoachResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            district = content.district(character.current_district_id)
+            try:
+                result = await poaching_svc.resolve_poach(
+                    session,
+                    character=character,
+                    district=district,
+                    goods=content.goods,
+                    rng=random.Random(),
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        if result.caught:
+            return PoachResponse(caught=True, fine=constants.POACH_FINE)
+        assert result.good is not None
+        return PoachResponse(
+            caught=False, good_name=result.good.name, qty=constants.POACH_YIELD_QTY
+        )
 
     return router

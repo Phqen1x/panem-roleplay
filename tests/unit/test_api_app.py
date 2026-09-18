@@ -14,6 +14,7 @@ from panem_shared.content.schemas import (
     District,
     DistrictCulture,
     DistrictMap,
+    Good,
     Job,
     JobOption,
     Location,
@@ -95,6 +96,35 @@ def make_content_with_job() -> ContentBundle:
     return ContentBundle(
         districts={0: make_district(0, "The Capitol"), 1: make_district(1, "District 1")},
         goods={},
+        jobs={"miner": make_job()},
+        routes=[],
+    )
+
+
+def make_content_with_outskirts() -> ContentBundle:
+    """Same shape as `make_content_with_job`, plus a district-1 `outskirts`
+    location and a `food`-category good, for `/activity/dashboard/crime/
+    poach` tests (`resolve_poach` needs both to find anything to yield)."""
+    locations = [
+        Location(id="square", name="The Square", kind="public"),
+        Location(id="station", name="Rail Station", kind="station"),
+        Location(id="outskirts", name="The Outskirts", kind="outskirts"),
+    ]
+    coords = {loc.id: (0, 0) for loc in locations}
+    district_1 = District(
+        id=1,
+        name="District 1",
+        industry="x",
+        produces=["grain"],
+        imports=[],
+        population_base=1000,
+        culture=DistrictCulture(),
+        locations=locations,
+        map=DistrictMap(image="x.png", width=100, height=100, location_coords=coords),
+    )
+    return ContentBundle(
+        districts={0: make_district(0, "The Capitol"), 1: district_1},
+        goods={"grain": Good(id="grain", name="Grain", base_price=1.0, category="food")},
         jobs={"miner": make_job()},
         routes=[],
     )
@@ -219,6 +249,15 @@ def oauth_client() -> TestClient:
 @pytest.fixture
 def work_app(db_session_factory):
     content = make_content_with_job()
+    redis_client = FakeRedis()
+    app = create_app(content=content, redis_client=redis_client, session_factory=db_session_factory)
+    app.state.fake_redis = redis_client  # type: ignore[attr-defined]
+    return app
+
+
+@pytest.fixture
+def poach_app(db_session_factory):
+    content = make_content_with_outskirts()
     redis_client = FakeRedis()
     app = create_app(content=content, redis_client=redis_client, session_factory=db_session_factory)
     app.state.fake_redis = redis_client  # type: ignore[attr-defined]
@@ -1178,5 +1217,187 @@ class TestDashboardJail:
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(
                 f"/activity/dashboard/jail/{char_id}/lockpick/start", json={"discord_id": 5}
+            )
+        assert response.status_code == 400
+
+
+class TestDashboardCrime:
+    async def test_steal_targets_lists_players_and_npcs_at_the_same_spot(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"location_id": "square"}
+        )
+        await seed_character(
+            db_session_factory,
+            discord_id=6,
+            character_overrides={"name": "Mark", "location_id": "square"},
+        )
+        await seed_npc(db_session_factory, name="Effie", location_id="square")
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/crime/{char_id}/steal-targets",
+                params={"discord_id": 5},
+            )
+        assert response.status_code == 200
+        targets = {(t["name"], t["kind"]) for t in response.json()["targets"]}
+        assert targets == {("Mark", "player"), ("Effie", "npc")}
+
+    async def test_burgle_targets_lists_house_owners_in_district(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        owner_id = await seed_character(
+            db_session_factory, discord_id=6, character_overrides={"name": "Owner"}
+        )
+        await seed_house(db_session_factory, owner_id=owner_id)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/crime/{char_id}/burgle-targets",
+                params={"discord_id": 5},
+            )
+        assert response.status_code == 200
+        assert response.json()["owners"] == ["Owner"]
+
+    async def test_steal_start_mints_an_attempt(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"location_id": "square"}
+        )
+        victim_id = await seed_character(
+            db_session_factory,
+            discord_id=6,
+            character_overrides={"name": "Mark", "location_id": "square"},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/crime/{char_id}/steal/start",
+                json={"discord_id": 5, "target": "Mark"},
+            )
+        assert response.status_code == 200
+        body = response.json()
+        redis_client = work_app.state.fake_redis
+        raw = json.loads(redis_client.store[crime_attempt_key(body["attempt_id"])])
+        assert raw == {
+            "kind": "steal",
+            "character_id": char_id,
+            "district_id": 1,
+            "current_tick": 0,
+            "victim_kind": "character",
+            "victim_id": str(victim_id),
+        }
+
+    async def test_steal_start_404s_for_an_unknown_target(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/crime/{char_id}/steal/start",
+                json={"discord_id": 5, "target": "Nobody"},
+            )
+        assert response.status_code == 404
+
+    async def test_steal_start_refuses_on_cooldown(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"location_id": "square", "last_steal_tick": 0},
+        )
+        await seed_character(
+            db_session_factory,
+            discord_id=6,
+            character_overrides={"name": "Mark", "location_id": "square"},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/crime/{char_id}/steal/start",
+                json={"discord_id": 5, "target": "Mark"},
+            )
+        assert response.status_code == 400
+
+    async def test_burgle_start_mints_an_attempt(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        owner_id = await seed_character(
+            db_session_factory, discord_id=6, character_overrides={"name": "Owner"}
+        )
+        house_id = await seed_house(db_session_factory, owner_id=owner_id)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/crime/{char_id}/burgle/start",
+                json={"discord_id": 5, "owner": "Owner"},
+            )
+        assert response.status_code == 200
+        body = response.json()
+        redis_client = work_app.state.fake_redis
+        raw = json.loads(redis_client.store[crime_attempt_key(body["attempt_id"])])
+        assert raw["kind"] == "burgle"
+        assert raw["property_id"] == house_id
+
+    async def test_burgle_start_404s_for_an_unknown_owner(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/crime/{char_id}/burgle/start",
+                json={"discord_id": 5, "owner": "Nobody"},
+            )
+        assert response.status_code == 404
+
+    async def test_burgle_start_refuses_own_house(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"name": "Self"}
+        )
+        await seed_house(db_session_factory, owner_id=char_id)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/crime/{char_id}/burgle/start",
+                json={"discord_id": 5, "owner": "Self"},
+            )
+        assert response.status_code == 400
+
+    async def test_poach_success_grants_the_good(self, poach_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"location_id": "outskirts"}
+        )
+        transport = httpx.ASGITransport(app=poach_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            with patch("random.Random.random", return_value=0.99):
+                response = await client.post(
+                    f"/activity/dashboard/crime/{char_id}/poach",
+                    json={"discord_id": 5},
+                )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["caught"] is False
+        assert body["good_name"] == "Grain"
+
+    async def test_poach_caught_reports_the_fine(self, poach_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"location_id": "outskirts"}
+        )
+        transport = httpx.ASGITransport(app=poach_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            with patch("random.Random.random", return_value=0.0):
+                response = await client.post(
+                    f"/activity/dashboard/crime/{char_id}/poach",
+                    json={"discord_id": 5},
+                )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["caught"] is True
+        assert body["fine"] > 0
+
+    async def test_poach_refuses_when_not_at_outskirts(self, poach_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=poach_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/crime/{char_id}/poach",
+                json={"discord_id": 5},
             )
         assert response.status_code == 400

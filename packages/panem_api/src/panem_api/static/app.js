@@ -30,7 +30,7 @@ const STEP_TIMEOUT_MS = 8000;
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "4";
+const ASSET_VERSION = "5";
 
 const TABS = ["map", "character", "work", "market", "travel", "social", "jail", "crime", "housing"];
 const TAB_LABELS = {

@@ -20,12 +20,9 @@ import random
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from panem_bot.errors import NotAllowed
 from panem_bot.services import jail as jail_svc
 from panem_shared import constants
 from panem_shared.db.models import Character, DistrictState, Npc, Property
-from panem_shared.enums import CharacterStatus, OwnerKind, PropertyKind
-from panem_shared.simtime import TICKS_PER_PHASE
 from panem_shared.stealing import (
     STEAL_PRESSURE_DELTA as STEAL_PRESSURE_DELTA,
 )
@@ -35,23 +32,12 @@ from panem_shared.stealing import (
     apply_burgle_outcome,
     apply_steal_outcome,
 )
-
-
-def check_can_steal(character: Character, victim: StealVictim, current_tick: int) -> None:
-    """Raises `NotAllowed` unless `character` can attempt this steal:
-    approved, physically at the same location as `victim`, and hasn't
-    already tried once this day-phase (`Character.last_steal_tick`,
-    compared via `tick // TICKS_PER_PHASE` -- the same boundary math
-    `panem_shared.simtime.is_phase_boundary` uses)."""
-    if character.status != CharacterStatus.APPROVED.value:
-        raise NotAllowed("character_not_approved")
-    if character.location_id is None or character.location_id != victim.location_id:
-        raise NotAllowed("steal_not_here", name=character.name)
-    if (
-        character.last_steal_tick is not None
-        and character.last_steal_tick // TICKS_PER_PHASE == current_tick // TICKS_PER_PHASE
-    ):
-        raise NotAllowed("steal_on_cooldown", name=character.name)
+from panem_shared.stealing import (
+    check_can_burgle as check_can_burgle,
+)
+from panem_shared.stealing import (
+    check_can_steal as check_can_steal,
+)
 
 
 async def resolve_steal(
@@ -108,41 +94,6 @@ async def roll_and_apply_steal(
         success=success,
         rng=rng,
     )
-
-
-def check_can_burgle(
-    character: Character, house: Property, current_tick: int, *, owner: Character | None = None
-) -> None:
-    """Raises `NotAllowed` unless `character` can attempt this burglary:
-    approved, physically in the house's district (`Property` carries no
-    `location_id` the way a person does, so district presence is the
-    closest match to "same location as you"), not its own owner, hasn't
-    already stolen or burgled this day-phase -- the same `last_steal_
-    tick` cooldown `/steal` uses -- and, when `owner` is given (the
-    caller already looked it up to find the house), not currently home:
-    `house.location_id` is only ever set for a `HOUSE` (seeded by
-    `panem_sim.world.seed_properties`), so a `None` on either side just
-    skips this check rather than refusing every burglary."""
-    if character.status != CharacterStatus.APPROVED.value:
-        raise NotAllowed("character_not_approved")
-    if house.kind != PropertyKind.HOUSE.value:
-        raise NotAllowed("burgle_not_a_house")
-    if character.current_district_id != house.district_id:
-        raise NotAllowed("burgle_wrong_district", name=character.name)
-    if house.owner_kind == OwnerKind.CHARACTER.value and house.owner_id == character.id:
-        raise NotAllowed("burgle_own_house", name=character.name)
-    if (
-        owner is not None
-        and house.location_id is not None
-        and owner.status == CharacterStatus.APPROVED.value
-        and owner.location_id == house.location_id
-    ):
-        raise NotAllowed("burgle_owner_home", name=character.name, owner=owner.name)
-    if (
-        character.last_steal_tick is not None
-        and character.last_steal_tick // TICKS_PER_PHASE == current_tick // TICKS_PER_PHASE
-    ):
-        raise NotAllowed("steal_on_cooldown", name=character.name)
 
 
 async def resolve_burgle(
