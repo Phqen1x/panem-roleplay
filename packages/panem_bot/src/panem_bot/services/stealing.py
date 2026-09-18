@@ -70,6 +70,7 @@ async def resolve_steal(
 ) -> StealResult:
     check_can_steal(character, victim, current_tick)
     character.last_steal_tick = current_tick
+    district_row = await session.get(DistrictState, district_id)
 
     is_npc = isinstance(victim, Npc)
     base_success = (
@@ -77,16 +78,21 @@ async def resolve_steal(
         if is_npc
         else constants.STEAL_FROM_PLAYER_BASE_SUCCESS
     )
+    base_success = jail_svc.crackdown_good_odds(base_success, district_row, current_tick)
     if rng.random() < base_success:
         amount = min(int(victim.money), rng.randint(*constants.STEAL_YIELD_MONEY_RANGE))
         victim.money -= amount
         character.money += amount
         return StealResult(success=True, alerted=False, caught=False, amount=amount)
 
-    if rng.random() >= constants.STEAL_ALERT_PROB:
+    alert_prob = jail_svc.crackdown_bad_odds(constants.STEAL_ALERT_PROB, district_row, current_tick)
+    if rng.random() >= alert_prob:
         return StealResult(success=False, alerted=False, caught=False, amount=0)  # a clean miss
 
-    if rng.random() < constants.STEAL_ESCAPE_BASE_PROB:
+    escape_prob = jail_svc.crackdown_good_odds(
+        constants.STEAL_ESCAPE_BASE_PROB, district_row, current_tick
+    )
+    if rng.random() < escape_prob:
         return StealResult(
             success=False, alerted=True, caught=False, amount=0
         )  # alerted, but got away
@@ -111,7 +117,6 @@ async def resolve_steal(
             session.add(relationship)
         relationship.affinity -= constants.REP_STEAL_CAUGHT_VICTIM_PENALTY
 
-    district_row = await session.get(DistrictState, district_id)
     if district_row is not None:
         district_row.peacekeeper_pressure = min(
             1.0, district_row.peacekeeper_pressure + STEAL_PRESSURE_DELTA
@@ -158,8 +163,12 @@ async def resolve_burgle(
     YIELD_CAP`) rather than debiting anyone."""
     check_can_burgle(character, house, current_tick)
     character.last_steal_tick = current_tick
+    district_row = await session.get(DistrictState, house.district_id)
 
-    if rng.random() < constants.BURGLE_BASE_SUCCESS:
+    success_prob = jail_svc.crackdown_good_odds(
+        constants.BURGLE_BASE_SUCCESS, district_row, current_tick
+    )
+    if rng.random() < success_prob:
         amount = min(
             constants.BURGLE_YIELD_CAP,
             round(house.suggested_price * constants.BURGLE_YIELD_FRACTION),
@@ -167,10 +176,14 @@ async def resolve_burgle(
         character.money += amount
         return StealResult(success=True, alerted=False, caught=False, amount=amount)
 
-    if rng.random() >= constants.STEAL_ALERT_PROB:
+    alert_prob = jail_svc.crackdown_bad_odds(constants.STEAL_ALERT_PROB, district_row, current_tick)
+    if rng.random() >= alert_prob:
         return StealResult(success=False, alerted=False, caught=False, amount=0)  # a clean miss
 
-    if rng.random() < constants.STEAL_ESCAPE_BASE_PROB:
+    escape_prob = jail_svc.crackdown_good_odds(
+        constants.STEAL_ESCAPE_BASE_PROB, district_row, current_tick
+    )
+    if rng.random() < escape_prob:
         return StealResult(
             success=False, alerted=True, caught=False, amount=0
         )  # alerted, but got away
@@ -179,7 +192,6 @@ async def resolve_burgle(
     jail_svc.commit_to_jail(character, constants.STEAL_JAIL_TICKS)
     character.reputation -= constants.REP_STEAL_CAUGHT_GENERAL_PENALTY
 
-    district_row = await session.get(DistrictState, house.district_id)
     if district_row is not None:
         district_row.peacekeeper_pressure = min(
             1.0, district_row.peacekeeper_pressure + STEAL_PRESSURE_DELTA

@@ -136,21 +136,24 @@ async def _adjust_inventory(
     return new_qty
 
 
-def _roll_detection(rng: random.Random) -> bool:
+def _roll_detection(
+    district_row: DistrictState | None, current_tick: int, rng: random.Random
+) -> bool:
     """Every black-market location is illicit by definition -- unlike
     `market.py`'s `_roll_illicit_detection`, there's no legal-location
-    case to gate on, so this is just the bare probability roll."""
-    return rng.random() < constants.MARKET_ILLICIT_DETECTION_PROB
+    case to gate on, so this is just the bare probability roll (scaled
+    up under an active crackdown)."""
+    prob = jail_svc.crackdown_bad_odds(
+        constants.MARKET_ILLICIT_DETECTION_PROB, district_row, current_tick
+    )
+    return rng.random() < prob
 
 
-async def _apply_caught_consequence(
-    session: AsyncSession, character: Character, district_id: int
-) -> None:
+def _apply_caught_consequence(character: Character, district_row: DistrictState | None) -> None:
     character.money = max(0, character.money - constants.MARKET_ILLICIT_FINE)
     jail_svc.commit_to_jail(character, constants.MARKET_ILLICIT_JAIL_TICKS)
     character.reputation -= constants.REP_ILLICIT_CAUGHT_PENALTY
 
-    district_row = await session.get(DistrictState, district_id)
     if district_row is not None:
         district_row.peacekeeper_pressure = min(
             1.0, district_row.peacekeeper_pressure + BLACKMARKET_PRESSURE_DELTA
@@ -194,9 +197,10 @@ async def buy(
         )
     )
 
-    caught = _roll_detection(rng)
+    district_row = await session.get(DistrictState, district.id)
+    caught = _roll_detection(district_row, tick, rng)
     if caught:
-        await _apply_caught_consequence(session, character, district.id)
+        _apply_caught_consequence(character, district_row)
     return BlackMarketTradeResult(qty=qty, unit_price=price, total=total, caught=caught)
 
 
@@ -235,7 +239,8 @@ async def sell(
         )
     )
 
-    caught = _roll_detection(rng)
+    district_row = await session.get(DistrictState, district.id)
+    caught = _roll_detection(district_row, tick, rng)
     if caught:
-        await _apply_caught_consequence(session, character, district.id)
+        _apply_caught_consequence(character, district_row)
     return BlackMarketTradeResult(qty=qty, unit_price=price, total=total, caught=caught)

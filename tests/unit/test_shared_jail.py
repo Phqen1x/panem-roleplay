@@ -11,6 +11,12 @@ from panem_shared.db.models import Character, DistrictState
 from panem_shared.enums import CharacterStatus
 
 
+def make_district_row(**overrides: object) -> DistrictState:
+    defaults: dict[str, object] = dict(district_id=1, peacekeeper_pressure=0.3)
+    defaults.update(overrides)
+    return DistrictState(**defaults)  # type: ignore[arg-type]
+
+
 class FixedRng:
     def __init__(self, value: float) -> None:
         self._value = value
@@ -68,7 +74,9 @@ class TestCommitToJail:
 class TestResolveIllicitHeat:
     def test_below_threshold_no_arrest(self):
         character = make_character(illicit_heat=0.0)
-        arrested = shared_jail.resolve_illicit_heat(character, None, lost=False, rng=FixedRng(0.99))
+        arrested = shared_jail.resolve_illicit_heat(
+            character, None, lost=False, current_tick=0, rng=FixedRng(0.99)
+        )
         assert arrested is False
         assert character.illicit_heat == constants.ILLICIT_HEAT_PER_SHIFT
         assert character.jailed_until_tick is None
@@ -76,14 +84,20 @@ class TestResolveIllicitHeat:
     def test_a_loss_adds_more_heat_than_a_win(self):
         won_char = make_character(illicit_heat=0.0)
         lost_char = make_character(illicit_heat=0.0)
-        shared_jail.resolve_illicit_heat(won_char, None, lost=False, rng=FixedRng(0.99))
-        shared_jail.resolve_illicit_heat(lost_char, None, lost=True, rng=FixedRng(0.99))
+        shared_jail.resolve_illicit_heat(
+            won_char, None, lost=False, current_tick=0, rng=FixedRng(0.99)
+        )
+        shared_jail.resolve_illicit_heat(
+            lost_char, None, lost=True, current_tick=0, rng=FixedRng(0.99)
+        )
         assert lost_char.illicit_heat > won_char.illicit_heat
 
     def test_over_threshold_evasion_success_halves_heat_and_avoids_jail(self):
         character = make_character(illicit_heat=constants.ILLICIT_HEAT_ARREST_THRESHOLD)
         # A roll safely below ARREST_EVASION_BASE_PROB succeeds evasion.
-        arrested = shared_jail.resolve_illicit_heat(character, None, lost=False, rng=FixedRng(0.0))
+        arrested = shared_jail.resolve_illicit_heat(
+            character, None, lost=False, current_tick=0, rng=FixedRng(0.0)
+        )
         assert arrested is False
         assert character.jailed_until_tick is None
         expected_heat = (
@@ -93,7 +107,9 @@ class TestResolveIllicitHeat:
 
     def test_over_threshold_evasion_failure_jails_fines_and_resets_heat(self):
         character = make_character(illicit_heat=constants.ILLICIT_HEAT_ARREST_THRESHOLD, money=100)
-        arrested = shared_jail.resolve_illicit_heat(character, None, lost=False, rng=FixedRng(0.99))
+        arrested = shared_jail.resolve_illicit_heat(
+            character, None, lost=False, current_tick=0, rng=FixedRng(0.99)
+        )
         assert arrested is True
         assert character.money == 100 - constants.ILLICIT_ARREST_FINE
         assert character.jailed_until_tick == constants.ILLICIT_ARREST_JAIL_TICKS
@@ -103,10 +119,76 @@ class TestResolveIllicitHeat:
     def test_arrest_bumps_district_pressure_when_a_row_is_given(self):
         character = make_character(illicit_heat=constants.ILLICIT_HEAT_ARREST_THRESHOLD)
         district_row = DistrictState(district_id=1, peacekeeper_pressure=0.3)
-        shared_jail.resolve_illicit_heat(character, district_row, lost=False, rng=FixedRng(0.99))
+        shared_jail.resolve_illicit_heat(
+            character, district_row, lost=False, current_tick=0, rng=FixedRng(0.99)
+        )
         assert district_row.peacekeeper_pressure == 0.3 + shared_jail.ARREST_PRESSURE_DELTA
 
     def test_missing_district_row_does_not_raise(self):
         character = make_character(illicit_heat=constants.ILLICIT_HEAT_ARREST_THRESHOLD)
-        arrested = shared_jail.resolve_illicit_heat(character, None, lost=False, rng=FixedRng(0.99))
+        arrested = shared_jail.resolve_illicit_heat(
+            character, None, lost=False, current_tick=0, rng=FixedRng(0.99)
+        )
         assert arrested is True
+
+    def test_arrest_evasion_is_harder_under_an_active_crackdown(self):
+        character = make_character(illicit_heat=constants.ILLICIT_HEAT_ARREST_THRESHOLD)
+        district_row = make_district_row(crackdown_until_tick=100)
+        # A roll that clears the base evasion prob but not the scaled-down one.
+        roll = (
+            constants.ARREST_EVASION_BASE_PROB
+            + constants.ARREST_EVASION_BASE_PROB / constants.CRACKDOWN_DETECTION_MULTIPLIER
+        ) / 2
+        arrested = shared_jail.resolve_illicit_heat(
+            character, district_row, lost=False, current_tick=10, rng=FixedRng(roll)
+        )
+        assert arrested is True
+
+    def test_crackdown_has_no_effect_once_its_window_passes(self):
+        character = make_character(illicit_heat=constants.ILLICIT_HEAT_ARREST_THRESHOLD)
+        district_row = make_district_row(crackdown_until_tick=5)
+        roll = (
+            constants.ARREST_EVASION_BASE_PROB
+            + constants.ARREST_EVASION_BASE_PROB / constants.CRACKDOWN_DETECTION_MULTIPLIER
+        ) / 2
+        arrested = shared_jail.resolve_illicit_heat(
+            character, district_row, lost=False, current_tick=10, rng=FixedRng(roll)
+        )
+        assert arrested is False
+
+
+class TestCrackdownOdds:
+    def test_inactive_without_a_row(self):
+        assert shared_jail.is_crackdown_active(None, 10) is False
+
+    def test_inactive_once_the_window_has_passed(self):
+        row = make_district_row(crackdown_until_tick=5)
+        assert shared_jail.is_crackdown_active(row, 10) is False
+
+    def test_active_within_the_window(self):
+        row = make_district_row(crackdown_until_tick=100)
+        assert shared_jail.is_crackdown_active(row, 10) is True
+
+    def test_bad_odds_scale_up_when_active(self):
+        row = make_district_row(crackdown_until_tick=100)
+        assert (
+            shared_jail.crackdown_bad_odds(0.1, row, 10)
+            == 0.1 * constants.CRACKDOWN_DETECTION_MULTIPLIER
+        )
+
+    def test_bad_odds_unchanged_when_inactive(self):
+        assert shared_jail.crackdown_bad_odds(0.1, None, 10) == 0.1
+
+    def test_good_odds_scale_down_when_active(self):
+        row = make_district_row(crackdown_until_tick=100)
+        assert (
+            shared_jail.crackdown_good_odds(0.5, row, 10)
+            == 0.5 / constants.CRACKDOWN_DETECTION_MULTIPLIER
+        )
+
+    def test_good_odds_unchanged_when_inactive(self):
+        assert shared_jail.crackdown_good_odds(0.5, None, 10) == 0.5
+
+    def test_bad_odds_clamp_at_one(self):
+        row = make_district_row(crackdown_until_tick=100)
+        assert shared_jail.crackdown_bad_odds(0.9, row, 10) == 1.0

@@ -19,6 +19,15 @@ from panem_shared.db.models import Character
 from panem_shared.jail import (
     commit_to_jail as commit_to_jail,
 )
+from panem_shared.jail import (
+    crackdown_bad_odds as crackdown_bad_odds,
+)
+from panem_shared.jail import (
+    crackdown_good_odds as crackdown_good_odds,
+)
+from panem_shared.jail import (
+    is_crackdown_active as is_crackdown_active,
+)
 
 
 def check_is_jailed(character: Character, current_tick: int) -> None:

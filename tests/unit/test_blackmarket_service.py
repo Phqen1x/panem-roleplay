@@ -285,6 +285,38 @@ class TestBuy:
         district_row = await db_session.get(DistrictState, 1)
         assert district_row.peacekeeper_pressure == 0.3 + blackmarket_svc.BLACKMARKET_PRESSURE_DELTA
 
+    async def test_crackdown_makes_detection_more_likely(self, db_session):
+        district = make_district()
+        character = make_character(money=100)
+        fence = make_fence()
+        await add_trust(db_session, character.id, fence.id, Stance.LOVES.value)
+        db_session.add(
+            MarketPrice(
+                district_id=1, good_id="contraband_weapons", price=35.0, supply=10.0, tick=0
+            )
+        )
+        db_session.add(
+            DistrictState(district_id=1, peacekeeper_pressure=0.3, crackdown_until_tick=100)
+        )
+        await db_session.flush()
+        roll = (
+            constants.MARKET_ILLICIT_DETECTION_PROB
+            + constants.MARKET_ILLICIT_DETECTION_PROB * constants.CRACKDOWN_DETECTION_MULTIPLIER
+        ) / 2
+
+        result = await blackmarket_svc.buy(
+            db_session,
+            character=character,
+            district=district,
+            goods=make_goods(),
+            npcs=make_npcs(fence),
+            good_id="contraband_weapons",
+            qty=1,
+            tick=10,
+            rng=FixedRng(roll),
+        )
+        assert result.caught is True
+
 
 class TestSell:
     async def test_happy_path_returns_stock_and_pays_out(self, db_session):

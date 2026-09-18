@@ -631,3 +631,16 @@ BURGLE_YIELD_CAP = 50
 """A successful burglary nets `BURGLE_YIELD_FRACTION` of the property's
 `suggested_price`, capped at `BURGLE_YIELD_CAP` -- a rich house is a
 better mark, but never a jackpot."""
+
+CRACKDOWN_DEFAULT_DURATION_TICKS = 48
+CRACKDOWN_PRESSURE_DELTA = 0.3
+"""`/staff district crackdown`'s default window and the immediate
+`peacekeeper_pressure` spike it applies on top of setting `DistrictState.
+crackdown_until_tick` -- `panem_sim.systems.crisis` relaxes the pressure
+back toward baseline once the window passes, same as any other bump."""
+CRACKDOWN_DETECTION_MULTIPLIER = 1.6
+"""While a crackdown is active, every illicit-activity detection
+probability (market/black-market catches, illicit-work arrest evasion,
+stealing/burglary) scales by this factor -- "bad" (get-caught) odds
+multiply up, "good" (succeed/escape) odds divide down, both clamped to
+stay valid probabilities."""

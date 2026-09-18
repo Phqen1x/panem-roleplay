@@ -385,7 +385,9 @@ def create_app(
             arrested = False
             if character.job_is_illicit and not body.neutral:
                 district_row = await session.get(DistrictState, character.district_id)
-                arrested = resolve_illicit_heat(character, district_row, lost=not body.won)
+                arrested = resolve_illicit_heat(
+                    character, district_row, lost=not body.won, current_tick=tick
+                )
             wage, character_name = round(outcome.wage), character.name
         logger.info("work_game_resolved", shift_id=shift_id, won=body.won, wage=wage)
         return WorkResultResponse(

@@ -211,6 +211,29 @@ class TestResolveSteal:
         assert result.caught is True
         assert character.reputation == -constants.REP_STEAL_CAUGHT_GENERAL_PENALTY
 
+    async def test_crackdown_makes_success_harder(self, db_session):
+        character = make_character(money=0)
+        victim = make_npc(money=50.0)
+        db_session.add(
+            DistrictState(district_id=1, peacekeeper_pressure=0.3, crackdown_until_tick=100)
+        )
+        await db_session.flush()
+        # A roll that clears the base success prob but not the crackdown-scaled one.
+        roll = (
+            constants.STEAL_FROM_NPC_BASE_SUCCESS
+            + constants.STEAL_FROM_NPC_BASE_SUCCESS / constants.CRACKDOWN_DETECTION_MULTIPLIER
+        ) / 2
+
+        result = await stealing_svc.resolve_steal(
+            db_session,
+            character=character,
+            victim=victim,
+            district_id=1,
+            current_tick=10,
+            rng=SequenceRng([roll, 0.99]),
+        )
+        assert result.success is False
+
     async def test_sets_the_cooldown_on_every_attempt(self, db_session):
         character = make_character(last_steal_tick=None)
         victim = make_npc()

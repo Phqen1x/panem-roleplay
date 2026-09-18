@@ -30,6 +30,7 @@ from panem_shared.db.models import (
     Property,
     Scene,
     User,
+    WorldClock,
 )
 from panem_shared.enums import CharacterStatus, DayPhase, JobLevel, OwnerKind, Position, SceneStatus
 
@@ -120,6 +121,56 @@ class StaffCog(commands.Cog):
         embed.add_field(name="Quota", value=f"{row.quota_progress:.0f} / {row.quota_target:.0f}")
         embed.add_field(name="Treasury", value=f"{row.treasury:.0f}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @group.command(
+        name="crackdown", description="Trigger a peacekeeper crackdown in a district (contraband)"
+    )
+    @app_commands.describe(
+        district="District number (0 = The Capitol)",
+        duration_ticks="How long the crackdown lasts -- defaults to CRACKDOWN_DEFAULT_DURATION_TICKS",
+    )
+    @app_commands.check(_is_staff)
+    async def crackdown(
+        self,
+        interaction: discord.Interaction,
+        district: app_commands.Range[int, 0, 12],
+        duration_ticks: app_commands.Range[int, 1, None] | None = None,
+    ) -> None:
+        """Every illicit-activity detection roll in `district` (market/
+        black-market catches, illicit-work arrest evasion, stealing,
+        burglary) scales harder for the window -- `panem_shared.jail.
+        crackdown_bad_odds`/`crackdown_good_odds` read `DistrictState.
+        crackdown_until_tick` directly, no per-system wiring needed
+        beyond this one row. Also immediately spikes `peacekeeper_
+        pressure`, which `panem_sim.systems.crisis` relaxes back toward
+        baseline once the window passes, same as any other bump."""
+        duration = duration_ticks or constants.CRACKDOWN_DEFAULT_DURATION_TICKS
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            clock = await session.get(WorldClock, 1)
+            current_tick = clock.tick if clock is not None else 0
+            row = await session.get(DistrictState, district)
+            if row is None:
+                await interaction.response.send_message(
+                    "No district_state row yet -- the sim hasn't seeded it.", ephemeral=True
+                )
+                return
+            row.crackdown_until_tick = current_tick + duration
+            row.peacekeeper_pressure = min(
+                1.0, row.peacekeeper_pressure + constants.CRACKDOWN_PRESSURE_DELTA
+            )
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="crackdown",
+                target=str(district),
+                payload={"duration_ticks": duration, "until_tick": row.crackdown_until_tick},
+            )
+        district_name = self.bot.content.district(district).name  # type: ignore[attr-defined]
+        await interaction.response.send_message(
+            f"Peacekeepers crack down on **{district_name}** for {duration} ticks.",
+            ephemeral=True,
+        )
 
     @group.command(name="ban", description="Ban a user from the bot")
     @app_commands.describe(user="User to ban")

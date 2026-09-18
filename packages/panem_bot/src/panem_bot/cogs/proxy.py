@@ -18,6 +18,7 @@ from panem_bot.services import characters as characters_svc
 from panem_bot.services import dialogue as dialogue_svc
 from panem_bot.services import engagements as engagements_svc
 from panem_bot.services import housing as housing_svc
+from panem_bot.services import jail as jail_svc
 from panem_bot.services import proxy as proxy_svc
 from panem_bot.services import shifts as shifts_svc
 from panem_bot.strings import t
@@ -545,6 +546,7 @@ class ProxyCog(commands.Cog):
                     character_job_title=character_job_title,
                     character_home_district=character_home_district,
                     known=known,
+                    district_on_edge=jail_svc.is_crackdown_active(district_state, current_tick),
                 )
 
                 sent = await webhook.send(

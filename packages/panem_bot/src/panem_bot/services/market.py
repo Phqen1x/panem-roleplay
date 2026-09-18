@@ -119,18 +119,25 @@ async def _adjust_inventory(
     return new_qty
 
 
-def _roll_illicit_detection(location: Location, rng: random.Random) -> bool:
-    return location.illicit and rng.random() < constants.MARKET_ILLICIT_DETECTION_PROB
+def _roll_illicit_detection(
+    location: Location,
+    district_row: DistrictState | None,
+    current_tick: int,
+    rng: random.Random,
+) -> bool:
+    if not location.illicit:
+        return False
+    prob = jail_svc.crackdown_bad_odds(
+        constants.MARKET_ILLICIT_DETECTION_PROB, district_row, current_tick
+    )
+    return rng.random() < prob
 
 
-async def _apply_illicit_consequence(
-    session: AsyncSession, character: Character, district_id: int
-) -> None:
+def _apply_illicit_consequence(character: Character, district_row: DistrictState | None) -> None:
     character.money = max(0, character.money - constants.MARKET_ILLICIT_FINE)
     jail_svc.commit_to_jail(character, constants.MARKET_ILLICIT_JAIL_TICKS)
     character.reputation -= constants.REP_ILLICIT_CAUGHT_PENALTY
 
-    district_row = await session.get(DistrictState, district_id)
     if district_row is not None:
         district_row.peacekeeper_pressure = min(
             1.0, district_row.peacekeeper_pressure + ILLICIT_PRESSURE_DELTA
@@ -172,9 +179,10 @@ async def buy(
         )
     )
 
-    caught = _roll_illicit_detection(location, rng)
+    district_row = await session.get(DistrictState, district.id)
+    caught = _roll_illicit_detection(location, district_row, tick, rng)
     if caught:
-        await _apply_illicit_consequence(session, character, district.id)
+        _apply_illicit_consequence(character, district_row)
     return TradeResult(qty=qty, unit_price=price, total=total, caught=caught)
 
 
@@ -211,9 +219,10 @@ async def sell(
         )
     )
 
-    caught = _roll_illicit_detection(location, rng)
+    district_row = await session.get(DistrictState, district.id)
+    caught = _roll_illicit_detection(location, district_row, tick, rng)
     if caught:
-        await _apply_illicit_consequence(session, character, district.id)
+        _apply_illicit_consequence(character, district_row)
     return TradeResult(qty=qty, unit_price=price, total=total, caught=caught)
 
 

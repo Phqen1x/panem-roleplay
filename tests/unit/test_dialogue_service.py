@@ -287,6 +287,29 @@ class TestBuildRequestContext:
         assert "crisis" not in ctx.scene
         assert "district_mood" not in ctx.scene
 
+    def test_crackdown_adds_a_nervousness_line(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[],
+            district_on_edge=True,
+        )
+        assert "peacekeeper_crackdown" in ctx.scene
+
+    def test_no_crackdown_line_by_default(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[],
+        )
+        assert "peacekeeper_crackdown" not in ctx.scene
+
     def test_speaker_job_district_and_reputation_are_included(self):
         ctx = dialogue.build_request_context(
             npc=make_npc(),

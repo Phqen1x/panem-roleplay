@@ -83,6 +83,7 @@ def build_request_context(
     character_home_district: District | None = None,
     known: str | None = None,
     constraints: Mapping[str, str] | None = None,
+    district_on_edge: bool = False,
 ) -> omni.RequestContext:
     """`present` lists everyone else in the scene besides `character`
     (other engaged NPCs, other joined characters) -- the system prompt
@@ -101,6 +102,14 @@ def build_request_context(
     callers (npc-to-npc chatter, any caller that skips them) simply don't
     get those header lines -- `render_request_header` already omits an
     empty block.
+
+    `district_on_edge` (contraband system) is the caller's pre-resolved
+    `panem_shared.jail.is_crackdown_active` check -- this function stays
+    tick-unaware, matching every other already-resolved field here
+    (`known`, `district_state`, ...); when true it adds a line to the
+    scene block so an NPC's reply can reflect peacekeepers cracking down
+    without the model needing to infer it from crisis/unrest numbers
+    alone.
 
     `known` is `RelationshipRow.summary` for this NPC-character pair -- a
     running recap of every past engagement between them, already trimmed
@@ -135,6 +144,10 @@ def build_request_context(
         scene["crisis"] = crisis
         scene["district_mood"] = (
             f"morale {district_state.morale:.0f}/100, unrest {district_state.unrest:.0f}/100"
+        )
+    if district_on_edge:
+        scene["peacekeeper_crackdown"] = (
+            "active -- peacekeepers are cracking down, people are visibly on edge"
         )
 
     speaker: dict[str, str] = {"name": character.name}
@@ -306,6 +319,7 @@ async def generate_reply(
     character_job_title: str | None = None,
     character_home_district: District | None = None,
     known: str | None = None,
+    district_on_edge: bool = False,
 ) -> str:
     provider = resolve_provider(npc, settings)
     if provider == "template":
@@ -320,6 +334,7 @@ async def generate_reply(
         memories=memories,
         present=present,
         npc_job_title=npc_job_title,
+        district_on_edge=district_on_edge,
         npc_background=npc_background,
         district_state=district_state,
         character_job_title=character_job_title,

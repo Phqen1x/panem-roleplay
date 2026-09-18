@@ -270,7 +270,11 @@ class JobsCog(commands.Cog):
         arrested = False
         if char.job_is_illicit and not neutral:
             arrested = await shifts_svc.resolve_illicit_heat(
-                session, character=char, district_id=district.id, lost=not won
+                session,
+                character=char,
+                district_id=district.id,
+                current_tick=current_tick,
+                lost=not won,
             )
 
         if neutral:

@@ -40,23 +40,54 @@ weighting caveat (Spec §7's real number wasn't available in this
 session's context)."""
 
 
+def is_crackdown_active(district_row: DistrictState | None, current_tick: int) -> bool:
+    return (
+        district_row is not None
+        and district_row.crackdown_until_tick is not None
+        and current_tick < district_row.crackdown_until_tick
+    )
+
+
+def crackdown_bad_odds(
+    base_prob: float, district_row: DistrictState | None, current_tick: int
+) -> float:
+    """Scales a "bad" (get-caught) probability up under an active
+    moderator crackdown (`/staff district crackdown`), clamped to stay a
+    valid probability."""
+    if not is_crackdown_active(district_row, current_tick):
+        return base_prob
+    return min(1.0, base_prob * constants.CRACKDOWN_DETECTION_MULTIPLIER)
+
+
+def crackdown_good_odds(
+    base_prob: float, district_row: DistrictState | None, current_tick: int
+) -> float:
+    """The inverse of `crackdown_bad_odds` for a "good" (succeed/escape)
+    probability -- divides instead of multiplying, same clamp."""
+    if not is_crackdown_active(district_row, current_tick):
+        return base_prob
+    return max(0.0, base_prob / constants.CRACKDOWN_DETECTION_MULTIPLIER)
+
+
 def resolve_illicit_heat(
     character: Character,
     district_row: DistrictState | None,
     *,
     lost: bool,
+    current_tick: int,
     rng: random.Random | None = None,
 ) -> bool:
     """Bumps `Character.illicit_heat` after an illicit shift (a real loss
     adds `ILLICIT_HEAT_PER_LOSS`, anything else `ILLICIT_HEAT_PER_SHIFT`
     -- "failing a work game attracts much more attention"), and once heat
     clears `ILLICIT_HEAT_ARREST_THRESHOLD`, immediately rolls an arrest-
-    evasion check. A win halves heat back down and leaves the character
-    free; a loss jails them (`commit_to_jail`, fine, reputation hit, a
-    bump to `district_row.peacekeeper_pressure` if a row was found) and
-    resets heat to 0. Returns whether an arrest happened, for the
-    caller's reply text. Takes the `DistrictState` row directly (rather
-    than a session) so this stays a plain function callable from both
+    evasion check (harder under an active crackdown -- `crackdown_good_
+    odds`). A win halves heat back down and leaves the character free; a
+    loss jails them (`commit_to_jail`, fine, reputation hit, a bump to
+    `district_row.peacekeeper_pressure` if a row was found) and resets
+    heat to 0. Returns whether an arrest happened, for the caller's
+    reply text. Takes the `DistrictState` row directly (rather than a
+    session) so this stays a plain function callable from both
     `panem_bot` and `panem_api`."""
     roller = rng if rng is not None else random.Random()
     character.illicit_heat += (
@@ -65,7 +96,10 @@ def resolve_illicit_heat(
     if character.illicit_heat < constants.ILLICIT_HEAT_ARREST_THRESHOLD:
         return False
 
-    if roller.random() < constants.ARREST_EVASION_BASE_PROB:
+    evasion_prob = crackdown_good_odds(
+        constants.ARREST_EVASION_BASE_PROB, district_row, current_tick
+    )
+    if roller.random() < evasion_prob:
         character.illicit_heat /= 2
         return False
 

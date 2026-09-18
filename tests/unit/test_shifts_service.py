@@ -186,7 +186,12 @@ class TestResolveIllicitHeat:
         await db_session.flush()
 
         arrested = await shifts_svc.resolve_illicit_heat(
-            db_session, character=character, district_id=1, lost=False, rng=FixedRng(0.99)
+            db_session,
+            character=character,
+            district_id=1,
+            current_tick=0,
+            lost=False,
+            rng=FixedRng(0.99),
         )
 
         assert arrested is True
@@ -198,7 +203,12 @@ class TestResolveIllicitHeat:
         character = make_character(illicit_heat=0.0, jail_count=0, jailed_until_tick=None)
 
         arrested = await shifts_svc.resolve_illicit_heat(
-            db_session, character=character, district_id=1, lost=False, rng=FixedRng(0.99)
+            db_session,
+            character=character,
+            district_id=1,
+            current_tick=0,
+            lost=False,
+            rng=FixedRng(0.99),
         )
 
         assert arrested is False
@@ -208,7 +218,12 @@ class TestResolveIllicitHeat:
         character = make_character(illicit_heat=99.0, jail_count=0, jailed_until_tick=None)
 
         arrested = await shifts_svc.resolve_illicit_heat(
-            db_session, character=character, district_id=999, lost=False, rng=FixedRng(0.99)
+            db_session,
+            character=character,
+            district_id=999,
+            current_tick=0,
+            lost=False,
+            rng=FixedRng(0.99),
         )
 
         assert arrested is True

@@ -128,6 +128,7 @@ async def resolve_illicit_heat(
     *,
     character: Character,
     district_id: int,
+    current_tick: int,
     lost: bool,
     rng: random.Random | None = None,
 ) -> bool:
@@ -135,7 +136,9 @@ async def resolve_illicit_heat(
     resolve_illicit_heat` (the actual heat/arrest logic, shared with
     `panem_api`'s `/work` minigame result endpoint) -- looks up
     `district_id`'s `DistrictState` row for the arrest-consequence
-    pressure bump, then delegates. Returns whether an arrest happened,
-    for `/work`'s reply text."""
+    pressure bump and crackdown check, then delegates. Returns whether
+    an arrest happened, for `/work`'s reply text."""
     district_row = await session.get(DistrictState, district_id)
-    return _resolve_illicit_heat(character, district_row, lost=lost, rng=rng)
+    return _resolve_illicit_heat(
+        character, district_row, lost=lost, current_tick=current_tick, rng=rng
+    )

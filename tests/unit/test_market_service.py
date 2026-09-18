@@ -197,6 +197,33 @@ class TestBuy:
         district_row = await db_session.get(DistrictState, district.id)
         assert district_row.peacekeeper_pressure == 0.3 + market_svc.ILLICIT_PRESSURE_DELTA
 
+    async def test_crackdown_makes_detection_more_likely(self, db_session):
+        district = make_district(illicit_market=True)
+        character = make_character(money=100, jailed_until_tick=None)
+        db_session.add(
+            DistrictState(
+                district_id=district.id, peacekeeper_pressure=0.3, crackdown_until_tick=100
+            )
+        )
+        await db_session.flush()
+        # A roll that clears the base detection prob but not the crackdown-scaled one.
+        roll = (
+            constants.MARKET_ILLICIT_DETECTION_PROB
+            + constants.MARKET_ILLICIT_DETECTION_PROB * constants.CRACKDOWN_DETECTION_MULTIPLIER
+        ) / 2
+
+        result = await market_svc.buy(
+            db_session,
+            character=character,
+            district=district,
+            goods=make_goods(),
+            good_id="coal",
+            qty=1,
+            tick=10,
+            rng=FixedRng(roll),
+        )
+        assert result.caught is True
+
     async def test_illicit_catch_without_a_district_state_row_does_not_raise(self, db_session):
         district = make_district(illicit_market=True)
         character = make_character(money=100, jailed_until_tick=None)
