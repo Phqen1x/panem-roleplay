@@ -2086,3 +2086,111 @@ actually home.
   pure roll to a real minigame when one's available. The "3 tries" lockpick jail-escape limit is
   still 3 separate `/lockpick` invocations (each one launches its own Activity attempt), not a
   single session with 3 in-game chances.
+
+## Notes on the web dashboard (every player command as tabs on the Activity)
+
+A follow-up request: turn the map-only Activity into a full dashboard where a player can do
+everything their slash commands do, organized into tabs -- with a jail tab that shows a cell with
+the player's avatar in it while jailed. Built as nine milestones, each its own commit
+(`static/tabs/*.js` + a `build_*_router` in `packages/panem_api/src/panem_api/dashboard_routes.py`
+per domain), sharing one identity model and one cross-process-move pattern throughout.
+
+- **Identity has no cryptographic auth**, matching the honesty `app.py`'s own module docstring
+  already had for `/activity/work|crime/*`: `app.js`'s existing Discord SDK `authenticate()` call
+  (previously its return value was discarded) now captures the real logged-in Discord user; a
+  manual "Discord ID" text field is the fallback in preview mode / outside a real Activity
+  iframe. Every dashboard request carries `discord_id` + the `character_id` picked from
+  `POST /activity/dashboard/identify`'s list, and every route calls a shared
+  `_resolve_owned_character` that 404s if `User.discord_id` doesn't match `Character.user_id` --
+  enough to stop one player acting as another's character by guessing an id, not a real login.
+- **The shell** (`static/index.html`/`app.js`): a character picker plus a hash-routed
+  (`#map`/`#character`/`#work`/`#market`/`#travel`/`#social`/`#jail`/`#crime`/`#housing`) tab bar,
+  each tab a dynamically-`import()`ed `static/tabs/<name>.js` module with a uniform
+  `mount(root, ctx) -> {unmount?}` contract (`ctx` = `{discordId, characterId, apiFetch,
+  refreshIdentity}`, the same shape the minigame modules under `static/games/*.js` already use).
+  `showTab()` guards against two overlapping mounts (a rapid double tab-switch racing a dynamic
+  `import()`) with a generation counter; a real bug caught by live Playwright testing, not a
+  hypothetical -- the manual-Discord-ID input's `change` handler used to re-mount the current tab
+  after its own network round trip, which could wipe out whatever the player had half-typed into
+  a form in the meantime. Fixed by dropping that stale re-mount (`ctx.discordId()` is a live read
+  already) and adding the generation guard as defense-in-depth for every tab, not just that one.
+  `ASSET_VERSION` in `app.js` (bumped every milestone, currently `9`) cache-busts every
+  dynamically-imported tab module together with `index.html`'s own `<script src="/app.js?v=N">`.
+- **Character** (`character.js`): list/create/edit avatar & proxy tag/retire, mirroring
+  `/character list|create|avatar|tag|retire`. Creation writes the `Character` row directly (no
+  bot token to post the staff-approval embed from `panem_api`) and district is a plain `<select>`
+  rather than inferred from a Discord guild role -- the one deliberate behavioral difference from
+  the in-Discord flow, since a wider OAuth scope wasn't worth adding just for this. A dashboard-
+  created character reaches staff the same way a Discord-created one eventually would anyway:
+  `CharacterCog._announce_pending_characters`, a `tasks.loop` background poll (already needed
+  because *any* pending character can go unnoticed) picks up `status=pending AND
+  approval_notified_at IS NULL` rows regardless of which path created them and posts the usual
+  embed, stamping `approval_notified_at` so it's not posted twice.
+- **Jail** (`jail.js`), the tab named explicitly in the request: an inline-SVG cell (bars, floor,
+  a dim light -- original art, no external image asset, consistent with this codebase's existing
+  lockpick/pickpocket minigame art) with the character's avatar (`Character.avatar_url`, falling
+  back to the Discord SDK avatar) composited inside while `jailed_until_tick > now`, an empty cell
+  otherwise. Bail pays instantly; "Attempt Lockpick" mints a crime attempt exactly like
+  `cogs/jail.py`'s `/lockpick` does and embeds the existing `crime.html?attempt_id=...` page in an
+  `<iframe>` to actually play it -- no minigame logic duplicated.
+- **Crime** (`crime.js`): steal/burgle target pickers (an improvement over the bare-string
+  `owner`/`target` params `/steal`/`/burgle` take today -- these list who's actually reachable)
+  launching the same iframe-embedded minigame pattern as jail, plus an instant-resolve poach
+  button (`/poach` never launches an Activity on the bot side either).
+- **Work** (`work.js`): one new "start" endpoint mirrors only `/work`'s shift-finding half;
+  actually playing or skipping a shift reuses the existing `/activity/work/{shift_id}` (status)
+  and `.../result` (POST) endpoints unchanged, the same reuse-over-duplication approach as jail/
+  crime. The dashboard's ad-hoc shift override only checks `Position.GAMEMAKER` (a real
+  in-fiction position), not the Discord staff role half of the bot's `is_staff OR GAMEMAKER`
+  check -- the dashboard has no concept of a Discord guild role to check against.
+- **Market/Black Market** (`market.js`), one tab with a legal/illicit toggle rather than two:
+  mirrors `/market prices|buy|sell`, `/inventory`, and `/blackmarket prices|buy|sell` -- both are
+  instant-resolve with no minigame, so no iframe is needed here.
+- **Travel + Residents/Social** (`travel.js`, `social.js`): `travel.js` mirrors `/travel` (split
+  into its location and cross-district sub-flows, same as the command itself) and `/where`
+  (folded into the one status panel rather than a separate call). `social.js` combines two
+  read-only panels: Residents (`/resident list|where|profile`, with each row's current location
+  included up front rather than needing a second request per NPC) and a character's current
+  `/talk`/`/engage`/`/scene` engagement, shown read-only with a "Continue in Discord" deep link
+  (`https://discord.com/channels/{guild_id}/{thread_id}`) rather than any write action -- a
+  deliberate scope decision made up front: making `/talk`/`/engage`/`/scene` fully interactive
+  from the dashboard would need a new dashboard -> Redis -> `panem_bot` relay, since only the bot
+  process holds a token and can create/post to a Discord thread. `discord_guild_id` (new,
+  optional `create_app` parameter, `Settings.discord_guild_id`) is `0` on a dev/preview server
+  that hasn't configured it, and the link is simply omitted rather than pointing at a bogus
+  `channels/0/...` URL.
+- **Housing** (`housing.js`): mirrors every `/housing` subcommand (`buy` incl. financed,
+  `buy-complex`, `refinance`, `sell`/delist, `rent-out`, `auction-start`/`-bid`, `rent`,
+  `move-out`, `inn-stay`) plus `/sleep`. The status read goes one step past `/housing status`:
+  it also lists *every* property the character owns (not just their current `housing_property_id`
+  "home", which only ever tracks the most recently bought house or leased apartment) so the tab
+  can offer sell/refinance/auction/rent-out actions per owned property -- something the dashboard
+  can show all at once that a single Discord command reply couldn't.
+- **The cross-process move pattern**, repeated once per domain needed: a Discord-independent
+  module living under `panem_bot/services/` moves verbatim to `panem_shared/`, and
+  `panem_bot/services/<name>.py` becomes a one-line-per-symbol re-export shim
+  (`from panem_shared.<name> import (x as x)`) so every existing cog/test is untouched. Moved for
+  the dashboard this way: `errors.py` (the `ServiceError` hierarchy), `characters.py`, `jobs.py`,
+  `travel.py`, `housing.py`, `market.py`, `blackmarket.py`, `poaching.py`, and extensions to the
+  already-shared `jail.py`/`stealing.py`/`shifts.py`. One function, `proxy.py`'s
+  `has_location_access`, moved alone into a new `panem_shared/location_access.py` rather than the
+  whole (otherwise Discord-heavy) `proxy.py` module traveling with it -- the one genuinely
+  Discord-independent piece of that file, and needed by `travel.py`/`dialogue.py`/`engagements.py`
+  alike, so a small dedicated module fit better than folding it into `travel.py` directly.
+- **Fixed along the way, not a dashboard bug but exposed by writing dashboard tests for it**: the
+  shared `make_content_with_market()` test fixture (`tests/unit/test_api_app.py`, from the
+  Milestone 6/blackmarket build) put both the legal-market and black-market tests at the same
+  `illicit=True` location. `market.py`'s `buy`/`sell` roll illicit detection for *any* `illicit`
+  location, not only for illicit goods, so a legal grain purchase in that fixture had a small
+  unseeded chance of an unrelated fine landing on it mid-test. Split into two locations --
+  `legal_market` (not `illicit`) and `market` (`illicit=True`, still required by
+  `resolve_black_market_location` for the black-market tests) -- makes the legal-market tests
+  deterministic without touching `market.py`'s actual behavior.
+- **Verification**: every milestone got the full ruff/mypy-baseline(146 errors, pre-existing and
+  unrelated to this feature)/pytest loop, `node --check` on every changed `static/**/*.js`, and a
+  live Playwright smoke pass against a real Postgres-backed server using real `data/` district
+  content -- clicking through every one of the nine tabs, confirming each renders real content
+  (not a placeholder or a load error) with no console errors besides the browser's own
+  `favicon.ico` 404. A real Discord-launched Activity iframe handshake (the SDK's `authenticate()`
+  call against Discord's actual OAuth flow) can't be verified from this environment -- the same
+  documented gap `app.py`'s own module docstring already calls out for `/activity/work|crime/*`.
