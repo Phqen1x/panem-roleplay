@@ -31,9 +31,12 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from panem_shared import characters as characters_svc
+from panem_shared.content.loader import ContentBundle
 from panem_shared.db.models import Character, User
 from panem_shared.db.session import session_scope
-from panem_shared.enums import CharacterStatus
+from panem_shared.enums import CharacterStatus, DayPhase
+from panem_shared.errors import NotFound, ServiceError
 
 
 class DashboardCharacterSummary(BaseModel):
@@ -65,9 +68,9 @@ def _require_session_factory(
 async def _resolve_owned_character(
     session: AsyncSession, *, discord_id: int, character_id: int
 ) -> Character:
-    """Every dashboard action/read route (from M2 onward) calls this first --
-    the shared ownership check described in this module's docstring. Raises
-    404 rather than 403 for a mismatched owner, same as an unknown id: this
+    """Every dashboard action/read route calls this first -- the shared
+    ownership check described in this module's docstring. Raises 404
+    rather than 403 for a mismatched owner, same as an unknown id: this
     process has no session/login of its own to distinguish "wrong owner"
     from "doesn't exist" in a way that's worth telling a client apart."""
     character = await session.get(Character, character_id)
@@ -77,6 +80,18 @@ async def _resolve_owned_character(
     if user is None or user.discord_id != discord_id:
         raise HTTPException(status_code=404, detail="No such character")
     return character
+
+
+def _http_from_service_error(exc: ServiceError) -> HTTPException:
+    """Every dashboard write route below wraps its service call in `except
+    ServiceError as exc: raise _http_from_service_error(exc) from exc` --
+    the service layer's `NotAllowed`/`ValidationFailed`/`LimitReached`/
+    `NotFound` refusals (`panem_shared.errors`) already carry a
+    `reason_key` that means the same thing `strings.py` looks it up for in
+    Discord, so this reuses it as the HTTP detail rather than inventing a
+    second set of messages."""
+    status = 404 if isinstance(exc, NotFound) else 400
+    return HTTPException(status_code=status, detail=exc.reason_key)
 
 
 def build_identify_router(*, session_factory: async_sessionmaker[AsyncSession] | None) -> APIRouter:
@@ -119,5 +134,178 @@ def build_identify_router(*, session_factory: async_sessionmaker[AsyncSession] |
                     for c in characters
                 ]
             )
+
+    return router
+
+
+class CharacterDetail(BaseModel):
+    id: int
+    name: str
+    status: str
+    age: int
+    appearance: str
+    backstory: str
+    avatar_url: str | None = None
+    proxy_tag: str | None = None
+    district_id: int
+    current_district_id: int
+    job_title: str | None = None
+    shift_phase: str | None = None
+    job_is_illicit: bool
+    money: int
+    jailed_until_tick: int | None = None
+
+
+def _character_detail(character: Character) -> CharacterDetail:
+    return CharacterDetail(
+        id=character.id,
+        name=character.name,
+        status=character.status,
+        age=character.age,
+        appearance=character.appearance,
+        backstory=character.backstory,
+        avatar_url=character.avatar_url,
+        proxy_tag=character.proxy_tag,
+        district_id=character.district_id,
+        current_district_id=character.current_district_id,
+        job_title=character.job_title,
+        shift_phase=character.shift_phase,
+        job_is_illicit=character.job_is_illicit,
+        money=character.money,
+        jailed_until_tick=character.jailed_until_tick,
+    )
+
+
+class MyCharactersResponse(BaseModel):
+    characters: list[CharacterDetail]
+
+
+class CreateCharacterRequest(BaseModel):
+    discord_id: int
+    district_id: int
+    name: str
+    age: int
+    appearance: str = ""
+    backstory: str = ""
+    avatar_url: str | None = None
+    job_title: str
+    shift_phase: str
+    job_is_illicit: bool = False
+
+
+class RetireCharacterRequest(BaseModel):
+    discord_id: int
+
+
+class UpdateCharacterRequest(BaseModel):
+    discord_id: int
+    avatar_url: str | None = None
+    proxy_tag: str | None = None
+
+
+def build_characters_router(
+    *,
+    content: ContentBundle,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    max_characters_per_user: int,
+) -> APIRouter:
+    """The Character tab's REST surface: list/create/edit/retire, mirroring
+    `/character list|create|avatar|tag|retire`. Unlike Discord's `/character
+    create` (a multi-step modal wizard ending in a bot-posted staff-approval
+    embed), this endpoint can only write the DB row -- `panem_api` has no
+    bot token to post that embed itself, so `CharacterCog._announce_pending_
+    characters` (a background poll task in `panem_bot`) picks up what this
+    creates and announces it the same way, shortly after. District is a
+    plain field here rather than inferred from a Discord guild role (how
+    `/character create` picks it) -- the dashboard has no equivalent
+    without a wider OAuth scope than this feature asks for; see the
+    README's note on this simplification."""
+    router = APIRouter(prefix="/activity/dashboard/characters", tags=["dashboard"])
+
+    @router.get("", response_model=MyCharactersResponse)
+    async def list_my_characters(discord_id: int) -> MyCharactersResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            user_row = await session.execute(select(User).where(User.discord_id == discord_id))
+            user = user_row.scalar_one_or_none()
+            if user is None:
+                return MyCharactersResponse(characters=[])
+            rows = await session.execute(
+                select(Character).where(Character.user_id == user.id).order_by(Character.id)
+            )
+            return MyCharactersResponse(
+                characters=[_character_detail(c) for c in rows.scalars().all()]
+            )
+
+    @router.post("", response_model=CharacterDetail)
+    async def create_my_character(body: CreateCharacterRequest) -> CharacterDetail:
+        factory = _require_session_factory(session_factory)
+        if body.district_id not in content.districts:
+            raise HTTPException(status_code=400, detail="No such district")
+        if body.shift_phase not in {phase.value for phase in DayPhase}:
+            raise HTTPException(status_code=400, detail="Invalid shift phase")
+        async with session_scope(factory) as session:
+            user = await characters_svc.get_or_create_user(session, body.discord_id)
+            # Same fallback `effective_max_characters` applies, inlined: that
+            # helper takes a full `Settings` object just for this one field,
+            # which isn't worth constructing here for the sake of reuse.
+            max_characters = (
+                user.max_characters_override
+                if user.max_characters_override is not None
+                else max_characters_per_user
+            )
+            try:
+                character = await characters_svc.create_character(
+                    session,
+                    user=user,
+                    district_id=body.district_id,
+                    name=body.name,
+                    age=body.age,
+                    appearance=body.appearance,
+                    backstory=body.backstory,
+                    avatar_url=body.avatar_url,
+                    job_title=body.job_title,
+                    shift_phase=body.shift_phase,
+                    job_is_illicit=body.job_is_illicit,
+                    max_characters=max_characters,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            return _character_detail(character)
+
+    @router.patch("/{character_id}", response_model=CharacterDetail)
+    async def update_my_character(
+        character_id: int, body: UpdateCharacterRequest
+    ) -> CharacterDetail:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            try:
+                if body.avatar_url is not None:
+                    characters_svc.validate_avatar_url(body.avatar_url)
+                    character.avatar_url = body.avatar_url or None
+                if body.proxy_tag is not None:
+                    characters_svc.validate_proxy_tag(body.proxy_tag)
+                    character.proxy_tag = body.proxy_tag
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            return _character_detail(character)
+
+    @router.post("/{character_id}/retire", response_model=CharacterDetail)
+    async def retire_my_character(
+        character_id: int, body: RetireCharacterRequest
+    ) -> CharacterDetail:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            try:
+                character = await characters_svc.retire_character(session, character)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            return _character_detail(character)
 
     return router

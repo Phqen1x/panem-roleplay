@@ -509,6 +509,16 @@ ENGAGEMENT_IDLE_CHECK_INTERVAL_MINUTES = 5
 """How often `EngagementCog`'s background task scans open engagements for
 `last_message_at` past the current timeout, mirroring `SceneCog.
 archive_idle_scenes`'s own `tasks.loop` cadence pattern."""
+CHARACTER_APPROVAL_POLL_INTERVAL_MINUTES = 2
+"""How often `CharacterCog`'s background task scans for `PENDING`
+characters with no `approval_notified_at` yet -- the web dashboard
+(`panem_api.dashboard_routes`) creates characters directly via a DB write
+with no bot token of its own to post the staff-approval embed, so this is
+what actually gets a dashboard-created application announced. A Discord-
+created character (`/character create`) posts and stamps this inline,
+same tick -- this task only ever picks up the dashboard's, same mirror-
+the-idle-timeout-task cadence pattern as `ENGAGEMENT_IDLE_CHECK_INTERVAL_
+MINUTES`."""
 ENGAGEMENT_MAX_PARTICIPANTS = 5
 """`/engage start` has no true variadic argument (Discord slash commands
 don't support one), so participants are `ENGAGEMENT_MAX_PARTICIPANTS`

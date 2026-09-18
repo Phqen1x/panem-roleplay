@@ -30,7 +30,7 @@ const STEP_TIMEOUT_MS = 8000;
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "1";
+const ASSET_VERSION = "3";
 
 const TABS = ["map", "character", "work", "market", "travel", "social", "jail", "crime", "housing"];
 const TAB_LABELS = {
@@ -232,7 +232,13 @@ function currentTabName() {
   return TABS.includes(name) ? name : TABS[0];
 }
 
+// Guards against two overlapping showTab() calls finishing out of order
+// (e.g. a rapid double tab-switch) stomping on each other's mount -- the
+// dynamic import() below is an async gap a second call can land inside.
+let tabGeneration = 0;
+
 async function showTab(name) {
+  const generation = ++tabGeneration;
   if (currentTabHandle && typeof currentTabHandle.unmount === "function") {
     currentTabHandle.unmount();
   }
@@ -243,8 +249,10 @@ async function showTab(name) {
   }
   try {
     const mod = await import(`./tabs/${name}.js?v=${ASSET_VERSION}`);
+    if (generation !== tabGeneration) return; // superseded while importing
     currentTabHandle = mod.mount(tabRootEl, buildCtx()) || null;
   } catch (err) {
+    if (generation !== tabGeneration) return;
     console.error(`Failed to load tab "${name}":`, err);
     tabRootEl.append(el("p", { class: "tab-status" }, `Could not load this tab: ${err.message}`));
   }
@@ -277,8 +285,14 @@ function setupIdentityControls() {
   discordIdInput.addEventListener("change", async () => {
     state.manualDiscordId = discordIdInput.value.trim();
     writeStorage("panem_discord_id", state.manualDiscordId);
+    // Deliberately doesn't remount the current tab afterward: refreshIdentity
+    // is a network round trip, and remounting once it resolves would wipe
+    // out anything the player typed into the currently-open tab in the
+    // meantime. ctx.discordId() is a live read, so the open tab already
+    // sees the new id for any action it takes next -- switching tabs (or
+    // back) picks up a fresh character list right away, same as any other
+    // tab visit.
     await refreshIdentity();
-    await showTab(currentTabName());
   });
   characterSelect.addEventListener("change", async () => {
     state.characterId = Number(characterSelect.value);

@@ -880,3 +880,178 @@ class TestDashboardIdentify:
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post("/activity/dashboard/identify", json={"discord_id": 42})
         assert response.json()["characters"][0]["jailed_until_tick"] == 500
+
+
+class TestDashboardCharacters:
+    async def test_create_503s_when_not_configured(self):
+        app = create_app(content=make_content_with_job(), redis_client=FakeRedis())
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/activity/dashboard/characters",
+                json={
+                    "discord_id": 1,
+                    "district_id": 1,
+                    "name": "Wren",
+                    "age": 15,
+                    "job_title": "Miner",
+                    "shift_phase": "morning",
+                },
+            )
+        assert response.status_code == 503
+
+    async def test_create_rejects_an_unknown_district(self, work_app):
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/activity/dashboard/characters",
+                json={
+                    "discord_id": 1,
+                    "district_id": 999,
+                    "name": "Wren",
+                    "age": 15,
+                    "job_title": "Miner",
+                    "shift_phase": "morning",
+                },
+            )
+        assert response.status_code == 400
+
+    async def test_create_rejects_an_invalid_shift_phase(self, work_app):
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/activity/dashboard/characters",
+                json={
+                    "discord_id": 1,
+                    "district_id": 1,
+                    "name": "Wren",
+                    "age": 15,
+                    "job_title": "Miner",
+                    "shift_phase": "midnight",
+                },
+            )
+        assert response.status_code == 400
+
+    async def test_create_happy_path_is_pending_with_no_approval_notified_yet(
+        self, work_app, db_session_factory
+    ):
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/activity/dashboard/characters",
+                json={
+                    "discord_id": 7,
+                    "district_id": 1,
+                    "name": "Wren",
+                    "age": 15,
+                    "job_title": "Miner",
+                    "shift_phase": "morning",
+                },
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == CharacterStatus.PENDING.value
+        async with db_session_factory() as session:
+            character = await session.get(Character, body["id"])
+            assert character.approval_notified_at is None
+
+    async def test_create_rejects_a_duplicate_name(self, work_app, db_session_factory):
+        await seed_character(db_session_factory, character_overrides={"name": "Wren"})
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/activity/dashboard/characters",
+                json={
+                    "discord_id": 99,
+                    "district_id": 1,
+                    "name": "Wren",
+                    "age": 15,
+                    "job_title": "Miner",
+                    "shift_phase": "morning",
+                },
+            )
+        assert response.status_code == 400
+
+    async def test_list_returns_every_status_for_that_discord_id(
+        self, work_app, db_session_factory
+    ):
+        await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"name": "Wren", "status": CharacterStatus.APPROVED.value},
+        )
+        await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"name": "Applicant", "status": CharacterStatus.PENDING.value},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/activity/dashboard/characters", params={"discord_id": 5})
+        assert response.status_code == 200
+        names = {c["name"] for c in response.json()["characters"]}
+        assert names == {"Wren", "Applicant"}
+
+    async def test_update_rejects_a_non_owner(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.patch(
+                f"/activity/dashboard/characters/{char_id}",
+                json={"discord_id": 6, "avatar_url": "https://example.com/pic.png"},
+            )
+        assert response.status_code == 404
+
+    async def test_update_sets_avatar_and_tag(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.patch(
+                f"/activity/dashboard/characters/{char_id}",
+                json={
+                    "discord_id": 5,
+                    "avatar_url": "https://example.com/pic.png",
+                    "proxy_tag": "wren::",
+                },
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["avatar_url"] == "https://example.com/pic.png"
+        assert body["proxy_tag"] == "wren::"
+
+    async def test_update_rejects_an_invalid_avatar_url(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.patch(
+                f"/activity/dashboard/characters/{char_id}",
+                json={"discord_id": 5, "avatar_url": "not-a-url"},
+            )
+        assert response.status_code == 400
+
+    async def test_retire_happy_path(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"status": CharacterStatus.APPROVED.value},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/characters/{char_id}/retire", json={"discord_id": 5}
+            )
+        assert response.status_code == 200
+        assert response.json()["status"] == CharacterStatus.RETIRED.value
+
+    async def test_retire_rejects_a_non_owner(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"status": CharacterStatus.APPROVED.value},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/characters/{char_id}/retire", json={"discord_id": 6}
+            )
+        assert response.status_code == 404

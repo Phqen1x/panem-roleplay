@@ -48,7 +48,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from panem_api.dashboard_routes import build_identify_router
+from panem_api.dashboard_routes import build_characters_router, build_identify_router
 from panem_shared import constants
 from panem_shared.content.loader import ContentBundle
 from panem_shared.content.schemas import District
@@ -297,6 +297,7 @@ def create_app(
     discord_client_id: str = "",
     discord_client_secret: str = "",
     session_factory: async_sessionmaker[AsyncSession] | None = None,
+    max_characters_per_user: int = 1,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -664,6 +665,13 @@ def create_app(
         return response_obj
 
     app.include_router(build_identify_router(session_factory=session_factory))
+    app.include_router(
+        build_characters_router(
+            content=content,
+            session_factory=session_factory,
+            max_characters_per_user=max_characters_per_user,
+        )
+    )
 
     if STATIC_DIR.exists():
         # Mounted last so it only ever catches paths none of the routes

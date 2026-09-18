@@ -1,29 +1,21 @@
-"""Service-layer exceptions. Cogs catch these and map them to `strings.py`
-replies; services never format a user-facing string themselves (NFR-10)."""
+"""Re-exports `panem_shared.errors` so every existing `from panem_bot.errors
+import NotAllowed`-style call site keeps working unchanged -- the classes
+themselves live in `panem_shared` now (see that module's docstring)."""
 
 from __future__ import annotations
 
-
-class ServiceError(Exception):
-    """Base for all service-layer refusals. `reason_key` indexes `strings.py`."""
-
-    def __init__(self, reason_key: str, **fmt: object) -> None:
-        self.reason_key = reason_key
-        self.fmt = fmt
-        super().__init__(reason_key)
-
-
-class ValidationFailed(ServiceError):
-    """Input failed field validation (FR-CHR-2/7)."""
-
-
-class NotAllowed(ServiceError):
-    """The actor is not permitted to perform this action."""
-
-
-class NotFound(ServiceError):
-    """The referenced row does not exist."""
-
-
-class LimitReached(ServiceError):
-    """A configured cap (characters per user, scenes per district, ...) is hit."""
+from panem_shared.errors import (
+    LimitReached as LimitReached,
+)
+from panem_shared.errors import (
+    NotAllowed as NotAllowed,
+)
+from panem_shared.errors import (
+    NotFound as NotFound,
+)
+from panem_shared.errors import (
+    ServiceError as ServiceError,
+)
+from panem_shared.errors import (
+    ValidationFailed as ValidationFailed,
+)

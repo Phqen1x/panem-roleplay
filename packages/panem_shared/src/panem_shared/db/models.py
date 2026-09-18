@@ -189,6 +189,20 @@ class Character(TimestampMixin, Base):
     `Job`. Was a single `is_victor` bool; a list since a character can hold
     more than one."""
 
+    approval_notified_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    """Stamped once the staff approval-request embed has been posted for
+    this (still-`PENDING`) character -- `None` means it hasn't yet.
+    `/character create` posts it inline and stamps this immediately, the
+    same instant it creates the row, so this is always already set for a
+    Discord-created character by the time anything else could see it. It
+    only matters for a character created via the web dashboard
+    (`panem_api.dashboard_routes`), which has no bot token and so can't
+    post to Discord itself -- `panem_bot`'s `_announce_pending_characters`
+    background task polls for `status == PENDING AND approval_notified_at
+    IS NULL` and posts the same embed those get, then stamps this."""
+
     in_transit_until_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
     transit_destination_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     away_since_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)

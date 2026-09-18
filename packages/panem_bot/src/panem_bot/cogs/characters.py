@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import contextlib
+import datetime as dt
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 from sqlalchemy import func, select
 
 from panem_bot import autocomplete
@@ -52,6 +53,10 @@ class CharacterCog(commands.Cog):
             on_reject=self._handle_reject,
         )
         self.bot.add_view(self.approval_view)
+        self._announce_pending_characters.start()
+
+    async def cog_unload(self) -> None:
+        self._announce_pending_characters.cancel()
 
     async def _interaction_is_staff(self, interaction: discord.Interaction) -> bool:
         if not isinstance(interaction.user, discord.Member):
@@ -289,12 +294,15 @@ class CharacterCog(commands.Cog):
             character_id = character.id
 
         await interaction.response.send_message(t("character_created", name=name), ephemeral=True)
-        await self._post_approval_embed(interaction, character_id)
+        await self._post_approval_embed(character_id, applicant_discord_id=interaction.user.id)
 
-    async def _post_approval_embed(
-        self, interaction: discord.Interaction, character_id: int
-    ) -> None:
-        channel = interaction.client.get_channel(self.bot.settings.approval_channel_id)
+    async def _post_approval_embed(self, character_id: int, *, applicant_discord_id: int) -> None:
+        """Posts the staff-approval embed and stamps `approval_notified_at`
+        so `_announce_pending_characters` doesn't post it again. Takes a
+        bare `applicant_discord_id` rather than an `interaction` so the
+        background task (announcing a character the web dashboard created,
+        with no interaction of its own) can call this too."""
+        channel = self.bot.get_channel(self.bot.settings.approval_channel_id)
         if channel is None:
             return
         async with self.bot.db() as session:
@@ -303,7 +311,7 @@ class CharacterCog(commands.Cog):
             embed = discord.Embed(
                 title=f"Character Application: {character.name}", color=discord.Color.blurple()
             )
-            embed.add_field(name="Applicant", value=f"<@{interaction.user.id}>", inline=True)
+            embed.add_field(name="Applicant", value=f"<@{applicant_discord_id}>", inline=True)
             embed.add_field(name="District", value=district.name, inline=True)
             embed.add_field(name="Age", value=str(character.age), inline=True)
             shift_label = SHIFT_PHASE_LABELS.get(character.shift_phase or "", character.shift_phase)
@@ -320,8 +328,34 @@ class CharacterCog(commands.Cog):
             if character.avatar_url:
                 embed.set_thumbnail(url=character.avatar_url)
             embed.set_footer(text=f"{CHAR_ID_FOOTER_PREFIX}{character.id}")
+            character.approval_notified_at = dt.datetime.now(dt.UTC)
 
         await channel.send(embed=embed, view=self.approval_view)
+
+    @tasks.loop(minutes=constants.CHARACTER_APPROVAL_POLL_INTERVAL_MINUTES)
+    async def _announce_pending_characters(self) -> None:
+        """Picks up characters the web dashboard created (`panem_api.
+        dashboard_routes`, no bot token of its own to post an embed with)
+        and announces them exactly like `/character create` announces its
+        own -- everything else about approval (the buttons, `/staff
+        approve`, ...) is unchanged either way."""
+        async with self.bot.db() as session:
+            rows = (
+                await session.execute(
+                    select(Character.id, User.discord_id)
+                    .join(User, User.id == Character.user_id)
+                    .where(
+                        Character.status == CharacterStatus.PENDING.value,
+                        Character.approval_notified_at.is_(None),
+                    )
+                )
+            ).all()
+        for character_id, discord_id in rows:
+            await self._post_approval_embed(character_id, applicant_discord_id=discord_id)
+
+    @_announce_pending_characters.before_loop
+    async def _before_announce_pending_characters(self) -> None:
+        await self.bot.wait_until_ready()
 
     # --------------------------------------------------------- approval flow
 
@@ -552,7 +586,7 @@ class CharacterCog(commands.Cog):
         await interaction.response.send_message(
             f"**{name}** updated and resubmitted for approval.", ephemeral=True
         )
-        await self._post_approval_embed(interaction, character_id)
+        await self._post_approval_embed(character_id, applicant_discord_id=interaction.user.id)
 
     @group.command(name="retire", description="Retire an approved character")
     @app_commands.describe(character="Character name")
