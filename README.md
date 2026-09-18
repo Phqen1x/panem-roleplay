@@ -1973,7 +1973,13 @@ Only an actual catch carries consequence: jail, a fine, a general reputation hit
 NPC victim specifically -- an additional `RelationshipRow.affinity` hit with them (a player
 victim has no equivalent row to dock; Spec §6's relationship model only covers NPC standing).
 Targets are resolved by free-typed name at the thief's own location, matching `/talk`'s NPC-
-name resolution. `/burgle` reuses the exact same alert/escape/caught machinery against another
+name resolution -- with a `target` autocomplete (`StealingCog.steal_target_autocomplete`, reading
+the already-typed `character` param via `interaction.namespace`, same pattern `/talk`'s own
+resident autocomplete uses) listing exactly who a thief could actually hit right now: approved
+characters and NPCs sharing both district and exact location, each suffixed `(player)`/`(NPC)` to
+disambiguate a name collision between the two. Typing a target by hand instead of picking a
+suggestion also accepts a leading `@` (`@Commodus`), stripped before matching either way, for
+players used to @-mentioning a name elsewhere in the server. `/burgle` reuses the exact same alert/escape/caught machinery against another
 character's house (`Property.kind == HOUSE`) instead of a person -- `Property` carries no
 `location_id` the way a person does, so a flat harder success rate (`BURGLE_BASE_SUCCESS`)
 stands in for the "same location as you" precision a house can't offer, refuses your own house

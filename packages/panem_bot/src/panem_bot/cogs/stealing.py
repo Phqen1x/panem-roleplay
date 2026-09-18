@@ -20,6 +20,14 @@ from panem_shared.db.models import Character, Npc, Property, WorldClock
 from panem_shared.enums import CharacterStatus, OwnerKind, PropertyKind
 
 
+def _strip_at(name: str) -> str:
+    """Lets a player type a target the way they'd @-mention someone
+    elsewhere in the server (`@Commodus`) instead of picking an
+    autocomplete suggestion -- names are never actually stored with a
+    leading `@`, so this is stripped before matching either way."""
+    return name[1:] if name.startswith("@") else name
+
+
 class StealingCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
@@ -68,7 +76,9 @@ class StealingCog(commands.Cog):
         ).scalar_one_or_none()
 
     @app_commands.command(name="steal", description="Try to pickpocket a player or NPC")
-    @app_commands.describe(character="Character name", target="Who to steal from")
+    @app_commands.describe(
+        character="Character name", target="Who to steal from (or @mention their name)"
+    )
     @app_commands.autocomplete(character=autocomplete.own_approved)
     async def steal(self, interaction: discord.Interaction, character: str, target: str) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
@@ -77,7 +87,7 @@ class StealingCog(commands.Cog):
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
 
-            victim = await self._resolve_target(session, char, target)
+            victim = await self._resolve_target(session, char, _strip_at(target))
             if victim is None:
                 await interaction.response.send_message(t("steal_target_not_found"), ephemeral=True)
                 return
@@ -114,6 +124,58 @@ class StealingCog(commands.Cog):
         else:
             text = t("steal_miss", name=name)
         await interaction.response.send_message(text, ephemeral=True)
+
+    @steal.autocomplete("target")
+    async def steal_target_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Only ever people the invoker could actually steal from right
+        now -- other approved characters and NPCs sharing both their
+        district *and* their exact location, matching `_resolve_target`'s
+        own scope (Spec: "Only steal from people in the same location as
+        you")."""
+        character_name = getattr(interaction.namespace, "character", None)
+        if not character_name:
+            return []
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            char = await self._get_character(session, interaction.user.id, character_name)
+            if char is None:
+                return []
+            char_names = (
+                (
+                    await session.execute(
+                        select(Character.name).where(
+                            Character.status == CharacterStatus.APPROVED.value,
+                            Character.current_district_id == char.current_district_id,
+                            Character.location_id == char.location_id,
+                            Character.id != char.id,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            npc_names = (
+                (
+                    await session.execute(
+                        select(Npc.name).where(
+                            Npc.district_id == char.current_district_id,
+                            Npc.location_id == char.location_id,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        current_lower = _strip_at(current).lower()
+        candidates = [(name, "player") for name in char_names] + [
+            (name, "NPC") for name in npc_names
+        ]
+        matches = sorted(pair for pair in candidates if current_lower in pair[0].lower())
+        return [
+            app_commands.Choice(name=f"{name} ({kind})", value=name)
+            for name, kind in matches[: autocomplete.MAX_CHOICES]
+        ]
 
     @app_commands.command(name="burgle", description="Try to break into another character's house")
     @app_commands.describe(character="Character name", owner="Name of the house's owner")
