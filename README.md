@@ -1889,3 +1889,106 @@ existing `system_prompt.md` rules from the dialogue/memory work above and needed
 new UI surfaces a district's daily production-value rank directly (it only drives the
 redistribution math internally) -- a `/district rank` command or similar is real follow-up
 scope if players want to see it.
+
+## Notes on the contraband system (illicit work, black market, stealing, jail)
+
+A second large pass on top of the economy rework above: illicit jobs any player can declare,
+a per-district black market fed only by that work, `/steal`/`/burgle`, and the jail loop
+(priors, bail, lock-picking) all of that funnels into, plus a moderator lever to crack down on
+a district and make all of it harder. One scope call made up front and worth flagging plainly:
+the spec's skill checks ("a line circling a small target zone") are implemented as single
+weighted probability rolls, not a real-time client minigame -- every existing detection
+mechanic in this codebase (`market.py`'s illicit-market catch, `/poach`'s detection roll) is
+already this exact shape, and a literal timing UI would need a whole new generic Activity
+subsystem (unlike every existing Activity game, a skill check here isn't tied to a `Shift`)
+that's also fundamentally unreliable over Discord's interaction API, whose round-trip latency
+can't judge a sub-second window fairly. Every check below is a roll whose odds move with
+difficulty/priors/district pressure, narrated in the reply text.
+
+**1. Illicit jobs are self-declared, not catalog-driven.** `Job.legal`/`peacekeeper_attention`
+already existed in `data/jobs.yaml` (three jobs even used them: `hob_trader`, `d6_hustler`/
+`d6_black_marketeer`, `d8_smuggler`) but were dead fields -- nothing in `panem_sim`/`panem_bot`
+read them, since the player job system was reworked to free-typed `Character.job_title` long
+before this session, with no catalog left to check `legal` against. Rather than resurrecting a
+catalog, character creation gained one more step after the existing job-title/shift-phase
+prompts (`IllicitDeclareView`, a two-button choice mirroring `ShiftPhaseSelectView`): "is this
+job illicit?", stored as `Character.job_is_illicit` and editable after the fact via `/staff
+give job`'s new `illicit` parameter. `data/jobs.yaml`'s `legal`/`peacekeeper_attention`/
+`options.risk` fields stay exactly as vestigial as before -- NPC-flavor-only, untouched.
+
+**2. Illicit goods and each district's black market.** Four new contraband goods, deliberately
+no alcohol or drugs (a children's server): `contraband_weapons`, `forbidden_literature`,
+`smuggled_luxuries`, `counterfeit_papers`. Every district 1-12 (the Capitol trades in none of
+this) got a new `illicit_produces: [<good>]` field (`District` schema) assigning it one, and an
+`illicit: true` market location if it didn't already have one from the four districts
+(D6/D8/D11/D12) that already had one authored -- 8 new dedicated locations, one flavor name
+each ("The Black Armory", "The Scrap Circuit", ...). `panem_sim/systems/economy.py` carries
+illicit production forward with none of the legal pipeline's Capitol cut or national
+redistribution (module docstring point 8): a district's black-market stock is exactly what its
+own illicit workers made that day, priced flat at `base_price`, and a quiet day really does
+mean zero stock, unlike legal goods' `MARKET_SUPPLY_FLOOR` floor -- "the only way more goods
+appear... is if people with illicit jobs work" holds literally. `/work`ing an illicit job
+(`cogs/jobs.py::_finish_shift`) produces that good instead of the legal quota good via a new
+`panem_shared.shifts.illicit_shift_output` (same won/neutral/loss shape as legal production,
+kept separate rather than a branch inside `resolve_shift_game` since it reads a different good
+list off `district`), and builds per-character `illicit_heat` (`ILLICIT_HEAT_PER_SHIFT`, more
+on a real loss) that triggers an immediate arrest-evasion roll once it clears a threshold
+(`panem_shared/jail.py::resolve_illicit_heat`, shared with `panem_api`'s `/work` endpoint for
+the same reason `panem_shared.shifts` is -- that endpoint can't depend on `panem_bot`).
+
+Access to the black market itself (`/blackmarket prices|buy|sell`, `panem_bot/services/
+blackmarket.py`) is gated behind "good relations with certain NPCs", taken literally: each
+district's `data/npcs/*.yaml` got one already-authored NPC flagged `black_market_contact:
+true` (no new NPCs needed), and trading requires a `RelationshipRow` stance of Likes or Loves
+with *that specific NPC* -- a stranger, or someone merely tolerated, is refused before any
+trade math runs. Otherwise mirrors `market.py`'s buy/sell shape closely, including its illicit-
+detection/consequence roll on every trade.
+
+**3. `/steal` and `/burgle`: pickpocketing and burglary.** `panem_bot/services/stealing.py`,
+once per day-phase (`Character.last_steal_tick`, compared via `tick // simtime.TICKS_PER_
+PHASE` -- no new helper needed). A success is silent either way, no reputation cost. A failure
+rolls twice more, matching the spec's "steal without alerting them, or with alerting them...
+escape or get caught": `STEAL_ALERT_PROB` decides if the mark notices at all (a clean miss
+otherwise), then `STEAL_ESCAPE_BASE_PROB` decides whether an alerted character gets away.
+Only an actual catch carries consequence: jail, a fine, a general reputation hit, and -- for an
+NPC victim specifically -- an additional `RelationshipRow.affinity` hit with them (a player
+victim has no equivalent row to dock; Spec §6's relationship model only covers NPC standing).
+Targets are resolved by free-typed name at the thief's own location, matching `/talk`'s NPC-
+name resolution. `/burgle` reuses the exact same alert/escape/caught machinery against another
+character's house (`Property.kind == HOUSE`) instead of a person -- `Property` carries no
+`location_id` the way a person does, so a flat harder success rate (`BURGLE_BASE_SUCCESS`)
+stands in for the "same location as you" precision a house can't offer, refuses your own house
+and the wrong district, shares `/steal`'s cooldown, and pays out a capped fraction of the
+house's `suggested_price` rather than debiting anyone.
+
+**4. Jail: priors, bail, lock-picking.** Every jailing call site (`market.py`, `poaching.py`,
+now also the illicit-work/steal/burgle paths above) used to duplicate the same `base_tick =
+jailed_until_tick or 0; jailed_until_tick = base_tick + X` arithmetic inline. Consolidated into
+`panem_shared.jail.commit_to_jail` (moved to `panem_shared`, not `panem_bot`, for the same
+"panem_api needs it too" reason as `resolve_illicit_heat`): scales the sentence by
+`Character.jail_count` priors, sets `jail_sentence_ticks` (the sentence's fixed original
+length) and resets `jail_lockpick_tries_used`. `/bail` pays `BAIL_BASE_COST` plus a per-
+remaining-tick charge to walk free immediately; `/lockpick` offers up to `LOCKPICK_MAX_TRIES`
+(3) probability-roll attempts, odds fixed from `jail_sentence_ticks` (not the counting-down
+`jailed_until_tick`) so a long sentence stays hard to pick for the whole stay rather than
+easing up near release.
+
+**5. Moderator crackdowns.** `/staff district crackdown` sets a new `DistrictState.crackdown_
+until_tick` and immediately spikes `peacekeeper_pressure` (which `crisis.py` already relaxes
+back to baseline over `CRISIS_RECOVERY_DAYS` once the window passes -- no new decay mechanism
+needed). `panem_shared/jail.py::crackdown_bad_odds`/`crackdown_good_odds` read that window and
+scale every illicit-activity probability this whole feature rolls -- market/black-market
+detection, illicit-work arrest evasion, `/steal`'s and `/burgle`'s success/alert/escape odds --
+harder in one place rather than duplicating the check at each call site. `dialogue.py`'s NPC
+reply context gained a `district_on_edge` field (the caller pre-resolves `is_crackdown_active`
+and passes a plain bool in, keeping `dialogue.py` itself tick-unaware like every other field it
+renders) that surfaces as visible NPC nervousness the same way `crisis_level` already does.
+
+**What this pass does not build**: the literal real-time circular skill-check UI the spec
+describes (see the scope note at the top) -- every check here is a probability roll instead,
+including the jail lock-picking minigame's "3 tries" (implemented as 3 separate `/lockpick`
+command invocations, not a single interactive session). Stealing an inventory *good* (not just
+money) from a player or NPC was considered and dropped: NPCs don't carry real `Inventory` rows
+today (`Npc`'s `shop_goods` is flavor-only), so there'd be nothing to actually take from most
+targets -- `/steal`/`/burgle` move money only. No `/character status` line surfaces `illicit_
+heat`/`jail_count` directly; a player finds out about heat when the arrest roll actually fires.
