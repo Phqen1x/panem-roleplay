@@ -40,15 +40,34 @@ from panem_shared import blackmarket as blackmarket_svc
 from panem_shared import characters as characters_svc
 from panem_shared import constants, job_levels
 from panem_shared import jail as jail_svc
+from panem_shared import jobs as jobs_svc
 from panem_shared import market as market_svc
 from panem_shared import poaching as poaching_svc
 from panem_shared import stealing as stealing_svc
+from panem_shared import travel as travel_svc
 from panem_shared.content.loader import ContentBundle
-from panem_shared.db.models import Character, Npc, Property, Shift, User, WorldClock
+from panem_shared.db.models import (
+    Character,
+    Npc,
+    Property,
+    RelationshipRow,
+    Scene,
+    Shift,
+    User,
+    WorldClock,
+)
 from panem_shared.db.session import session_scope
-from panem_shared.enums import CharacterStatus, DayPhase, OwnerKind, Position, PropertyKind
-from panem_shared.errors import NotFound, ServiceError
+from panem_shared.enums import (
+    CharacterStatus,
+    DayPhase,
+    OwnerKind,
+    Position,
+    PropertyKind,
+    SceneStatus,
+)
+from panem_shared.errors import NotAllowed, NotFound, ServiceError
 from panem_shared.redis_keys import CRIME_ATTEMPT_TTL_S, crime_attempt_key
+from panem_shared.relationships import relationship_key
 from panem_shared.shifts import (
     already_worked_this_tick,
     has_job,
@@ -997,5 +1016,353 @@ def build_blackmarket_router(
             total=result.total,
             caught=result.caught,
         )
+
+    return router
+
+
+class TravelLocationOption(BaseModel):
+    id: str
+    name: str
+
+
+class TravelDistrictOption(BaseModel):
+    id: int
+    name: str
+
+
+class TravelStatusResponse(BaseModel):
+    character_name: str
+    current_district_id: int
+    current_district_name: str
+    location_id: str | None = None
+    location_name: str | None = None
+    locations: list[TravelLocationOption]
+    districts: list[TravelDistrictOption]
+    in_transit: bool
+    transit_destination_id: int | None = None
+
+
+class TravelToLocationRequest(BaseModel):
+    discord_id: int
+    location_id: str
+
+
+class TravelToLocationResponse(BaseModel):
+    character_name: str
+    location_name: str
+
+
+class TravelToDistrictRequest(BaseModel):
+    discord_id: int
+    destination_id: int
+
+
+class TravelToDistrictResponse(BaseModel):
+    character_name: str
+    destination_district_name: str
+    transit_ticks: int
+
+
+def build_travel_router(
+    *, content: ContentBundle, session_factory: async_sessionmaker[AsyncSession] | None
+) -> APIRouter:
+    """The Travel tab's REST surface: mirrors `/travel` (both its
+    location and cross-district sub-flows, split into two endpoints the
+    same way the command itself is split into `_travel_location`/
+    `_travel_district`) and `/where` (folded into the status read below
+    rather than a separate endpoint -- the dashboard already has
+    `location_id`/`location_name` on every status response)."""
+    router = APIRouter(prefix="/activity/dashboard/travel", tags=["dashboard"])
+
+    @router.get("/{character_id}", response_model=TravelStatusResponse)
+    async def travel_status(character_id: int, discord_id: int) -> TravelStatusResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            district = content.district(character.current_district_id)
+            location = None
+            if character.location_id is not None:
+                location = travel_svc.resolve_location(district, character.location_id)
+            current_tick = await _current_tick(session)
+            in_transit = (
+                character.in_transit_until_tick is not None
+                and character.in_transit_until_tick > current_tick
+            )
+            return TravelStatusResponse(
+                character_name=character.name,
+                current_district_id=district.id,
+                current_district_name=district.name,
+                location_id=location.id if location is not None else None,
+                location_name=location.name if location is not None else None,
+                locations=[
+                    TravelLocationOption(id=loc.id, name=loc.name) for loc in district.locations
+                ],
+                districts=[
+                    TravelDistrictOption(id=d.id, name=d.name)
+                    for d in sorted(content.districts.values(), key=lambda d: d.id)
+                    if d.id != district.id
+                ],
+                in_transit=in_transit,
+                transit_destination_id=character.transit_destination_id,
+            )
+
+    @router.post("/{character_id}/location", response_model=TravelToLocationResponse)
+    async def travel_to_location(
+        character_id: int, body: TravelToLocationRequest
+    ) -> TravelToLocationResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            district = content.district(character.current_district_id)
+            try:
+                location = travel_svc.resolve_location(district, body.location_id)
+                travel_svc.check_can_travel(character=character, location=location)
+            except (NotFound, NotAllowed) as exc:
+                raise _http_from_service_error(exc) from exc
+            character.location_id = location.id
+            placed = travel_svc.place(district, location)
+            if placed is not None:
+                character.x, character.y = placed
+            return TravelToLocationResponse(
+                character_name=character.name, location_name=location.name
+            )
+
+    @router.post("/{character_id}/district", response_model=TravelToDistrictResponse)
+    async def travel_to_district(
+        character_id: int, body: TravelToDistrictRequest
+    ) -> TravelToDistrictResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            current_tick = await _current_tick(session)
+            origin_district = content.district(character.current_district_id)
+            try:
+                travel_svc.check_can_travel_district(
+                    character=character,
+                    district=origin_district,
+                    destination_id=body.destination_id,
+                    current_tick=current_tick,
+                )
+                if not travel_svc.is_free_route(character, origin_district.id, body.destination_id):
+                    await travel_svc.spend_transport(session, character)
+            except (NotFound, NotAllowed) as exc:
+                raise _http_from_service_error(exc) from exc
+            destination_district = content.district(body.destination_id)
+            character.in_transit_until_tick = current_tick + constants.TRANSIT_TICKS
+            character.transit_destination_id = body.destination_id
+            if character.current_district_id == character.district_id:
+                character.away_since_tick = current_tick
+            return TravelToDistrictResponse(
+                character_name=character.name,
+                destination_district_name=destination_district.name,
+                transit_ticks=constants.TRANSIT_TICKS,
+            )
+
+    return router
+
+
+class ResidentSummary(BaseModel):
+    name: str
+    job_title: str
+    location_id: str | None = None
+    location_name: str | None = None
+
+
+class ResidentsResponse(BaseModel):
+    district_name: str
+    residents: list[ResidentSummary]
+
+
+class ResidentProfileResponse(BaseModel):
+    name: str
+    job_title: str
+    location_name: str | None = None
+    traits: list[str]
+    tone: str
+    stance: str
+    appearance: str
+    backstory: str
+
+
+def build_residents_router(
+    *, content: ContentBundle, session_factory: async_sessionmaker[AsyncSession] | None
+) -> APIRouter:
+    """The Residents tab's REST surface: mirrors `/resident list|where|
+    profile`. Unlike the split Discord commands, `list` here already
+    includes each resident's current location (an improvement in the same
+    spirit as the Crime tab's burgle-targets -- avoiding a second
+    request per NPC the dashboard would otherwise need to make)."""
+    router = APIRouter(prefix="/activity/dashboard/residents", tags=["dashboard"])
+
+    async def _resolve_npc(session: AsyncSession, character: Character, name: str) -> Npc:
+        npc = (
+            await session.execute(
+                select(Npc).where(
+                    Npc.district_id == character.current_district_id, Npc.name == name
+                )
+            )
+        ).scalar_one_or_none()
+        if npc is None:
+            raise HTTPException(status_code=404, detail="resident_not_found")
+        return npc
+
+    @router.get("/{character_id}", response_model=ResidentsResponse)
+    async def resident_list(character_id: int, discord_id: int) -> ResidentsResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            district = content.district(character.current_district_id)
+            npcs = (
+                (
+                    await session.execute(
+                        select(Npc)
+                        .where(Npc.district_id == character.current_district_id)
+                        .order_by(Npc.name)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            all_jobs = await jobs_svc.get_all_jobs(session, content)
+            locations_by_id = {loc.id: loc.name for loc in district.locations}
+            residents = []
+            for npc in npcs:
+                job = all_jobs.get(npc.job_id) if npc.job_id else None
+                residents.append(
+                    ResidentSummary(
+                        name=npc.name,
+                        job_title=job.title if job else "Unemployed",
+                        location_id=npc.location_id,
+                        location_name=(
+                            locations_by_id.get(npc.location_id)
+                            if npc.location_id is not None
+                            else None
+                        ),
+                    )
+                )
+        return ResidentsResponse(district_name=district.name, residents=residents)
+
+    @router.get("/{character_id}/{resident_name}", response_model=ResidentProfileResponse)
+    async def resident_profile(
+        character_id: int, resident_name: str, discord_id: int
+    ) -> ResidentProfileResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            npc = await _resolve_npc(session, character, resident_name)
+            job = await jobs_svc.get_job(session, content, npc.job_id) if npc.job_id else None
+            job_name = job.title if job else "Unemployed"
+
+            key = relationship_key(
+                (OwnerKind.CHARACTER.value, str(character.id)), (OwnerKind.NPC.value, npc.id)
+            )
+            relationship = await session.get(RelationshipRow, key)
+            stance = relationship.stance if relationship is not None else "stranger"
+
+            district = content.district(character.current_district_id)
+            location = next((loc for loc in district.locations if loc.id == npc.location_id), None)
+            tone = npc.speech_style.get("tone", "unknown") if npc.speech_style else "unknown"
+            authored = content.npcs.get(npc.id)
+            appearance = npc.appearance_override or (authored.appearance if authored else "")
+            backstory = npc.backstory_override or (authored.backstory if authored else "")
+        return ResidentProfileResponse(
+            name=npc.name,
+            job_title=job_name,
+            location_name=location.name if location is not None else None,
+            traits=list(npc.traits),
+            tone=tone,
+            stance=stance,
+            appearance=appearance,
+            backstory=backstory,
+        )
+
+    return router
+
+
+class SocialStatusResponse(BaseModel):
+    in_scene: bool
+    scene_kind: str | None = None
+    scene_title: str | None = None
+    location_name: str | None = None
+    participant_character_names: list[str] = []
+    participant_npc_names: list[str] = []
+    discord_thread_url: str | None = None
+
+
+def build_social_router(
+    *,
+    content: ContentBundle,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    discord_guild_id: int,
+) -> APIRouter:
+    """The Social tab's REST surface -- read-only + deep link, per the
+    user's own choice on `/talk`/`/engage`/`/scene`: building full
+    interactivity for these would need a dashboard -> Redis ->
+    `panem_bot` relay (only the bot process holds a token and can
+    post/create Discord threads), which is out of scope here. This just
+    shows a character's current open scene (an `/engage`/`/talk`
+    engagement or a `/scene`) and a "Continue in Discord" link back to
+    the real thread -- no write actions."""
+    router = APIRouter(prefix="/activity/dashboard/social", tags=["dashboard"])
+
+    @router.get("/{character_id}", response_model=SocialStatusResponse)
+    async def social_status(character_id: int, discord_id: int) -> SocialStatusResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            open_scenes = (
+                (await session.execute(select(Scene).where(Scene.status == SceneStatus.OPEN.value)))
+                .scalars()
+                .all()
+            )
+            scene = next(
+                (s for s in open_scenes if character.id in s.participants.get("characters", [])),
+                None,
+            )
+            if scene is None:
+                return SocialStatusResponse(in_scene=False)
+
+            char_rows = (
+                await session.execute(
+                    select(Character.name).where(
+                        Character.id.in_(scene.participants.get("characters", []))
+                    )
+                )
+            ).scalars()
+            npc_rows = (
+                await session.execute(
+                    select(Npc.name).where(Npc.id.in_(scene.participants.get("npcs", [])))
+                )
+            ).scalars()
+            district = content.district(scene.district_id)
+            location = next(
+                (loc for loc in district.locations if loc.id == scene.location_id), None
+            )
+            thread_url = (
+                f"https://discord.com/channels/{discord_guild_id}/{scene.thread_id}"
+                if discord_guild_id
+                else None
+            )
+            return SocialStatusResponse(
+                in_scene=True,
+                scene_kind=scene.kind,
+                scene_title=scene.title,
+                location_name=location.name if location is not None else None,
+                participant_character_names=sorted(char_rows),
+                participant_npc_names=sorted(npc_rows),
+                discord_thread_url=thread_url,
+            )
 
     return router

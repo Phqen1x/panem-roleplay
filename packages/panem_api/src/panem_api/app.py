@@ -55,6 +55,9 @@ from panem_api.dashboard_routes import (
     build_identify_router,
     build_jail_router,
     build_market_router,
+    build_residents_router,
+    build_social_router,
+    build_travel_router,
     build_work_router,
 )
 from panem_shared import constants
@@ -287,6 +290,7 @@ def create_app(
     discord_client_secret: str = "",
     session_factory: async_sessionmaker[AsyncSession] | None = None,
     max_characters_per_user: int = 1,
+    discord_guild_id: int = 0,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -672,6 +676,15 @@ def create_app(
     app.include_router(build_work_router(session_factory=session_factory))
     app.include_router(build_market_router(content=content, session_factory=session_factory))
     app.include_router(build_blackmarket_router(content=content, session_factory=session_factory))
+    app.include_router(build_travel_router(content=content, session_factory=session_factory))
+    app.include_router(build_residents_router(content=content, session_factory=session_factory))
+    app.include_router(
+        build_social_router(
+            content=content,
+            session_factory=session_factory,
+            discord_guild_id=discord_guild_id,
+        )
+    )
 
     if STATIC_DIR.exists():
         # Mounted last so it only ever catches paths none of the routes

@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from panem_api.app import create_app
+from panem_shared.constants import TRANSIT_TICKS
 from panem_shared.content.loader import ContentBundle
 from panem_shared.content.schemas import (
     District,
@@ -27,10 +28,18 @@ from panem_shared.db.models import (
     Npc,
     Property,
     RelationshipRow,
+    Scene,
     Shift,
     User,
 )
-from panem_shared.enums import CharacterStatus, OwnerKind, PropertyKind, Stance
+from panem_shared.enums import (
+    CharacterStatus,
+    OwnerKind,
+    PropertyKind,
+    SceneKind,
+    SceneStatus,
+    Stance,
+)
 from panem_shared.redis_keys import (
     crime_attempt_key,
     crime_interaction_key,
@@ -328,6 +337,51 @@ def market_app(db_session_factory):
     app = create_app(content=content, redis_client=redis_client, session_factory=db_session_factory)
     app.state.fake_redis = redis_client  # type: ignore[attr-defined]
     return app
+
+
+@pytest.fixture
+def travel_app(db_session_factory):
+    """`make_content()`'s two districts (0, 1), each with a `square` and a
+    `station` location, is already exactly what the Travel tab's tests
+    need -- no dedicated content fixture required."""
+    content = make_content()
+    redis_client = FakeRedis()
+    app = create_app(content=content, redis_client=redis_client, session_factory=db_session_factory)
+    app.state.fake_redis = redis_client  # type: ignore[attr-defined]
+    return app
+
+
+@pytest.fixture
+def social_app(db_session_factory):
+    content = make_content()
+    redis_client = FakeRedis()
+    app = create_app(
+        content=content,
+        redis_client=redis_client,
+        session_factory=db_session_factory,
+        discord_guild_id=999,
+    )
+    app.state.fake_redis = redis_client  # type: ignore[attr-defined]
+    return app
+
+
+async def seed_scene(session_factory, **overrides: object) -> int:
+    async with session_factory() as session, session.begin():
+        scene_kwargs: dict[str, object] = dict(
+            district_id=1,
+            location_id="square",
+            thread_id=555,
+            forum_channel_id=1,
+            kind=SceneKind.ENGAGEMENT.value,
+            title="A Chat",
+            status=SceneStatus.OPEN.value,
+            participants={"characters": [], "pending_characters": [], "npcs": []},
+        )
+        scene_kwargs.update(overrides)
+        scene = Scene(**scene_kwargs)  # type: ignore[arg-type]
+        session.add(scene)
+        await session.flush()
+        return scene.id
 
 
 class TestHealth:
@@ -1731,3 +1785,220 @@ class TestDashboardBlackMarket:
             )
         assert response.status_code == 200
         assert response.json()["good_name"] == "Contraband"
+
+
+class TestDashboardTravel:
+    async def test_status_lists_locations_and_other_districts(self, travel_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        transport = httpx.ASGITransport(app=travel_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/travel/{char_id}", params={"discord_id": 42}
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["current_district_id"] == 1
+        assert body["location_id"] == "square"
+        assert {loc["id"] for loc in body["locations"]} == {"square", "station"}
+        assert body["districts"] == [{"id": 0, "name": "The Capitol"}]
+        assert body["in_transit"] is False
+
+    async def test_location_travel_happy_path(self, travel_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        transport = httpx.ASGITransport(app=travel_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/travel/{char_id}/location",
+                json={"discord_id": 42, "location_id": "station"},
+            )
+        assert response.status_code == 200
+        assert response.json()["location_name"] == "Rail Station"
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.location_id == "station"
+
+    async def test_location_travel_refuses_unknown_location(self, travel_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        transport = httpx.ASGITransport(app=travel_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/travel/{char_id}/location",
+                json={"discord_id": 42, "location_id": "nowhere"},
+            )
+        assert response.status_code == 404
+
+    async def test_district_travel_home_is_free(self, travel_app, db_session_factory):
+        """Traveling back to a character's home district never needs
+        banked `transport` stock (`is_free_route`) -- this character is
+        away in the Capitol and heads back to District 1, their home."""
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=42,
+            character_overrides={
+                "district_id": 1,
+                "current_district_id": 0,
+                "location_id": "station",
+            },
+        )
+        transport = httpx.ASGITransport(app=travel_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/travel/{char_id}/district",
+                json={"discord_id": 42, "destination_id": 1},
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["destination_district_name"] == "District 1"
+        assert body["transit_ticks"] == TRANSIT_TICKS
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.transit_destination_id == 1
+
+    async def test_district_travel_refuses_insufficient_transport(
+        self, travel_app, db_session_factory
+    ):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=42,
+            character_overrides={
+                "district_id": 1,
+                "current_district_id": 1,
+                "location_id": "station",
+            },
+        )
+        transport = httpx.ASGITransport(app=travel_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/travel/{char_id}/district",
+                json={"discord_id": 42, "destination_id": 0},
+            )
+        assert response.status_code == 400
+
+    async def test_district_travel_refuses_not_at_station(self, travel_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=42,
+            character_overrides={"location_id": "square"},
+        )
+        transport = httpx.ASGITransport(app=travel_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/travel/{char_id}/district",
+                json={"discord_id": 42, "destination_id": 0},
+            )
+        assert response.status_code == 400
+
+
+class TestDashboardResidents:
+    async def test_list_returns_residents_with_job_and_location(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_npc(db_session_factory, job_id="miner")
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}", params={"discord_id": 42}
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["district_name"] == "District 1"
+        assert body["residents"] == [
+            {
+                "name": "Mark",
+                "job_title": "Miner",
+                "location_id": "square",
+                "location_name": "The Square",
+            }
+        ]
+
+    async def test_profile_returns_details_for_a_stranger(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_npc(
+            db_session_factory,
+            job_id="miner",
+            traits=["gruff", "loyal"],
+            speech_style={"tone": "blunt"},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}/Mark", params={"discord_id": 42}
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["job_title"] == "Miner"
+        assert body["location_name"] == "The Square"
+        assert body["traits"] == ["gruff", "loyal"]
+        assert body["tone"] == "blunt"
+        assert body["stance"] == "stranger"
+
+    async def test_profile_404s_for_unknown_resident(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}/Nobody", params={"discord_id": 42}
+            )
+        assert response.status_code == 404
+
+
+class TestDashboardSocial:
+    async def test_status_reports_not_in_a_scene(self, social_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        transport = httpx.ASGITransport(app=social_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/social/{char_id}", params={"discord_id": 42}
+            )
+        assert response.status_code == 200
+        assert response.json() == {
+            "in_scene": False,
+            "scene_kind": None,
+            "scene_title": None,
+            "location_name": None,
+            "participant_character_names": [],
+            "participant_npc_names": [],
+            "discord_thread_url": None,
+        }
+
+    async def test_status_reports_the_open_scene_with_a_thread_link(
+        self, social_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_npc(db_session_factory)
+        await seed_scene(
+            db_session_factory,
+            thread_id=777,
+            title="A Quiet Word",
+            participants={"characters": [char_id], "pending_characters": [], "npcs": ["d1_npc_1"]},
+        )
+        transport = httpx.ASGITransport(app=social_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/social/{char_id}", params={"discord_id": 42}
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["in_scene"] is True
+        assert body["scene_title"] == "A Quiet Word"
+        assert body["scene_kind"] == SceneKind.ENGAGEMENT.value
+        assert body["location_name"] == "The Square"
+        assert body["participant_character_names"] == ["Wren"]
+        assert body["participant_npc_names"] == ["Mark"]
+        assert body["discord_thread_url"] == "https://discord.com/channels/999/777"
+
+    async def test_status_omits_thread_link_without_a_configured_guild(
+        self, travel_app, db_session_factory
+    ):
+        """`travel_app` (unlike `social_app`) has no `discord_guild_id`
+        configured -- the default for a dev/preview server that hasn't
+        set `DISCORD_GUILD_ID` -- so the link is omitted rather than
+        pointing at a bogus `channels/0/...` URL."""
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_scene(db_session_factory, participants={"characters": [char_id], "npcs": []})
+        transport = httpx.ASGITransport(app=travel_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/social/{char_id}", params={"discord_id": 42}
+            )
+        assert response.status_code == 200
+        assert response.json()["discord_thread_url"] is None

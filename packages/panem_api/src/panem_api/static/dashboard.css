@@ -182,6 +182,14 @@ table.data-table th {
   font-weight: 600;
 }
 
+table.data-table tr.clickable-row {
+  cursor: pointer;
+}
+
+table.data-table tr.clickable-row:hover {
+  background: var(--surface-hover, rgba(255, 255, 255, 0.05));
+}
+
 .jail-cell-wrap {
   max-width: 360px;
   margin: 0 auto 12px;
