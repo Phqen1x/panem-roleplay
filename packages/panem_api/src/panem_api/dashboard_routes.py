@@ -26,17 +26,24 @@ crime, work, market, travel, residents, housing, characters) adds its own
 
 from __future__ import annotations
 
+import json
+import secrets
+
+import redis.asyncio as redis
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from panem_shared import characters as characters_svc
+from panem_shared import constants
+from panem_shared import jail as jail_svc
 from panem_shared.content.loader import ContentBundle
-from panem_shared.db.models import Character, User
+from panem_shared.db.models import Character, User, WorldClock
 from panem_shared.db.session import session_scope
 from panem_shared.enums import CharacterStatus, DayPhase
 from panem_shared.errors import NotFound, ServiceError
+from panem_shared.redis_keys import CRIME_ATTEMPT_TTL_S, crime_attempt_key
 
 
 class DashboardCharacterSummary(BaseModel):
@@ -80,6 +87,11 @@ async def _resolve_owned_character(
     if user is None or user.discord_id != discord_id:
         raise HTTPException(status_code=404, detail="No such character")
     return character
+
+
+async def _current_tick(session: AsyncSession) -> int:
+    clock = await session.get(WorldClock, 1)
+    return clock.tick if clock is not None else 0
 
 
 def _http_from_service_error(exc: ServiceError) -> HTTPException:
@@ -307,5 +319,115 @@ def build_characters_router(
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
             return _character_detail(character)
+
+    return router
+
+
+class JailStatusResponse(BaseModel):
+    character_name: str
+    avatar_url: str | None = None
+    jailed: bool
+    jailed_until_tick: int | None = None
+    jail_sentence_ticks: int | None = None
+    jail_count: int
+    tries_used: int
+    tries_left: int
+    bail_cost: int | None = None
+
+
+class BailRequest(BaseModel):
+    discord_id: int
+
+
+class BailResponse(BaseModel):
+    character_name: str
+    cost: int
+
+
+class LockpickStartRequest(BaseModel):
+    discord_id: int
+
+
+class LockpickStartResponse(BaseModel):
+    attempt_id: str
+    difficulty: float
+
+
+def build_jail_router(
+    *,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    redis_client: redis.Redis,
+) -> APIRouter:
+    """The Jail tab's REST surface: mirrors `/bail` and `/lockpick`. The
+    lockpick-start endpoint mints a crime attempt exactly like `cogs/jail.
+    py`'s `/lockpick` does today (same Redis key/payload shape
+    `/activity/crime/{attempt_id}` already reads) -- the dashboard tab
+    embeds `crime.html?attempt_id=...&kind=lockpick` in an iframe to play
+    it, reusing that page and its minigame unmodified."""
+    router = APIRouter(prefix="/activity/dashboard/jail", tags=["dashboard"])
+
+    @router.get("/{character_id}", response_model=JailStatusResponse)
+    async def jail_status(character_id: int, discord_id: int) -> JailStatusResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            current_tick = await _current_tick(session)
+            jailed = (
+                character.jailed_until_tick is not None
+                and character.jailed_until_tick > current_tick
+            )
+            tries_used = character.jail_lockpick_tries_used or 0
+            cost = jail_svc.bail_cost(character, current_tick) if jailed else None
+            return JailStatusResponse(
+                character_name=character.name,
+                avatar_url=character.avatar_url,
+                jailed=jailed,
+                jailed_until_tick=character.jailed_until_tick,
+                jail_sentence_ticks=character.jail_sentence_ticks,
+                jail_count=character.jail_count,
+                tries_used=tries_used,
+                tries_left=max(0, constants.LOCKPICK_MAX_TRIES - tries_used),
+                bail_cost=cost,
+            )
+
+    @router.post("/{character_id}/bail", response_model=BailResponse)
+    async def pay_bail(character_id: int, body: BailRequest) -> BailResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            current_tick = await _current_tick(session)
+            try:
+                cost = jail_svc.pay_bail(character, current_tick)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            return BailResponse(character_name=character.name, cost=cost)
+
+    @router.post("/{character_id}/lockpick/start", response_model=LockpickStartResponse)
+    async def start_lockpick(
+        character_id: int, body: LockpickStartRequest
+    ) -> LockpickStartResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            current_tick = await _current_tick(session)
+            try:
+                jail_svc.check_can_attempt_lockpick(character, current_tick)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            difficulty = jail_svc.lockpick_difficulty(character)
+
+        attempt_id = secrets.token_urlsafe(16)
+        await redis_client.set(
+            crime_attempt_key(attempt_id),
+            json.dumps({"kind": "lockpick", "character_id": character_id}),
+            ex=CRIME_ATTEMPT_TTL_S,
+        )
+        return LockpickStartResponse(attempt_id=attempt_id, difficulty=difficulty)
 
     return router

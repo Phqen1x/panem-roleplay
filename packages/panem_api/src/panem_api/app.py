@@ -48,7 +48,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from panem_api.dashboard_routes import build_characters_router, build_identify_router
+from panem_api.dashboard_routes import (
+    build_characters_router,
+    build_identify_router,
+    build_jail_router,
+)
 from panem_shared import constants
 from panem_shared.content.loader import ContentBundle
 from panem_shared.content.schemas import District
@@ -671,6 +675,9 @@ def create_app(
             session_factory=session_factory,
             max_characters_per_user=max_characters_per_user,
         )
+    )
+    app.include_router(
+        build_jail_router(session_factory=session_factory, redis_client=redis_client)
     )
 
     if STATIC_DIR.exists():

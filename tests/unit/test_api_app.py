@@ -35,7 +35,7 @@ class FakeRedis:
     async def get(self, key: str) -> str | None:
         return self.store.get(key)
 
-    async def set(self, key: str, value: str) -> bool:
+    async def set(self, key: str, value: str, ex: int | None = None) -> bool:
         self.store[key] = value
         return True
 
@@ -1055,3 +1055,128 @@ class TestDashboardCharacters:
                 f"/activity/dashboard/characters/{char_id}/retire", json={"discord_id": 6}
             )
         assert response.status_code == 404
+
+
+class TestDashboardJail:
+    async def test_status_when_not_jailed(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/jail/{char_id}", params={"discord_id": 5}
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["jailed"] is False
+        assert body["bail_cost"] is None
+
+    async def test_status_when_jailed_includes_bail_cost(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"jailed_until_tick": 500, "jail_sentence_ticks": 100},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/jail/{char_id}", params={"discord_id": 5}
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["jailed"] is True
+        assert body["bail_cost"] > 0
+
+    async def test_status_rejects_a_non_owner(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/jail/{char_id}", params={"discord_id": 6}
+            )
+        assert response.status_code == 404
+
+    async def test_bail_happy_path_clears_the_sentence(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={
+                "jailed_until_tick": 500,
+                "jail_sentence_ticks": 100,
+                "money": 100_000,
+            },
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/jail/{char_id}/bail", json={"discord_id": 5}
+            )
+        assert response.status_code == 200
+        assert response.json()["cost"] > 0
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.jailed_until_tick is None
+
+    async def test_bail_refuses_when_not_jailed(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/jail/{char_id}/bail", json={"discord_id": 5}
+            )
+        assert response.status_code == 400
+
+    async def test_bail_refuses_insufficient_funds(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"jailed_until_tick": 500, "jail_sentence_ticks": 100, "money": 0},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/jail/{char_id}/bail", json={"discord_id": 5}
+            )
+        assert response.status_code == 400
+
+    async def test_lockpick_start_mints_a_crime_attempt(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"jailed_until_tick": 500, "jail_sentence_ticks": 100},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/jail/{char_id}/lockpick/start", json={"discord_id": 5}
+            )
+        assert response.status_code == 200
+        body = response.json()
+        redis_client = work_app.state.fake_redis
+        raw = redis_client.store[crime_attempt_key(body["attempt_id"])]
+        assert json.loads(raw) == {"kind": "lockpick", "character_id": char_id}
+
+    async def test_lockpick_start_refuses_when_out_of_tries(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={
+                "jailed_until_tick": 500,
+                "jail_sentence_ticks": 100,
+                "jail_lockpick_tries_used": 3,
+            },
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/jail/{char_id}/lockpick/start", json={"discord_id": 5}
+            )
+        assert response.status_code == 400
+
+    async def test_lockpick_start_refuses_when_not_jailed(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/jail/{char_id}/lockpick/start", json={"discord_id": 5}
+            )
+        assert response.status_code == 400
