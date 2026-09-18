@@ -38,7 +38,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from panem_shared import blackmarket as blackmarket_svc
 from panem_shared import characters as characters_svc
-from panem_shared import constants, job_levels
+from panem_shared import constants, job_levels, simtime
+from panem_shared import housing as housing_svc
 from panem_shared import jail as jail_svc
 from panem_shared import jobs as jobs_svc
 from panem_shared import market as market_svc
@@ -47,9 +48,11 @@ from panem_shared import stealing as stealing_svc
 from panem_shared import travel as travel_svc
 from panem_shared.content.loader import ContentBundle
 from panem_shared.db.models import (
+    ApartmentLease,
     Character,
     Npc,
     Property,
+    PropertyAuction,
     RelationshipRow,
     Scene,
     Shift,
@@ -1363,6 +1366,629 @@ def build_social_router(
                 participant_character_names=sorted(char_rows),
                 participant_npc_names=sorted(npc_rows),
                 discord_thread_url=thread_url,
+            )
+
+    return router
+
+
+class HousingListing(BaseModel):
+    id: int
+    kind: str
+    tier: str
+    complex_id: str | None = None
+    price: float
+    price_label: str  # "sale" | "night" | "day_rent"
+
+
+class HousingOwnedProperty(BaseModel):
+    id: int
+    kind: str
+    tier: str
+    district_id: int
+    for_sale: bool
+    asking_price: float | None = None
+    mortgage_principal: float
+    mortgage_payment: float
+    has_open_auction: bool
+
+
+class HousingStatusResponse(BaseModel):
+    character_name: str
+    fatigue: float
+    home_property_id: int | None = None
+    home_kind: str | None = None
+    home_district_id: int | None = None
+    owned: list[HousingOwnedProperty]
+    listings: list[HousingListing]
+
+
+class HousingBuyRequest(BaseModel):
+    discord_id: int
+    financed: bool = False
+
+
+class HousingBuyResponse(BaseModel):
+    property_id: int
+    kind: str
+    price: int
+    financed: bool
+    down_payment: int | None = None
+    payment: int | None = None
+
+
+class HousingBuyComplexRequest(BaseModel):
+    discord_id: int
+    complex_id: str
+
+
+class HousingBuyComplexResponse(BaseModel):
+    complex_id: str
+    units: int
+    price: int
+
+
+class HousingRefinanceRequest(BaseModel):
+    discord_id: int
+    amount: float
+
+
+class HousingRefinanceResponse(BaseModel):
+    property_id: int
+    amount: int
+    payment: int
+
+
+class HousingSellRequest(BaseModel):
+    discord_id: int
+    price: float | None = None
+
+
+class HousingSellResponse(BaseModel):
+    property_id: int
+    for_sale: bool
+    price: int | None = None
+
+
+class HousingRentOutRequest(BaseModel):
+    discord_id: int
+    price: float
+
+
+class HousingRentOutResponse(BaseModel):
+    property_id: int
+    price: int
+
+
+class HousingAuctionStartRequest(BaseModel):
+    discord_id: int
+    minimum_bid: float
+
+
+class HousingAuctionStartResponse(BaseModel):
+    property_id: int
+    minimum_bid: int
+
+
+class HousingAuctionBidRequest(BaseModel):
+    discord_id: int
+    amount: float
+
+
+class HousingAuctionBidResponse(BaseModel):
+    property_id: int
+    amount: int
+
+
+class HousingRentRequest(BaseModel):
+    discord_id: int
+
+
+class HousingRentResponse(BaseModel):
+    property_id: int
+    price: int
+
+
+class HousingMoveOutRequest(BaseModel):
+    discord_id: int
+
+
+class HousingMoveOutResponse(BaseModel):
+    character_name: str
+
+
+class HousingInnStayRequest(BaseModel):
+    discord_id: int
+
+
+class HousingInnStayResponse(BaseModel):
+    property_id: int
+    price: int
+    fatigue: float
+
+
+class HousingSleepRequest(BaseModel):
+    discord_id: int
+    ticks: int | None = None
+
+
+class HousingSleepResponse(BaseModel):
+    ticks: int
+    restored: float
+    fatigue: float
+
+
+def build_housing_router(
+    *, content: ContentBundle, session_factory: async_sessionmaker[AsyncSession] | None
+) -> APIRouter:
+    """The Housing tab's REST surface: mirrors every `/housing` subcommand
+    plus `/sleep`. Unlike the split Discord commands (each its own
+    `character`/`property_id` pair typed by hand), every write here
+    targets `{property_id}` in the URL path the same way the Jail/Crime/
+    Market routers already do -- `property_id` is exactly the id
+    `/activity/dashboard/housing/{character_id}`'s own listing already
+    returns, so the dashboard never needs a separate autocomplete step."""
+    router = APIRouter(prefix="/activity/dashboard/housing", tags=["dashboard"])
+
+    def _listing(property_: Property, buyer: Character) -> HousingListing:
+        price = round(housing_svc.quoted_price(property_, buyer), 2)
+        label = "sale"
+        if property_.kind == PropertyKind.INN.value:
+            label = "night"
+        elif property_.kind == PropertyKind.APARTMENT.value:
+            label = "day_rent"
+        return HousingListing(
+            id=property_.id,
+            kind=property_.kind,
+            tier=property_.tier,
+            complex_id=property_.complex_id,
+            price=price,
+            price_label=label,
+        )
+
+    async def _owned_property(
+        session: AsyncSession, property_id: int, *, discord_id: int, character_id: int
+    ) -> tuple[Character, Property]:
+        character = await _resolve_owned_character(
+            session, discord_id=discord_id, character_id=character_id
+        )
+        property_ = await session.get(Property, property_id)
+        if property_ is None:
+            raise HTTPException(status_code=404, detail="housing_not_found")
+        return character, property_
+
+    @router.get("/{character_id}", response_model=HousingStatusResponse)
+    async def housing_status(character_id: int, discord_id: int) -> HousingStatusResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            home_property = None
+            if character.housing_property_id is not None:
+                home_property = await session.get(Property, character.housing_property_id)
+
+            owned_rows = (
+                (
+                    await session.execute(
+                        select(Property).where(
+                            Property.owner_kind == OwnerKind.CHARACTER.value,
+                            Property.owner_id == character.id,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            open_auction_property_ids = set(
+                (
+                    await session.execute(
+                        select(PropertyAuction.property_id).where(PropertyAuction.status == "open")
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            owned = [
+                HousingOwnedProperty(
+                    id=p.id,
+                    kind=p.kind,
+                    tier=p.tier,
+                    district_id=p.district_id,
+                    for_sale=p.for_sale,
+                    asking_price=p.asking_price,
+                    mortgage_principal=round(p.mortgage_principal, 2),
+                    mortgage_payment=round(p.mortgage_payment, 2),
+                    has_open_auction=p.id in open_auction_property_ids,
+                )
+                for p in sorted(owned_rows, key=lambda p: p.id)
+            ]
+
+            leased_unit_ids = select(ApartmentLease.property_id)
+            rows = (
+                (
+                    await session.execute(
+                        select(Property).where(
+                            Property.district_id == character.current_district_id,
+                            (
+                                (Property.kind != PropertyKind.APARTMENT.value)
+                                & Property.for_sale.is_(True)
+                            )
+                            | (
+                                (Property.kind == PropertyKind.APARTMENT.value)
+                                & Property.id.not_in(leased_unit_ids)
+                            ),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            listings = [
+                _listing(p, character) for p in sorted(rows, key=lambda p: (p.kind, p.tier, p.id))
+            ]
+            return HousingStatusResponse(
+                character_name=character.name,
+                fatigue=round(character.fatigue, 1),
+                home_property_id=home_property.id if home_property is not None else None,
+                home_kind=home_property.kind if home_property is not None else None,
+                home_district_id=(home_property.district_id if home_property is not None else None),
+                owned=owned,
+                listings=listings,
+            )
+
+    @router.post("/{character_id}/{property_id}/buy", response_model=HousingBuyResponse)
+    async def buy(
+        character_id: int, property_id: int, body: HousingBuyRequest
+    ) -> HousingBuyResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character, property_ = await _owned_property(
+                session, property_id, discord_id=body.discord_id, character_id=character_id
+            )
+            try:
+                housing_svc.check_can_buy_property(character=character, property_=property_)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+
+            price = round(housing_svc.quoted_price(property_, character))
+            current_tick = await _current_tick(session)
+            is_financed = body.financed and property_.kind == PropertyKind.HOUSE.value
+
+            down_payment = None
+            payment = None
+            if is_financed:
+                terms = housing_svc.financed_purchase_terms(price)
+                down_payment = round(terms.down_payment)
+                if character.money < down_payment:
+                    raise HTTPException(status_code=400, detail="housing_down_payment_too_much")
+                character.money -= down_payment
+                property_.mortgage_principal = terms.principal
+                property_.mortgage_payment = terms.payment
+                property_.mortgage_next_due_tick = (
+                    current_tick + constants.MORTGAGE_PAYMENT_INTERVAL_TICKS
+                )
+                property_.mortgage_missed_payments = 0
+                payment = round(property_.mortgage_payment)
+            else:
+                if character.money < price:
+                    raise HTTPException(status_code=400, detail="housing_insufficient_funds")
+                character.money -= price
+
+            property_.owner_kind = OwnerKind.CHARACTER.value
+            property_.owner_id = character.id
+            property_.for_sale = False
+            property_.asking_price = None
+            if property_.kind == PropertyKind.HOUSE.value:
+                character.housing_property_id = property_.id
+            elif property_.kind == PropertyKind.INN.value:
+                property_.mortgage_payment = constants.INN_DAILY_MAINTENANCE_COST
+                property_.mortgage_next_due_tick = (
+                    current_tick + constants.MORTGAGE_PAYMENT_INTERVAL_TICKS
+                )
+                property_.mortgage_missed_payments = 0
+
+            return HousingBuyResponse(
+                property_id=property_.id,
+                kind=property_.kind,
+                price=price,
+                financed=is_financed,
+                down_payment=down_payment,
+                payment=payment,
+            )
+
+    @router.post(
+        "/{character_id}/complex/{complex_id}/buy", response_model=HousingBuyComplexResponse
+    )
+    async def buy_complex(
+        character_id: int, complex_id: str, body: HousingBuyComplexRequest
+    ) -> HousingBuyComplexResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            units = (
+                (await session.execute(select(Property).where(Property.complex_id == complex_id)))
+                .scalars()
+                .all()
+            )
+            try:
+                housing_svc.check_can_buy_complex(character=character, units=list(units))
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+
+            price = round(housing_svc.complex_purchase_price(list(units)))
+            if character.money < price:
+                raise HTTPException(status_code=400, detail="housing_insufficient_funds")
+            character.money -= price
+            for unit in units:
+                unit.owner_kind = OwnerKind.CHARACTER.value
+                unit.owner_id = character.id
+            return HousingBuyComplexResponse(complex_id=complex_id, units=len(units), price=price)
+
+    @router.post("/{character_id}/{property_id}/refinance", response_model=HousingRefinanceResponse)
+    async def refinance(
+        character_id: int, property_id: int, body: HousingRefinanceRequest
+    ) -> HousingRefinanceResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character, property_ = await _owned_property(
+                session, property_id, discord_id=body.discord_id, character_id=character_id
+            )
+            try:
+                housing_svc.check_can_refinance(
+                    character=character, property_=property_, amount=body.amount
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+
+            current_tick = await _current_tick(session)
+            payment = round(housing_svc.apply_refinance(property_, body.amount, tick=current_tick))
+            character.money += round(body.amount)
+            return HousingRefinanceResponse(
+                property_id=property_.id, amount=round(body.amount), payment=payment
+            )
+
+    @router.post("/{character_id}/{property_id}/sell", response_model=HousingSellResponse)
+    async def sell(
+        character_id: int, property_id: int, body: HousingSellRequest
+    ) -> HousingSellResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character, property_ = await _owned_property(
+                session, property_id, discord_id=body.discord_id, character_id=character_id
+            )
+            try:
+                housing_svc.check_owns_property(character=character, property_=property_)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+
+            if body.price is None:
+                property_.for_sale = False
+                property_.asking_price = None
+            else:
+                property_.for_sale = True
+                property_.asking_price = body.price
+            return HousingSellResponse(
+                property_id=property_.id,
+                for_sale=property_.for_sale,
+                price=round(body.price) if body.price is not None else None,
+            )
+
+    @router.post("/{character_id}/{property_id}/rent-out", response_model=HousingRentOutResponse)
+    async def rent_out(
+        character_id: int, property_id: int, body: HousingRentOutRequest
+    ) -> HousingRentOutResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character, property_ = await _owned_property(
+                session, property_id, discord_id=body.discord_id, character_id=character_id
+            )
+            if property_.kind != PropertyKind.APARTMENT.value:
+                raise HTTPException(status_code=400, detail="housing_not_an_apartment")
+            try:
+                housing_svc.check_owns_property(character=character, property_=property_)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            existing_lease = (
+                await session.execute(
+                    select(ApartmentLease).where(ApartmentLease.property_id == property_id)
+                )
+            ).scalar_one_or_none()
+            if existing_lease is not None:
+                raise HTTPException(status_code=400, detail="housing_unit_already_leased")
+
+            property_.asking_price = body.price
+            return HousingRentOutResponse(property_id=property_.id, price=round(body.price))
+
+    @router.post(
+        "/{character_id}/{property_id}/auction-start",
+        response_model=HousingAuctionStartResponse,
+    )
+    async def auction_start(
+        character_id: int, property_id: int, body: HousingAuctionStartRequest
+    ) -> HousingAuctionStartResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character, property_ = await _owned_property(
+                session, property_id, discord_id=body.discord_id, character_id=character_id
+            )
+            existing_auction = (
+                await session.execute(
+                    select(PropertyAuction).where(
+                        PropertyAuction.property_id == property_id,
+                        PropertyAuction.status == "open",
+                    )
+                )
+            ).scalar_one_or_none()
+            try:
+                housing_svc.check_can_start_auction(
+                    character=character, property_=property_, existing_auction=existing_auction
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+
+            current_tick = await _current_tick(session)
+            session.add(
+                PropertyAuction(
+                    property_id=property_.id,
+                    seller_kind=OwnerKind.CHARACTER.value,
+                    seller_id=character.id,
+                    minimum_bid=body.minimum_bid,
+                    ends_at_tick=current_tick + constants.AUCTION_DURATION_TICKS_DEFAULT,
+                    status="open",
+                )
+            )
+            property_.for_sale = False
+            return HousingAuctionStartResponse(
+                property_id=property_.id, minimum_bid=round(body.minimum_bid)
+            )
+
+    @router.post(
+        "/{character_id}/{property_id}/auction-bid", response_model=HousingAuctionBidResponse
+    )
+    async def auction_bid(
+        character_id: int, property_id: int, body: HousingAuctionBidRequest
+    ) -> HousingAuctionBidResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            auction = (
+                await session.execute(
+                    select(PropertyAuction).where(
+                        PropertyAuction.property_id == property_id,
+                        PropertyAuction.status == "open",
+                    )
+                )
+            ).scalar_one_or_none()
+            if auction is None:
+                raise HTTPException(status_code=404, detail="housing_auction_not_found")
+            try:
+                housing_svc.check_can_bid(character=character, auction=auction, amount=body.amount)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+
+            auction.current_bid = body.amount
+            auction.current_bidder_id = character.id
+            return HousingAuctionBidResponse(property_id=property_id, amount=round(body.amount))
+
+    @router.post("/{character_id}/{property_id}/rent", response_model=HousingRentResponse)
+    async def rent(
+        character_id: int, property_id: int, body: HousingRentRequest
+    ) -> HousingRentResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character, property_ = await _owned_property(
+                session, property_id, discord_id=body.discord_id, character_id=character_id
+            )
+            existing_lease = (
+                await session.execute(
+                    select(ApartmentLease).where(ApartmentLease.property_id == property_id)
+                )
+            ).scalar_one_or_none()
+            try:
+                housing_svc.check_can_rent(
+                    character=character, property_=property_, existing_lease=existing_lease
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+
+            landlord = (
+                await session.get(Character, property_.owner_id)
+                if property_.owner_kind == OwnerKind.CHARACTER.value
+                else None
+            )
+            rent_price = round(housing_svc.quoted_price(property_, character, seller=landlord))
+            current_tick = await _current_tick(session)
+            session.add(
+                ApartmentLease(
+                    property_id=property_.id,
+                    tenant_character_id=character.id,
+                    rent_price=rent_price,
+                    started_tick=current_tick,
+                    next_rent_due_tick=current_tick + constants.TICKS_PER_DAY,
+                )
+            )
+            character.housing_property_id = property_.id
+            return HousingRentResponse(property_id=property_.id, price=rent_price)
+
+    @router.post("/{character_id}/move-out", response_model=HousingMoveOutResponse)
+    async def move_out(character_id: int, body: HousingMoveOutRequest) -> HousingMoveOutResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            if character.housing_property_id is None:
+                raise HTTPException(status_code=400, detail="housing_no_home")
+            lease = (
+                await session.execute(
+                    select(ApartmentLease).where(ApartmentLease.tenant_character_id == character.id)
+                )
+            ).scalar_one_or_none()
+            if lease is None:
+                raise HTTPException(status_code=400, detail="housing_not_a_tenant")
+            await session.delete(lease)
+            character.housing_property_id = None
+            return HousingMoveOutResponse(character_name=character.name)
+
+    @router.post("/{character_id}/{property_id}/inn-stay", response_model=HousingInnStayResponse)
+    async def inn_stay(
+        character_id: int, property_id: int, body: HousingInnStayRequest
+    ) -> HousingInnStayResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character, inn = await _owned_property(
+                session, property_id, discord_id=body.discord_id, character_id=character_id
+            )
+            if inn.kind != PropertyKind.INN.value:
+                raise HTTPException(status_code=400, detail="housing_not_an_inn")
+
+            owner = (
+                await session.get(Character, inn.owner_id)
+                if inn.owner_kind == OwnerKind.CHARACTER.value
+                else None
+            )
+            price = round(housing_svc.quoted_price(inn, character, seller=owner))
+            if character.money < price:
+                raise HTTPException(status_code=400, detail="housing_insufficient_funds")
+
+            character.money -= price
+            if owner is not None:
+                owner.money += price
+            housing_svc.apply_fatigue_restoration(character, simtime.TICKS_PER_PHASE, has_bed=True)
+            character.hunger = max(
+                constants.HUNGER_MIN, character.hunger - constants.HUNGER_DECREASE_MET
+            )
+            return HousingInnStayResponse(
+                property_id=inn.id, price=price, fatigue=round(character.fatigue, 1)
+            )
+
+    @router.post("/{character_id}/sleep", response_model=HousingSleepResponse)
+    async def sleep(character_id: int, body: HousingSleepRequest) -> HousingSleepResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            current_tick = await _current_tick(session)
+            _tick, phase, _day, _month = simtime.current(current_tick)
+            try:
+                housing_svc.check_can_sleep(phase)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+
+            max_ticks = simtime.ticks_remaining_in_phase(current_tick)
+            sleep_ticks = (
+                max(1, min(body.ticks, max_ticks)) if body.ticks is not None else max_ticks
+            )
+            restored = housing_svc.apply_fatigue_restoration(
+                character, sleep_ticks, has_bed=housing_svc.has_a_bed(character)
+            )
+            return HousingSleepResponse(
+                ticks=sleep_ticks, restored=round(restored, 1), fatigue=round(character.fatigue, 1)
             )
 
     return router

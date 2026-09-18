@@ -22,11 +22,13 @@ from panem_shared.content.schemas import (
     NpcContent,
 )
 from panem_shared.db.models import (
+    ApartmentLease,
     Character,
     Inventory,
     MarketPrice,
     Npc,
     Property,
+    PropertyAuction,
     RelationshipRow,
     Scene,
     Shift,
@@ -242,6 +244,27 @@ async def seed_house(session_factory, *, owner_id: int, **overrides: object) -> 
         return house.id
 
 
+async def seed_property(session_factory, **overrides: object) -> int:
+    """An NPC-owned, for-sale house by default -- unlike `seed_house`
+    (a character's own property), this is what a dashboard housing test
+    buys/rents from scratch."""
+    async with session_factory() as session, session.begin():
+        kwargs: dict[str, object] = dict(
+            district_id=1,
+            kind=PropertyKind.HOUSE.value,
+            tier="apprentice",
+            owner_kind=OwnerKind.NPC.value,
+            owner_id=None,
+            for_sale=True,
+            suggested_price=1000.0,
+        )
+        kwargs.update(overrides)
+        property_ = Property(**kwargs)  # type: ignore[arg-type]
+        session.add(property_)
+        await session.flush()
+        return property_.id
+
+
 @pytest.fixture
 def client() -> TestClient:
     content = make_content()
@@ -287,11 +310,19 @@ def poach_app(db_session_factory):
 def make_content_with_market() -> ContentBundle:
     """District 1 trades `grain` (imported) legally and `contraband` on
     the black market, with `fence` as its fence NPC -- for `/activity/
-    dashboard/market` and `.../blackmarket` tests."""
+    dashboard/market` and `.../blackmarket` tests. Two separate
+    `kind="market"` locations: `legal_market` (not `illicit`) for the
+    legal-market tests, and `market` (`illicit=True`, required by
+    `resolve_black_market_location`) for the black-market ones -- sharing
+    one location between them would expose the legal tests to `buy`/
+    `sell`'s own illicit-detection roll (`market.py::_roll_illicit_
+    detection` fires for *any* `illicit` location, not just illicit
+    goods), flaking a fine onto an otherwise-deterministic legal trade."""
     locations = [
         Location(id="square", name="The Square", kind="public"),
         Location(id="station", name="Rail Station", kind="station"),
-        Location(id="market", name="The Market", kind="market", illicit=True),
+        Location(id="legal_market", name="The Market", kind="market"),
+        Location(id="market", name="The Underground Market", kind="market", illicit=True),
     ]
     coords = {loc.id: (0, 0) for loc in locations}
     district_1 = District(
@@ -382,6 +413,15 @@ async def seed_scene(session_factory, **overrides: object) -> int:
         session.add(scene)
         await session.flush()
         return scene.id
+
+
+@pytest.fixture
+def housing_app(db_session_factory):
+    content = make_content()
+    redis_client = FakeRedis()
+    app = create_app(content=content, redis_client=redis_client, session_factory=db_session_factory)
+    app.state.fake_redis = redis_client  # type: ignore[attr-defined]
+    return app
 
 
 class TestHealth:
@@ -1620,7 +1660,7 @@ class TestDashboardWork:
 class TestDashboardMarket:
     async def test_status_lists_traded_goods_and_inventory(self, market_app, db_session_factory):
         char_id = await seed_character(
-            db_session_factory, discord_id=5, character_overrides={"location_id": "market"}
+            db_session_factory, discord_id=5, character_overrides={"location_id": "legal_market"}
         )
         transport = httpx.ASGITransport(app=market_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -1636,7 +1676,7 @@ class TestDashboardMarket:
         char_id = await seed_character(
             db_session_factory,
             discord_id=5,
-            character_overrides={"location_id": "market", "money": 1000},
+            character_overrides={"location_id": "legal_market", "money": 1000},
         )
         transport = httpx.ASGITransport(app=market_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -1666,7 +1706,7 @@ class TestDashboardMarket:
 
     async def test_buy_refuses_a_non_positive_qty(self, market_app, db_session_factory):
         char_id = await seed_character(
-            db_session_factory, discord_id=5, character_overrides={"location_id": "market"}
+            db_session_factory, discord_id=5, character_overrides={"location_id": "legal_market"}
         )
         transport = httpx.ASGITransport(app=market_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -1680,7 +1720,7 @@ class TestDashboardMarket:
         char_id = await seed_character(
             db_session_factory,
             discord_id=5,
-            character_overrides={"location_id": "market", "money": 0},
+            character_overrides={"location_id": "legal_market", "money": 0},
         )
         async with db_session_factory() as session, session.begin():
             session.add(
@@ -2002,3 +2042,262 @@ class TestDashboardSocial:
             )
         assert response.status_code == 200
         assert response.json()["discord_thread_url"] is None
+
+
+class TestDashboardHousing:
+    async def test_status_lists_own_home_and_district_listings(
+        self, housing_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        prop_id = await seed_property(db_session_factory)
+        transport = httpx.ASGITransport(app=housing_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/housing/{char_id}", params={"discord_id": 42}
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["home_property_id"] is None
+        assert [item["id"] for item in body["listings"]] == [prop_id]
+        assert body["listings"][0]["price_label"] == "sale"
+
+    async def test_buy_house_happy_path(self, housing_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=42, character_overrides={"money": 2000}
+        )
+        prop_id = await seed_property(db_session_factory, suggested_price=1000.0)
+        transport = httpx.ASGITransport(app=housing_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/housing/{char_id}/{prop_id}/buy",
+                json={"discord_id": 42},
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["price"] == 1000
+        assert body["financed"] is False
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            property_ = await session.get(Property, prop_id)
+            assert character.money == 1000
+            assert character.housing_property_id == prop_id
+            assert property_.owner_kind == OwnerKind.CHARACTER.value
+            assert property_.owner_id == char_id
+
+    async def test_buy_refuses_wrong_district(self, housing_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=42, character_overrides={"district_id": 1}
+        )
+        prop_id = await seed_property(db_session_factory, district_id=0)
+        transport = httpx.ASGITransport(app=housing_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/housing/{char_id}/{prop_id}/buy",
+                json={"discord_id": 42},
+            )
+        assert response.status_code == 400
+
+    async def test_buy_refuses_insufficient_funds(self, housing_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=42, character_overrides={"money": 0}
+        )
+        prop_id = await seed_property(db_session_factory, suggested_price=1000.0)
+        transport = httpx.ASGITransport(app=housing_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/housing/{char_id}/{prop_id}/buy",
+                json={"discord_id": 42},
+            )
+        assert response.status_code == 400
+
+    async def test_rent_apartment_happy_path(self, housing_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        prop_id = await seed_property(
+            db_session_factory, kind=PropertyKind.APARTMENT.value, suggested_price=50.0
+        )
+        transport = httpx.ASGITransport(app=housing_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/housing/{char_id}/{prop_id}/rent",
+                json={"discord_id": 42},
+            )
+        assert response.status_code == 200
+        assert response.json()["price"] == 50
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.housing_property_id == prop_id
+            lease = (
+                await session.execute(
+                    select(ApartmentLease).where(ApartmentLease.property_id == prop_id)
+                )
+            ).scalar_one_or_none()
+            assert lease is not None
+            assert lease.tenant_character_id == char_id
+
+    async def test_move_out_happy_path(self, housing_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        prop_id = await seed_property(
+            db_session_factory, kind=PropertyKind.APARTMENT.value, suggested_price=50.0
+        )
+        transport = httpx.ASGITransport(app=housing_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            await client.post(
+                f"/activity/dashboard/housing/{char_id}/{prop_id}/rent",
+                json={"discord_id": 42},
+            )
+            response = await client.post(
+                f"/activity/dashboard/housing/{char_id}/move-out", json={"discord_id": 42}
+            )
+        assert response.status_code == 200
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.housing_property_id is None
+            lease = (
+                await session.execute(
+                    select(ApartmentLease).where(ApartmentLease.property_id == prop_id)
+                )
+            ).scalar_one_or_none()
+            assert lease is None
+
+    async def test_move_out_refuses_without_a_lease(self, housing_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        transport = httpx.ASGITransport(app=housing_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/housing/{char_id}/move-out", json={"discord_id": 42}
+            )
+        assert response.status_code == 400
+
+    async def test_refinance_happy_path(self, housing_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=42, character_overrides={"money": 0}
+        )
+        prop_id = await seed_house(db_session_factory, owner_id=char_id, suggested_price=1000.0)
+        transport = httpx.ASGITransport(app=housing_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/housing/{char_id}/{prop_id}/refinance",
+                json={"discord_id": 42, "amount": 200},
+            )
+        assert response.status_code == 200
+        assert response.json()["amount"] == 200
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            property_ = await session.get(Property, prop_id)
+            assert character.money == 200
+            assert property_.mortgage_principal == 200
+
+    async def test_refinance_refuses_someone_elses_property(self, housing_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        other_id = await seed_character(
+            db_session_factory, discord_id=99, character_overrides={"name": "Owner"}
+        )
+        prop_id = await seed_house(db_session_factory, owner_id=other_id)
+        transport = httpx.ASGITransport(app=housing_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/housing/{char_id}/{prop_id}/refinance",
+                json={"discord_id": 42, "amount": 50},
+            )
+        assert response.status_code == 400
+
+    async def test_sell_lists_and_delists(self, housing_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        prop_id = await seed_house(db_session_factory, owner_id=char_id)
+        transport = httpx.ASGITransport(app=housing_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/housing/{char_id}/{prop_id}/sell",
+                json={"discord_id": 42, "price": 1500},
+            )
+            assert response.json()["for_sale"] is True
+            response = await client.post(
+                f"/activity/dashboard/housing/{char_id}/{prop_id}/sell",
+                json={"discord_id": 42, "price": None},
+            )
+        assert response.status_code == 200
+        assert response.json()["for_sale"] is False
+
+    async def test_auction_start_and_bid(self, housing_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        bidder_id = await seed_character(
+            db_session_factory,
+            discord_id=99,
+            character_overrides={"name": "Bidder", "money": 5000},
+        )
+        prop_id = await seed_house(db_session_factory, owner_id=char_id)
+        transport = httpx.ASGITransport(app=housing_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            start_response = await client.post(
+                f"/activity/dashboard/housing/{char_id}/{prop_id}/auction-start",
+                json={"discord_id": 42, "minimum_bid": 500},
+            )
+            assert start_response.status_code == 200
+            bid_response = await client.post(
+                f"/activity/dashboard/housing/{bidder_id}/{prop_id}/auction-bid",
+                json={"discord_id": 99, "amount": 600},
+            )
+        assert bid_response.status_code == 200
+        assert bid_response.json()["amount"] == 600
+        async with db_session_factory() as session:
+            auction = (
+                await session.execute(
+                    select(PropertyAuction).where(PropertyAuction.property_id == prop_id)
+                )
+            ).scalar_one_or_none()
+            assert auction is not None
+            assert auction.current_bid == 600
+            assert auction.current_bidder_id == bidder_id
+
+    async def test_auction_bid_refuses_below_minimum(self, housing_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        bidder_id = await seed_character(
+            db_session_factory, discord_id=99, character_overrides={"name": "Bidder"}
+        )
+        prop_id = await seed_house(db_session_factory, owner_id=char_id)
+        transport = httpx.ASGITransport(app=housing_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            await client.post(
+                f"/activity/dashboard/housing/{char_id}/{prop_id}/auction-start",
+                json={"discord_id": 42, "minimum_bid": 500},
+            )
+            response = await client.post(
+                f"/activity/dashboard/housing/{bidder_id}/{prop_id}/auction-bid",
+                json={"discord_id": 99, "amount": 100},
+            )
+        assert response.status_code == 400
+
+    async def test_sleep_restores_fatigue_at_night(self, housing_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=42, character_overrides={"fatigue": 0.0}
+        )
+        transport = httpx.ASGITransport(app=housing_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/housing/{char_id}/sleep", json={"discord_id": 42}
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["restored"] > 0
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.fatigue == body["fatigue"]
+
+    async def test_inn_stay_happy_path(self, housing_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=42, character_overrides={"money": 200}
+        )
+        inn_id = await seed_property(
+            db_session_factory, kind=PropertyKind.INN.value, suggested_price=20.0
+        )
+        transport = httpx.ASGITransport(app=housing_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/housing/{char_id}/{inn_id}/inn-stay",
+                json={"discord_id": 42},
+            )
+        assert response.status_code == 200
+        assert response.json()["price"] == 20
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.money == 180
