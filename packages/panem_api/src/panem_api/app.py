@@ -49,10 +49,12 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from panem_api.dashboard_routes import (
+    build_blackmarket_router,
     build_characters_router,
     build_crime_router,
     build_identify_router,
     build_jail_router,
+    build_market_router,
     build_work_router,
 )
 from panem_shared import constants
@@ -668,6 +670,8 @@ def create_app(
         )
     )
     app.include_router(build_work_router(session_factory=session_factory))
+    app.include_router(build_market_router(content=content, session_factory=session_factory))
+    app.include_router(build_blackmarket_router(content=content, session_factory=session_factory))
 
     if STATIC_DIR.exists():
         # Mounted last so it only ever catches paths none of the routes

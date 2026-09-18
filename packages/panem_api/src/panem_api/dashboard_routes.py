@@ -36,9 +36,11 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from panem_shared import blackmarket as blackmarket_svc
 from panem_shared import characters as characters_svc
 from panem_shared import constants, job_levels
 from panem_shared import jail as jail_svc
+from panem_shared import market as market_svc
 from panem_shared import poaching as poaching_svc
 from panem_shared import stealing as stealing_svc
 from panem_shared.content.loader import ContentBundle
@@ -798,5 +800,202 @@ def build_work_router(*, session_factory: async_sessionmaker[AsyncSession] | Non
                 level=level.value,
                 already_worked_this_tick=already_worked,
             )
+
+    return router
+
+
+class GoodPrice(BaseModel):
+    good_id: str
+    name: str
+    price: float
+
+
+class InventoryItem(BaseModel):
+    good_id: str
+    name: str
+    qty: int
+
+
+async def _inventory_items(
+    session: AsyncSession, content: ContentBundle, character_id: int
+) -> list[InventoryItem]:
+    rows = await market_svc.list_inventory(session, character_id)
+    return [
+        InventoryItem(good_id=row.good_id, name=content.goods[row.good_id].name, qty=row.qty)
+        for row in rows
+        if row.good_id in content.goods
+    ]
+
+
+class MarketStatusResponse(BaseModel):
+    prices: list[GoodPrice]
+    inventory: list[InventoryItem]
+
+
+class TradeRequest(BaseModel):
+    discord_id: int
+    good_id: str
+    qty: int
+
+
+class TradeResponse(BaseModel):
+    good_id: str
+    good_name: str
+    qty: int
+    total: float
+    caught: bool
+
+
+def build_market_router(
+    *, content: ContentBundle, session_factory: async_sessionmaker[AsyncSession] | None
+) -> APIRouter:
+    """The legal half of the Market tab's REST surface: mirrors `/market
+    prices|buy|sell` and `/inventory`."""
+    router = APIRouter(prefix="/activity/dashboard/market", tags=["dashboard"])
+
+    @router.get("/{character_id}", response_model=MarketStatusResponse)
+    async def market_status(character_id: int, discord_id: int) -> MarketStatusResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            district = content.district(character.current_district_id)
+            good_ids = sorted(set(district.produces) | set(district.imports))
+            prices = []
+            for good_id in good_ids:
+                good = content.goods.get(good_id)
+                if good is None:
+                    continue
+                price = await market_svc.get_price(session, district.id, good)
+                prices.append(GoodPrice(good_id=good_id, name=good.name, price=price))
+            inventory = await _inventory_items(session, content, character_id)
+        return MarketStatusResponse(prices=prices, inventory=inventory)
+
+    @router.post("/{character_id}/buy", response_model=TradeResponse)
+    async def market_buy(character_id: int, body: TradeRequest) -> TradeResponse:
+        return await _trade(character_id, body, side="buy")
+
+    @router.post("/{character_id}/sell", response_model=TradeResponse)
+    async def market_sell(character_id: int, body: TradeRequest) -> TradeResponse:
+        return await _trade(character_id, body, side="sell")
+
+    async def _trade(character_id: int, body: TradeRequest, *, side: str) -> TradeResponse:
+        factory = _require_session_factory(session_factory)
+        if body.qty <= 0:
+            raise HTTPException(status_code=400, detail="market_invalid_qty")
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            district = content.district(character.current_district_id)
+            trade = market_svc.buy if side == "buy" else market_svc.sell
+            tick = await _current_tick(session)
+            try:
+                result = await trade(
+                    session,
+                    character=character,
+                    district=district,
+                    goods=content.goods,
+                    good_id=body.good_id,
+                    qty=body.qty,
+                    tick=tick,
+                    rng=random.Random(),
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            good_name = content.goods[body.good_id].name
+        return TradeResponse(
+            good_id=body.good_id,
+            good_name=good_name,
+            qty=result.qty,
+            total=result.total,
+            caught=result.caught,
+        )
+
+    return router
+
+
+class BlackMarketStatusResponse(BaseModel):
+    trusted: bool
+    prices: list[GoodPrice]
+    inventory: list[InventoryItem]
+
+
+def build_blackmarket_router(
+    *, content: ContentBundle, session_factory: async_sessionmaker[AsyncSession] | None
+) -> APIRouter:
+    """The illicit half of the Market tab's REST surface: mirrors
+    `/blackmarket prices|buy|sell`. `prices` never checks trust (neither
+    does the bot's own command) -- only `buy`/`sell` do, via
+    `blackmarket_svc.check_can_trade`."""
+    router = APIRouter(prefix="/activity/dashboard/blackmarket", tags=["dashboard"])
+
+    @router.get("/{character_id}", response_model=BlackMarketStatusResponse)
+    async def blackmarket_status(character_id: int, discord_id: int) -> BlackMarketStatusResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            district = content.district(character.current_district_id)
+            prices = []
+            for good_id in district.illicit_produces:
+                good = content.goods.get(good_id)
+                if good is None:
+                    continue
+                price = await blackmarket_svc.get_price(session, district.id, good)
+                prices.append(GoodPrice(good_id=good_id, name=good.name, price=price))
+            trusted = False
+            try:
+                fence = blackmarket_svc.resolve_fence(district.id, content.npcs)
+                await blackmarket_svc.check_can_trade(session, character, fence)
+                trusted = True
+            except ServiceError:
+                trusted = False
+            inventory = await _inventory_items(session, content, character_id)
+        return BlackMarketStatusResponse(trusted=trusted, prices=prices, inventory=inventory)
+
+    @router.post("/{character_id}/buy", response_model=TradeResponse)
+    async def blackmarket_buy(character_id: int, body: TradeRequest) -> TradeResponse:
+        return await _trade(character_id, body, side="buy")
+
+    @router.post("/{character_id}/sell", response_model=TradeResponse)
+    async def blackmarket_sell(character_id: int, body: TradeRequest) -> TradeResponse:
+        return await _trade(character_id, body, side="sell")
+
+    async def _trade(character_id: int, body: TradeRequest, *, side: str) -> TradeResponse:
+        factory = _require_session_factory(session_factory)
+        if body.qty <= 0:
+            raise HTTPException(status_code=400, detail="market_invalid_qty")
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            district = content.district(character.current_district_id)
+            trade = blackmarket_svc.buy if side == "buy" else blackmarket_svc.sell
+            tick = await _current_tick(session)
+            try:
+                result = await trade(
+                    session,
+                    character=character,
+                    district=district,
+                    goods=content.goods,
+                    npcs=content.npcs,
+                    good_id=body.good_id,
+                    qty=body.qty,
+                    tick=tick,
+                    rng=random.Random(),
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            good_name = content.goods[body.good_id].name
+        return TradeResponse(
+            good_id=body.good_id,
+            good_name=good_name,
+            qty=result.qty,
+            total=result.total,
+            caught=result.caught,
+        )
 
     return router

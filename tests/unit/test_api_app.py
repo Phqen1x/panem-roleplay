@@ -18,15 +18,26 @@ from panem_shared.content.schemas import (
     Job,
     JobOption,
     Location,
+    NpcContent,
 )
-from panem_shared.db.models import Character, Npc, Property, Shift, User
-from panem_shared.enums import CharacterStatus, OwnerKind, PropertyKind
+from panem_shared.db.models import (
+    Character,
+    Inventory,
+    MarketPrice,
+    Npc,
+    Property,
+    RelationshipRow,
+    Shift,
+    User,
+)
+from panem_shared.enums import CharacterStatus, OwnerKind, PropertyKind, Stance
 from panem_shared.redis_keys import (
     crime_attempt_key,
     crime_interaction_key,
     work_interaction_key,
     work_pending_key,
 )
+from panem_shared.relationships import relationship_key
 
 
 class FakeRedis:
@@ -258,6 +269,61 @@ def work_app(db_session_factory):
 @pytest.fixture
 def poach_app(db_session_factory):
     content = make_content_with_outskirts()
+    redis_client = FakeRedis()
+    app = create_app(content=content, redis_client=redis_client, session_factory=db_session_factory)
+    app.state.fake_redis = redis_client  # type: ignore[attr-defined]
+    return app
+
+
+def make_content_with_market() -> ContentBundle:
+    """District 1 trades `grain` (imported) legally and `contraband` on
+    the black market, with `fence` as its fence NPC -- for `/activity/
+    dashboard/market` and `.../blackmarket` tests."""
+    locations = [
+        Location(id="square", name="The Square", kind="public"),
+        Location(id="station", name="Rail Station", kind="station"),
+        Location(id="market", name="The Market", kind="market", illicit=True),
+    ]
+    coords = {loc.id: (0, 0) for loc in locations}
+    district_1 = District(
+        id=1,
+        name="District 1",
+        industry="x",
+        produces=[],
+        imports=["grain"],
+        illicit_produces=["contraband"],
+        population_base=1000,
+        culture=DistrictCulture(),
+        locations=locations,
+        map=DistrictMap(image="x.png", width=100, height=100, location_coords=coords),
+    )
+    return ContentBundle(
+        districts={0: make_district(0, "The Capitol"), 1: district_1},
+        goods={
+            "grain": Good(id="grain", name="Grain", base_price=2.0, category="food"),
+            "contraband": Good(
+                id="contraband", name="Contraband", base_price=10.0, category="illicit"
+            ),
+        },
+        jobs={},
+        routes=[],
+        npcs={
+            "fence": NpcContent(
+                id="fence",
+                district=1,
+                name="Sal",
+                age=40,
+                home_location_id="square",
+                backstory="",
+                black_market_contact=True,
+            )
+        },
+    )
+
+
+@pytest.fixture
+def market_app(db_session_factory):
+    content = make_content_with_market()
     redis_client = FakeRedis()
     app = create_app(content=content, redis_client=redis_client, session_factory=db_session_factory)
     app.state.fake_redis = redis_client  # type: ignore[attr-defined]
@@ -1495,3 +1561,173 @@ class TestDashboardWork:
             shift = await session.get(Shift, body["shift_id"])
             assert shift is not None
             assert shift.character_id == char_id
+
+
+class TestDashboardMarket:
+    async def test_status_lists_traded_goods_and_inventory(self, market_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"location_id": "market"}
+        )
+        transport = httpx.ASGITransport(app=market_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/market/{char_id}", params={"discord_id": 5}
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert [p["good_id"] for p in body["prices"]] == ["grain"]
+        assert body["inventory"] == []
+
+    async def test_buy_happy_path(self, market_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"location_id": "market", "money": 1000},
+        )
+        transport = httpx.ASGITransport(app=market_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/market/{char_id}/buy",
+                json={"discord_id": 5, "good_id": "grain", "qty": 3},
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["qty"] == 3
+        assert body["good_name"] == "Grain"
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.money == 1000 - round(3 * 2.0)
+
+    async def test_buy_refuses_not_at_a_market(self, market_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"location_id": "square"}
+        )
+        transport = httpx.ASGITransport(app=market_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/market/{char_id}/buy",
+                json={"discord_id": 5, "good_id": "grain", "qty": 1},
+            )
+        assert response.status_code == 400
+
+    async def test_buy_refuses_a_non_positive_qty(self, market_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"location_id": "market"}
+        )
+        transport = httpx.ASGITransport(app=market_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/market/{char_id}/buy",
+                json={"discord_id": 5, "good_id": "grain", "qty": 0},
+            )
+        assert response.status_code == 400
+
+    async def test_sell_happy_path(self, market_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"location_id": "market", "money": 0},
+        )
+        async with db_session_factory() as session, session.begin():
+            session.add(
+                Inventory(
+                    owner_kind=OwnerKind.CHARACTER.value,
+                    owner_id=str(char_id),
+                    good_id="grain",
+                    qty=5,
+                )
+            )
+        transport = httpx.ASGITransport(app=market_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/market/{char_id}/sell",
+                json={"discord_id": 5, "good_id": "grain", "qty": 2},
+            )
+        assert response.status_code == 200
+        assert response.json()["qty"] == 2
+
+
+class TestDashboardBlackMarket:
+    async def test_status_reports_untrusted_by_default(self, market_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=market_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/blackmarket/{char_id}", params={"discord_id": 5}
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["trusted"] is False
+        assert [p["good_id"] for p in body["prices"]] == ["contraband"]
+
+    async def test_status_reports_trusted_with_good_relations(self, market_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        async with db_session_factory() as session, session.begin():
+            key = relationship_key(
+                (OwnerKind.CHARACTER.value, str(char_id)), (OwnerKind.NPC.value, "fence")
+            )
+            session.add(
+                RelationshipRow(
+                    subject_kind=key[0],
+                    subject_id=key[1],
+                    object_kind=key[2],
+                    object_id=key[3],
+                    affinity=0,
+                    trust=0.0,
+                    stance=Stance.LIKES.value,
+                )
+            )
+        transport = httpx.ASGITransport(app=market_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/blackmarket/{char_id}", params={"discord_id": 5}
+            )
+        assert response.status_code == 200
+        assert response.json()["trusted"] is True
+
+    async def test_buy_refuses_when_not_trusted(self, market_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"location_id": "market", "money": 1000},
+        )
+        transport = httpx.ASGITransport(app=market_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/blackmarket/{char_id}/buy",
+                json={"discord_id": 5, "good_id": "contraband", "qty": 1},
+            )
+        assert response.status_code == 400
+
+    async def test_buy_succeeds_when_trusted(self, market_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"location_id": "market", "money": 1000},
+        )
+        async with db_session_factory() as session, session.begin():
+            key = relationship_key(
+                (OwnerKind.CHARACTER.value, str(char_id)), (OwnerKind.NPC.value, "fence")
+            )
+            session.add(
+                RelationshipRow(
+                    subject_kind=key[0],
+                    subject_id=key[1],
+                    object_kind=key[2],
+                    object_id=key[3],
+                    affinity=0,
+                    trust=0.0,
+                    stance=Stance.LOVES.value,
+                )
+            )
+            session.add(
+                MarketPrice(district_id=1, good_id="contraband", price=10.0, supply=100, tick=0)
+            )
+        transport = httpx.ASGITransport(app=market_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/blackmarket/{char_id}/buy",
+                json={"discord_id": 5, "good_id": "contraband", "qty": 1},
+            )
+        assert response.status_code == 200
+        assert response.json()["good_name"] == "Contraband"
