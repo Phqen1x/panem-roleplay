@@ -19,7 +19,7 @@ from panem_shared.content.schemas import (
 )
 from panem_shared.db.models import Character, Shift, User
 from panem_shared.enums import CharacterStatus
-from panem_shared.redis_keys import work_pending_key
+from panem_shared.redis_keys import work_interaction_key, work_pending_key
 
 
 class FakeRedis:
@@ -32,6 +32,9 @@ class FakeRedis:
     async def set(self, key: str, value: str) -> bool:
         self.store[key] = value
         return True
+
+    async def delete(self, key: str) -> None:
+        self.store.pop(key, None)
 
     async def aclose(self) -> None:
         pass
@@ -156,9 +159,9 @@ def oauth_client() -> TestClient:
 def work_app(db_session_factory):
     content = make_content_with_job()
     redis_client = FakeRedis()
-    return create_app(
-        content=content, redis_client=redis_client, session_factory=db_session_factory
-    )
+    app = create_app(content=content, redis_client=redis_client, session_factory=db_session_factory)
+    app.state.fake_redis = redis_client  # type: ignore[attr-defined]
+    return app
 
 
 class TestHealth:
@@ -409,6 +412,59 @@ class TestWorkShiftResult:
             "level": "apprentice",
             "arrested": False,
         }
+
+    async def test_does_not_call_discord_when_no_launch_message_was_stashed(
+        self, work_app, db_session_factory
+    ):
+        shift_id = await seed_shift(db_session_factory)
+        transport = httpx.ASGITransport(app=work_app)
+        with patch.object(httpx.AsyncClient, "patch", AsyncMock()) as mock_patch:
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    f"/activity/work/{shift_id}/result", json={"won": True}
+                )
+        assert response.status_code == 200
+        mock_patch.assert_not_called()
+
+    async def test_edits_the_launch_message_and_forgets_it(self, work_app, db_session_factory):
+        shift_id = await seed_shift(db_session_factory)
+        redis_client = work_app.state.fake_redis
+        redis_client.store[work_interaction_key(shift_id)] = json.dumps(
+            {"application_id": "111", "token": "tok"}
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        fake_response = httpx.Response(200, json={})
+        with patch.object(
+            httpx.AsyncClient, "patch", AsyncMock(return_value=fake_response)
+        ) as mock_patch:
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    f"/activity/work/{shift_id}/result", json={"won": True}
+                )
+        assert response.status_code == 200
+        mock_patch.assert_called_once()
+        url, kwargs = mock_patch.call_args.args, mock_patch.call_args.kwargs
+        assert "111" in url[0] and "tok" in url[0]
+        assert kwargs["json"]["components"] == []
+        assert work_interaction_key(shift_id) not in redis_client.store
+
+    async def test_a_failed_discord_edit_does_not_fail_the_response(
+        self, work_app, db_session_factory
+    ):
+        shift_id = await seed_shift(db_session_factory)
+        redis_client = work_app.state.fake_redis
+        redis_client.store[work_interaction_key(shift_id)] = json.dumps(
+            {"application_id": "111", "token": "expired"}
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        with patch.object(
+            httpx.AsyncClient, "patch", AsyncMock(side_effect=httpx.ConnectError("boom"))
+        ):
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    f"/activity/work/{shift_id}/result", json={"won": True}
+                )
+        assert response.status_code == 200
 
     async def test_loss_pays_the_loss_multiplier(self, work_app, db_session_factory):
         shift_id = await seed_shift(db_session_factory)

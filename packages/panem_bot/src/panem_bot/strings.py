@@ -86,6 +86,7 @@ STRINGS: dict[str, str] = {
     "shift_already_worked_this_tick": (
         "**{name}** already worked this shift this tick -- try again next tick."
     ),
+    "shift_worked_banner": "This shift has already been worked!",
     "work_ok": "**{name}** {outcome}: +{wage} money, {rep_delta:+d} reputation.",
     "work_game_ready": "**{name}** clocks in for **{title}**. Play the shift's minigame below "
     "(opens in your browser) -- you're paid based on how it goes, even if you finish after "

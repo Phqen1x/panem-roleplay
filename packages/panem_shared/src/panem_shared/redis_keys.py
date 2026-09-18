@@ -36,6 +36,24 @@ Discord shows, short enough that a stale entry doesn't linger and get
 mistaken for a fresher shift once the channel is reused."""
 
 
+def work_interaction_key(shift_id: int) -> str:
+    """`panem_bot`'s `/work` stashes the interaction it used to send the
+    minigame-launch message here (its `application_id`/`token`, the pair
+    an interaction's webhook-edit endpoint needs -- no bot token
+    required), keyed by shift id. `panem_api`'s work-result endpoint reads
+    it back once the Activity reports a result, so it can edit that
+    original message to remove its now-stale Play/Skip buttons even
+    though the result arrived in a different process with no Discord
+    gateway connection of its own."""
+    return f"work:interaction:{shift_id}"
+
+
+WORK_INTERACTION_TTL_S = 14 * 60
+"""Just under Discord's 15-minute interaction-token validity window -- a
+lookup that survives past that point couldn't be used to edit the
+original message anyway, so there's no reason to keep it longer."""
+
+
 SIM_ALERTS_CHANNEL = "sim:alerts"
 """Published to by `panem_sim.tick` (FR-TCK-3) when a tick fails twice in
 a row and the loop pauses -- `panem_bot.narrator.run` forwards whatever's

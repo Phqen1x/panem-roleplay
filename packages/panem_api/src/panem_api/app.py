@@ -47,7 +47,7 @@ from panem_shared.db.session import session_scope
 from panem_shared.jail import resolve_illicit_heat
 from panem_shared.job_levels import job_level_for_shifts
 from panem_shared.logging import get_logger
-from panem_shared.redis_keys import positions_key, work_pending_key
+from panem_shared.redis_keys import positions_key, work_interaction_key, work_pending_key
 from panem_shared.shifts import (
     already_worked_this_tick,
     apply_shift_outcome,
@@ -60,6 +60,7 @@ logger = get_logger(component="api")
 
 STATIC_DIR = Path(__file__).parent / "static"
 DISCORD_TOKEN_URL = "https://discord.com/api/oauth2/token"
+DISCORD_API_BASE = "https://discord.com/api/v10"
 
 POSITIONS_POLL_INTERVAL_SECONDS = 3.0
 """How often the WebSocket re-sends a district's position snapshot.
@@ -167,6 +168,40 @@ async def _read_positions(redis_client: redis.Redis, district_id: int) -> Positi
     if raw is None:
         return EMPTY_POSITIONS
     return Positions.model_validate(json.loads(raw))
+
+
+async def _clear_launch_message(redis_client: redis.Redis, shift_id: int) -> None:
+    """Removes the now-stale Play/Skip buttons from `panem_bot`'s original
+    `/work` launch message once the Activity reports a result -- this
+    process has no Discord gateway connection of its own, but an
+    interaction's own `application_id`/`token` (stashed by `/work`, see
+    `redis_keys.work_interaction_key`) is enough to edit that message
+    directly via Discord's webhook-edit REST endpoint, no bot token
+    needed. Best-effort: the shift is already resolved either way by the
+    time this runs, so a missing/expired token (Discord's 15-minute cap)
+    or a failed request here just leaves stale buttons behind rather than
+    failing the result the player is waiting on."""
+    key = work_interaction_key(shift_id)
+    raw = await redis_client.get(key)
+    if raw is None:
+        return
+    await redis_client.delete(key)
+    info = json.loads(raw)
+    url = f"{DISCORD_API_BASE}/webhooks/{info['application_id']}/{info['token']}/messages/@original"
+    async with httpx.AsyncClient() as http_client:
+        try:
+            response = await http_client.patch(
+                url, json={"content": "This shift has already been worked!", "components": []}
+            )
+        except httpx.HTTPError as exc:
+            logger.warning("work_launch_message_edit_failed", shift_id=shift_id, error=str(exc))
+            return
+        if response.status_code != 200:
+            logger.warning(
+                "work_launch_message_edit_failed",
+                shift_id=shift_id,
+                status=response.status_code,
+            )
 
 
 def create_app(
@@ -389,6 +424,7 @@ def create_app(
                     character, district_row, lost=not body.won, current_tick=tick
                 )
             wage, character_name = round(outcome.wage), character.name
+        await _clear_launch_message(redis_client, shift_id)
         logger.info("work_game_resolved", shift_id=shift_id, won=body.won, wage=wage)
         return WorkResultResponse(
             wage=wage,

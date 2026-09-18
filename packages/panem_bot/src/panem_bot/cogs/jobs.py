@@ -11,6 +11,7 @@ universal Apprentice->Expert progression replaced it.
 from __future__ import annotations
 
 import dataclasses
+import json
 import random
 from collections.abc import Awaitable, Callable
 
@@ -64,6 +65,23 @@ class JobsCog(commands.Cog):
         clock = await session.get(WorldClock, 1)
         return clock.tick if clock is not None else 0
 
+    async def _remember_interaction(self, shift_id: int, interaction: discord.Interaction) -> None:
+        """Stashes what `panem_api`'s work-result endpoint needs to edit
+        this same message later (its own process, no gateway connection)
+        once the Activity reports a result -- see
+        `redis_keys.work_interaction_key`."""
+        application_id = interaction.application_id or self.bot.application_id
+        if application_id is None:
+            return
+        await self.bot.redis.set(  # type: ignore[attr-defined]
+            redis_keys.work_interaction_key(shift_id),
+            json.dumps({"application_id": application_id, "token": interaction.token}),
+            ex=redis_keys.WORK_INTERACTION_TTL_S,
+        )
+
+    async def _forget_interaction(self, shift_id: int) -> None:
+        await self.bot.redis.delete(redis_keys.work_interaction_key(shift_id))  # type: ignore[attr-defined]
+
     def _skip_button(self, shift_id: int, char_id: int) -> _SkipButton:
         """Lets a player opt out of the minigame entirely from the same
         message that offers to launch it -- resolves the shift right away
@@ -86,7 +104,15 @@ class JobsCog(commands.Cog):
                     )
                     return
                 text = await self._finish_shift(session, shift, char, won=False, neutral=True)
-            await skip_interaction.response.send_message(text, ephemeral=True)
+            await self._forget_interaction(shift_id)
+            # Edit the launch message itself (removing its now-stale
+            # Play/Skip buttons) rather than send_message -- Discord allows
+            # only one initial response per interaction, so the actual
+            # result goes out as a followup right after.
+            await skip_interaction.response.edit_message(
+                content=t("shift_worked_banner"), view=None
+            )
+            await skip_interaction.followup.send(text, ephemeral=True)
 
         return _SkipButton(on_click)
 
@@ -202,6 +228,7 @@ class JobsCog(commands.Cog):
             await interaction.response.send_message(
                 t(key, name=char_name, title=job_title), view=view, ephemeral=True
             )
+            await self._remember_interaction(shift_id, interaction)
             return
 
         await self._resolve_work_coinflip(interaction, char_id, shift_id)

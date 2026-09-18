@@ -1281,6 +1281,25 @@ or a win score is. Verified with headless-Chromium checks confirming the pool ac
 excludes Coin Flip/Pick Your Poison past Apprentice, and that Minesweeper's cell count and
 Snake's on-screen win target match the expected value at all five levels.
 
+**The launch message now clears its own buttons once the shift is worked.** Previously
+`/work`'s ephemeral minigame-launch message kept showing its Play/Skip buttons forever,
+even after the shift was resolved -- clicking either one again after the fact just hit
+`shift_no_longer_open`/`shift_already_worked_this_tick` instead of anything visibly
+changing. Skip now edits that same message in place (`shift_worked_banner`: "This shift
+has already been worked!", buttons removed) as its interaction response, with the actual
+result delivered as a followup right after (Discord allows only one initial response per
+interaction). Completing the real Activity minigame instead resolves through
+`panem_api`, a separate process with no Discord gateway connection of its own -- so
+`/work` now stashes the launching interaction's `application_id`/`token` in Redis, keyed
+by shift id (`redis_keys.work_interaction_key`, `WORK_INTERACTION_TTL_S` = 14 minutes,
+just under Discord's 15-minute interaction-token validity). `panem_api`'s
+`/activity/work/{shift_id}/result` reads it back and edits the original message directly
+via Discord's webhook-edit REST endpoint (`PATCH
+/webhooks/{application_id}/{token}/messages/@original`) -- no bot token needed, since an
+interaction's own token is sufficient to edit its own responses. Best-effort: a missing
+or expired token (a shift resolved more than 15 minutes after `/work` was run) just
+leaves the stale buttons behind rather than failing the actual work result.
+
 ## Notes on working a shift multiple times per tick
 
 Previously a `Shift` closed (`result = COMPLETED`) the instant it was worked once --
