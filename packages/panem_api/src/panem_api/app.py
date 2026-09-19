@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import os
 import random
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -47,6 +48,8 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from starlette.responses import Response
+from starlette.types import Scope
 
 from panem_api.dashboard_routes import (
     build_blackmarket_router,
@@ -99,6 +102,38 @@ from panem_shared.stealing import (
 logger = get_logger(component="api")
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+class NoCacheStaticFiles(StaticFiles):
+    """Every dashboard asset (`index.html`, `app.js`, `dashboard.css`,
+    each `tabs/*.js`) is fetched through Discord's Activity iframe
+    embedding, which proxies/caches static assets at a layer this server's
+    own response headers otherwise have no say over -- the `?v=N`
+    query-string convention `app.js`'s own module docstring documents
+    (bumped on every asset change) assumes that layer keys its cache on
+    the full URL including the query string, but there is no way to
+    confirm that from here, and a proxy that instead normalizes or drops
+    query strings before caching would silently defeat that convention
+    entirely, serving a stale asset indefinitely regardless of how many
+    times the version is bumped -- exactly the "same issue" recurrence
+    this fixes. `Cache-Control: no-store` is the standards-based way to
+    tell any well-behaved intermediate cache not to retain a response at
+    all, independent of whatever caching key strategy it uses -- a
+    stronger guarantee than relying solely on cache-busting query strings
+    for content that's actively being iterated on."""
+
+    def file_response(
+        self,
+        full_path: os.PathLike[str] | str,
+        stat_result: os.stat_result,
+        scope: Scope,
+        status_code: int = 200,
+    ) -> Response:
+        response = super().file_response(full_path, stat_result, scope, status_code)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+
 DISCORD_TOKEN_URL = "https://discord.com/api/oauth2/token"
 DISCORD_API_BASE = "https://discord.com/api/v10"
 
@@ -693,6 +728,6 @@ def create_app(
         # above matched (Starlette tries routes in registration order) --
         # the Activity frontend at "/", "/app.js", etc. sits alongside the
         # data API above without either shadowing the other.
-        app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="activity")
+        app.mount("/", NoCacheStaticFiles(directory=STATIC_DIR, html=True), name="activity")
 
     return app

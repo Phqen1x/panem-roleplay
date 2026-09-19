@@ -2260,3 +2260,20 @@ Three issues surfaced once the dashboard was actually launched as a real Discord
   `tabs/*.js` modules) now points at `"./_shared.js?v=2"` / `"./tabs/_shared.js?v=2"`; `_shared.js`'s
   own module docstring documents bumping that literal in every importer whenever this file's
   exports change again.
+- **The dropdown still didn't work after that -- "same issue" reported again, this time with the
+  OAuth/token/identify flow all logging clean 200s.** That ruled out both prior fixes as the live
+  cause: nothing client-side ever surfaced a load error, and the underlying request flow was
+  reaching this server correctly. The remaining suspect was the `?v=N` cache-busting convention
+  itself -- it only defeats a cache that keys on the *full* URL including the query string, an
+  assumption this server has no way to confirm about whatever caching layer sits between a real
+  Discord Activity and it. A layer that instead normalizes or drops query strings before caching
+  (not unusual for a CDN optimizing static-asset delivery) would keep serving a stale `app.js`/
+  `_shared.js`/`index.html` forever, no matter how many times the version literal is bumped --
+  the version-bump convention was necessary but, on its own, resting on an unverifiable
+  assumption. Added a `NoCacheStaticFiles` subclass (`app.py`) wrapping the dashboard's static
+  mount, setting `Cache-Control: no-store` on every response -- the standards-based instruction to
+  *any* well-behaved intermediate cache not to retain a response at all, independent of whatever
+  key it caches on. This doesn't replace the `?v=N` convention (browsers that ignore `no-store`,
+  or a misbehaving cache, still benefit from a changed URL), but it's the stronger guarantee for a
+  dashboard under active iteration, and it's what should have been in place from the first
+  caching-related fix rather than reached for only after two rounds of the same report.
