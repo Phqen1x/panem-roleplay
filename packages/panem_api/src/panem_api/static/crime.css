@@ -60,3 +60,18 @@ main {
   opacity: 0.5;
   cursor: default;
 }
+
+.board-lockpick canvas {
+  touch-action: none;
+  cursor: pointer;
+}
+
+.lockpick-meta {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 320px;
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0;
+}

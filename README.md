@@ -2545,3 +2545,59 @@ this file. Note: this adds two more `mypy` baseline errors (146 -> 148) -- the s
 `self.bot.db()`/`log_staff_action(bot=self.bot)` typing gap (`commands.Bot` vs. the actual `PanemBot`
 subclass) every other `StaffCog` command already has, from the new `/staff jail` command using the
 same pattern; not a new category of error.
+
+## Rebuilt the lockpicking minigame as an actual pin-tumbler puzzle, not a reskinned timing game
+
+User feedback: "why is lockpicking the same sliding skill check as pickpocketing? It should have
+integrated the lockpick game from the github repo i linked before." Tracing it back, an earlier
+session's commit message for the original Activity minigames explained the reference project "turned
+out to be a Unity/C# GPLv3 game, not browser-embeddable" and built an original canvas game instead --
+but what got built (`games/lockpick.js`) was a needle sweeping across a dial that you strike when it's
+over a lit zone, which is *mechanically identical* to `games/pickpocket.js`'s own timing game (same
+sweep-and-strike shape, just different numbers). Picking a lock and picking a pocket read as the same
+minute of gameplay. The actual repo link wasn't preserved anywhere (not the commit message, not code
+comments, not later session context), so rather than guess at a URL, asked the user directly; they
+clarified what they actually wanted: "a lock pick minigame where you actually have to fiddle with a
+physical lock as opposed to the simple reaction time game."
+
+Rewrote `games/lockpick.js` from scratch as an original pin-tumbler mechanic (still not a port of any
+third-party project or code -- a Unity/C# GPLv3 codebase still can't be embedded in a browser iframe
+or have its code pulled into this repo regardless of what's referenced, but the general pin-tumbler
+*mechanic* itself -- tension + pins pushed to a hidden shear line -- isn't anyone's proprietary
+code). `label`/`instructions()`/`mount(boardEl, {onFinish, setStatus, difficulty})`'s contract is
+unchanged, so `crime.js` (shared coordinator for `/lockpick`'s and `/burgle`'s Activity launch) needed
+no changes at all -- only `games/lockpick.js` itself, plus `crime.css` (new `.lockpick-meta` row
+styling) and version bumps (`crime.js`'s `ASSET_VERSION` 2 -> 3, `crime.html`'s `/crime.js?v=`/
+`/crime.css?v=` to match).
+
+**The mechanic**: `pinCount` pins (3-6, scaling with `difficulty`), each with a hidden `shear` height
+the player has to find by feel -- there's no numeric readout of where it is, only a visual/color cue
+the instant a pin actually catches. A vertical tension "wrench" bar free-drifts via a damped random
+walk whenever the player isn't actively dragging it back into its safe zone (drift rate scales with
+`difficulty`); dragging it sets tension directly, letting go leaves it to wander. Click-and-hold (or
+select with ←/→ and hold Space) on a pin raises it at a steady rate; release and it springs
+back down at a fixed rate unless it's already caught. A pin only catches (turns green, height locks
+to its exact shear value) if it reaches its shear line *while tension is in the safe zone* -- reach it
+with bad tension and nothing happens (you have to notice and back off); push *past* the shear line at
+all while unset is a strike (three strikes and the pick snaps -- `onFinish(false)`), regardless of
+tension. A caught pin isn't permanent either: tension drifting out of the safe zone for more than
+`SET_LOSS_GRACE_S` springs it back down, since nothing's holding the cylinder rotated anymore --
+juggling multiple caught pins while still working the rest is the actual skill ceiling. All pins
+caught simultaneously wins (`onFinish(true)`); a 26-second clock is also a loss condition, so a
+stalled attempt can't sit open indefinitely. `catchTolerance` (how wide the "feel" window is) and the
+drift rate both scale with the same `difficulty` float `panem_shared.jail.lockpick_difficulty`/
+`stealing.burgle_difficulty` already compute server-side for the RNG-fallback path -- a longer jail
+sentence, or a house instead of a cell door, reads as a narrower catch window and a twitchier wrench,
+not a faster needle anymore.
+
+Verified live end to end (this sandbox has no route to the original Unity/C# reference project either,
+same as before, so verification is necessarily against this fresh implementation's own behavior, not
+a side-by-side comparison): minted a real lockpick attempt against a seeded jailed character and drove
+it with Playwright, confirming via a temporary debug hook (removed before commit) that (a) holding a
+pin with tension centered correctly catches it exactly at its randomized, otherwise-invisible shear
+value; (b) holding a pin with tension pinned outside the safe zone never catches it and correctly
+racks up strikes on overshoot; (c) three strikes ends the attempt via the same `onFinish(false)` ->
+`crime.js`'s `/activity/crime/{id}/result` POST -> `apply_lockpick_attempt`'s real failure path,
+confirmed by the server's own "The lock holds. 2 attempt(s) left." response. `node --check` clean on
+the rewritten file; no Python changed, so the existing 965-test suite and mypy baseline are both
+unaffected by this one.

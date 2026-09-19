@@ -23,7 +23,7 @@
 // in an `<iframe>` for the lockpick/steal/burgle minigames (see
 // static/tabs/jail.js, static/tabs/crime.js) and use it to refresh their
 // own status without a reload. A no-op outside an iframe.
-const ASSET_VERSION = "2";
+const ASSET_VERSION = "3";
 
 const [lockpick, pickpocket] = await Promise.all([
   import(`./games/lockpick.js?v=${ASSET_VERSION}`),
