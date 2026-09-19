@@ -61,6 +61,7 @@ from panem_api.dashboard_routes import (
     build_market_router,
     build_residents_router,
     build_social_router,
+    build_staff_router,
     build_travel_router,
     build_work_router,
 )
@@ -327,6 +328,9 @@ def create_app(
     session_factory: async_sessionmaker[AsyncSession] | None = None,
     max_characters_per_user: int = 1,
     discord_guild_id: int = 0,
+    discord_token: str = "",
+    staff_role_id: int = 0,
+    log_channel_id: int = 0,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -693,7 +697,14 @@ def create_app(
         logger.info("crime_attempt_resolved", attempt_id=attempt_id, kind=kind, won=body.won)
         return response_obj
 
-    app.include_router(build_identify_router(session_factory=session_factory))
+    app.include_router(
+        build_identify_router(
+            session_factory=session_factory,
+            discord_token=discord_token,
+            discord_guild_id=discord_guild_id,
+            staff_role_id=staff_role_id,
+        )
+    )
     app.include_router(
         build_characters_router(
             content=content,
@@ -720,6 +731,15 @@ def create_app(
             content=content,
             session_factory=session_factory,
             discord_guild_id=discord_guild_id,
+        )
+    )
+    app.include_router(
+        build_staff_router(
+            session_factory=session_factory,
+            discord_token=discord_token,
+            discord_guild_id=discord_guild_id,
+            staff_role_id=staff_role_id,
+            log_channel_id=log_channel_id,
         )
     )
 

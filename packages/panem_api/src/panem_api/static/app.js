@@ -30,7 +30,7 @@ const STEP_TIMEOUT_MS = 8000;
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "17";
+const ASSET_VERSION = "18";
 
 const TABS = ["map", "character", "work", "market", "travel", "social", "jail", "crime", "housing"];
 const TAB_LABELS = {
@@ -45,6 +45,13 @@ const TAB_LABELS = {
   housing: "Housing",
 };
 
+// Only offered when `/identify` reports `is_staff` -- see `visibleTabs()`.
+// Not part of `TABS`/`TAB_LABELS` above: those two arrays are also used as
+// "every tab a plain player can reach" wherever that distinction matters
+// (currently just `currentTabName()`'s fallback below).
+const STAFF_TAB = "staff";
+const STAFF_TAB_LABEL = "Staff";
+
 const statusEl = document.getElementById("status");
 const navEl = document.getElementById("tab-nav");
 const tabRootEl = document.getElementById("tab-root");
@@ -57,9 +64,17 @@ const state = {
   manualDiscordId: "",
   characters: [],
   characterId: null,
+  isStaff: false,
 };
 
 let currentTabHandle = null;
+// Only rebuilds the nav bar's DOM when staff status actually changes --
+// `refreshIdentity()` re-runs `setupNav()` every time (including from the
+// manual Discord ID field's change handler, which deliberately doesn't
+// remount the current tab -- see its own comment), and a full nav rebuild
+// on every one of those calls would silently drop the "active" class
+// `showTab()` sets on the current tab's button until the next tab switch.
+let navBuiltForStaff = null;
 
 function setStatus(text) {
   statusEl.textContent = text;
@@ -283,7 +298,9 @@ async function refreshIdentity() {
   const discordId = getDiscordId();
   if (!discordId) {
     state.characters = [];
+    state.isStaff = false;
     renderCharacterOptions();
+    setupNav();
     return;
   }
   try {
@@ -293,11 +310,14 @@ async function refreshIdentity() {
       body: JSON.stringify({ discord_id: discordId }),
     });
     state.characters = body.characters;
+    state.isStaff = Boolean(body.is_staff);
   } catch (err) {
     console.warn("Could not load characters:", err);
     state.characters = [];
+    state.isStaff = false;
   }
   renderCharacterOptions();
+  setupNav();
 }
 
 function buildCtx() {
@@ -310,9 +330,13 @@ function buildCtx() {
   };
 }
 
+function visibleTabs() {
+  return state.isStaff ? [...TABS, STAFF_TAB] : TABS;
+}
+
 function currentTabName() {
   const name = location.hash.replace(/^#/, "");
-  return TABS.includes(name) ? name : TABS[0];
+  return visibleTabs().includes(name) ? name : TABS[0];
 }
 
 // Guards against two overlapping showTab() calls finishing out of order
@@ -342,21 +366,25 @@ async function showTab(name) {
 }
 
 function setupNav() {
-  for (const name of TABS) {
+  if (navBuiltForStaff === state.isStaff) return;
+  navBuiltForStaff = state.isStaff;
+  navEl.innerHTML = "";
+  const active = currentTabName();
+  for (const name of visibleTabs()) {
     navEl.append(
       el(
         "button",
         {
           "data-tab": name,
+          class: name === active ? "active" : "",
           onclick: () => {
             location.hash = `#${name}`;
           },
         },
-        TAB_LABELS[name]
+        name === STAFF_TAB ? STAFF_TAB_LABEL : TAB_LABELS[name]
       )
     );
   }
-  window.addEventListener("hashchange", () => showTab(currentTabName()));
 }
 
 function setupIdentityControls() {
@@ -402,8 +430,8 @@ function setupIdentityControls() {
 }
 
 async function main() {
-  setupNav();
   setupIdentityControls();
+  window.addEventListener("hashchange", () => showTab(currentTabName()));
 
   state.discordUser = await authenticateWithDiscord();
   if (!state.discordUser) {

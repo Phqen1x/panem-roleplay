@@ -32,6 +32,9 @@ def main() -> None:
         session_factory=session_factory,
         max_characters_per_user=settings.max_characters_per_user,
         discord_guild_id=settings.discord_guild_id,
+        discord_token=settings.discord_token,
+        staff_role_id=settings.staff_role_id,
+        log_channel_id=settings.log_channel_id,
     )
     uvicorn.run(app, host=settings.api_host, port=settings.api_port)
 

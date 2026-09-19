@@ -36,6 +36,7 @@ from pydantic import BaseModel
 from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from panem_api import discord_staff
 from panem_shared import blackmarket as blackmarket_svc
 from panem_shared import characters as characters_svc
 from panem_shared import constants, job_levels, simtime
@@ -56,6 +57,7 @@ from panem_shared.db.models import (
     RelationshipRow,
     Scene,
     Shift,
+    StaffAction,
     User,
     WorldClock,
 )
@@ -96,6 +98,7 @@ class IdentifyRequest(BaseModel):
 
 class IdentifyResponse(BaseModel):
     characters: list[DashboardCharacterSummary]
+    is_staff: bool = False
 
 
 def _require_session_factory(
@@ -140,7 +143,13 @@ def _http_from_service_error(exc: ServiceError) -> HTTPException:
     return HTTPException(status_code=status, detail=exc.reason_key)
 
 
-def build_identify_router(*, session_factory: async_sessionmaker[AsyncSession] | None) -> APIRouter:
+def build_identify_router(
+    *,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    discord_token: str = "",
+    discord_guild_id: int = 0,
+    staff_role_id: int = 0,
+) -> APIRouter:
     router = APIRouter(prefix="/activity/dashboard", tags=["dashboard"])
 
     @router.post("/identify", response_model=IdentifyResponse)
@@ -151,13 +160,26 @@ def build_identify_router(*, session_factory: async_sessionmaker[AsyncSession] |
         offer a character picker the same way each slash command's
         `character:` autocomplete does today. An unknown discord_id (no
         `User` row yet -- this player has never run a command that created
-        one) isn't an error: it just means no characters yet."""
+        one) isn't an error: it just means no characters yet.
+
+        `is_staff` is only used to decide whether `app.js` shows the Staff
+        tab's nav button -- cosmetic, not a security boundary. The actual
+        enforcement is `build_staff_router` re-checking `discord_staff.
+        fetch_is_staff` itself on every staff route, the same "never trust
+        the client with a privilege decision" posture `_resolve_owned_
+        character` already applies to character ownership."""
+        is_staff = await discord_staff.fetch_is_staff(
+            body.discord_id,
+            bot_token=discord_token,
+            guild_id=discord_guild_id,
+            staff_role_id=staff_role_id,
+        )
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             user_row = await session.execute(select(User).where(User.discord_id == body.discord_id))
             user = user_row.scalar_one_or_none()
             if user is None:
-                return IdentifyResponse(characters=[])
+                return IdentifyResponse(characters=[], is_staff=is_staff)
             rows = await session.execute(
                 select(Character)
                 .where(
@@ -181,7 +203,8 @@ def build_identify_router(*, session_factory: async_sessionmaker[AsyncSession] |
                         and c.jailed_until_tick > current_tick,
                     )
                     for c in characters
-                ]
+                ],
+                is_staff=is_staff,
             )
 
     return router
@@ -2047,5 +2070,91 @@ def build_housing_router(
             return HousingSleepResponse(
                 ticks=sleep_ticks, restored=round(restored, 1), fatigue=round(character.fatigue, 1)
             )
+
+    return router
+
+
+class StaffJailRequest(BaseModel):
+    discord_id: int
+    character_name: str
+    ticks: int
+    reason: str | None = None
+
+
+class StaffJailResponse(BaseModel):
+    character_name: str
+    applied_ticks: int
+    jailed_until_tick: int
+
+
+def build_staff_router(
+    *,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    discord_token: str = "",
+    discord_guild_id: int = 0,
+    staff_role_id: int = 0,
+    log_channel_id: int = 0,
+) -> APIRouter:
+    """The Staff tab's REST surface -- the dashboard equivalent of `/staff
+    jail`. Staff-only: every route here re-checks `discord_staff.fetch_is_
+    staff` itself rather than trusting a client-supplied flag (`/identify`'s
+    `is_staff` is cosmetic, only used to decide whether `app.js` shows the
+    tab at all) -- a client could lie about being staff the same way it
+    could lie about owning a character, so this is checked server-side on
+    every write, not read off whatever `/identify` last returned. Acts on
+    any character by name (staff jail someone else's character, not their
+    own), so unlike every other router in this module there's no `_resolve_
+    owned_character` ownership check to reuse here."""
+    router = APIRouter(prefix="/activity/dashboard/staff", tags=["dashboard"])
+
+    async def _require_staff(discord_id: int) -> None:
+        ok = await discord_staff.fetch_is_staff(
+            discord_id,
+            bot_token=discord_token,
+            guild_id=discord_guild_id,
+            staff_role_id=staff_role_id,
+        )
+        if not ok:
+            raise HTTPException(status_code=403, detail="staff_only")
+
+    @router.post("/jail", response_model=StaffJailResponse)
+    async def jail_character(body: StaffJailRequest) -> StaffJailResponse:
+        await _require_staff(body.discord_id)
+        if body.ticks < 1:
+            raise HTTPException(status_code=400, detail="invalid_ticks")
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = (
+                await session.execute(
+                    select(Character).where(Character.name == body.character_name)
+                )
+            ).scalar_one_or_none()
+            if character is None:
+                raise HTTPException(status_code=404, detail="character_not_found")
+            current_tick = await _current_tick(session)
+            applied = jail_svc.commit_to_jail(character, body.ticks, current_tick)
+            assert character.jailed_until_tick is not None  # always set by commit_to_jail
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="jail",
+                    target=str(character.id),
+                    payload={"ticks": body.ticks, "applied_ticks": applied, "reason": body.reason},
+                )
+            )
+            response = StaffJailResponse(
+                character_name=character.name,
+                applied_ticks=applied,
+                jailed_until_tick=character.jailed_until_tick,
+            )
+        await discord_staff.post_staff_log(
+            channel_id=log_channel_id,
+            bot_token=discord_token,
+            content=(
+                f"**Staff action:** <@{body.discord_id}> `jail` -> `{response.character_name}` "
+                f"(ticks={body.ticks}, applied={applied}, reason={body.reason!r})"
+            ),
+        )
+        return response
 
     return router

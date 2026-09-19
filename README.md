@@ -2473,3 +2473,75 @@ character with `jailed_until_tick` past the current world tick gets `{"detail": 
 already lapsed travels and reaches the ordinary `job_no_open_shift` refusal normally -- the jail
 check doesn't fire for someone who's actually free. Added regression tests at every layer
 (`test_shared_jail.py`'s new `TestCheckNotJailed`, `test_travel_service.py`, `test_api_app.py`).
+
+## Staff: forcibly jail a character, and a Staff tab on the Activity dashboard
+
+Two asks: give staff a way to jail someone directly (jailing had only ever been a *side effect* of
+crime/game resolution -- `commit_to_jail` was called from `resolve_illicit_heat` and the
+market/stealing/poaching consequence paths, but no staff command called it), and put staff tools on
+the web dashboard behind a tab only staff can see.
+
+**Bot side** is the easy half: `/staff jail character:<name> ticks:<n> reason:<text?>`
+(`panem_bot/cogs/staff.py`) follows the exact shape every other `StaffCog` command already uses --
+`@app_commands.check(_is_staff)` (`PanemBot.is_staff` checking the interacting member's roles against
+`Settings.staff_role_id`), calls `panem_shared.jail.commit_to_jail(character, ticks, current_tick)`
+directly (the same function every existing jail path already calls), and logs via the existing
+`log_staff_action` (writes a `StaffAction` row, best-effort posts a one-line summary to
+`Settings.log_channel_id`).
+
+**The dashboard tab is the interesting half**, because nothing like it existed: every other dashboard
+route (`dashboard_routes.py`) trusts a client-supplied `discord_id`/`character_id` pair for "does
+this player own this character" -- fine for that (not cryptographic auth, just enough to stop
+guessing, per that module's own docstring), but wrong for "is this Discord user staff", which is a
+privilege decision, not an ownership check. `panem_api` also had zero Discord API access of any
+kind before this -- no bot token, no gateway connection, no REST calls beyond one-shot webhook edits
+using a per-interaction token `panem_bot` had already minted. There was no way to answer "is this
+Discord user staff" from this process at all.
+
+Fixed by giving `panem_api` its own (limited) Discord REST access: a new `panem_api/discord_staff.py`
+module with `fetch_is_staff(discord_id, bot_token, guild_id, staff_role_id)`, which calls Discord's
+`GET /guilds/{guild_id}/members/{user_id}` with the bot token (`Settings.discord_token` -- already
+loaded by every process via the same shared `Settings`, but previously only ever *used* by
+`panem_bot`) and checks the returned role list for `staff_role_id`, mirroring what `PanemBot.is_staff`
+already does with a live cached `discord.Member`. Any of `bot_token`/`guild_id`/`staff_role_id` being
+unset, or the request failing/erroring, reads as "not staff" -- fails closed by default, so a
+deployment that hasn't set `STAFF_ROLE_ID`/`DISCORD_TOKEN` for `panem_api` (a new, optional
+requirement -- the dashboard works exactly as before without them, just with no Staff tab) never
+accidentally exposes staff actions. Verified live: with no staff config passed to `create_app`,
+`/activity/dashboard/identify` returns `"is_staff": false` and `POST /activity/dashboard/staff/jail`
+403s with `staff_only`, unconditionally.
+
+This check is re-run **server-side on every staff route**, not read off whatever `/identify` last
+returned -- `/identify`'s `is_staff` field is only used client-side to decide whether `app.js` shows
+the Staff tab's nav button at all; a client lying about it (or the field going stale) can't grant
+itself the ability to actually jail someone, since `build_staff_router`'s own `_require_staff` calls
+`fetch_is_staff` again before doing anything. `POST /activity/dashboard/staff/jail
+{discord_id, character_name, ticks, reason?}` resolves the target by exact name (any character, not
+just the caller's own -- there's no `_resolve_owned_character` ownership check here, deliberately,
+since staff act on other people's characters), calls the same `commit_to_jail`, writes a `StaffAction`
+row, and best-effort posts to `Settings.log_channel_id` via the same new REST module (`post_staff_log`
+-- a plain `POST /channels/{id}/messages` with the bot token, no gateway needed) so a dashboard-issued
+jail shows up in the same log channel a Discord-issued one does. A missing/misconfigured log channel
+is a no-op, same "logging must never fail the action" posture as the bot's own `log_staff_action`.
+
+`app.js` now tracks `state.isStaff` (set from `/identify`'s response) and only adds the Staff tab's
+nav button when it's true (`visibleTabs()`); `setupNav()` only rebuilds the nav bar's DOM when staff
+status actually *changes*, since `refreshIdentity()` now calls it on every identity refresh (including
+the manual Discord-ID field's change handler, which deliberately doesn't remount the current tab) and
+a full rebuild on every one of those would otherwise drop the "active" tab highlight until the next
+tab switch. The new `static/tabs/staff.js` is a single form (character name, ticks, optional reason)
+posting to the new endpoint -- reachable by hash (`#staff`) even without the nav button, which is
+fine: the route re-checks staff status itself regardless of how the tab was reached.
+`ASSET_VERSION` bumped 17 -> 18.
+
+Verified live: with staff config unset (the default), `/identify` reports `is_staff: false` and
+`/staff/jail` 403s. The role-check itself (`fetch_is_staff` returning true/false depending on the
+member's roles, failing closed on a lookup error) and the full jail-and-log flow (StaffAction row
+written, correct `payload`, best-effort log post firing with the right channel/token/content when
+configured) are covered by mocking Discord's REST responses in `test_api_app.py`'s new
+`TestDashboardStaff` -- this sandbox has no route to the real Discord API to verify the happy path
+any further live than that, same documented limitation as every other Discord-REST-touching test in
+this file. Note: this adds two more `mypy` baseline errors (146 -> 148) -- the same pre-existing
+`self.bot.db()`/`log_staff_action(bot=self.bot)` typing gap (`commands.Bot` vs. the actual `PanemBot`
+subclass) every other `StaffCog` command already has, from the new `/staff jail` command using the
+same pattern; not a new category of error.

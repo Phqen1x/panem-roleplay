@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from panem_bot import autocomplete, redis_keys
 from panem_bot.errors import ServiceError
 from panem_bot.services import characters as characters_svc
+from panem_bot.services import jail as jail_svc
 from panem_bot.services import jobs as jobs_svc
 from panem_bot.services.staff import log_staff_action
 from panem_bot.strings import t
@@ -252,6 +253,43 @@ class StaffCog(commands.Cog):
                 target=str(row.id),
             )
         await interaction.response.send_message(f"**{character}** has died.", ephemeral=True)
+
+    @group.command(name="jail", description="Forcibly jail a character for a set number of ticks")
+    @app_commands.describe(
+        character="Character name",
+        ticks="Sentence length in ticks",
+        reason="Optional reason, logged with the action",
+    )
+    @app_commands.autocomplete(character=autocomplete.any_approved)
+    @app_commands.check(_is_staff)
+    async def jail(
+        self,
+        interaction: discord.Interaction,
+        character: str,
+        ticks: app_commands.Range[int, 1, None],
+        reason: str | None = None,
+    ) -> None:
+        async with self.bot.db() as session:
+            row = await self._find_character(session, character)
+            if row is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            clock = await session.get(WorldClock, 1)
+            current_tick = clock.tick if clock is not None else 0
+            applied = jail_svc.commit_to_jail(row, ticks, current_tick)
+            until_tick = row.jailed_until_tick
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="jail",
+                target=str(row.id),
+                payload={"ticks": ticks, "applied_ticks": applied, "reason": reason},
+            )
+        await interaction.response.send_message(
+            f"**{character}** has been jailed for {applied} ticks (until tick {until_tick}).",
+            ephemeral=True,
+        )
 
     @group.command(name="note", description="Attach a staff note to a character")
     @app_commands.describe(character="Character name", text="Note text")

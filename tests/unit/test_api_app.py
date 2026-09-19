@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from panem_api import discord_staff
 from panem_api.app import create_app
 from panem_shared.constants import TRANSIT_TICKS
 from panem_shared.content.loader import ContentBundle
@@ -32,6 +33,7 @@ from panem_shared.db.models import (
     RelationshipRow,
     Scene,
     Shift,
+    StaffAction,
     User,
 )
 from panem_shared.enums import (
@@ -422,6 +424,33 @@ def housing_app(db_session_factory):
     app = create_app(content=content, redis_client=redis_client, session_factory=db_session_factory)
     app.state.fake_redis = redis_client  # type: ignore[attr-defined]
     return app
+
+
+@pytest.fixture
+def staff_app(db_session_factory):
+    """`log_channel_id=0` deliberately leaves the best-effort Discord log
+    post disabled by default (`post_staff_log` short-circuits on a falsy
+    channel id) -- most tests below only care about the jail action itself
+    and would otherwise need every one of them to mock `httpx.AsyncClient.
+    post` just to avoid a real (sandboxed, so failing) network call. The
+    one test that cares about the log post configures its own app."""
+    content = make_content()
+    redis_client = FakeRedis()
+    app = create_app(
+        content=content,
+        redis_client=redis_client,
+        session_factory=db_session_factory,
+        discord_guild_id=999,
+        discord_token="test-bot-token",
+        staff_role_id=777,
+        log_channel_id=0,
+    )
+    app.state.fake_redis = redis_client  # type: ignore[attr-defined]
+    return app
+
+
+def _fake_member_response(role_ids: list[int]) -> httpx.Response:
+    return httpx.Response(200, json={"roles": [str(r) for r in role_ids]})
 
 
 class TestHealth:
@@ -1041,7 +1070,33 @@ class TestDashboardIdentify:
                 "/activity/dashboard/identify", json={"discord_id": 999999}
             )
         assert response.status_code == 200
-        assert response.json() == {"characters": []}
+        assert response.json() == {"characters": [], "is_staff": False}
+
+    async def test_is_staff_true_when_discord_reports_the_staff_role(
+        self, staff_app, db_session_factory
+    ):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/identify", json={"discord_id": 42}
+                )
+        assert response.status_code == 200
+        assert response.json()["is_staff"] is True
+
+    async def test_is_staff_false_without_the_staff_role(self, staff_app, db_session_factory):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([1, 2]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/identify", json={"discord_id": 42}
+                )
+        assert response.status_code == 200
+        assert response.json()["is_staff"] is False
 
     async def test_returns_only_approved_characters_for_that_discord_id(
         self, work_app, db_session_factory
@@ -2436,3 +2491,135 @@ class TestDashboardHousing:
         async with db_session_factory() as session:
             character = await session.get(Character, char_id)
             assert character.money == 180
+
+
+class TestDashboardStaff:
+    async def test_jail_refuses_without_the_staff_role(self, staff_app, db_session_factory):
+        await seed_character(db_session_factory, character_overrides={"name": "Wren"})
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([1, 2]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/jail",
+                    json={"discord_id": 42, "character_name": "Wren", "ticks": 50},
+                )
+        assert response.status_code == 403
+        assert response.json()["detail"] == "staff_only"
+
+    async def test_jail_fails_closed_when_the_discord_lookup_errors(
+        self, staff_app, db_session_factory
+    ):
+        await seed_character(db_session_factory, character_overrides={"name": "Wren"})
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(side_effect=httpx.ConnectError("boom"))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/jail",
+                    json={"discord_id": 42, "character_name": "Wren", "ticks": 50},
+                )
+        assert response.status_code == 403
+
+    async def test_jail_happy_path_with_the_staff_role(self, staff_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, character_overrides={"name": "Wren"})
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/jail",
+                    json={
+                        "discord_id": 42,
+                        "character_name": "Wren",
+                        "ticks": 50,
+                        "reason": "brawling",
+                    },
+                )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["character_name"] == "Wren"
+        assert body["applied_ticks"] == 50
+        assert body["jailed_until_tick"] == 50
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.jailed_until_tick == 50
+            assert character.jail_count == 1
+            staff_actions = (
+                (await session.execute(select(StaffAction).where(StaffAction.action == "jail")))
+                .scalars()
+                .all()
+            )
+        assert len(staff_actions) == 1
+        assert staff_actions[0].staff_discord_id == 42
+        assert staff_actions[0].target == str(char_id)
+        assert staff_actions[0].payload == {
+            "ticks": 50,
+            "applied_ticks": 50,
+            "reason": "brawling",
+        }
+
+    async def test_jail_refuses_an_unknown_character(self, staff_app, db_session_factory):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/jail",
+                    json={"discord_id": 42, "character_name": "Nobody", "ticks": 50},
+                )
+        assert response.status_code == 404
+        assert response.json()["detail"] == "character_not_found"
+
+    async def test_jail_refuses_a_non_positive_tick_count(self, staff_app, db_session_factory):
+        await seed_character(db_session_factory, character_overrides={"name": "Wren"})
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/jail",
+                    json={"discord_id": 42, "character_name": "Wren", "ticks": 0},
+                )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "invalid_ticks"
+
+    async def test_post_staff_log_posts_to_the_configured_channel(self):
+        # Exercised directly rather than through the `/staff/jail` route:
+        # both the route's outer test request and this best-effort call
+        # are `httpx.AsyncClient.post`, so patching that method globally
+        # while also driving the route through an `httpx.AsyncClient`-
+        # backed ASGI transport (this module's usual pattern for an async
+        # test) would intercept the outer request too. `discord_staff.
+        # post_staff_log`'s own behavior -- what URL/headers/body it sends,
+        # and that a failure is swallowed -- is what's worth covering here.
+        fake_response = httpx.Response(200, json={})
+        with patch.object(
+            httpx.AsyncClient, "post", AsyncMock(return_value=fake_response)
+        ) as mock_post:
+            await discord_staff.post_staff_log(
+                channel_id=555, bot_token="test-bot-token", content="**Staff action:** ... `Wren`"
+            )
+        mock_post.assert_awaited_once()
+        args, kwargs = mock_post.call_args
+        assert args[0] == f"{discord_staff.DISCORD_API_BASE}/channels/555/messages"
+        assert kwargs["headers"]["Authorization"] == "Bot test-bot-token"
+        assert "Wren" in kwargs["json"]["content"]
+
+    async def test_post_staff_log_is_a_noop_without_a_channel_or_token(self):
+        with patch.object(httpx.AsyncClient, "post", AsyncMock()) as mock_post:
+            await discord_staff.post_staff_log(channel_id=0, bot_token="", content="ignored")
+        mock_post.assert_not_awaited()
+
+    async def test_post_staff_log_swallows_a_failed_request(self):
+        with patch.object(
+            httpx.AsyncClient, "post", AsyncMock(side_effect=httpx.ConnectError("boom"))
+        ):
+            await discord_staff.post_staff_log(
+                channel_id=555, bot_token="test-bot-token", content="ignored"
+            )  # no raise
