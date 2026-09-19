@@ -30,7 +30,7 @@ const STEP_TIMEOUT_MS = 8000;
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "9";
+const ASSET_VERSION = "10";
 
 const TABS = ["map", "character", "work", "market", "travel", "social", "jail", "crime", "housing"];
 const TAB_LABELS = {
@@ -96,6 +96,28 @@ function withTimeout(promise, label) {
   ]);
 }
 
+// The embedded-app-sdk's own RPC failures (e.g. a rejected
+// `commands.authorize()`) come back as plain `{code, message}` objects, not
+// `Error` instances -- `String(err)` on those is just "[object Object]",
+// which is exactly the unhelpful text this used to send to both the status
+// banner and the server log. Pull out whatever's actually there instead.
+function describeError(err) {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === "object") {
+    const parts = [];
+    if ("code" in err) parts.push(`code ${err.code}`);
+    if ("message" in err && err.message) parts.push(String(err.message));
+    if (parts.length > 0) return parts.join(": ");
+    try {
+      const json = JSON.stringify(err);
+      if (json && json !== "{}") return json;
+    } catch {
+      // Fall through to the generic String() below.
+    }
+  }
+  return String(err);
+}
+
 async function reportClientError(step, err) {
   try {
     await fetch("/activity/debug", {
@@ -103,7 +125,7 @@ async function reportClientError(step, err) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         step,
-        message: err instanceof Error ? err.message : String(err),
+        message: describeError(err),
         stack: err instanceof Error ? err.stack : undefined,
       }),
     });
@@ -170,7 +192,7 @@ async function authenticateWithDiscord() {
     reportClientError(STEP.current, err);
     setStatus(
       `Preview mode -- Discord auth failed at "${STEP.current}" ` +
-        `(${err instanceof Error ? err.message : err}). Enter a Discord ID below to try the ` +
+        `(${describeError(err)}). Enter a Discord ID below to try the ` +
         "dashboard anyway; check the panem_api server log for details."
     );
     return null;
