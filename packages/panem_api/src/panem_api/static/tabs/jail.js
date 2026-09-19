@@ -8,6 +8,12 @@
 // (see that file's docstring) tells this tab to refresh.
 import { fetchJson, el } from "./_shared.js?v=3";
 
+// Matches tabs/crime.js's/work.js's identical fix: crime.html's own
+// result screen used to disappear the instant it appeared, since the
+// listener below cleared the iframe in the same event that message
+// arrived. Leave it up long enough to actually read.
+const RESULT_DISPLAY_MS = 5000;
+
 function jailCellSvg({ occupied, avatarUrl }) {
   const ns = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(ns, "svg");
@@ -100,6 +106,7 @@ export function mount(root, ctx) {
   );
 
   let messageListener = null;
+  let closeResultTimer = null;
 
   function stopListening() {
     if (messageListener) {
@@ -108,9 +115,17 @@ export function mount(root, ctx) {
     }
   }
 
+  function clearCloseTimer() {
+    if (closeResultTimer) {
+      clearTimeout(closeResultTimer);
+      closeResultTimer = null;
+    }
+  }
+
   async function refresh() {
     const characterId = ctx.characterId();
     const discordId = ctx.discordId();
+    clearCloseTimer();
     iframeHost.innerHTML = "";
     stopListening();
     if (!characterId || !discordId) {
@@ -167,6 +182,7 @@ export function mount(root, ctx) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ discord_id: ctx.discordId() }),
       });
+      clearCloseTimer();
       iframeHost.innerHTML = "";
       const iframe = el("iframe", {
         class: "minigame-frame",
@@ -175,9 +191,15 @@ export function mount(root, ctx) {
       iframeHost.append(iframe);
       messageListener = (event) => {
         if (event.data && event.data.source === "panem-activity" && event.data.type === "crime-result") {
-          iframeHost.innerHTML = "";
           stopListening();
-          refresh();
+          // Leave crime.html's own result text on screen for a few
+          // seconds before clearing the iframe and refreshing status.
+          clearCloseTimer();
+          closeResultTimer = setTimeout(() => {
+            closeResultTimer = null;
+            iframeHost.innerHTML = "";
+            refresh();
+          }, RESULT_DISPLAY_MS);
         }
       };
       window.addEventListener("message", messageListener);
@@ -192,6 +214,7 @@ export function mount(root, ctx) {
   return {
     unmount() {
       stopListening();
+      clearCloseTimer();
     },
   };
 }

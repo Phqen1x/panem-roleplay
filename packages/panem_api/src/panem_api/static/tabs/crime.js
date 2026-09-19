@@ -6,6 +6,13 @@
 // instantly here too.
 import { fetchJson, el, dropdown } from "./_shared.js?v=3";
 
+// How long crime.html's own result screen (posted via postMessage, see
+// static/crime.js's `finish()`) stays visible before this tab clears the
+// iframe -- matches static/tabs/work.js's identical fix/reasoning: the
+// listener used to clear the iframe the instant the message arrived,
+// closing the minigame the same frame it announced its own outcome text.
+const RESULT_DISPLAY_MS = 5000;
+
 export function mount(root, ctx) {
   const stealSelect = dropdown();
   const stealBtn = el("button", { class: "btn", type: "button" }, "Steal");
@@ -37,6 +44,8 @@ export function mount(root, ctx) {
   root.append(statusEl, stealPanel, burglePanel, poachPanel, resultLine, iframeHost);
 
   let messageListener = null;
+  let closeResultTimer = null;
+
   function stopListening() {
     if (messageListener) {
       window.removeEventListener("message", messageListener);
@@ -44,7 +53,15 @@ export function mount(root, ctx) {
     }
   }
 
+  function clearCloseTimer() {
+    if (closeResultTimer) {
+      clearTimeout(closeResultTimer);
+      closeResultTimer = null;
+    }
+  }
+
   function mountMinigame(attemptId, kind) {
+    clearCloseTimer();
     iframeHost.innerHTML = "";
     const iframe = el("iframe", {
       class: "minigame-frame",
@@ -54,8 +71,15 @@ export function mount(root, ctx) {
     stopListening();
     messageListener = (event) => {
       if (event.data && event.data.source === "panem-activity" && event.data.type === "crime-result") {
-        iframeHost.innerHTML = "";
         stopListening();
+        // Leave crime.html's own result text ("gets away with N money",
+        // "caught -- fined and jailed", ...) on screen for a few seconds
+        // instead of yanking the iframe away the instant it appears.
+        clearCloseTimer();
+        closeResultTimer = setTimeout(() => {
+          closeResultTimer = null;
+          iframeHost.innerHTML = "";
+        }, RESULT_DISPLAY_MS);
       }
     };
     window.addEventListener("message", messageListener);
@@ -163,6 +187,7 @@ export function mount(root, ctx) {
   return {
     unmount() {
       stopListening();
+      clearCloseTimer();
     },
   };
 }

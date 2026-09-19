@@ -2395,3 +2395,16 @@ Two requested improvements to the dashboard's Work tab, both in `static/tabs/wor
   -of-truth persistence `app.js` already uses for the remembered character selection. The standalone
   minigame page now also reports which game was played (`game: game.label` in its `work-result`
   message, from each `games/*.js` module's own exported `label`) so the log can show it.
+
+## Crime tab / Jail tab: the same instant-close bug, one more time
+
+Same root cause as the Work tab fix above, found in the two other places that embed `crime.html`
+in an iframe: `static/tabs/crime.js`'s Steal/Burgle and `static/tabs/jail.js`'s lockpick both
+cleared the iframe the instant `crime.html`'s `crime-result` postMessage arrived, wiping its own
+result text ("gets away with N money, unnoticed", "caught -- fined and jailed", the lock giving
+way or holding) before it could be read. Both now hold the iframe open for `RESULT_DISPLAY_MS`
+(5 seconds, matching `tabs/work.js`) before clearing it, with the same pending-timer-cancelled-on-
+unmount/on-starting-a-new-attempt handling `tabs/work.js` already has. `/poach` (the Crime tab's
+third action) never launches an iframe -- it resolves instantly and its `resultLine` text was
+already left alone until the next action, so there was nothing to fix there; verified live that
+its result text is unchanged after several seconds, unlike the iframe-based flows.
