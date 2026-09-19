@@ -16,7 +16,7 @@ from panem_bot.services import characters as characters_svc
 from panem_bot.services import poaching as poaching_svc
 from panem_bot.strings import t
 from panem_shared import constants
-from panem_shared.db.models import Character
+from panem_shared.db.models import Character, WorldClock
 
 
 class PoachingCog(commands.Cog):
@@ -33,6 +33,10 @@ class PoachingCog(commands.Cog):
             )
         ).scalar_one_or_none()
 
+    async def _current_tick(self, session: AsyncSession) -> int:
+        clock = await session.get(WorldClock, 1)
+        return clock.tick if clock is not None else 0
+
     @app_commands.command(
         name="poach", description="Try to poach food at your district's outskirts"
     )
@@ -47,12 +51,14 @@ class PoachingCog(commands.Cog):
 
             content = self.bot.content  # type: ignore[attr-defined]
             district = content.district(char.current_district_id)
+            current_tick = await self._current_tick(session)
             try:
                 result = await poaching_svc.resolve_poach(
                     session,
                     character=char,
                     district=district,
                     goods=content.goods,
+                    current_tick=current_tick,
                     rng=random.Random(),
                 )
             except ServiceError as exc:

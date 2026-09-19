@@ -154,9 +154,11 @@ def _roll_detection(
     return rng.random() < prob
 
 
-def _apply_caught_consequence(character: Character, district_row: DistrictState | None) -> None:
+def _apply_caught_consequence(
+    character: Character, district_row: DistrictState | None, current_tick: int
+) -> None:
     character.money = max(0, character.money - constants.MARKET_ILLICIT_FINE)
-    commit_to_jail(character, constants.MARKET_ILLICIT_JAIL_TICKS)
+    commit_to_jail(character, constants.MARKET_ILLICIT_JAIL_TICKS, current_tick)
     character.reputation -= constants.REP_ILLICIT_CAUGHT_PENALTY
 
     if district_row is not None:
@@ -205,7 +207,7 @@ async def buy(
     district_row = await session.get(DistrictState, district.id)
     caught = _roll_detection(district_row, tick, rng)
     if caught:
-        _apply_caught_consequence(character, district_row)
+        _apply_caught_consequence(character, district_row, tick)
     return BlackMarketTradeResult(qty=qty, unit_price=price, total=total, caught=caught)
 
 
@@ -247,5 +249,5 @@ async def sell(
     district_row = await session.get(DistrictState, district.id)
     caught = _roll_detection(district_row, tick, rng)
     if caught:
-        _apply_caught_consequence(character, district_row)
+        _apply_caught_consequence(character, district_row, tick)
     return BlackMarketTradeResult(qty=qty, unit_price=price, total=total, caught=caught)

@@ -191,7 +191,10 @@ class TestBuy:
         )
         assert result.caught is True
         assert character.money == max(0, 100 - 4 - constants.MARKET_ILLICIT_FINE)
-        assert character.jailed_until_tick == constants.MARKET_ILLICIT_JAIL_TICKS
+        # Sentence runs from the current tick (10), not from absolute
+        # tick 0 -- a bug that left every first-time offender already
+        # "free" the instant they were jailed at any non-zero world tick.
+        assert character.jailed_until_tick == 10 + constants.MARKET_ILLICIT_JAIL_TICKS
         assert character.reputation == -constants.REP_ILLICIT_CAUGHT_PENALTY
 
         district_row = await db_session.get(DistrictState, district.id)

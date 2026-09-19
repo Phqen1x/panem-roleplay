@@ -2408,3 +2408,33 @@ unmount/on-starting-a-new-attempt handling `tabs/work.js` already has. `/poach` 
 third action) never launches an iframe -- it resolves instantly and its `resultLine` text was
 already left alone until the next action, so there was nothing to fix there; verified live that
 its result text is unchanged after several seconds, unlike the iframe-based flows.
+
+## Fixed: getting jailed could leave you shown as already free
+
+Live report: "still says i am free when im in jail." Root cause was in `panem_shared.jail.
+commit_to_jail` (called by every jailing path -- `/steal`, `/burgle`, illicit-market catches,
+poaching, illicit-work heat arrests): a fresh sentence was anchored at `character.jailed_until_tick
+or 0`, ignoring the actual current world tick entirely. For a first-time offender (`jailed_until_tick`
+starts `None`) that meant `jailed_until_tick` was set to the *sentence length itself* -- e.g. tick 14
+-- regardless of what tick the world was really on. Any real game has a world tick well past 0
+almost immediately, so `jailed_until_tick (14) <= current_tick (5000)` read as already free (the
+same `jailed_until_tick > current_tick` check both `panem_shared.jail.check_is_jailed` and the
+dashboard's `/activity/dashboard/jail/{id}` endpoint use) the instant the sentence was set -- the
+character was jailed and shown as free in the same breath. A repeat offender whose previous
+sentence had already lapsed by the time of a new offense hit the identical bug via the "extend an
+existing sentence" branch.
+
+Fixed by adding a `current_tick` parameter to `commit_to_jail` and anchoring at
+`max(current_tick, character.jailed_until_tick or 0)` instead of just `character.jailed_until_tick
+or 0` -- a sentence always runs at least from *now*, whether it's a fresh one or extending one
+that's still actually active. Every call site already had `current_tick` (or an equivalently named
+`tick`) in scope except `poaching.resolve_poach`, which didn't take it as a parameter at all (its
+two callers -- `dashboard_routes.py`'s `/poach` endpoint and `panem_bot.cogs.poaching`'s `/poach`
+command -- didn't fetch the world tick either); added it there and threaded it through both.
+Verified live end to end: jailing a character at a non-zero world tick (`commit_to_jail(character,
+14, 5000)`) now sets `jailed_until_tick=5014`, and `GET /activity/dashboard/jail/{id}` correctly
+reports `"jailed": true`. Added regression tests at every layer this touched (`test_shared_jail.py`,
+`test_poaching_service.py`) and updated the existing market/blackmarket/stealing consequence tests,
+which had been asserting the old (buggy) `jailed_until_tick == <sentence>` behavior precisely
+because they already passed a non-zero tick -- proof the bug was there to catch all along, just
+never checked against.

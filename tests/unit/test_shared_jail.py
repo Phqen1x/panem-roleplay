@@ -47,7 +47,7 @@ def make_character(**overrides: object) -> Character:
 class TestCommitToJail:
     def test_first_offense_uses_the_base_sentence(self):
         character = make_character(jail_count=0, jailed_until_tick=None)
-        sentence = shared_jail.commit_to_jail(character, 10)
+        sentence = shared_jail.commit_to_jail(character, 10, 0)
         assert sentence == 10
         assert character.jailed_until_tick == 10
         assert character.jail_sentence_ticks == 10
@@ -55,20 +55,45 @@ class TestCommitToJail:
 
     def test_priors_lengthen_the_sentence(self):
         character = make_character(jail_count=3, jailed_until_tick=None)
-        sentence = shared_jail.commit_to_jail(character, 10)
+        sentence = shared_jail.commit_to_jail(character, 10, 0)
         assert sentence == 10 + 3 * constants.JAIL_PRIOR_TICKS_PER_COUNT
         assert character.jail_count == 4
 
     def test_extends_a_sentence_already_running_rather_than_shortening_it(self):
         character = make_character(jail_count=0, jailed_until_tick=50)
-        shared_jail.commit_to_jail(character, 10)
+        shared_jail.commit_to_jail(character, 10, 0)
         assert character.jailed_until_tick == 60
 
     def test_resets_lockpick_tries_for_the_fresh_sentence(self):
         character = make_character(jail_count=0, jailed_until_tick=None)
         character.jail_lockpick_tries_used = 2
-        shared_jail.commit_to_jail(character, 10)
+        shared_jail.commit_to_jail(character, 10, 0)
         assert character.jail_lockpick_tries_used == 0
+
+    def test_first_offense_at_a_non_zero_world_tick_jails_from_now_not_from_zero(self):
+        # Regression test: `base_tick` used to be `jailed_until_tick or 0`
+        # with no `current_tick` involved at all, so a first-time
+        # offender's sentence was always anchored at absolute tick
+        # `sentence` regardless of what tick the world clock was actually
+        # on. Any real game (world tick > 0 almost immediately) had every
+        # first jailing land in the past the instant it was set --
+        # `jailed_until_tick (10) <= current_tick (1000)` reads as already
+        # free. The sentence must run from *now*.
+        character = make_character(jail_count=0, jailed_until_tick=None)
+        sentence = shared_jail.commit_to_jail(character, 10, 1000)
+        assert sentence == 10
+        assert character.jailed_until_tick == 1010
+        assert character.jailed_until_tick > 1000  # actually jailed, not already free
+
+    def test_a_lapsed_previous_sentence_also_anchors_from_now_not_from_the_stale_value(self):
+        # A character jailed long ago (jailed_until_tick already in the
+        # past relative to current_tick) getting caught again shouldn't
+        # extend from that stale, already-expired value either -- same
+        # underlying bug, just via the "extends a sentence" branch instead
+        # of the "first offense" branch.
+        character = make_character(jail_count=0, jailed_until_tick=50)
+        shared_jail.commit_to_jail(character, 10, 1000)
+        assert character.jailed_until_tick == 1010
 
 
 class TestResolveIllicitHeat:

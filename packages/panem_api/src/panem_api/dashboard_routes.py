@@ -740,12 +740,14 @@ def build_crime_router(
                 session, discord_id=body.discord_id, character_id=character_id
             )
             district = content.district(character.current_district_id)
+            current_tick = await _current_tick(session)
             try:
                 result = await poaching_svc.resolve_poach(
                     session,
                     character=character,
                     district=district,
                     goods=content.goods,
+                    current_tick=current_tick,
                     rng=random.Random(),
                 )
             except ServiceError as exc:

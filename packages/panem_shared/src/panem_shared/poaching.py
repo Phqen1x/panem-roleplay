@@ -95,10 +95,10 @@ async def _grant_good(session: AsyncSession, character: Character, good_id: str,
 
 
 async def _apply_caught_consequence(
-    session: AsyncSession, character: Character, district_id: int
+    session: AsyncSession, character: Character, district_id: int, current_tick: int
 ) -> None:
     character.money = max(0, character.money - constants.POACH_FINE)
-    commit_to_jail(character, constants.POACH_JAIL_TICKS)
+    commit_to_jail(character, constants.POACH_JAIL_TICKS, current_tick)
     character.reputation -= constants.POACH_REP_PENALTY
 
     district_row = await session.get(DistrictState, district_id)
@@ -114,11 +114,12 @@ async def resolve_poach(
     character: Character,
     district: District,
     goods: dict[str, Good],
+    current_tick: int,
     rng: random.Random,
 ) -> PoachResult:
     good = check_can_poach(character, district, goods)
     if rng.random() < constants.POACH_DETECTION_PROB:
-        await _apply_caught_consequence(session, character, district.id)
+        await _apply_caught_consequence(session, character, district.id, current_tick)
         return PoachResult(caught=True, good=None)
     await _grant_good(session, character, good.id, constants.POACH_YIELD_QTY)
     return PoachResult(caught=False, good=good)

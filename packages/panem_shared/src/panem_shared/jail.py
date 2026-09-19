@@ -14,19 +14,29 @@ from panem_shared.db.models import Character, DistrictState
 from panem_shared.errors import NotAllowed
 
 
-def commit_to_jail(character: Character, base_ticks: int) -> int:
+def commit_to_jail(character: Character, base_ticks: int, current_tick: int) -> int:
     """Sentences `character` to jail, scaling the length by their priors
     (`Character.jail_count`) -- repeat offenders serve longer. Extends
     any sentence already running (`jailed_until_tick`) rather than
     shortening it, sets `jail_sentence_ticks` to *this* sentence's fixed
     length (what `/lockpick` reads for difficulty), and increments
-    `jail_count`. Returns the sentence length actually applied."""
+    `jail_count`. Returns the sentence length actually applied.
+
+    `base_tick` is `max(current_tick, character.jailed_until_tick or 0)`,
+    not just `character.jailed_until_tick or 0` -- the latter anchored a
+    fresh sentence (or one whose previous `jailed_until_tick` had already
+    lapsed) at absolute tick `sentence` regardless of what tick the world
+    was actually on, which is only ever correct if the world clock
+    happens to be at tick 0. Any time after that, a first-time offender's
+    `jailed_until_tick` landed in the *past* the instant it was set, so
+    `check_is_jailed`/the dashboard's own `jailed_until_tick > current_tick`
+    read them as already free the moment they were jailed."""
     # `character.jail_count`'s column `default=0` only applies once
     # SQLAlchemy actually inserts the row -- a freshly constructed,
     # not-yet-flushed `Character` (every unit test that builds one
     # without explicitly setting it) still has it as `None`.
     sentence = base_ticks + (character.jail_count or 0) * constants.JAIL_PRIOR_TICKS_PER_COUNT
-    base_tick = character.jailed_until_tick or 0
+    base_tick = max(current_tick, character.jailed_until_tick or 0)
     character.jailed_until_tick = base_tick + sentence
     character.jail_sentence_ticks = sentence
     character.jail_count = (character.jail_count or 0) + 1
@@ -140,7 +150,7 @@ def resolve_illicit_heat(
         return False
 
     character.money = max(0, character.money - constants.ILLICIT_ARREST_FINE)
-    commit_to_jail(character, constants.ILLICIT_ARREST_JAIL_TICKS)
+    commit_to_jail(character, constants.ILLICIT_ARREST_JAIL_TICKS, current_tick)
     character.reputation -= constants.ILLICIT_ARREST_REP_PENALTY
     character.illicit_heat = 0.0
 

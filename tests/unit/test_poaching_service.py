@@ -118,6 +118,7 @@ class TestResolvePoach:
             character=character,
             district=district,
             goods=make_goods(),
+            current_tick=0,
             rng=FixedRng(0.99),  # always above the detection threshold
         )
 
@@ -141,6 +142,7 @@ class TestResolvePoach:
             character=character,
             district=district,
             goods=make_goods(),
+            current_tick=0,
             rng=FixedRng(0.99),
         )
 
@@ -158,6 +160,7 @@ class TestResolvePoach:
             character=character,
             district=district,
             goods=make_goods(),
+            current_tick=0,
             rng=FixedRng(0.0),  # always below the detection threshold
         )
 
@@ -172,6 +175,28 @@ class TestResolvePoach:
         district_row = await db_session.get(DistrictState, district.id)
         assert district_row.peacekeeper_pressure == 0.3 + poaching_svc.PEACEKEEPER_PRESSURE_DELTA
 
+    async def test_caught_at_a_non_zero_world_tick_jails_from_now_not_from_zero(self, db_session):
+        # Regression test for the "still says I'm free when I'm jailed"
+        # bug: commit_to_jail used to anchor a fresh sentence at absolute
+        # tick `POACH_JAIL_TICKS` regardless of the actual world tick, so
+        # getting caught at any real (non-zero) tick left
+        # `jailed_until_tick` already in the past the instant it was set.
+        district = make_district()
+        character = make_character(money=100, jailed_until_tick=None)
+
+        result = await poaching_svc.resolve_poach(
+            db_session,
+            character=character,
+            district=district,
+            goods=make_goods(),
+            current_tick=5000,
+            rng=FixedRng(0.0),
+        )
+
+        assert result.caught is True
+        assert character.jailed_until_tick == 5000 + constants.POACH_JAIL_TICKS
+        assert character.jailed_until_tick > 5000  # actually jailed, not already free
+
     async def test_caught_without_a_district_state_row_does_not_raise(self, db_session):
         district = make_district()
         character = make_character(money=100, jailed_until_tick=None)
@@ -181,6 +206,7 @@ class TestResolvePoach:
             character=character,
             district=district,
             goods=make_goods(),
+            current_tick=0,
             rng=FixedRng(0.0),
         )
         assert result.caught is True
@@ -195,6 +221,7 @@ class TestResolvePoach:
                 character=character,
                 district=district,
                 goods=make_goods(),
+                current_tick=0,
                 rng=FixedRng(0.99),
             )
         assert character.money == 100

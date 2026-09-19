@@ -117,13 +117,14 @@ async def _apply_catch_consequences(
     character: Character,
     district_row: DistrictState | None,
     victim: StealVictim | None,
+    current_tick: int,
 ) -> None:
     """The shared tail of a caught steal or burglary: fine, jail,
     reputation, district pressure, and -- an NPC victim only -- the
     additional `RelationshipRow.affinity` hit (Spec §6's relationship
     model has no equivalent row for a player victim)."""
     character.money = max(0, character.money - constants.STEAL_FINE)
-    commit_to_jail(character, constants.STEAL_JAIL_TICKS)
+    commit_to_jail(character, constants.STEAL_JAIL_TICKS, current_tick)
     character.reputation -= constants.REP_STEAL_CAUGHT_GENERAL_PENALTY
     if isinstance(victim, Npc):
         key = relationship_key(
@@ -165,7 +166,11 @@ async def _apply_alert_escape_caught(
         return StealResult(False, True, False, 0)  # alerted, but got away
 
     await _apply_catch_consequences(
-        session, character=character, district_row=district_row, victim=victim
+        session,
+        character=character,
+        district_row=district_row,
+        victim=victim,
+        current_tick=current_tick,
     )
     return StealResult(False, True, True, 0)
 

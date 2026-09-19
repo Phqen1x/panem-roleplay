@@ -395,7 +395,7 @@ second affinity scale."""
 REP_ILLICIT_CAUGHT_PENALTY = 15
 """Reputation lost on top of the existing fine/jail/peacekeeper-pressure
 consequence when an illicit-market trade gets caught
-(`panem_bot.services.market._apply_illicit_consequence`)."""
+(`panem_shared.market._apply_illicit_consequence`)."""
 
 # Housing system: houses/apartments/inns, procedurally seeded per district
 # (no hand-authored YAML content -- `panem_sim.world.seed_properties`).

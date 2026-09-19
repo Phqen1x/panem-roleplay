@@ -281,7 +281,9 @@ class TestBuy:
         )
 
         assert result.caught is True
-        assert character.jailed_until_tick == constants.MARKET_ILLICIT_JAIL_TICKS
+        # Sentence runs from the current tick (10), not from absolute
+        # tick 0 -- see test_market_service.py's identical regression note.
+        assert character.jailed_until_tick == 10 + constants.MARKET_ILLICIT_JAIL_TICKS
         district_row = await db_session.get(DistrictState, 1)
         assert district_row.peacekeeper_pressure == 0.3 + blackmarket_svc.BLACKMARKET_PRESSURE_DELTA
 
