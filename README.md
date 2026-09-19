@@ -2277,3 +2277,18 @@ Three issues surfaced once the dashboard was actually launched as a real Discord
   or a misbehaving cache, still benefit from a changed URL), but it's the stronger guarantee for a
   dashboard under active iteration, and it's what should have been in place from the first
   caching-related fix rather than reached for only after two rounds of the same report.
+- **The exact same "does not provide an export named 'dropdown'" error recurred after all of the
+  above.** Root cause this time was a genuine process mistake, not a new class of bug: the commit
+  that added `?v=2` to every `_shared.js` import (`app.js` and all nine `tabs/*.js` files' content
+  all changed) never bumped `ASSET_VERSION` (`app.js`) itself -- so `/app.js?v=11` and every
+  `./tabs/<name>.js?v=11` URL stayed byte-for-byte identical to the version already fetched and
+  cached *before* that commit, meaning any URL-keyed cache (which the `Cache-Control: no-store` fix
+  addresses only for requests made *after* it shipped, not ones already cached before) had every
+  right to keep serving those old, pre-`?v=2` files under those unchanged URLs -- including a
+  `travel.js`/`crime.js`/etc. that still imported bare, unversioned `_shared.js`. Bumped
+  `ASSET_VERSION` to `"12"` and `index.html`'s matching `<script src="/app.js?v=12">` to close the
+  gap: every file this feature's static assets are cache-busted through now actually has a version
+  bump behind it. The standing lesson for this convention, now also called out in `_shared.js`'s
+  own docstring: editing a file inside `static/` is only half the fix -- the file (or files) whose
+  *own* content references its URL, all the way up to `index.html`, needs its version literal
+  bumped too, or the change never reaches a client relying on any layer of URL-keyed caching.
