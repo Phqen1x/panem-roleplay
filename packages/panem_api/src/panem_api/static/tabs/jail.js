@@ -148,7 +148,7 @@ export function mount(root, ctx) {
       const body = await ctx.apiFetch(`/activity/dashboard/jail/${ctx.characterId()}/bail`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ discord_id: Number(ctx.discordId()) }),
+        body: JSON.stringify({ discord_id: ctx.discordId() }),
       });
       resultLine.className = "result-line win";
       resultLine.textContent = `${body.character_name} pays ${body.cost} and walks free.`;
@@ -165,7 +165,7 @@ export function mount(root, ctx) {
       const body = await ctx.apiFetch(`/activity/dashboard/jail/${ctx.characterId()}/lockpick/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ discord_id: Number(ctx.discordId()) }),
+        body: JSON.stringify({ discord_id: ctx.discordId() }),
       });
       iframeHost.innerHTML = "";
       const iframe = el("iframe", {

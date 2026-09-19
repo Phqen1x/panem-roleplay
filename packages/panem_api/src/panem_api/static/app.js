@@ -30,7 +30,7 @@ const STEP_TIMEOUT_MS = 8000;
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "13";
+const ASSET_VERSION = "14";
 
 const TABS = ["map", "character", "work", "market", "travel", "social", "jail", "crime", "housing"];
 const TAB_LABELS = {
@@ -158,6 +158,35 @@ async function authenticateWithDiscord() {
     STEP.current = "discordSdk.ready()";
     await withTimeout(discordSdk.ready(), STEP.current);
 
+    // `commands.authorize()` is what shows Discord's consent popup -- and an
+    // access token obtained from it stays valid (per Discord's own OAuth2
+    // token lifetime, independent of this page/iframe) well beyond a single
+    // Activity launch. Skipping straight to `commands.authenticate()` with a
+    // token cached from a previous launch, and only falling back to a fresh
+    // `authorize()` if that cached token no longer works (expired/revoked),
+    // is what avoids re-prompting the player on every single launch -- the
+    // previous code discarded `accessToken` right after using it once,
+    // so every launch ran the full consent flow from a blank slate.
+    // `identify` is a low-sensitivity scope (just id/username/avatar, same
+    // as what any command's autocomplete already sees), so caching it in
+    // localStorage is a reasonable tradeoff given this process's already-
+    // documented lack of a stronger session layer (see this file's own
+    // module docstring, and dashboard_routes.py's).
+    const cachedToken = readStorage("panem_discord_access_token");
+    if (cachedToken) {
+      try {
+        STEP.current = "commands.authenticate() (cached token)";
+        const cachedResult = await withTimeout(
+          discordSdk.commands.authenticate({ access_token: cachedToken }),
+          STEP.current
+        );
+        setStatus("Connected via Discord.");
+        return cachedResult?.user ?? null;
+      } catch (err) {
+        console.warn("Cached Discord token no longer works, re-authorizing:", err);
+      }
+    }
+
     STEP.current = "commands.authorize()";
     const { code } = await withTimeout(
       discordSdk.commands.authorize({
@@ -175,6 +204,7 @@ async function authenticateWithDiscord() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code }),
     });
+    writeStorage("panem_discord_access_token", accessToken);
 
     STEP.current = "commands.authenticate()";
     const authResult = await withTimeout(
@@ -260,7 +290,7 @@ async function refreshIdentity() {
     const body = await fetchJson("/activity/dashboard/identify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ discord_id: Number(discordId) }),
+      body: JSON.stringify({ discord_id: discordId }),
     });
     state.characters = body.characters;
   } catch (err) {

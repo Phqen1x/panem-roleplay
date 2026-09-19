@@ -20,7 +20,7 @@ function sleepPanel(ctx, status, resultLine, onChanged) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          discord_id: Number(ctx.discordId()),
+          discord_id: ctx.discordId(),
           ticks: ticksInput.value ? Number(ticksInput.value) : null,
         }),
       });
@@ -64,7 +64,7 @@ function ownedRow(ctx, property_, resultLine, onChanged) {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ discord_id: Number(ctx.discordId()), ...body }),
+          body: JSON.stringify({ discord_id: ctx.discordId(), ...body }),
         }
       );
       resultLine.className = "result-line win";
@@ -154,7 +154,7 @@ function listingRow(ctx, listing, resultLine, onChanged) {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ discord_id: Number(ctx.discordId()), ...body }),
+          body: JSON.stringify({ discord_id: ctx.discordId(), ...body }),
         }
       );
       resultLine.className = "result-line win";

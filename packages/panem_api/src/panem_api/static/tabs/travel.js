@@ -75,7 +75,7 @@ export function mount(root, ctx) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            discord_id: Number(ctx.discordId()),
+            discord_id: ctx.discordId(),
             location_id: locationSelect.value,
           }),
         }
@@ -98,7 +98,7 @@ export function mount(root, ctx) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            discord_id: Number(ctx.discordId()),
+            discord_id: ctx.discordId(),
             destination_id: Number(districtSelect.value),
           }),
         }

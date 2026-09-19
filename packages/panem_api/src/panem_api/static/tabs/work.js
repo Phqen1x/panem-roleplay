@@ -68,7 +68,7 @@ export function mount(root, ctx) {
     const body = await ctx.apiFetch(`/activity/dashboard/work/${ctx.characterId()}/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ discord_id: Number(ctx.discordId()) }),
+      body: JSON.stringify({ discord_id: ctx.discordId() }),
     });
     currentShiftId = body.shift_id;
     if (body.already_worked_this_tick) {

@@ -2321,3 +2321,55 @@ character selected -- genuinely two separate bugs, not the same caching issue re
   the standard fix for this well-known "a component's own `display` beats the `hidden` attribute"
   CSS gotcha (the same one Bootstrap and other frameworks ship), rather than hunting down every
   individual class that sets its own `display` today or the next one that does so tomorrow.
+
+## Notes on four more live-reported dashboard bugs (identity, ordering, dropdown positioning, re-auth)
+
+- **Header character dropdown said "No characters" despite the player having approved
+  characters.** Root cause: every dashboard POST/PATCH body built its JSON with
+  `discord_id: Number(ctx.discordId())`. A real Discord snowflake is an 18-19 digit integer --
+  `175928847299117063` in Discord's own docs example -- while `Number.MAX_SAFE_INTEGER`
+  (`2**53 == 9007199254740992`) is only 16 digits, ~100-1000x smaller. `Number(...)` doesn't throw
+  past that point; it silently rounds to the nearest representable IEEE-754 double, corrupting the
+  low digits. `POST /activity/dashboard/identify` (the header dropdown's data source) got a
+  mangled id that matched no `User` row, so it always saw zero characters -- while the Character
+  tab's `GET .../characters?discord_id=...` call (a URL query string, never wrapped in `Number()`)
+  sent the id untouched and worked correctly the whole time, which is exactly why the two views
+  disagreed. Fixed by dropping `Number(...)` around every `discord_id` field dashboard-wide (`app.js`,
+  and every `tabs/*.js` POST/PATCH body) -- it's already a string from `getDiscordId()`/the SDK/the
+  manual-id input, and FastAPI/Pydantic parses a numeric JSON *string* into an exact-precision
+  Python `int` with no float ever involved, so passing it through unchanged is both correct and
+  simpler than the broken `Number()` wrapping it replaced. (Every numeric *game* field --
+  `qty`, `age`, `district_id`, `destination_id`, etc. -- is a small int these small numbers are the
+  right call for, and was left as `Number(...)`; only `discord_id` is a snowflake.) Added a
+  regression test (`test_accepts_a_real_snowflake_sent_as_a_json_string`) asserting `/identify`
+  resolves a real ID sent the way the fixed frontend now sends it.
+- **Character tab listed approved/retired/pending characters in creation order instead of grouped
+  by status.** `list_my_characters`' query only had `.order_by(Character.id)`. Added a `CASE`-based
+  `status_rank` (approved=0, retired=1, pending=2) ordered ahead of `Character.id`, so approved
+  characters always sort first regardless of when each one was created.
+- **The shift-phase dropdown on the character-creation form didn't visibly drop down** (and, once
+  investigated, neither did *any* other per-tab dropdown built by `tabs/_shared.js`'s `dropdown()`
+  factory -- market's legal/black-market toggle, crime's steal/burgle target selects, travel's
+  location/district selects, map's district select -- this just happened to be the one instance
+  reported). `.custom-select-menu` is `position: absolute`, which anchors to the nearest
+  *positioned* ancestor. Only the header's own `#character-select` (an ID rule) ever got
+  `position: relative`; the generic `.custom-select` class every `dropdown()` instance actually
+  wears never did. With no positioned ancestor, each of those menus anchored to the page's initial
+  containing block instead of its own toggle button -- `top: calc(100% + 4px)` of *that* renders far
+  down the page, nowhere near where the player clicked. It wasn't failing to open; it was opening
+  somewhere invisible, which looks identical to "doesn't drop down" from the UI. Fixed by moving
+  `position: relative` onto the generic `.custom-select` class in `dashboard.css`, fixing every
+  instance at once instead of only the header's. Verified live with Playwright: the shift-phase
+  menu now renders 4px below its own toggle button, matching the CSS's `calc(100% + 4px)`.
+- **Discord's authorize consent popup appeared on every single Activity launch.** `app.js` called
+  `commands.authorize()` (the step that shows that popup) unconditionally on every load, then threw
+  away the resulting `access_token` right after exchanging it for one use. Discord's OAuth2 access
+  tokens from this flow stay valid well past a single launch, independent of the iframe/session that
+  requested them, so there was no need to re-run the full consent flow every time. Now the token is
+  cached in `localStorage` after a successful exchange; on a later launch, `authenticateWithDiscord()`
+  tries `commands.authenticate()` directly with the cached token first, and only falls back to the
+  full `commands.authorize()` + `/activity/token` exchange if that fails (expired/revoked token, or no
+  cached token yet). `identify` is a low-sensitivity scope (just id/username/avatar, no more than any
+  slash command's `character:` autocomplete already sees), so caching it client-side is a reasonable
+  tradeoff given this process's already-documented lack of a stronger session layer (see
+  `dashboard_routes.py`'s module docstring).

@@ -28,7 +28,7 @@ function characterCard(ctx, character, { onChanged }) {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          discord_id: Number(ctx.discordId()),
+          discord_id: ctx.discordId(),
           avatar_url: avatarInput.value || null,
           proxy_tag: tagInput.value || null,
         }),
@@ -50,7 +50,7 @@ function characterCard(ctx, character, { onChanged }) {
       await ctx.apiFetch(`/activity/dashboard/characters/${character.id}/retire`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ discord_id: Number(ctx.discordId()) }),
+        body: JSON.stringify({ discord_id: ctx.discordId() }),
       });
       onChanged();
     } catch (err) {
@@ -91,7 +91,7 @@ function createForm(ctx, { onCreated }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          discord_id: Number(ctx.discordId()),
+          discord_id: ctx.discordId(),
           district_id: Number(districtInput.value),
           name: nameInput.value,
           age: Number(ageInput.value),

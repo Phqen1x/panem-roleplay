@@ -33,7 +33,7 @@ import secrets
 import redis.asyncio as redis
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from panem_shared import blackmarket as blackmarket_svc
@@ -289,10 +289,16 @@ def build_characters_router(
             user = user_row.scalar_one_or_none()
             if user is None:
                 return MyCharactersResponse(characters=[])
+            status_rank = case(
+                (Character.status == CharacterStatus.APPROVED.value, 0),
+                (Character.status == CharacterStatus.RETIRED.value, 1),
+                (Character.status == CharacterStatus.PENDING.value, 2),
+                else_=3,
+            )
             rows = await session.execute(
                 select(Character)
                 .where(Character.user_id == user.id, Character.status.in_(visible_statuses))
-                .order_by(Character.id)
+                .order_by(status_rank, Character.id)
             )
             return MyCharactersResponse(
                 characters=[_character_detail(c, content=content) for c in rows.scalars().all()]

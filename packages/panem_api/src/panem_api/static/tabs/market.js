@@ -42,7 +42,7 @@ function tradeForm(ctx, { basePath, resultLine, onTraded }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          discord_id: Number(ctx.discordId()),
+          discord_id: ctx.discordId(),
           good_id: goodInput.value,
           qty: Number(qtyInput.value),
         }),

@@ -1069,6 +1069,33 @@ class TestDashboardIdentify:
         assert [c["name"] for c in body["characters"]] == ["Wren"]
         assert body["characters"][0]["id"] == approved_id
 
+    async def test_accepts_a_real_snowflake_sent_as_a_json_string(
+        self, work_app, db_session_factory
+    ):
+        # Real Discord snowflakes are 18-19 digit integers, well past
+        # Number.MAX_SAFE_INTEGER (2**53 == 9007199254740992, 16 digits) --
+        # app.js used to send `discord_id: Number(rawId)` in every JSON
+        # body, which silently rounds a snowflake to the nearest
+        # representable double and corrupts its low digits. The fix sends
+        # the id as-is (a numeric string); FastAPI/Pydantic parses a
+        # numeric JSON string into `int` exactly, no float involved, so
+        # this must resolve the same as if the field were sent as a JSON
+        # number that happened to be small enough to round-trip safely.
+        snowflake = 824399825380032612
+        assert snowflake > 2**53
+        await seed_character(
+            db_session_factory,
+            discord_id=snowflake,
+            character_overrides={"name": "Wren", "status": CharacterStatus.APPROVED.value},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/activity/dashboard/identify", json={"discord_id": str(snowflake)}
+            )
+        assert response.status_code == 200
+        assert [c["name"] for c in response.json()["characters"]] == ["Wren"]
+
     async def test_surfaces_jailed_until_tick_for_the_jail_tab(self, work_app, db_session_factory):
         await seed_character(
             db_session_factory,
@@ -1171,7 +1198,7 @@ class TestDashboardCharacters:
             )
         assert response.status_code == 400
 
-    async def test_list_excludes_rejected_and_dead_but_keeps_pending_approved_retired(
+    async def test_list_excludes_rejected_and_dead_and_sorts_approved_then_retired_then_pending(
         self, work_app, db_session_factory
     ):
         await seed_character(
@@ -1203,8 +1230,13 @@ class TestDashboardCharacters:
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get("/activity/dashboard/characters", params={"discord_id": 5})
         assert response.status_code == 200
-        names = {c["name"] for c in response.json()["characters"]}
-        assert names == {"Wren", "Applicant", "Retiree"}
+        names = [c["name"] for c in response.json()["characters"]]
+        assert set(names) == {"Wren", "Applicant", "Retiree"}
+        # Approved characters sort first, then retired, then pending --
+        # regardless of creation order (Applicant was created before
+        # Retiree above) or of the surrogate id order that would otherwise
+        # fall out of a plain `.order_by(Character.id)`.
+        assert names == ["Wren", "Retiree", "Applicant"]
 
     async def test_update_rejects_a_non_owner(self, work_app, db_session_factory):
         char_id = await seed_character(db_session_factory, discord_id=5)

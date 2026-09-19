@@ -34,9 +34,25 @@ header {
    an Activity's iframe content for its own embedding, which is known to
    break Chromium's native select-popup positioning inside that context
    (the popup either fails to open or renders somewhere invisible). Plain
-   DOM elements sidestep that entirely. */
-#character-select {
+   DOM elements sidestep that entirely.
+
+   `.custom-select-menu` is `position: absolute`, which anchors to the
+   nearest *positioned* ancestor -- normally its own `.custom-select`
+   wrapper. Every per-tab dropdown built by `tabs/_shared.js`'s `dropdown()`
+   factory carries that class, but only the header's own `#character-select`
+   (an ID rule, below) ever got `position: relative`. Every other instance
+   (market's mode select, crime's target selects, travel's location/district
+   selects, character creation's shift select, ...) had no positioned
+   ancestor at all, so its menu anchored to the page's initial containing
+   block instead -- `top: calc(100% + 4px)` of that is far down the page,
+   nowhere near the toggle button that opened it. It wasn't failing to open;
+   it was opening somewhere the player would never see it, which looks
+   identical to "doesn't drop down" from the UI. */
+.custom-select {
   position: relative;
+}
+
+#character-select {
   margin-left: auto;
 }
 

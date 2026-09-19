@@ -109,7 +109,7 @@ export function mount(root, ctx) {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ discord_id: Number(ctx.discordId()), target: stealSelect.value }),
+          body: JSON.stringify({ discord_id: ctx.discordId(), target: stealSelect.value }),
         }
       );
       mountMinigame(body.attempt_id, "steal");
@@ -127,7 +127,7 @@ export function mount(root, ctx) {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ discord_id: Number(ctx.discordId()), owner: burgleSelect.value }),
+          body: JSON.stringify({ discord_id: ctx.discordId(), owner: burgleSelect.value }),
         }
       );
       mountMinigame(body.attempt_id, "burgle");
@@ -143,7 +143,7 @@ export function mount(root, ctx) {
       const body = await ctx.apiFetch(`/activity/dashboard/crime/${ctx.characterId()}/poach`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ discord_id: Number(ctx.discordId()) }),
+        body: JSON.stringify({ discord_id: ctx.discordId() }),
       });
       if (body.caught) {
         resultLine.className = "result-line lose";
