@@ -4,7 +4,7 @@
 // unmodified; Skip calls the existing /activity/work/{id}/result
 // endpoint directly with {won:false, neutral:true}, exactly like the
 // bot's own Skip button does.
-import { fetchJson, el } from "./_shared.js";
+import { fetchJson, el } from "./_shared.js?v=2";
 
 export function mount(root, ctx) {
   const statusEl = el("p", { class: "tab-status" });

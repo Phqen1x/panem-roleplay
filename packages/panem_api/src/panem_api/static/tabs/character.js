@@ -6,7 +6,7 @@
 // router docstring. District is a plain select here rather than inferred
 // from a Discord guild role, the one deliberate simplification from the
 // Discord flow.
-import { fetchJson, el, dropdown } from "./_shared.js";
+import { fetchJson, el, dropdown } from "./_shared.js?v=2";
 
 const SHIFT_PHASES = ["morning", "afternoon", "evening", "night"];
 

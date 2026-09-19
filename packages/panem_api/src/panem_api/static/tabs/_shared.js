@@ -3,6 +3,18 @@
 // self-contained/copy-paste per their own docstrings), the tabs all live
 // inside one shell (`app.js`) that already imports them, so a shared
 // module here is worth the coupling.
+//
+// Every importer uses a static `import ... from "./_shared.js?v=N"` (or
+// `"./tabs/_shared.js?v=N"` from `app.js`) rather than a bare specifier --
+// this file is fetched as its own URL by the browser's module loader,
+// independently of whatever cache-busting the *importing* file's own URL
+// carries, and Discord's Activity iframe embedding is known to cache
+// static assets aggressively at its proxy layer regardless of this
+// server's own response headers. Bump the `?v=` literal in every one of
+// those import statements any time this file's exports change -- a stale
+// cached copy missing a new export surfaces as "The requested module
+// './_shared.js' does not provide an export named '...'" in whichever
+// tabs import it, exactly the bug this convention exists to prevent.
 
 // Dashboard error responses carry the service layer's raw `reason_key`
 // (e.g. "bail_insufficient_funds") as `detail` -- the same key `strings.py`

@@ -2248,3 +2248,15 @@ Three issues surfaced once the dashboard was actually launched as a real Discord
   `renderCharacterOptions()`, which closes the dropdown menu right as the same click opens it. The
   preview-mode Discord-ID input's `change` handler now no-ops when the value hasn't actually
   changed.
+- **That `dropdown()` fix immediately broke most tabs a second way**: "The requested module
+  './_shared.js' does not provide an export named 'dropdown'". Every tab imports `_shared.js` via
+  a plain `import ... from "./_shared.js"` -- a bare specifier with no cache-busting query string,
+  unlike every other dashboard asset (`app.js`, each `tabs/*.js`) which already gets one
+  (`?v=${ASSET_VERSION}`) for exactly this reason: Discord's Activity iframe embedding caches
+  static assets aggressively at its proxy layer, independent of this server's own response
+  headers, so a stale cached `_shared.js` from before `dropdown()` existed kept being served.
+  `_shared.js` was the one file that had never needed its own cache-busting before, since nothing
+  had changed its export list since it was written. Every import site (`app.js` and all nine
+  `tabs/*.js` modules) now points at `"./_shared.js?v=2"` / `"./tabs/_shared.js?v=2"`; `_shared.js`'s
+  own module docstring documents bumping that literal in every importer whenever this file's
+  exports change again.

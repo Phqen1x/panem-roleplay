@@ -4,7 +4,7 @@
 // minigames unmodified -- same pattern as static/tabs/jail.js. /poach
 // never launches an Activity on the bot side either, so it resolves
 // instantly here too.
-import { fetchJson, el, dropdown } from "./_shared.js";
+import { fetchJson, el, dropdown } from "./_shared.js?v=2";
 
 export function mount(root, ctx) {
   const stealSelect = dropdown();

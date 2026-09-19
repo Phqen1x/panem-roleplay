@@ -23,7 +23,7 @@
 // every other dashboard endpoint re-validating discord_id+character_id
 // together) -- there's still no cryptographic auth here, same documented
 // gap as the rest of this process.
-import { fetchJson, el } from "./tabs/_shared.js";
+import { fetchJson, el } from "./tabs/_shared.js?v=2";
 
 const DISCORD_SDK_URL = "/vendor/discord-embedded-app-sdk.js";
 const STEP_TIMEOUT_MS = 8000;

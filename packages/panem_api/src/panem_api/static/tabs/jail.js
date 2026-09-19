@@ -6,7 +6,7 @@
 // `/lockpick` mints) and embedding crime.html in an <iframe>, reusing that
 // page's minigame unmodified; a postMessage from crime.js on completion
 // (see that file's docstring) tells this tab to refresh.
-import { fetchJson, el } from "./_shared.js";
+import { fetchJson, el } from "./_shared.js?v=2";
 
 function jailCellSvg({ occupied, avatarUrl }) {
   const ns = "http://www.w3.org/2000/svg";
