@@ -2,7 +2,7 @@
 // /blackmarket prices|buy|sell in one place (a legal/illicit toggle
 // instead of two separate tabs) -- both are instant-resolve, no
 // minigame/iframe involved, same as their bot commands.
-import { fetchJson, el } from "./_shared.js";
+import { fetchJson, el, dropdown } from "./_shared.js";
 
 function priceTable(prices) {
   const table = el(
@@ -74,11 +74,10 @@ function tradeForm(ctx, { basePath, resultLine, onTraded }) {
 }
 
 export function mount(root, ctx) {
-  const modeSelect = el("select", {}, el("option", { value: "market" }, "Legal market"), el(
-    "option",
-    { value: "blackmarket" },
-    "Black market"
-  ));
+  const modeSelect = dropdown([
+    { value: "market", label: "Legal market" },
+    { value: "blackmarket", label: "Black market" },
+  ]);
   const statusEl = el("p", { class: "tab-status" });
   const trustEl = el("p", { class: "tab-status" });
   const pricesHost = el("div", {});

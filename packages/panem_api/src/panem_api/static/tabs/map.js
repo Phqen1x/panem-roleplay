@@ -3,7 +3,7 @@
 // unchanged from that original version: a schematic layout drawn from each
 // location's map coordinates (no real district map art yet -- see the
 // README), NPCs/characters pushed over a polling WebSocket.
-import { fetchJson, el } from "./_shared.js";
+import { fetchJson, el, dropdown } from "./_shared.js";
 
 function wsUrlFor(districtId) {
   const scheme = location.protocol === "https:" ? "wss:" : "ws:";
@@ -12,7 +12,8 @@ function wsUrlFor(districtId) {
 
 export function mount(root, _ctx) {
   const statusEl = el("p", { class: "tab-status" }, "Loading districts…");
-  const districtSelect = el("select", { disabled: "" });
+  const districtSelect = dropdown();
+  districtSelect.disabled = true;
   const countsEl = el("span", { class: "tab-counts" });
   const canvas = el("canvas", { width: "960", height: "600" });
   root.append(
@@ -89,11 +90,7 @@ export function mount(root, _ctx) {
       return;
     }
     statusEl.textContent = "";
-    districtSelect.innerHTML = "";
-    districtSelect.disabled = false;
-    for (const d of districts) {
-      districtSelect.append(el("option", { value: String(d.id) }, d.name));
-    }
+    districtSelect.setOptions(districts.map((d) => ({ value: d.id, label: d.name })));
     districtSelect.addEventListener("change", () => connectToDistrict(Number(districtSelect.value)));
     if (districts.length > 0) {
       districtSelect.value = String(districts[0].id);

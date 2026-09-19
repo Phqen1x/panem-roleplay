@@ -1,14 +1,14 @@
 // The "Travel" tab: mirrors `/travel` (both its location and
 // cross-district sub-flows) and `/where` (folded into the status panel
 // below rather than a separate action).
-import { fetchJson, el } from "./_shared.js";
+import { fetchJson, el, dropdown } from "./_shared.js";
 
 export function mount(root, ctx) {
   const statusEl = el("p", { class: "tab-status" });
   const whereEl = el("p", { class: "tab-status" });
-  const locationSelect = el("select", {});
+  const locationSelect = dropdown();
   const goLocationBtn = el("button", { class: "btn", type: "button" }, "Go");
-  const districtSelect = el("select", {});
+  const districtSelect = dropdown();
   const goDistrictBtn = el("button", { class: "btn", type: "button" }, "Board train");
   const resultLine = el("p", { class: "result-line" });
 
@@ -40,8 +40,6 @@ export function mount(root, ctx) {
   async function refresh() {
     const characterId = ctx.characterId();
     const discordId = ctx.discordId();
-    locationSelect.innerHTML = "";
-    districtSelect.innerHTML = "";
     if (!characterId || !discordId) {
       statusEl.textContent = "Pick a character above first.";
       whereEl.textContent = "";
@@ -57,13 +55,9 @@ export function mount(root, ctx) {
         : status.location_name
           ? `Currently at ${status.location_name}.`
           : "Not at any particular location right now.";
-      for (const loc of status.locations) {
-        locationSelect.append(el("option", { value: loc.id }, loc.name));
-      }
+      locationSelect.setOptions(status.locations.map((loc) => ({ value: loc.id, label: loc.name })));
       if (status.location_id) locationSelect.value = status.location_id;
-      for (const d of status.districts) {
-        districtSelect.append(el("option", { value: d.id }, d.name));
-      }
+      districtSelect.setOptions(status.districts.map((d) => ({ value: d.id, label: d.name })));
       const disabled = status.in_transit;
       goLocationBtn.disabled = disabled;
       goDistrictBtn.disabled = disabled;

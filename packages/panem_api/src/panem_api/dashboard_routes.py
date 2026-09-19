@@ -193,7 +193,9 @@ class CharacterDetail(BaseModel):
     avatar_url: str | None = None
     proxy_tag: str | None = None
     district_id: int
+    district_name: str
     current_district_id: int
+    current_district_name: str
     job_title: str | None = None
     shift_phase: str | None = None
     job_is_illicit: bool
@@ -201,7 +203,7 @@ class CharacterDetail(BaseModel):
     jailed_until_tick: int | None = None
 
 
-def _character_detail(character: Character) -> CharacterDetail:
+def _character_detail(character: Character, *, content: ContentBundle) -> CharacterDetail:
     return CharacterDetail(
         id=character.id,
         name=character.name,
@@ -212,7 +214,9 @@ def _character_detail(character: Character) -> CharacterDetail:
         avatar_url=character.avatar_url,
         proxy_tag=character.proxy_tag,
         district_id=character.district_id,
+        district_name=content.districts[character.district_id].name,
         current_district_id=character.current_district_id,
+        current_district_name=content.districts[character.current_district_id].name,
         job_title=character.job_title,
         shift_phase=character.shift_phase,
         job_is_illicit=character.job_is_illicit,
@@ -269,17 +273,29 @@ def build_characters_router(
 
     @router.get("", response_model=MyCharactersResponse)
     async def list_my_characters(discord_id: int) -> MyCharactersResponse:
+        """A rejected character is a dead end -- there's nothing left for the
+        player to do with it here (no appeal flow, no resubmission), so
+        unlike the Discord-side moderation queue it's never worth surfacing
+        in this list. Pending/approved/retired characters are all still
+        something the player manages."""
         factory = _require_session_factory(session_factory)
+        visible_statuses = {
+            CharacterStatus.PENDING.value,
+            CharacterStatus.APPROVED.value,
+            CharacterStatus.RETIRED.value,
+        }
         async with session_scope(factory) as session:
             user_row = await session.execute(select(User).where(User.discord_id == discord_id))
             user = user_row.scalar_one_or_none()
             if user is None:
                 return MyCharactersResponse(characters=[])
             rows = await session.execute(
-                select(Character).where(Character.user_id == user.id).order_by(Character.id)
+                select(Character)
+                .where(Character.user_id == user.id, Character.status.in_(visible_statuses))
+                .order_by(Character.id)
             )
             return MyCharactersResponse(
-                characters=[_character_detail(c) for c in rows.scalars().all()]
+                characters=[_character_detail(c, content=content) for c in rows.scalars().all()]
             )
 
     @router.post("", response_model=CharacterDetail)
@@ -316,7 +332,7 @@ def build_characters_router(
                 )
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
-            return _character_detail(character)
+            return _character_detail(character, content=content)
 
     @router.patch("/{character_id}", response_model=CharacterDetail)
     async def update_my_character(
@@ -336,7 +352,7 @@ def build_characters_router(
                     character.proxy_tag = body.proxy_tag
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
-            return _character_detail(character)
+            return _character_detail(character, content=content)
 
     @router.post("/{character_id}/retire", response_model=CharacterDetail)
     async def retire_my_character(
@@ -351,7 +367,7 @@ def build_characters_router(
                 character = await characters_svc.retire_character(session, character)
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
-            return _character_detail(character)
+            return _character_detail(character, content=content)
 
     return router
 
@@ -1385,6 +1401,7 @@ class HousingOwnedProperty(BaseModel):
     kind: str
     tier: str
     district_id: int
+    district_name: str
     for_sale: bool
     asking_price: float | None = None
     mortgage_principal: float
@@ -1398,6 +1415,7 @@ class HousingStatusResponse(BaseModel):
     home_property_id: int | None = None
     home_kind: str | None = None
     home_district_id: int | None = None
+    home_district_name: str | None = None
     owned: list[HousingOwnedProperty]
     listings: list[HousingListing]
 
@@ -1594,6 +1612,7 @@ def build_housing_router(
                     kind=p.kind,
                     tier=p.tier,
                     district_id=p.district_id,
+                    district_name=content.districts[p.district_id].name,
                     for_sale=p.for_sale,
                     asking_price=p.asking_price,
                     mortgage_principal=round(p.mortgage_principal, 2),
@@ -1632,6 +1651,11 @@ def build_housing_router(
                 home_property_id=home_property.id if home_property is not None else None,
                 home_kind=home_property.kind if home_property is not None else None,
                 home_district_id=(home_property.district_id if home_property is not None else None),
+                home_district_name=(
+                    content.districts[home_property.district_id].name
+                    if home_property is not None
+                    else None
+                ),
                 owned=owned,
                 listings=listings,
             )

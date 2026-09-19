@@ -4,10 +4,10 @@
 // minigames unmodified -- same pattern as static/tabs/jail.js. /poach
 // never launches an Activity on the bot side either, so it resolves
 // instantly here too.
-import { fetchJson, el } from "./_shared.js";
+import { fetchJson, el, dropdown } from "./_shared.js";
 
 export function mount(root, ctx) {
-  const stealSelect = el("select", {});
+  const stealSelect = dropdown();
   const stealBtn = el("button", { class: "btn", type: "button" }, "Steal");
   const stealPanel = el(
     "div",
@@ -17,7 +17,7 @@ export function mount(root, ctx) {
     stealBtn
   );
 
-  const burgleSelect = el("select", {});
+  const burgleSelect = dropdown();
   const burgleBtn = el("button", { class: "btn", type: "button" }, "Burgle");
   const burglePanel = el(
     "div",
@@ -64,8 +64,6 @@ export function mount(root, ctx) {
   async function loadOptions() {
     const characterId = ctx.characterId();
     const discordId = ctx.discordId();
-    stealSelect.innerHTML = "";
-    burgleSelect.innerHTML = "";
     if (!characterId || !discordId) {
       statusEl.textContent = "Pick a character above first.";
       [stealPanel, burglePanel, poachPanel].forEach((p) => (p.hidden = true));
@@ -82,25 +80,21 @@ export function mount(root, ctx) {
           `/activity/dashboard/crime/${characterId}/burgle-targets?discord_id=${encodeURIComponent(discordId)}`
         ),
       ]);
-      stealSelect.innerHTML = "";
       if (stealBody.targets.length === 0) {
-        stealSelect.append(el("option", { value: "" }, "Nobody here to steal from"));
+        stealSelect.setOptions([{ value: "", label: "Nobody here to steal from" }]);
         stealBtn.disabled = true;
       } else {
         stealBtn.disabled = false;
-        for (const t of stealBody.targets) {
-          stealSelect.append(el("option", { value: t.name }, `${t.name} (${t.kind})`));
-        }
+        stealSelect.setOptions(
+          stealBody.targets.map((t) => ({ value: t.name, label: `${t.name} (${t.kind})` }))
+        );
       }
-      burgleSelect.innerHTML = "";
       if (burgleBody.owners.length === 0) {
-        burgleSelect.append(el("option", { value: "" }, "No houses to burgle here"));
+        burgleSelect.setOptions([{ value: "", label: "No houses to burgle here" }]);
         burgleBtn.disabled = true;
       } else {
         burgleBtn.disabled = false;
-        for (const owner of burgleBody.owners) {
-          burgleSelect.append(el("option", { value: owner }, owner));
-        }
+        burgleSelect.setOptions(burgleBody.owners.map((owner) => ({ value: owner, label: owner })));
       }
     } catch (err) {
       statusEl.textContent = `Could not load targets: ${err.message}`;

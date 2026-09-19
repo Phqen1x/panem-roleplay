@@ -6,7 +6,7 @@
 // router docstring. District is a plain select here rather than inferred
 // from a Discord guild role, the one deliberate simplification from the
 // Discord flow.
-import { fetchJson, el } from "./_shared.js";
+import { fetchJson, el, dropdown } from "./_shared.js";
 
 const SHIFT_PHASES = ["morning", "afternoon", "evening", "night"];
 
@@ -62,7 +62,7 @@ function characterCard(ctx, character, { onChanged }) {
   return el(
     "div",
     { class: "panel" },
-    el("h2", { text: `${character.name} (District ${character.district_id})` }),
+    el("h2", { text: `${character.name} (${character.district_name})` }),
     statusLine,
     el("p", { class: "tab-status" }, `${character.job_title || "no job"} -- ${character.money} money`),
     el("div", { class: "field-row" }, el("label", { text: "Avatar URL" }), avatarInput),
@@ -77,10 +77,7 @@ function createForm(ctx, { onCreated }) {
   const ageInput = el("input", { type: "number", value: "16", min: "12", max: "99" });
   const districtInput = el("input", { type: "number", value: "1", min: "0", max: "12" });
   const jobInput = el("input", { type: "text", maxlength: "80", placeholder: "Miner, Baker, ..." });
-  const phaseSelect = el("select", {});
-  for (const phase of SHIFT_PHASES) {
-    phaseSelect.append(el("option", { value: phase }, phase));
-  }
+  const phaseSelect = dropdown(SHIFT_PHASES.map((phase) => ({ value: phase, label: phase })));
   const illicitInput = el("input", { type: "checkbox" });
   const appearanceInput = el("textarea", { rows: "2", maxlength: "400" });
   const backstoryInput = el("textarea", { rows: "3", maxlength: "1500" });

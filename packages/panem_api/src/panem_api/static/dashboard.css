@@ -15,8 +15,73 @@ header {
   width: 160px;
 }
 
+/* A hand-rolled dropdown, not a native <select> -- Discord scales/transforms
+   an Activity's iframe content for its own embedding, which is known to
+   break Chromium's native select-popup positioning inside that context
+   (the popup either fails to open or renders somewhere invisible). Plain
+   DOM elements sidestep that entirely. */
 #character-select {
+  position: relative;
   margin-left: auto;
+}
+
+.custom-select-toggle {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 28px 4px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  position: relative;
+}
+
+.custom-select-toggle:disabled {
+  cursor: default;
+  color: var(--muted);
+}
+
+.custom-select-toggle::after {
+  content: "\25BE";
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.custom-select-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  z-index: 20;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.custom-select-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.custom-select-menu button:hover,
+.custom-select-menu button.active {
+  background: var(--accent);
+  color: #14161c;
 }
 
 #tab-nav {

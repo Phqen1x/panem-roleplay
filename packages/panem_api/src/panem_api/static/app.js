@@ -30,7 +30,7 @@ const STEP_TIMEOUT_MS = 8000;
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "10";
+const ASSET_VERSION = "11";
 
 const TABS = ["map", "character", "work", "market", "travel", "social", "jail", "crime", "housing"];
 const TAB_LABELS = {
@@ -49,7 +49,8 @@ const statusEl = document.getElementById("status");
 const navEl = document.getElementById("tab-nav");
 const tabRootEl = document.getElementById("tab-root");
 const discordIdInput = document.getElementById("discord-id-input");
-const characterSelect = document.getElementById("character-select");
+const characterToggleEl = document.getElementById("character-select-toggle");
+const characterMenuEl = document.getElementById("character-select-menu");
 
 const state = {
   discordUser: null,
@@ -199,23 +200,53 @@ async function authenticateWithDiscord() {
   }
 }
 
+function characterLabel(character) {
+  return character.jailed_until_tick ? `${character.name} (jailed)` : character.name;
+}
+
+function closeCharacterMenu() {
+  characterMenuEl.hidden = true;
+}
+
+async function selectCharacter(id) {
+  closeCharacterMenu();
+  if (id === state.characterId) return;
+  state.characterId = id;
+  writeStorage("panem_character_id", String(id));
+  const chosen = state.characters.find((c) => c.id === id);
+  if (chosen) characterToggleEl.textContent = characterLabel(chosen);
+  await showTab(currentTabName());
+}
+
 function renderCharacterOptions() {
-  characterSelect.innerHTML = "";
+  characterMenuEl.innerHTML = "";
+  closeCharacterMenu();
   if (state.characters.length === 0) {
-    characterSelect.disabled = true;
-    characterSelect.append(el("option", {}, "No characters"));
+    characterToggleEl.disabled = true;
+    characterToggleEl.textContent = "No characters";
     state.characterId = null;
     return;
   }
-  characterSelect.disabled = false;
-  for (const character of state.characters) {
-    const label = character.jailed_until_tick ? `${character.name} (jailed)` : character.name;
-    characterSelect.append(el("option", { value: String(character.id) }, label));
-  }
+  characterToggleEl.disabled = false;
   const savedId = Number(readStorage("panem_character_id"));
   const stillValid = state.characters.some((c) => c.id === savedId);
   state.characterId = stillValid ? savedId : state.characters[0].id;
-  characterSelect.value = String(state.characterId);
+  for (const character of state.characters) {
+    const item = el("li", {}, [
+      el(
+        "button",
+        {
+          type: "button",
+          class: character.id === state.characterId ? "active" : "",
+          onclick: () => selectCharacter(character.id),
+        },
+        characterLabel(character)
+      ),
+    ]);
+    characterMenuEl.append(item);
+  }
+  const selected = state.characters.find((c) => c.id === state.characterId);
+  characterToggleEl.textContent = selected ? characterLabel(selected) : "No characters";
 }
 
 async function refreshIdentity() {
@@ -305,7 +336,17 @@ function setupIdentityControls() {
     discordIdInput.value = savedManualId;
   }
   discordIdInput.addEventListener("change", async () => {
-    state.manualDiscordId = discordIdInput.value.trim();
+    const next = discordIdInput.value.trim();
+    // A real click on the character dropdown blurs this field first (focus
+    // moves to the toggle button), and a browser fires "change" on blur
+    // whenever the field's value differs from what it was when it *gained*
+    // focus -- which, since this field is filled programmatically rather
+    // than typed into fresh each time, fires again here even though nothing
+    // actually changed. Without this guard that spuriously re-runs
+    // refreshIdentity() -> renderCharacterOptions(), which closes the
+    // dropdown menu it was rebuilding right as the same click opens it.
+    if (next === state.manualDiscordId) return;
+    state.manualDiscordId = next;
     writeStorage("panem_discord_id", state.manualDiscordId);
     // Deliberately doesn't remount the current tab afterward: refreshIdentity
     // is a network round trip, and remounting once it resolves would wipe
@@ -316,10 +357,17 @@ function setupIdentityControls() {
     // tab visit.
     await refreshIdentity();
   });
-  characterSelect.addEventListener("change", async () => {
-    state.characterId = Number(characterSelect.value);
-    writeStorage("panem_character_id", String(state.characterId));
-    await showTab(currentTabName());
+  characterToggleEl.addEventListener("click", () => {
+    if (characterToggleEl.disabled) return;
+    characterMenuEl.hidden = !characterMenuEl.hidden;
+  });
+  document.addEventListener("click", (event) => {
+    if (!characterMenuEl.hidden && !event.composedPath().includes(document.getElementById("character-select"))) {
+      closeCharacterMenu();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeCharacterMenu();
   });
 }
 

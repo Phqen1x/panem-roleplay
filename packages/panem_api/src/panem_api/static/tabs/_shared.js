@@ -24,6 +24,92 @@ export async function fetchJson(path, options) {
   return body;
 }
 
+// A hand-rolled dropdown standing in for a native <select> -- Discord
+// scales/transforms an Activity's iframe content for its own embedding,
+// which is known to break Chromium's native select-popup positioning in
+// that context (the popup either fails to open or renders somewhere
+// invisible/unclickable). This mimics just enough of <select>'s surface
+// (a `value` getter/setter, a `disabled` setter, a real "change" event)
+// that call sites barely have to change: swap `el("select", {})` for
+// `dropdown()`, and repeated `.append(el("option", {value}, label))`
+// calls for one `.setOptions([{value, label}, ...])` call.
+export function dropdown(initialOptions) {
+  const wrapper = el("div", { class: "custom-select" });
+  const toggle = el("button", { type: "button", class: "custom-select-toggle" });
+  const menu = el("ul", { class: "custom-select-menu" });
+  menu.hidden = true;
+  wrapper.append(toggle, menu);
+
+  let opts = [];
+  let current = "";
+
+  function close() {
+    menu.hidden = true;
+  }
+
+  function renderMenu() {
+    menu.innerHTML = "";
+    for (const opt of opts) {
+      const button = el(
+        "button",
+        {
+          type: "button",
+          class: opt.value === current ? "active" : "",
+          onclick: () => {
+            current = opt.value;
+            toggle.textContent = opt.label;
+            close();
+            wrapper.dispatchEvent(new Event("change"));
+          },
+        },
+        opt.label
+      );
+      menu.append(el("li", {}, button));
+    }
+  }
+
+  toggle.addEventListener("click", () => {
+    if (toggle.disabled) return;
+    menu.hidden = !menu.hidden;
+  });
+  document.addEventListener("click", (event) => {
+    if (!menu.hidden && !event.composedPath().includes(wrapper)) close();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") close();
+  });
+
+  Object.defineProperty(wrapper, "value", {
+    get: () => current,
+    set(v) {
+      current = String(v);
+      const match = opts.find((o) => o.value === current);
+      toggle.textContent = match ? match.label : "";
+      renderMenu();
+    },
+  });
+  Object.defineProperty(wrapper, "disabled", {
+    get: () => toggle.disabled,
+    set(v) {
+      toggle.disabled = v;
+    },
+  });
+
+  wrapper.setOptions = (entries) => {
+    opts = entries.map((entry) => ({ value: String(entry.value), label: entry.label }));
+    if (!opts.some((o) => o.value === current)) {
+      current = opts.length > 0 ? opts[0].value : "";
+    }
+    const match = opts.find((o) => o.value === current);
+    toggle.textContent = match ? match.label : "No options";
+    toggle.disabled = opts.length === 0;
+    renderMenu();
+  };
+
+  if (initialOptions) wrapper.setOptions(initialOptions);
+  return wrapper;
+}
+
 export function el(tag, attrs, ...children) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs || {})) {

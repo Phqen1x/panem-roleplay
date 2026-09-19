@@ -1171,7 +1171,7 @@ class TestDashboardCharacters:
             )
         assert response.status_code == 400
 
-    async def test_list_returns_every_status_for_that_discord_id(
+    async def test_list_excludes_rejected_and_dead_but_keeps_pending_approved_retired(
         self, work_app, db_session_factory
     ):
         await seed_character(
@@ -1184,12 +1184,27 @@ class TestDashboardCharacters:
             discord_id=5,
             character_overrides={"name": "Applicant", "status": CharacterStatus.PENDING.value},
         )
+        await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"name": "Retiree", "status": CharacterStatus.RETIRED.value},
+        )
+        await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"name": "Denied", "status": CharacterStatus.REJECTED.value},
+        )
+        await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"name": "Deceased", "status": CharacterStatus.DEAD.value},
+        )
         transport = httpx.ASGITransport(app=work_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get("/activity/dashboard/characters", params={"discord_id": 5})
         assert response.status_code == 200
         names = {c["name"] for c in response.json()["characters"]}
-        assert names == {"Wren", "Applicant"}
+        assert names == {"Wren", "Applicant", "Retiree"}
 
     async def test_update_rejects_a_non_owner(self, work_app, db_session_factory):
         char_id = await seed_character(db_session_factory, discord_id=5)

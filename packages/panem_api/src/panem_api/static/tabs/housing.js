@@ -41,7 +41,7 @@ function sleepPanel(ctx, status, resultLine, onChanged) {
       "p",
       { class: "tab-status" },
       status.home_property_id
-        ? `Home: ${status.home_kind} #${status.home_property_id} in District ${status.home_district_id}`
+        ? `Home: ${status.home_kind} #${status.home_property_id} in ${status.home_district_name}`
         : "No fixed home."
     ),
     el("div", { class: "field-row" }, el("label", { text: "Sleep" }), ticksInput, sleepBtn)
@@ -113,7 +113,7 @@ function ownedRow(ctx, property_, resultLine, onChanged) {
     el(
       "span",
       {},
-      `#${property_.id} ${property_.kind} (${property_.tier}) -- District ${property_.district_id}` +
+      `#${property_.id} ${property_.kind} (${property_.tier}) -- ${property_.district_name}` +
         (property_.mortgage_principal > 0
           ? ` -- mortgage ${property_.mortgage_principal} (${property_.mortgage_payment}/installment)`
           : "") +

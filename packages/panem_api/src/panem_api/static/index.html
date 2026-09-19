@@ -5,19 +5,22 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Panem: The Long Year</title>
 <link rel="stylesheet" href="/style.css" />
-<link rel="stylesheet" href="/dashboard.css?v=1" />
+<link rel="stylesheet" href="/dashboard.css?v=2" />
 </head>
 <body>
 <header>
   <h1>Panem: The Long Year</h1>
   <input id="discord-id-input" type="text" placeholder="Discord ID (preview mode)" hidden />
-  <select id="character-select" disabled>
-    <option>No characters</option>
-  </select>
+  <div id="character-select" class="custom-select">
+    <button type="button" id="character-select-toggle" class="custom-select-toggle" disabled>
+      No characters
+    </button>
+    <ul id="character-select-menu" class="custom-select-menu" hidden></ul>
+  </div>
 </header>
 <nav id="tab-nav"></nav>
 <p id="status">Connecting&hellip;</p>
 <div id="tab-root"></div>
-<script type="module" src="/app.js?v=10"></script>
+<script type="module" src="/app.js?v=11"></script>
 </body>
 </html>

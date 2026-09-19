@@ -2209,3 +2209,42 @@ per domain), sharing one identity model and one cross-process-move pattern throu
   `favicon.ico` 404. A real Discord-launched Activity iframe handshake (the SDK's `authenticate()`
   call against Discord's actual OAuth flow) can't be verified from this environment -- the same
   documented gap `app.py`'s own module docstring already calls out for `/activity/work|crime/*`.
+
+## Notes on dashboard fixes from live Discord testing
+
+Three issues surfaced once the dashboard was actually launched as a real Discord Activity
+(the one path that can't be exercised from this environment -- see the note directly above).
+
+- **Rejected characters showed up in the Character tab.** `GET /activity/dashboard/characters`
+  (the tab's own listing, distinct from `/identify`'s header picker which already filtered to
+  `APPROVED`) returned every character regardless of status. A rejected character is a dead end
+  here -- no appeal/resubmission flow exists in the dashboard -- so it's excluded now; pending,
+  approved, and retired characters (still things a player manages) remain visible. `DEAD` is
+  excluded for the same reason as `REJECTED`.
+- **District 0 (The Capitol) rendered as the literal string "District 0"** in the Character and
+  Housing tabs. Those tabs built their own `District ${id}` label client-side instead of using
+  the district's real name from content -- true for every district, not just 0, but only
+  noticeable there since every other district already has a distinct number people don't read
+  literally. `CharacterDetail`/`HousingOwnedProperty`/`HousingStatusResponse` now carry
+  `district_name`/`current_district_name`/`home_district_name` resolved server-side from
+  `ContentBundle.districts` (the same source `travel.py`'s status endpoint already used), and the
+  two tabs display those instead of formatting the id themselves.
+- **The header character-selection dropdown did nothing when clicked.** Root cause: Discord
+  scales/transforms an Activity's iframe content for its own embedding, which is a known way to
+  break Chromium's native `<select>` popup positioning -- the popup either fails to open or
+  renders somewhere invisible/unclickable, and this can't be reproduced in a plain (non-Discord)
+  browser tab, which is exactly why it was never caught during the original build's Playwright
+  passes. Every native `<select>` in the dashboard (`app.js`'s header picker, plus travel's
+  location/district selects, crime's target selects, market's legal/black-market toggle, the
+  character-creation shift-phase select, and the map tab's district select) is now a hand-rolled
+  dropdown built from plain `<div>`/`<button>`/`<ul>` elements (`tabs/_shared.js`'s new
+  `dropdown()` helper, mimicking just enough of `<select>`'s surface -- a `value` getter/setter, a
+  `disabled` setter, a real `"change"` event -- that call sites needed only mechanical changes).
+  Fixing this surfaced a second, genuine bug in the header widget itself: a real click on the
+  toggle first blurs whatever previously had focus (the manual "Discord ID" preview field), and a
+  browser fires a native `change` event on blur whenever the field's value differs from what it
+  was when the field *gained* focus -- true here even with no edit, since the field is filled
+  programmatically rather than typed into per visit. That spuriously re-ran `refreshIdentity()` ->
+  `renderCharacterOptions()`, which closes the dropdown menu right as the same click opens it. The
+  preview-mode Discord-ID input's `change` handler now no-ops when the value hasn't actually
+  changed.
