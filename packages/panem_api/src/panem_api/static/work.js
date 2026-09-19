@@ -57,7 +57,7 @@
 // own status without the player having to reload anything. A no-op when
 // there's no parent to hear it (the normal Discord-launched/plain-link
 // case).
-const ASSET_VERSION = "7";
+const ASSET_VERSION = "8";
 
 const [coinflip, connect4, minesweeper, poison, snake, solitaire] = await Promise.all([
   import(`./games/coinflip.js?v=${ASSET_VERSION}`),
@@ -82,6 +82,10 @@ const boardEl = document.getElementById("board");
 const resultEl = document.getElementById("result");
 
 let shiftId = null;
+// Set once `main()` picks a game, read by `finish()` -- lets the result
+// message tell the dashboard's Work tab which minigame this was, for its
+// work log (see static/tabs/work.js).
+let currentGameLabel = null;
 
 function setStatus(text) {
   statusEl.textContent = text;
@@ -122,7 +126,7 @@ async function finish(won, { neutral = false } = {}) {
     if (body.arrested) {
       resultEl.textContent += " Peacekeepers catch up with them -- fined and jailed.";
     }
-    notifyParent({ shiftId, ...body });
+    notifyParent({ shiftId, game: currentGameLabel, ...body });
   } catch (err) {
     resultEl.hidden = false;
     resultEl.className = "lose";
@@ -173,6 +177,7 @@ async function main() {
   const levelIndex = Math.max(0, LEVELS.indexOf(info.level));
   const pool = gamesForLevel(levelIndex);
   const game = pool[Math.floor(Math.random() * pool.length)];
+  currentGameLabel = game.label;
   setStatus(`${info.character_name} works as ${info.job_title}. ${game.instructions(levelIndex)}`);
   boardEl.hidden = false;
   game.mount(boardEl, { onFinish: finish, setStatus, levelIndex });

@@ -2373,3 +2373,25 @@ character selected -- genuinely two separate bugs, not the same caching issue re
   slash command's `character:` autocomplete already sees), so caching it client-side is a reasonable
   tradeoff given this process's already-documented lack of a stronger session layer (see
   `dashboard_routes.py`'s module docstring).
+
+## Work tab: result display delay + a client-side work log
+
+Two requested improvements to the dashboard's Work tab, both in `static/tabs/work.js`:
+
+- **The minigame's result screen used to disappear instantly.** `work.js`'s (the standalone
+  minigame page, `static/work.js`) `finish()` posts a `work-result` message to the parent window
+  the moment it has one, and the dashboard tab's listener used to clear the iframe and refresh in
+  that same event -- closing the game the exact instant it announced "X earns N money" (or a
+  level-up, or an arrest), before anyone could actually read it. The listener now leaves the iframe
+  (and its result screen) on screen for `RESULT_DISPLAY_MS` (5 seconds) before clearing it and
+  calling `refresh()`; starting a new shift or unmounting the tab cancels that pending timer so it
+  can't fire against a since-replaced iframe.
+- **A work log panel** now sits to the right of the Work tab (`.work-layout`'s two columns in
+  `dashboard.css`), listing recent shift outcomes for the selected character -- which minigame was
+  played (or "Skip" for a neutral-wage skip), win/loss color-coded green/red, the wage earned, and
+  any level-up/arrest. There's no server-side shift-history endpoint backing this (nothing else in
+  this codebase tracks per-shift history either), so it's kept client-side in `localStorage`, keyed
+  per character id, capped at the last 20 entries -- the same kind of convenience-only, not-a-source-
+  -of-truth persistence `app.js` already uses for the remembered character selection. The standalone
+  minigame page now also reports which game was played (`game: game.label` in its `work-result`
+  message, from each `games/*.js` module's own exported `label`) so the log can show it.

@@ -162,6 +162,60 @@ header {
   margin-bottom: 8px;
 }
 
+/* Work tab: main panel + iframe on the left, a running log of recent
+   shift outcomes on the right (tabs/work.js). */
+.work-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.work-layout .work-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.work-log {
+  width: 240px;
+  flex-shrink: 0;
+}
+
+.work-log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.work-log-list li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.work-log-list li:last-child {
+  border-bottom: none;
+}
+
+.work-log-list li.win {
+  color: #7cd992;
+}
+
+.work-log-list li.lose {
+  color: #e0736b;
+}
+
+@media (max-width: 640px) {
+  .work-layout {
+    flex-direction: column;
+  }
+
+  .work-log {
+    width: 100%;
+  }
+}
+
 .map-toolbar {
   display: flex;
   align-items: center;
