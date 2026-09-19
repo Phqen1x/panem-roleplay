@@ -852,6 +852,21 @@ Two support fixes, not a milestone.
   failures to a new `POST /activity/debug` (logged server-side as
   `activity_client_error`) since a real Discord Activity's devtools can
   be genuinely hard to reach to read the browser console directly.
+- **`commands.authorize()` failing with `OAuth2 Error: invalid_request:
+  Missing "redirect_uri" in request"` is a Developer Portal setting, not
+  a code bug.** The embedded-app-sdk's RPC-brokered `authorize()` never
+  actually uses a redirect URI (the Discord client handles returning
+  control to the Activity internally) -- but Discord's OAuth backend
+  still refuses to issue an authorization code at all unless the
+  Application has *at least one* Redirect URI registered under its
+  **OAuth2** settings tab. Add any URL there (it's never visited; even
+  `http://127.0.0.1` works) and save -- no redeploy needed, existing
+  Activity sessions pick it up on the next `authorize()` call. (Also:
+  the client-side status banner and `activity_client_error` log line
+  used to stringify any non-`Error` SDK rejection -- exactly what an
+  RPC OAuth error is -- as the useless `"[object Object]"`; `app.js`'s
+  `describeError()` now surfaces the real `code`/`message` instead,
+  which is what made this diagnosable.)
 
 ## Notes on this Milestone K (Phase 6: LLM-driven NPC dialogue) build
 
