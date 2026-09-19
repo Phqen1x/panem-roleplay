@@ -87,6 +87,7 @@ class DashboardCharacterSummary(BaseModel):
     current_district_id: int
     money: int
     jailed_until_tick: int | None = None
+    jailed: bool = False
 
 
 class IdentifyRequest(BaseModel):
@@ -165,6 +166,7 @@ def build_identify_router(*, session_factory: async_sessionmaker[AsyncSession] |
                 .order_by(Character.id)
             )
             characters = rows.scalars().all()
+            current_tick = await _current_tick(session)
             return IdentifyResponse(
                 characters=[
                     DashboardCharacterSummary(
@@ -175,6 +177,8 @@ def build_identify_router(*, session_factory: async_sessionmaker[AsyncSession] |
                         current_district_id=c.current_district_id,
                         money=c.money,
                         jailed_until_tick=c.jailed_until_tick,
+                        jailed=c.jailed_until_tick is not None
+                        and c.jailed_until_tick > current_tick,
                     )
                     for c in characters
                 ]
@@ -201,9 +205,12 @@ class CharacterDetail(BaseModel):
     job_is_illicit: bool
     money: int
     jailed_until_tick: int | None = None
+    jailed: bool = False
 
 
-def _character_detail(character: Character, *, content: ContentBundle) -> CharacterDetail:
+def _character_detail(
+    character: Character, *, content: ContentBundle, current_tick: int
+) -> CharacterDetail:
     return CharacterDetail(
         id=character.id,
         name=character.name,
@@ -222,6 +229,9 @@ def _character_detail(character: Character, *, content: ContentBundle) -> Charac
         job_is_illicit=character.job_is_illicit,
         money=character.money,
         jailed_until_tick=character.jailed_until_tick,
+        jailed=(
+            character.jailed_until_tick is not None and character.jailed_until_tick > current_tick
+        ),
     )
 
 
@@ -300,8 +310,12 @@ def build_characters_router(
                 .where(Character.user_id == user.id, Character.status.in_(visible_statuses))
                 .order_by(status_rank, Character.id)
             )
+            current_tick = await _current_tick(session)
             return MyCharactersResponse(
-                characters=[_character_detail(c, content=content) for c in rows.scalars().all()]
+                characters=[
+                    _character_detail(c, content=content, current_tick=current_tick)
+                    for c in rows.scalars().all()
+                ]
             )
 
     @router.post("", response_model=CharacterDetail)
@@ -338,7 +352,8 @@ def build_characters_router(
                 )
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
-            return _character_detail(character, content=content)
+            current_tick = await _current_tick(session)
+            return _character_detail(character, content=content, current_tick=current_tick)
 
     @router.patch("/{character_id}", response_model=CharacterDetail)
     async def update_my_character(
@@ -358,7 +373,8 @@ def build_characters_router(
                     character.proxy_tag = body.proxy_tag
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
-            return _character_detail(character, content=content)
+            current_tick = await _current_tick(session)
+            return _character_detail(character, content=content, current_tick=current_tick)
 
     @router.post("/{character_id}/retire", response_model=CharacterDetail)
     async def retire_my_character(
@@ -373,7 +389,8 @@ def build_characters_router(
                 character = await characters_svc.retire_character(session, character)
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
-            return _character_detail(character, content=content)
+            current_tick = await _current_tick(session)
+            return _character_detail(character, content=content, current_tick=current_tick)
 
     return router
 
@@ -817,6 +834,11 @@ def build_work_router(*, session_factory: async_sessionmaker[AsyncSession] | Non
             )
             if not has_job(character):
                 raise HTTPException(status_code=400, detail="job_none_set")
+            current_tick = await _current_tick(session)
+            try:
+                jail_svc.check_not_jailed(character, current_tick, "work_jailed")
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
 
             open_shift = (
                 await session.execute(
@@ -1145,9 +1167,12 @@ def build_travel_router(
                 session, discord_id=body.discord_id, character_id=character_id
             )
             district = content.district(character.current_district_id)
+            current_tick = await _current_tick(session)
             try:
                 location = travel_svc.resolve_location(district, body.location_id)
-                travel_svc.check_can_travel(character=character, location=location)
+                travel_svc.check_can_travel(
+                    character=character, location=location, current_tick=current_tick
+                )
             except (NotFound, NotAllowed) as exc:
                 raise _http_from_service_error(exc) from exc
             character.location_id = location.id

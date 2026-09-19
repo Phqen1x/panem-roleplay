@@ -166,6 +166,16 @@ def check_is_jailed(character: Character, current_tick: int) -> None:
         raise NotAllowed("jail_not_jailed", name=character.name)
 
 
+def check_not_jailed(character: Character, current_tick: int, reason_key: str) -> None:
+    """The mirror of `check_is_jailed`, for actions a jailed character
+    should be *blocked* from taking (travelling, working) rather than
+    ones only a jailed character can take (bail, lockpick). `reason_key`
+    lets each caller surface its own message (`travel_jailed`,
+    `work_jailed`) for the same underlying refusal."""
+    if character.jailed_until_tick is not None and character.jailed_until_tick > current_tick:
+        raise NotAllowed(reason_key, name=character.name)
+
+
 def bail_cost(character: Character, current_tick: int) -> int:
     """`BAIL_BASE_COST` plus `BAIL_COST_PER_REMAINING_TICK` per tick still
     left on the sentence -- bailing out right after being caught costs

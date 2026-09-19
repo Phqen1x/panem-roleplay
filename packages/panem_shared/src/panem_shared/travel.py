@@ -20,6 +20,7 @@ from panem_shared.content.schemas import District, Location
 from panem_shared.db.models import Character, Inventory
 from panem_shared.enums import CharacterStatus, LocationKind, OwnerKind, Position
 from panem_shared.errors import NotAllowed, NotFound
+from panem_shared.jail import check_not_jailed
 from panem_shared.location_access import has_location_access
 
 
@@ -30,12 +31,13 @@ def resolve_location(district: District, location_id: str) -> Location:
     return location
 
 
-def check_can_travel(*, character: Character, location: Location) -> None:
+def check_can_travel(*, character: Character, location: Location, current_tick: int) -> None:
     """FR-LOC-2/3. Raises `NotAllowed` on refusal."""
     if character.status == CharacterStatus.DEAD.value:
         raise NotAllowed("character_dead")
     if character.status != CharacterStatus.APPROVED.value:
         raise NotAllowed("character_not_approved")
+    check_not_jailed(character, current_tick, "travel_jailed")
     if not has_location_access(
         job_title=character.job_title, has_position=bool(character.positions), location=location
     ):
@@ -107,8 +109,7 @@ def check_can_travel_district(
         raise NotAllowed("character_dead")
     if character.status != CharacterStatus.APPROVED.value:
         raise NotAllowed("character_not_approved")
-    if character.jailed_until_tick is not None and character.jailed_until_tick > current_tick:
-        raise NotAllowed("travel_jailed", name=character.name)
+    check_not_jailed(character, current_tick, "travel_jailed")
     if (
         character.in_transit_until_tick is not None
         and character.in_transit_until_tick > current_tick

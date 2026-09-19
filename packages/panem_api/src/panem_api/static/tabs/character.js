@@ -14,7 +14,7 @@ function characterCard(ctx, character, { onChanged }) {
   const statusLine = el(
     "p",
     { class: "tab-status" },
-    `${character.status}${character.jailed_until_tick ? " -- jailed" : ""}`
+    `${character.status}${character.jailed ? " -- jailed" : ""}`
   );
   const avatarInput = el("input", { type: "text", value: character.avatar_url || "", placeholder: "https://..." });
   const tagInput = el("input", { type: "text", value: character.proxy_tag || "", placeholder: "tag::" });

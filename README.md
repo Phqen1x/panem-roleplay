@@ -2438,3 +2438,38 @@ reports `"jailed": true`. Added regression tests at every layer this touched (`t
 which had been asserting the old (buggy) `jailed_until_tick == <sentence>` behavior precisely
 because they already passed a non-zero tick -- proof the bug was there to catch all along, just
 never checked against.
+
+## Fixed: the character selector still read "jailed" after release, and jailed characters could travel/work
+
+Two more bugs found live off the jail fix above. First: "it says i am 'jailed' in the top right and
+in characters screen, but also says im free in the jail tab" -- the opposite-looking symptom from
+the previous fix, but the same underlying mistake in a different spot. `app.js`'s character-selector
+label (`characterLabel`) and `tabs/character.js`'s status line both read `character.jailed_until_tick`
+truthiness directly instead of comparing it against the current world tick, so a character whose
+sentence had already *lapsed* (a stale, in-the-past `jailed_until_tick` -- exactly what the previous
+fix's `commit_to_jail` bug used to produce for every existing jailing before it was fixed) still read
+as "(jailed)" everywhere except the Jail tab itself, which was the one place already doing the
+correct `jailed_until_tick > current_tick` comparison (`jail_status`'s own logic). Fixed by having
+`dashboard_routes.py` compute a proper `jailed: bool` field (same comparison as `jail_status`) on
+both `DashboardCharacterSummary` (`/activity/dashboard/identify`) and `CharacterDetail`
+(`/activity/dashboard/characters`), and switching `app.js`/`tabs/character.js` to read that instead
+of `jailed_until_tick` directly -- `jailed_until_tick` being set no longer means "currently jailed"
+by itself, so nothing in the frontend should read it that way. `ASSET_VERSION` bumped 16 -> 17.
+
+Second, a request in the same report: "make sure it isn't possible to travel while jailed or work
+while jailed." Cross-district travel (`travel_svc.check_can_travel_district`) already refused a
+jailed character (`travel_jailed`), but in-district location travel (`check_can_travel`, used by
+both `/travel location:` and the Travel tab's location move) had no jail check at all, and neither
+did starting a work shift (`/work`, and the Work tab's `/activity/dashboard/work/{id}/start`) --
+both were live gaps, not something this session had built in and then broken. Added
+`panem_shared.jail.check_not_jailed(character, current_tick, reason_key)` (the mirror of the
+existing `check_is_jailed`, which is for the opposite case -- actions only a jailed character can
+take, like bail/lockpick) and wired it into `check_can_travel` (reusing the existing `travel_jailed`
+string) and into both `/work` entry points (`work_jailed`, a new string) before either does anything
+else. `check_can_travel_district`'s existing inline check was also switched to call the same helper,
+for one shared implementation instead of two copies of the same comparison. Verified live: a
+character with `jailed_until_tick` past the current world tick gets `{"detail": "travel_jailed"}` /
+`{"detail": "work_jailed"}` from both dashboard endpoints, while a character whose sentence had
+already lapsed travels and reaches the ordinary `job_no_open_shift` refusal normally -- the jail
+check doesn't fire for someone who's actually free. Added regression tests at every layer
+(`test_shared_jail.py`'s new `TestCheckNotJailed`, `test_travel_service.py`, `test_api_app.py`).

@@ -68,9 +68,11 @@ class TravelCog(commands.Cog):
                 return
 
             district_content = self.bot.content.district(char.current_district_id)  # type: ignore[attr-defined]
+            clock = await session.get(WorldClock, 1)
+            current_tick = clock.tick if clock is not None else 0
             try:
                 loc = travel_svc.resolve_location(district_content, location)
-                travel_svc.check_can_travel(character=char, location=loc)
+                travel_svc.check_can_travel(character=char, location=loc, current_tick=current_tick)
             except (NotFound, NotAllowed) as exc:
                 await interaction.response.send_message(
                     t(exc.reason_key, **exc.fmt), ephemeral=True

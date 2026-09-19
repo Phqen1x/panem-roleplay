@@ -27,6 +27,8 @@ from panem_bot.services import shifts as shifts_svc
 from panem_bot.strings import t
 from panem_shared import constants, job_levels, redis_keys
 from panem_shared.db.models import Character, Shift, WorldClock
+from panem_shared.errors import NotAllowed
+from panem_shared.jail import check_not_jailed
 from panem_shared.logging import get_logger
 
 logger = get_logger(component="jobs")
@@ -183,6 +185,13 @@ class JobsCog(commands.Cog):
             if not shifts_svc.has_job(char):
                 await interaction.response.send_message(
                     t("job_none_set", name=char.name), ephemeral=True
+                )
+                return
+            try:
+                check_not_jailed(char, await self._current_tick(session), "work_jailed")
+            except NotAllowed as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
                 )
                 return
 

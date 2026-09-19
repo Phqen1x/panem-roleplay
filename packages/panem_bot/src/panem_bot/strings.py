@@ -81,6 +81,7 @@ STRINGS: dict[str, str] = {
     # catalog to apply for/quit/list, or a JobOption-driven ladder to check).
     "job_none_set": "**{name}** doesn't have a job set -- ask staff to set one with "
     "`/staff give job`.",
+    "work_jailed": "**{name}** is locked up and can't work a shift.",
     "job_no_open_shift": "**{name}** doesn't have a shift open right now.",
     "shift_no_longer_open": "That shift is no longer open.",
     "shift_already_worked_this_tick": (

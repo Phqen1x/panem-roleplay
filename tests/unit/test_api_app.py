@@ -1105,7 +1105,34 @@ class TestDashboardIdentify:
         transport = httpx.ASGITransport(app=work_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post("/activity/dashboard/identify", json={"discord_id": 42})
-        assert response.json()["characters"][0]["jailed_until_tick"] == 500
+        character = response.json()["characters"][0]
+        assert character["jailed_until_tick"] == 500
+        assert character["jailed"] is True
+
+    async def test_jailed_flag_is_false_once_the_stale_sentence_has_lapsed(
+        self, work_app, db_session_factory
+    ):
+        """Regression test for the character selector/character tab showing
+        "(jailed)" for a character whose `jailed_until_tick` is set but
+        already in the past relative to the current world tick -- the same
+        `jailed_until_tick > current_tick` comparison `jail_status` already
+        used, just missing from every other place that reads jail state.
+        `jailed_until_tick` truthiness alone isn't "currently jailed"."""
+        from panem_shared.db.models import WorldClock
+
+        await seed_character(
+            db_session_factory,
+            discord_id=42,
+            character_overrides={"jailed_until_tick": 500},
+        )
+        async with db_session_factory() as session, session.begin():
+            session.add(WorldClock(id=1, tick=1000))
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/activity/dashboard/identify", json={"discord_id": 42})
+        character = response.json()["characters"][0]
+        assert character["jailed_until_tick"] == 500
+        assert character["jailed"] is False
 
 
 class TestDashboardCharacters:
@@ -1237,6 +1264,34 @@ class TestDashboardCharacters:
         # Retiree above) or of the surrogate id order that would otherwise
         # fall out of a plain `.order_by(Character.id)`.
         assert names == ["Wren", "Retiree", "Applicant"]
+
+    async def test_list_jailed_flag_reflects_the_current_world_tick(
+        self, work_app, db_session_factory
+    ):
+        """Regression test: the Character tab used to show "-- jailed" off
+        `jailed_until_tick` truthiness alone, so a character whose sentence
+        had already lapsed (`jailed_until_tick <= current_tick`) still read
+        as jailed forever. The list response's `jailed` field must be
+        computed against the world clock, same as `jail_status`."""
+        from panem_shared.db.models import WorldClock
+
+        await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"name": "StillIn", "jailed_until_tick": 2000},
+        )
+        await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"name": "AlreadyOut", "jailed_until_tick": 10},
+        )
+        async with db_session_factory() as session, session.begin():
+            session.add(WorldClock(id=1, tick=1000))
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/activity/dashboard/characters", params={"discord_id": 5})
+        by_name = {c["name"]: c["jailed"] for c in response.json()["characters"]}
+        assert by_name == {"StillIn": True, "AlreadyOut": False}
 
     async def test_update_rejects_a_non_owner(self, work_app, db_session_factory):
         char_id = await seed_character(db_session_factory, discord_id=5)
@@ -1665,6 +1720,24 @@ class TestDashboardWork:
             )
         assert response.status_code == 400
 
+    async def test_start_refuses_while_jailed(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={
+                "job_title": "Miner",
+                "shift_phase": "morning",
+                "jailed_until_tick": 1_000_000,
+            },
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/work/{char_id}/start", json={"discord_id": 5}
+            )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "work_jailed"
+
     async def test_start_refuses_with_no_open_shift_and_no_gamemaker_position(
         self, work_app, db_session_factory
     ):
@@ -1913,6 +1986,21 @@ class TestDashboardTravel:
                 json={"discord_id": 42, "location_id": "nowhere"},
             )
         assert response.status_code == 404
+
+    async def test_location_travel_refuses_while_jailed(self, travel_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=42,
+            character_overrides={"jailed_until_tick": 1_000_000},
+        )
+        transport = httpx.ASGITransport(app=travel_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/travel/{char_id}/location",
+                json={"discord_id": 42, "location_id": "station"},
+            )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "travel_jailed"
 
     async def test_district_travel_home_is_free(self, travel_app, db_session_factory):
         """Traveling back to a character's home district never needs

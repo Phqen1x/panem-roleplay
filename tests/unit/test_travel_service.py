@@ -61,14 +61,16 @@ class TestCheckCanTravel:
         district = make_district()
         character = make_character()
         location = travel_svc.resolve_location(district, "square")
-        travel_svc.check_can_travel(character=character, location=location)  # no raise
+        travel_svc.check_can_travel(
+            character=character, location=location, current_tick=0
+        )  # no raise
 
     def test_refuses_dead_character(self):
         district = make_district()
         character = make_character(status=CharacterStatus.DEAD.value)
         location = travel_svc.resolve_location(district, "square")
         with pytest.raises(NotAllowed) as exc_info:
-            travel_svc.check_can_travel(character=character, location=location)
+            travel_svc.check_can_travel(character=character, location=location, current_tick=0)
         assert exc_info.value.reason_key == "character_dead"
 
     def test_refuses_non_approved_character(self):
@@ -76,22 +78,40 @@ class TestCheckCanTravel:
         character = make_character(status=CharacterStatus.PENDING.value)
         location = travel_svc.resolve_location(district, "square")
         with pytest.raises(NotAllowed) as exc_info:
-            travel_svc.check_can_travel(character=character, location=location)
+            travel_svc.check_can_travel(character=character, location=location, current_tick=0)
         assert exc_info.value.reason_key == "character_not_approved"
+
+    def test_refuses_jailed_character(self):
+        district = make_district()
+        character = make_character(jailed_until_tick=200)
+        location = travel_svc.resolve_location(district, "square")
+        with pytest.raises(NotAllowed) as exc_info:
+            travel_svc.check_can_travel(character=character, location=location, current_tick=100)
+        assert exc_info.value.reason_key == "travel_jailed"
+
+    def test_allows_once_jail_sentence_has_passed(self):
+        district = make_district()
+        character = make_character(jailed_until_tick=50)
+        location = travel_svc.resolve_location(district, "square")
+        travel_svc.check_can_travel(
+            character=character, location=location, current_tick=100
+        )  # no raise
 
     def test_refuses_restricted_location_without_access(self):
         district = make_district()
         character = make_character(job_title=None, positions=[])
         location = travel_svc.resolve_location(district, "labs")
         with pytest.raises(NotAllowed) as exc_info:
-            travel_svc.check_can_travel(character=character, location=location)
+            travel_svc.check_can_travel(character=character, location=location, current_tick=0)
         assert exc_info.value.reason_key == "location_restricted"
 
     def test_allows_victor_into_restricted_location(self):
         district = make_district()
         character = make_character(positions=["victor"])
         location = travel_svc.resolve_location(district, "labs")
-        travel_svc.check_can_travel(character=character, location=location)  # no raise
+        travel_svc.check_can_travel(
+            character=character, location=location, current_tick=0
+        )  # no raise
 
 
 class TestResolveStation:

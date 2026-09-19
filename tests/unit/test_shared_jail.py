@@ -5,10 +5,13 @@ directly, same reason panem_shared.shifts does.
 
 from __future__ import annotations
 
+import pytest
+
 from panem_shared import constants
 from panem_shared import jail as shared_jail
 from panem_shared.db.models import Character, DistrictState
 from panem_shared.enums import CharacterStatus
+from panem_shared.errors import NotAllowed
 
 
 def make_district_row(**overrides: object) -> DistrictState:
@@ -94,6 +97,28 @@ class TestCommitToJail:
         character = make_character(jail_count=0, jailed_until_tick=50)
         shared_jail.commit_to_jail(character, 10, 1000)
         assert character.jailed_until_tick == 1010
+
+
+class TestCheckNotJailed:
+    def test_no_raise_when_never_jailed(self):
+        character = make_character(jailed_until_tick=None)
+        shared_jail.check_not_jailed(character, 100, "travel_jailed")  # no raise
+
+    def test_raises_while_currently_jailed(self):
+        character = make_character(jailed_until_tick=200)
+        with pytest.raises(NotAllowed) as exc_info:
+            shared_jail.check_not_jailed(character, 100, "travel_jailed")
+        assert exc_info.value.reason_key == "travel_jailed"
+
+    def test_no_raise_once_the_sentence_has_lapsed(self):
+        character = make_character(jailed_until_tick=50)
+        shared_jail.check_not_jailed(character, 100, "travel_jailed")  # no raise
+
+    def test_reason_key_is_caller_specific(self):
+        character = make_character(jailed_until_tick=200)
+        with pytest.raises(NotAllowed) as exc_info:
+            shared_jail.check_not_jailed(character, 100, "work_jailed")
+        assert exc_info.value.reason_key == "work_jailed"
 
 
 class TestResolveIllicitHeat:
