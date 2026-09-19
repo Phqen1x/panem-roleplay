@@ -4,7 +4,7 @@
 // unmodified; Skip calls the existing /activity/work/{id}/result
 // endpoint directly with {won:false, neutral:true}, exactly like the
 // bot's own Skip button does.
-import { fetchJson, el } from "./_shared.js?v=2";
+import { fetchJson, el } from "./_shared.js?v=3";
 
 export function mount(root, ctx) {
   const statusEl = el("p", { class: "tab-status" });
@@ -55,6 +55,16 @@ export function mount(root, ctx) {
   }
 
   async function ensureShift() {
+    // `refresh()` already hides these buttons whenever no character is
+    // selected, but this guard is the one place that actually stops a
+    // click from firing anyway (e.g. a click landing between a character
+    // becoming unselected and this tab re-rendering) -- without it the
+    // request goes out as ".../work/null/start", which FastAPI rejects as
+    // a path-validation error before this shows up here as a clean,
+    // readable message instead of a raw HTTP failure.
+    if (!ctx.characterId()) {
+      throw new Error("Pick a character above first.");
+    }
     const body = await ctx.apiFetch(`/activity/dashboard/work/${ctx.characterId()}/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

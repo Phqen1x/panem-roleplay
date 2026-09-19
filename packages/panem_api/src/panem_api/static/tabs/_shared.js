@@ -23,8 +23,26 @@
 // underscores into spaces is a cheap, generic readability pass so every
 // tab's error text is presentable without hand-writing a translation for
 // each one.
+//
+// `detail` isn't always that string, though: a request FastAPI itself
+// rejects before reaching a route (e.g. a non-numeric character id in the
+// URL, which happens if a tab fires a request with no character selected)
+// comes back with `detail` as a *list* of `{loc, msg, type}` validation-
+// error objects, not a string. The old `typeof text === "string" ? ... :
+// text` fallback returned that list/object as-is, and `new Error(...)`
+// coerces a non-string argument with `String(...)` -- for a plain object
+// or an array of them, that's the ever-informative "[object Object]".
+// Always return a string (or a falsy value the caller's own `||` fallback
+// catches) instead.
 function humanize(text) {
-  return typeof text === "string" ? text.replaceAll("_", " ") : text;
+  if (typeof text === "string") return text.replaceAll("_", " ");
+  if (Array.isArray(text)) {
+    const messages = text
+      .map((item) => (item && typeof item.msg === "string" ? item.msg : null))
+      .filter((msg) => msg !== null);
+    if (messages.length > 0) return messages.join("; ");
+  }
+  return undefined;
 }
 
 export async function fetchJson(path, options) {

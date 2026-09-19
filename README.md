@@ -2292,3 +2292,32 @@ Three issues surfaced once the dashboard was actually launched as a real Discord
   own docstring: editing a file inside `static/` is only half the fix -- the file (or files) whose
   *own* content references its URL, all the way up to `index.html`, needs its version literal
   bumped too, or the change never reaches a client relying on any layer of URL-keyed caching.
+
+## Notes on two more live-reported dashboard bugs (Work tab)
+
+Both surfaced together from clicking "Play for your shift"/"Skip (neutral wage)" with no
+character selected -- genuinely two separate bugs, not the same caching issue recurring again.
+
+- **"[object Object]" instead of a real error message.** Root cause: with no character selected,
+  `work.js`'s `ensureShift()` requested `.../work/null/start`; FastAPI rejects a non-integer path
+  parameter with a 422 whose `detail` is a *list* of `{loc, msg, type}` validation-error objects,
+  not a string -- unlike every other dashboard error, which carries a plain `reason_key` string.
+  `_shared.js`'s `humanize()` only handled the string case, returning the list/object unchanged for
+  anything else; `fetchJson`'s `new Error(humanize(body.detail) || ...)` then coerced that non-string
+  value with `String(...)`, which is exactly "[object Object]" for an object (or an array of them).
+  `humanize()` now extracts each validation error's own `msg` when `detail` is a list, and otherwise
+  returns `undefined` so the caller's `||` fallback (`` `${path} -> ${response.status}` ``) takes
+  over -- never a raw object reaching `new Error()` again. Also added an explicit guard in
+  `ensureShift()` so a click with no character selected never fires that malformed request in the
+  first place, surfacing "Pick a character above first." immediately instead.
+- **That guard shouldn't have been reachable at all -- `refresh()` already sets `actionsEl.hidden =
+  true` whenever no character is selected, so how were the buttons visible enough to click?** They
+  were never actually hidden: `actionsEl`'s `class="field-row"` sets `display: flex` in
+  `dashboard.css`, which -- being an *author* rule -- overrides the browser's own default
+  `[hidden] { display: none }` at equal selector specificity, regardless of which one is defined
+  later. Setting `.hidden = true` on any `.field-row`-classed element (also `jail.js`'s Bail/
+  Lockpick action row, same bug, not yet reported) toggled the DOM attribute but never actually
+  hid anything. Added a single `[hidden] { display: none !important; }` rule to `dashboard.css` --
+  the standard fix for this well-known "a component's own `display` beats the `hidden` attribute"
+  CSS gotcha (the same one Bootstrap and other frameworks ship), rather than hunting down every
+  individual class that sets its own `display` today or the next one that does so tomorrow.

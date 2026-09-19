@@ -8,7 +8,7 @@
 // need a dashboard -> Redis -> panem_bot relay (only the bot process
 // holds a token and can post/create Discord threads), which is out of
 // scope for this pass.
-import { fetchJson, el } from "./_shared.js?v=2";
+import { fetchJson, el } from "./_shared.js?v=3";
 
 function engagementPanel(ctx) {
   const statusEl = el("p", { class: "tab-status" });

@@ -2,7 +2,7 @@
 // /blackmarket prices|buy|sell in one place (a legal/illicit toggle
 // instead of two separate tabs) -- both are instant-resolve, no
 // minigame/iframe involved, same as their bot commands.
-import { fetchJson, el, dropdown } from "./_shared.js?v=2";
+import { fetchJson, el, dropdown } from "./_shared.js?v=3";
 
 function priceTable(prices) {
   const table = el(

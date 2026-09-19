@@ -3,7 +3,7 @@
 // unchanged from that original version: a schematic layout drawn from each
 // location's map coordinates (no real district map art yet -- see the
 // README), NPCs/characters pushed over a polling WebSocket.
-import { fetchJson, el, dropdown } from "./_shared.js?v=2";
+import { fetchJson, el, dropdown } from "./_shared.js?v=3";
 
 function wsUrlFor(districtId) {
   const scheme = location.protocol === "https:" ? "wss:" : "ws:";

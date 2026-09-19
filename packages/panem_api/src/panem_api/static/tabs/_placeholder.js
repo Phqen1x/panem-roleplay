@@ -1,6 +1,6 @@
 // Shared "not built yet" stub for a tab module -- replaced with the real
 // implementation as each dashboard milestone lands (see the plan/README).
-import { el } from "./_shared.js?v=2";
+import { el } from "./_shared.js?v=3";
 
 export function mountPlaceholder(root, title, commands) {
   root.append(

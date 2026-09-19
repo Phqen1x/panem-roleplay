@@ -2,6 +2,21 @@
    styles for the dashboard shell (header identity controls, tab nav) and
    generic per-tab building blocks every tabs/*.js module can reuse. */
 
+/* Several tabs toggle an action row's `.hidden` property in JS to show/hide
+   it (e.g. work.js's/jail.js's Play/Skip/Bail/Lockpick buttons while no
+   character -- or no job/not-jailed -- is selected). The browser's own
+   default stylesheet hides a `[hidden]` element via `display: none`, but
+   `.field-row` below sets `display: flex` at equal selector specificity,
+   and being an *author* rule it wins over that default regardless of
+   source order -- so a `.field-row[hidden]` element was never actually
+   hidden, just as visible and clickable as ever. This is the standard,
+   well-precedented fix (the same one CSS frameworks like Bootstrap ship)
+   rather than hunting down and fixing every individual class that sets its
+   own `display` today, or the next one that does so tomorrow.  */
+[hidden] {
+  display: none !important;
+}
+
 header {
   flex-wrap: wrap;
 }
