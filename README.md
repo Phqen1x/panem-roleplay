@@ -2883,3 +2883,83 @@ Verified: `ruff` clean, `mypy` error count unchanged (148, confirmed identical b
 `git stash`), full `pytest` suite unchanged (984 passed), and a direct Python import of
 `panem_bot.modals`/`panem_bot.views`/`panem_bot.cogs.characters` confirms both removed classes
 (`JobTitleModal`, `JobTitlePromptView`) are actually gone rather than just unreferenced.
+
+## The visual customizer replaced entirely: a Picrew-style upload-your-own-art layer picker
+
+Both prior character-portrait systems -- the fixed-palette procedural renderer (2D canvas, then a
+3D Three.js scene) -- are gone. Asked for something closer to [Picrew](https://picrew.me): staff
+upload their own artwork, mark each image with which "part" (category) it belongs to and where it
+sits in the stack, and players just pick one option per category. There is no seed data or fixed
+palette anymore -- the catalog starts completely empty, and stays that way until staff use the new
+admin panel to add categories and upload images into them.
+
+**Data model**: two new tables replace the old fixed enum lists. `LayerCategory` (name, `z_index` --
+lower renders further back) is a "part" of the portrait (Hair, Base, Eyes, whatever staff decide to
+call it); `LayerOption` (`category_id`, name, `image_path`) is one uploaded image within a category.
+`Character.appearance_traits` (a `dict` of enum values) is renamed to `appearance_layers` (a `dict`
+of `{category_id: option_id}`) via a straight column rename -- there's no way to map old fixed-trait
+data onto real uploaded artwork that didn't exist yet, so every character just starts uncustomized
+again, the same "never customized" null convention the old column already used for rows saved
+before it existed.
+
+**Backend** (`panem_shared/layers.py`, Discord-independent like every other service module here):
+`create_category`/`update_category`/`delete_category`, and `create_option`/`delete_option` which
+save/unlink the actual image file (`static/uploads/layers/<uuid>.<ext>`, one of `png`/`webp`/`gif`
+only -- no SVG, since that's a script-injection surface if ever served with the wrong content-type,
+and no JPEG, since it has no alpha channel to make a transparent layer sprite). `validate_layer_
+selection` checks a player's submitted `{category_id: option_id}` map actually references real,
+matching rows before it's saved -- a stale selection (staff deleted the option *after* a character
+picked it) is left alone rather than treated as invalid; that's handled by the frontend at render
+time (skip a selection with no matching option), not flagged as an error at save time.
+
+**API**: `GET /activity/dashboard/layers` (public, mirrors the old `appearance-options` endpoint's
+trust level -- static non-sensitive catalog data) replaces that endpoint entirely. Character create/
+update take `appearance_layers` instead of `appearance_traits`. Staff-only mutations live in `build_
+staff_router` alongside `/staff/jail`: `POST/PATCH/DELETE .../staff/layers/categories[/{id}]` and
+`POST .../staff/layers/categories/{id}/options` (multipart upload) / `.../staff/layers/options/{id}/
+delete`. `create_app` gained a `static_dir` parameter (defaults to the real bundled `static/`) so
+tests can point uploads at a `tmp_path` instead of writing real files into the checked-out tree.
+
+**Frontend rendering**: `avatar_creator.js` went from a live WebGL scene to plain DOM -- one
+absolutely-positioned `<img>` per category stacked by `z_index` inside a fixed-aspect-ratio
+container (`mountAvatar(container, categories, selection)`). No rendering logic at all; the actual
+"art" is 100% staff-uploaded. `character.js`'s customizer became a per-category `</>` picker (a
+`None` option first, then every uploaded option in that category) instead of dropdowns/color
+swatches -- a category with zero options uploaded yet is simply left out of the picker entirely, and
+if *no* category has any options yet, the whole customizer shows "No customization options uploaded
+yet -- check back soon" instead of an empty picker list.
+
+**Staff admin panel** (`staff.js`, alongside the existing jail tool): "New category" (name + stack
+order) at the bottom, and one panel per existing category above it with rename/reorder, a "Delete
+category" button, a list of its images with delete buttons, and an upload form (name + file picker).
+No `Content-Type` header is set on the upload request -- the browser fills in the multipart boundary
+itself from the `FormData` body, and overriding it breaks the upload.
+
+**A real async-ORM bug caught by the new tests, not just theoretical**: the "create category"
+endpoint initially read the freshly-created row's `.options` relationship directly to build its
+response, which raised `MissingGreenlet` on every single call -- a brand-new row's collection isn't
+automatically "loaded empty" once it's been flushed to the database; reading it unrefreshed tries to
+lazy-load, which async SQLAlchemy can't do transparently. Fixed by explicitly `session.refresh
+(category, attribute_names=["options"])` before building the response, the same pattern the
+"update category" endpoint already needed for the same reason. Caught immediately by the new test
+suite (an actual `httpx` request through the real app, not a mock) rather than shipping broken.
+
+**Deployment**: staff-uploaded images are real files written at runtime, not source or seed content
+-- `deploy/docker-compose.yml`'s `api` service gained a `panem_layer_uploads` named volume mounted
+at the uploads path, the same durability-across-rebuilds treatment `panem_pg_data` already gets for
+Postgres. `python-multipart` was added as a `panem_api` dependency (FastAPI's `Form`/`File` request
+parameters hard-require it, and refuse to even start the app without it once any route uses them).
+
+Verified: `ruff`/`mypy` clean (mypy's 148 pre-existing errors unchanged), migration applies and
+round-trips cleanly on a fresh database with a single alembic head, and the full test suite (983
+tests -- replacing the old fixed-palette appearance tests 1:1 rather than just deleting coverage) 
+passes, including 17 new tests directly exercising the layer catalog, character create/update
+against it, and every staff category/option CRUD and upload/delete endpoint (with a `tmp_path`-
+backed `static_dir` so test uploads never touch the real repo). Live Playwright verification against
+a real running server confirmed both states end-to-end: a totally empty catalog renders the "no
+options yet" message with no console errors, and a seeded catalog (screenshot-verified) shows a
+working `</>` picker per category, actually composites the selected images in the preview, and
+correctly wraps back to "None" after cycling through every option. That same live pass caught a
+second real bug -- the preview container had no `max-width`, so `aspect-ratio: 3/4` blew it up to
+fill the entire panel's width (nearly 1000px tall) -- fixed by capping it at 320px, the same way the
+old canvas-based version was implicitly bounded by its fixed render resolution.

@@ -29,22 +29,22 @@ from __future__ import annotations
 import json
 import random
 import secrets
-from typing import Any
+from pathlib import Path
 
 import redis.asyncio as redis
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from panem_api import discord_staff
-from panem_shared import appearance as appearance_svc
 from panem_shared import blackmarket as blackmarket_svc
 from panem_shared import characters as characters_svc
 from panem_shared import constants, job_levels, simtime
 from panem_shared import housing as housing_svc
 from panem_shared import jail as jail_svc
 from panem_shared import jobs as jobs_svc
+from panem_shared import layers as layers_svc
 from panem_shared import market as market_svc
 from panem_shared import poaching as poaching_svc
 from panem_shared import stealing as stealing_svc
@@ -53,6 +53,7 @@ from panem_shared.content.loader import ContentBundle
 from panem_shared.db.models import (
     ApartmentLease,
     Character,
+    LayerCategory,
     Npc,
     Property,
     PropertyAuction,
@@ -87,7 +88,7 @@ class DashboardCharacterSummary(BaseModel):
     id: int
     name: str
     avatar_url: str | None = None
-    appearance_traits: dict[str, Any]
+    appearance_layers: dict[str, int]
     district_id: int
     current_district_id: int
     money: int
@@ -198,8 +199,7 @@ def build_identify_router(
                         id=c.id,
                         name=c.name,
                         avatar_url=c.avatar_url,
-                        appearance_traits=c.appearance_traits
-                        or appearance_svc.DEFAULT_APPEARANCE_TRAITS,
+                        appearance_layers=c.appearance_layers or {},
                         district_id=c.district_id,
                         current_district_id=c.current_district_id,
                         money=c.money,
@@ -221,7 +221,7 @@ class CharacterDetail(BaseModel):
     status: str
     age: int
     appearance: str
-    appearance_traits: dict[str, Any]
+    appearance_layers: dict[str, int]
     backstory: str
     avatar_url: str | None = None
     proxy_tag: str | None = None
@@ -246,7 +246,7 @@ def _character_detail(
         status=character.status,
         age=character.age,
         appearance=character.appearance,
-        appearance_traits=character.appearance_traits or appearance_svc.DEFAULT_APPEARANCE_TRAITS,
+        appearance_layers=character.appearance_layers or {},
         backstory=character.backstory,
         avatar_url=character.avatar_url,
         proxy_tag=character.proxy_tag,
@@ -277,7 +277,7 @@ class CreateCharacterRequest(BaseModel):
     appearance: str = ""
     backstory: str = ""
     avatar_url: str | None = None
-    appearance_traits: dict[str, Any] | None = None
+    appearance_layers: dict[str, int] | None = None
     job_title: str
     shift_phase: str
     job_is_illicit: bool = False
@@ -291,26 +291,7 @@ class UpdateCharacterRequest(BaseModel):
     discord_id: int
     avatar_url: str | None = None
     proxy_tag: str | None = None
-    appearance_traits: dict[str, Any] | None = None
-
-
-class AppearanceOptionsResponse(BaseModel):
-    gender_presentations: list[str]
-    age_looks: list[str]
-    face_shapes: list[str]
-    expressions: list[str]
-    hair_styles: list[str]
-    facial_hair: list[str]
-    builds: list[str]
-    clothing_styles: list[str]
-    jewelry: list[str]
-    skin_tones: list[str]
-    hair_colors: list[str]
-    eye_colors: list[str]
-    clothing_colors: list[str]
-    height_cm_min: int
-    height_cm_max: int
-    defaults: dict[str, Any]
+    appearance_layers: dict[str, int] | None = None
 
 
 def build_characters_router(
@@ -331,32 +312,6 @@ def build_characters_router(
     without a wider OAuth scope than this feature asks for; see the
     README's note on this simplification."""
     router = APIRouter(prefix="/activity/dashboard/characters", tags=["dashboard"])
-
-    @router.get("/appearance-options", response_model=AppearanceOptionsResponse)
-    async def appearance_options() -> AppearanceOptionsResponse:
-        """The customizer's single source of truth for its palettes -- the
-        frontend never hardcodes its own copy of these lists, it just
-        renders whatever this returns. No `discord_id` needed: this is
-        static, non-sensitive option data, same trust level as the static
-        `/districts` endpoint above this file's own routers."""
-        return AppearanceOptionsResponse(
-            gender_presentations=list(appearance_svc.GENDER_PRESENTATIONS),
-            age_looks=list(appearance_svc.AGE_LOOKS),
-            face_shapes=list(appearance_svc.FACE_SHAPES),
-            expressions=list(appearance_svc.EXPRESSIONS),
-            hair_styles=list(appearance_svc.HAIR_STYLES),
-            facial_hair=list(appearance_svc.FACIAL_HAIR),
-            builds=list(appearance_svc.BUILDS),
-            clothing_styles=list(appearance_svc.CLOTHING_STYLES),
-            jewelry=list(appearance_svc.JEWELRY_OPTIONS),
-            skin_tones=list(appearance_svc.SKIN_TONES),
-            hair_colors=list(appearance_svc.HAIR_COLORS),
-            eye_colors=list(appearance_svc.EYE_COLORS),
-            clothing_colors=list(appearance_svc.CLOTHING_COLORS),
-            height_cm_min=appearance_svc.HEIGHT_CM_MIN,
-            height_cm_max=appearance_svc.HEIGHT_CM_MAX,
-            defaults=dict(appearance_svc.DEFAULT_APPEARANCE_TRAITS),
-        )
 
     @router.get("", response_model=MyCharactersResponse)
     async def list_my_characters(discord_id: int) -> MyCharactersResponse:
@@ -422,7 +377,7 @@ def build_characters_router(
                     appearance=body.appearance,
                     backstory=body.backstory,
                     avatar_url=body.avatar_url,
-                    appearance_traits=body.appearance_traits,
+                    appearance_layers=body.appearance_layers,
                     job_title=body.job_title,
                     shift_phase=body.shift_phase,
                     job_is_illicit=body.job_is_illicit,
@@ -449,9 +404,9 @@ def build_characters_router(
                 if body.proxy_tag is not None:
                     characters_svc.validate_proxy_tag(body.proxy_tag)
                     character.proxy_tag = body.proxy_tag
-                if body.appearance_traits is not None:
-                    character.appearance_traits = appearance_svc.validate_appearance_traits(
-                        body.appearance_traits
+                if body.appearance_layers is not None:
+                    character.appearance_layers = await layers_svc.validate_layer_selection(
+                        session, body.appearance_layers
                     )
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
@@ -473,6 +428,60 @@ def build_characters_router(
                 raise _http_from_service_error(exc) from exc
             current_tick = await _current_tick(session)
             return _character_detail(character, content=content, current_tick=current_tick)
+
+    return router
+
+
+class LayerOptionResponse(BaseModel):
+    id: int
+    name: str
+    image_url: str
+
+
+class LayerCategoryResponse(BaseModel):
+    id: int
+    name: str
+    z_index: int
+    options: list[LayerOptionResponse]
+
+
+class LayerCatalogResponse(BaseModel):
+    categories: list[LayerCategoryResponse]
+
+
+def _layer_category_response(category: LayerCategory) -> LayerCategoryResponse:
+    return LayerCategoryResponse(
+        id=category.id,
+        name=category.name,
+        z_index=category.z_index,
+        options=[
+            LayerOptionResponse(id=o.id, name=o.name, image_url=f"/{o.image_path}")
+            for o in category.options
+        ],
+    )
+
+
+def build_layers_router(
+    *, session_factory: async_sessionmaker[AsyncSession] | None
+) -> APIRouter:
+    """The Picrew-style customizer's read side: every category (in render
+    order) and its options. No `discord_id` needed -- like the old
+    `appearance-options` endpoint this replaces, it's static, non-sensitive
+    catalog data, same trust level as `/districts`. Starts out returning
+    `{"categories": []}` until staff upload something through `build_staff_
+    router`'s layer-management endpoints below; the frontend picker is
+    built to render that (nothing to customize yet) rather than treating
+    it as an error."""
+    router = APIRouter(prefix="/activity/dashboard/layers", tags=["dashboard"])
+
+    @router.get("", response_model=LayerCatalogResponse)
+    async def layer_catalog() -> LayerCatalogResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            categories = await layers_svc.list_categories(session)
+            return LayerCatalogResponse(
+                categories=[_layer_category_response(c) for c in categories]
+            )
 
     return router
 
@@ -2146,9 +2155,30 @@ class StaffJailResponse(BaseModel):
     jailed_until_tick: int
 
 
+class CreateLayerCategoryRequest(BaseModel):
+    discord_id: int
+    name: str
+    z_index: int = 0
+
+
+class UpdateLayerCategoryRequest(BaseModel):
+    discord_id: int
+    name: str | None = None
+    z_index: int | None = None
+
+
+class DeleteLayerCategoryRequest(BaseModel):
+    discord_id: int
+
+
+class DeleteLayerOptionRequest(BaseModel):
+    discord_id: int
+
+
 def build_staff_router(
     *,
     session_factory: async_sessionmaker[AsyncSession] | None,
+    static_dir: Path,
     discord_token: str = "",
     discord_guild_id: int = 0,
     staff_role_id: int = 0,
@@ -2215,5 +2245,105 @@ def build_staff_router(
             ),
         )
         return response
+
+    # ---- Layer management (Picrew-style customizer admin) --------------
+    # The upload flow this feature was actually asked for: staff add a
+    # category once (a stack position + a name), then upload images into
+    # it one at a time, each with its own display name. There is no seed
+    # data -- these are the only way any category/option ever comes to
+    # exist, matching the "start off with no options" requirement.
+
+    @router.post("/layers/categories", response_model=LayerCategoryResponse)
+    async def create_layer_category(body: CreateLayerCategoryRequest) -> LayerCategoryResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                category = await layers_svc.create_category(
+                    session, name=body.name, z_index=body.z_index
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            # A freshly flushed row's `options` relationship isn't
+            # automatically "loaded empty" -- reading it unrefreshed raises
+            # (async sessions can't transparently lazy-load), same as
+            # update_category below.
+            await session.refresh(category, attribute_names=["options"])
+            return _layer_category_response(category)
+
+    @router.patch("/layers/categories/{category_id}", response_model=LayerCategoryResponse)
+    async def update_layer_category(
+        category_id: int, body: UpdateLayerCategoryRequest
+    ) -> LayerCategoryResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                category = await layers_svc.update_category(
+                    session, category_id, name=body.name, z_index=body.z_index
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            # update_category doesn't touch/load `options` (it only mutates
+            # name/z_index on an already-fetched row), and accessing an
+            # unloaded relationship on an async session raises rather than
+            # lazy-loading -- refresh it explicitly before building the
+            # response, which reads `.options`.
+            await session.refresh(category, attribute_names=["options"])
+            return _layer_category_response(category)
+
+    @router.post("/layers/categories/{category_id}/delete")
+    async def delete_layer_category(
+        category_id: int, body: DeleteLayerCategoryRequest
+    ) -> dict[str, bool]:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                await layers_svc.delete_category(session, category_id, static_dir=static_dir)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"deleted": True}
+
+    @router.post(
+        "/layers/categories/{category_id}/options", response_model=LayerOptionResponse
+    )
+    async def create_layer_option(
+        category_id: int,
+        discord_id: int = Form(...),
+        name: str = Form(...),
+        file: UploadFile = File(...),  # noqa: B008 -- FastAPI's own sentinel-default idiom
+    ) -> LayerOptionResponse:
+        await _require_staff(discord_id)
+        data = await file.read()
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                option = await layers_svc.create_option(
+                    session,
+                    category_id=category_id,
+                    name=name,
+                    content_type=file.content_type or "",
+                    data=data,
+                    static_dir=static_dir,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            return LayerOptionResponse(
+                id=option.id, name=option.name, image_url=f"/{option.image_path}"
+            )
+
+    @router.post("/layers/options/{option_id}/delete")
+    async def delete_layer_option(
+        option_id: int, body: DeleteLayerOptionRequest
+    ) -> dict[str, bool]:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                await layers_svc.delete_option(session, option_id, static_dir=static_dir)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"deleted": True}
 
     return router

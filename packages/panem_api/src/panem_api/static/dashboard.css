@@ -362,32 +362,40 @@ table.data-table tr.clickable-row:hover {
 
 /* ---------------------------------------------- Character avatar customizer */
 
-/* A live Three.js <canvas> (fixed WIDTH x HEIGHT render resolution from
-   avatar_creator.js) sits inside this container. The container itself
-   carries no fixed size -- the canvas's own `width:100%` + `aspect-ratio`
-   below does the scaling, the same way the old canvas-only version relied
-   on the browser preserving a plain <canvas>'s intrinsic aspect ratio when
-   only `max-width` constrains it. `overflow: hidden` keeps the rounded
-   corners clipping the canvas rather than the canvas squaring them off. */
+/* avatar_creator.js's compositor puts one absolutely-positioned <img> per
+   layer category inside `.layer-stack`, stacked by z-index -- this
+   container just needs a fixed aspect ratio so every layer's `inset: 0`
+   aligns the same way regardless of the preview's rendered width. A 3:4
+   portrait ratio is a reasonable default for staff-uploaded art; nothing
+   enforces it, so keep every layer image the same aspect ratio as each
+   other for the layers to line up. */
 .avatar-preview {
   display: block;
+  position: relative;
   margin: 0 auto 12px;
+  width: 100%;
+  max-width: 320px;
+  aspect-ratio: 3 / 4;
   border-radius: 8px;
   background: #171a20;
   overflow: hidden;
 }
 
-/* aspect-ratio and cursor are set inline from avatar_creator.js -- WIDTH/
-   HEIGHT stay a single source of truth there rather than duplicated here,
-   and the cursor toggles between grab/grabbing as the user drags. */
-.avatar-preview canvas {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-
 .avatar-preview.small {
   max-width: 160px;
+}
+
+.layer-stack {
+  position: absolute;
+  inset: 0;
+}
+
+.layer-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .avatar-editor {
@@ -396,37 +404,34 @@ table.data-table tr.clickable-row:hover {
   padding-top: 10px;
 }
 
-.swatch-row {
+.layer-picker {
+  align-items: center;
+  gap: 8px;
+}
+
+.layer-thumb {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  border-radius: 4px;
+  background: #171a20;
+}
+
+/* --------------------------------------- Staff tab: layer catalog admin */
+
+.layer-category {
+  margin-bottom: 24px;
+}
+
+.layer-option-list {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 6px;
-  flex: 1;
+  margin-bottom: 12px;
 }
 
-.swatch {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  border: 2px solid var(--border);
-  cursor: pointer;
-  padding: 0;
-}
-
-.swatch.active {
-  border-color: var(--accent);
-}
-
-.jewelry-checks {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  flex: 1;
-}
-
-.jewelry-check {
+.layer-option-row {
   display: flex;
   align-items: center;
-  gap: 4px;
-  color: var(--muted);
-  font-size: 13px;
+  gap: 8px;
 }

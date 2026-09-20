@@ -144,6 +144,11 @@ services:
       - "8000:8000"
     volumes:
       - ../data:/app/data:ro
+      # Staff-uploaded Picrew layer images (panem_shared.layers) -- a named
+      # volume, not `:ro` data content, since these are written at runtime
+      # through the dashboard and need to survive a container rebuild the
+      # same way panem_pg_data does for Postgres.
+      - panem_layer_uploads:/app/packages/panem_api/src/panem_api/static/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -159,6 +164,7 @@ services:
 
 volumes:
   panem_pg_data:
+  panem_layer_uploads:
   lemonade_cache:
   lemonade_llama:
   lemonade_data:

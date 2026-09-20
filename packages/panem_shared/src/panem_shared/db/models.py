@@ -124,13 +124,16 @@ class Character(TimestampMixin, Base):
 
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     proxy_tag: Mapped[str | None] = mapped_column(String(12), nullable=True)
-    appearance_traits: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-    """Structured portrait options for the dashboard's visual character
-    customizer (`panem_shared.appearance`) -- separate from `appearance`
-    above, which stays the player's own free-text description. Nullable
-    rather than defaulted here so existing rows read as "never
-    customized"; API responses fill in `appearance.DEFAULT_APPEARANCE_
-    TRAITS` for display rather than backfilling every row via migration."""
+    appearance_layers: Mapped[dict[str, int] | None] = mapped_column(JSONB, nullable=True)
+    """The dashboard's Picrew-style portrait: `{category_id (as a string,
+    since JSON object keys always are): option_id}`, one selection per
+    `LayerCategory` -- separate from `appearance` above, which stays the
+    player's own free-text description. A category with no entry (or an
+    option id that no longer exists, e.g. staff deleted it) just renders
+    as nothing for that layer rather than erroring; see
+    `panem_shared.layers`. Nullable rather than defaulted so existing rows
+    read as "never customized" -- there is no fixed default selection to
+    backfill, unlike the old fixed-palette trait system this replaced."""
 
     loyalty: Mapped[float] = mapped_column(Float, nullable=False, default=50.0)
     fear: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
@@ -686,3 +689,45 @@ class StaffAction(TimestampMixin, Base):
     action: Mapped[str] = mapped_column(String(64), nullable=False)
     target: Mapped[str] = mapped_column(String(64), nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class LayerCategory(TimestampMixin, Base):
+    """One "part" of the Picrew-style character portrait (e.g. "Base",
+    "Hair", "Eyes") -- a stack position (`z_index`, lower renders behind
+    higher) plus a name, both staff-set. Starts out with zero rows and zero
+    `LayerOption`s in it; the whole picker (`GET /activity/dashboard/
+    layers`) and its admin tooling (`build_layers_router`'s staff routes)
+    are built to render sensibly on an empty catalog, not just a populated
+    one, since content is added after the fact through the dashboard
+    rather than seeded."""
+
+    __tablename__ = "layer_categories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    z_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    options: Mapped[list[LayerOption]] = relationship(
+        back_populates="category", order_by="LayerOption.id", cascade="all, delete-orphan"
+    )
+
+
+class LayerOption(TimestampMixin, Base):
+    """One selectable image within a `LayerCategory` -- an uploaded PNG
+    (`image_path`, relative to `static/`, e.g. `uploads/layers/<uuid>.png`)
+    plus a staff-given display name. `Character.appearance_layers` stores
+    the selected option id per category; nothing here enforces that every
+    category has a selection, or that an option a character has selected
+    still exists after staff deletes it -- both are just "render nothing
+    for that layer," not an error."""
+
+    __tablename__ = "layer_options"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    category_id: Mapped[int] = mapped_column(
+        ForeignKey("layer_categories.id"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    image_path: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    category: Mapped[LayerCategory] = relationship(back_populates="options")

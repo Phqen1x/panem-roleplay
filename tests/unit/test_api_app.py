@@ -10,7 +10,6 @@ from sqlalchemy import select
 
 from panem_api import discord_staff
 from panem_api.app import create_app
-from panem_shared import appearance
 from panem_shared.constants import TRANSIT_TICKS
 from panem_shared.content.loader import ContentBundle
 from panem_shared.content.schemas import (
@@ -27,6 +26,8 @@ from panem_shared.db.models import (
     ApartmentLease,
     Character,
     Inventory,
+    LayerCategory,
+    LayerOption,
     MarketPrice,
     Npc,
     Property,
@@ -217,6 +218,24 @@ async def seed_character(
         session.add(character)
         await session.flush()
         return character.id
+
+
+async def seed_layer_category(
+    session_factory, *, name: str = "Hair", z_index: int = 0, option_names: list[str] | None = None
+) -> tuple[int, list[int]]:
+    async with session_factory() as session, session.begin():
+        category = LayerCategory(name=name, z_index=z_index)
+        session.add(category)
+        await session.flush()
+        option_ids = []
+        for option_name in option_names or []:
+            option = LayerOption(
+                category_id=category.id, name=option_name, image_path=f"uploads/layers/{option_name}.png"
+            )
+            session.add(option)
+            await session.flush()
+            option_ids.append(option.id)
+        return category.id, option_ids
 
 
 async def seed_npc(session_factory, **overrides: object) -> str:
@@ -452,6 +471,28 @@ def staff_app(db_session_factory):
 
 def _fake_member_response(role_ids: list[int]) -> httpx.Response:
     return httpx.Response(200, json={"roles": [str(r) for r in role_ids]})
+
+
+@pytest.fixture
+def staff_app_with_uploads(db_session_factory, tmp_path):
+    """Same as `staff_app`, but `static_dir` points at `tmp_path` -- the
+    layer-catalog upload tests write real files (`panem_shared.layers`
+    saves to disk, not just the DB), and doing that under the checked-out
+    `static/` tree would leave test artifacts behind in the real repo."""
+    content = make_content()
+    redis_client = FakeRedis()
+    app = create_app(
+        content=content,
+        redis_client=redis_client,
+        session_factory=db_session_factory,
+        discord_guild_id=999,
+        discord_token="test-bot-token",
+        staff_role_id=777,
+        log_channel_id=0,
+        static_dir=tmp_path,
+    )
+    app.state.fake_redis = redis_client  # type: ignore[attr-defined]
+    return app
 
 
 class TestHealth:
@@ -1386,9 +1427,11 @@ class TestDashboardCharacters:
             )
         assert response.status_code == 400
 
-    async def test_create_stores_a_valid_appearance_traits_submission(
+    async def test_create_stores_a_valid_appearance_layers_submission(
         self, work_app, db_session_factory
     ):
+        category_id, option_ids = await seed_layer_category(db_session_factory, option_names=["Braid"])
+        option_id = option_ids[0]
         transport = httpx.ASGITransport(app=work_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(
@@ -1400,17 +1443,13 @@ class TestDashboardCharacters:
                     "age": 15,
                     "job_title": "Miner",
                     "shift_phase": "morning",
-                    "appearance_traits": {"hair_style": "mohawk", "build": "stocky"},
+                    "appearance_layers": {str(category_id): option_id},
                 },
             )
         assert response.status_code == 200
-        traits = response.json()["appearance_traits"]
-        assert traits["hair_style"] == "mohawk"
-        assert traits["build"] == "stocky"
-        # Untouched fields still come back filled from the defaults.
-        assert traits["face_shape"] == appearance.DEFAULT_APPEARANCE_TRAITS["face_shape"]
+        assert response.json()["appearance_layers"] == {str(category_id): option_id}
 
-    async def test_create_with_no_appearance_traits_gets_the_defaults(
+    async def test_create_with_no_appearance_layers_stores_nothing(
         self, work_app, db_session_factory
     ):
         transport = httpx.ASGITransport(app=work_app)
@@ -1427,9 +1466,9 @@ class TestDashboardCharacters:
                 },
             )
         assert response.status_code == 200
-        assert response.json()["appearance_traits"] == appearance.DEFAULT_APPEARANCE_TRAITS
+        assert response.json()["appearance_layers"] == {}
 
-    async def test_create_rejects_an_invalid_appearance_trait(self, work_app):
+    async def test_create_rejects_an_option_id_that_does_not_exist(self, work_app):
         transport = httpx.ASGITransport(app=work_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(
@@ -1441,12 +1480,12 @@ class TestDashboardCharacters:
                     "age": 15,
                     "job_title": "Baker",
                     "shift_phase": "morning",
-                    "appearance_traits": {"hair_style": "not-a-real-style"},
+                    "appearance_layers": {"999": 999},
                 },
             )
         assert response.status_code == 400
 
-    async def test_list_fills_appearance_traits_defaults_for_a_row_saved_before_the_field_existed(
+    async def test_list_returns_empty_appearance_layers_for_a_never_customized_row(
         self, work_app, db_session_factory
     ):
         await seed_character(
@@ -1459,43 +1498,54 @@ class TestDashboardCharacters:
             response = await client.get("/activity/dashboard/characters", params={"discord_id": 5})
         assert response.status_code == 200
         (character,) = response.json()["characters"]
-        assert character["appearance_traits"] == appearance.DEFAULT_APPEARANCE_TRAITS
+        assert character["appearance_layers"] == {}
 
-    async def test_update_sets_appearance_traits(self, work_app, db_session_factory):
+    async def test_update_sets_appearance_layers(self, work_app, db_session_factory):
         char_id = await seed_character(db_session_factory, discord_id=5)
+        category_id, option_ids = await seed_layer_category(db_session_factory, option_names=["Braid"])
+        option_id = option_ids[0]
         transport = httpx.ASGITransport(app=work_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.patch(
                 f"/activity/dashboard/characters/{char_id}",
-                json={
-                    "discord_id": 5,
-                    "appearance_traits": {"eye_color": appearance.EYE_COLORS[2]},
-                },
+                json={"discord_id": 5, "appearance_layers": {str(category_id): option_id}},
             )
         assert response.status_code == 200
-        assert response.json()["appearance_traits"]["eye_color"] == appearance.EYE_COLORS[2]
+        assert response.json()["appearance_layers"] == {str(category_id): option_id}
 
-    async def test_update_rejects_an_invalid_appearance_trait(self, work_app, db_session_factory):
+    async def test_update_rejects_an_option_that_belongs_to_a_different_category(
+        self, work_app, db_session_factory
+    ):
         char_id = await seed_character(db_session_factory, discord_id=5)
+        category_id, option_ids = await seed_layer_category(db_session_factory, option_names=["Braid"])
+        option_id = option_ids[0]
         transport = httpx.ASGITransport(app=work_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.patch(
                 f"/activity/dashboard/characters/{char_id}",
-                json={"discord_id": 5, "appearance_traits": {"height_cm": 999}},
+                # option_id is real, but doesn't belong to category_id + 1.
+                json={"discord_id": 5, "appearance_layers": {str(category_id + 1): option_id}},
             )
         assert response.status_code == 400
 
-    async def test_appearance_options_lists_every_palette(self, work_app):
+    async def test_layer_catalog_starts_empty(self, work_app):
         transport = httpx.ASGITransport(app=work_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.get("/activity/dashboard/characters/appearance-options")
+            response = await client.get("/activity/dashboard/layers")
         assert response.status_code == 200
-        body = response.json()
-        assert body["hair_styles"] == list(appearance.HAIR_STYLES)
-        assert body["skin_tones"] == list(appearance.SKIN_TONES)
-        assert body["height_cm_min"] == appearance.HEIGHT_CM_MIN
-        assert body["height_cm_max"] == appearance.HEIGHT_CM_MAX
-        assert body["defaults"] == appearance.DEFAULT_APPEARANCE_TRAITS
+        assert response.json() == {"categories": []}
+
+    async def test_layer_catalog_lists_categories_in_z_index_order(
+        self, work_app, db_session_factory
+    ):
+        await seed_layer_category(db_session_factory, name="Hair", z_index=5, option_names=["Braid"])
+        await seed_layer_category(db_session_factory, name="Base", z_index=0, option_names=["Tan"])
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/activity/dashboard/layers")
+        assert response.status_code == 200
+        names = [c["name"] for c in response.json()["categories"]]
+        assert names == ["Base", "Hair"]
 
     async def test_retire_happy_path(self, work_app, db_session_factory):
         char_id = await seed_character(
@@ -2735,3 +2785,185 @@ class TestDashboardStaff:
             await discord_staff.post_staff_log(
                 channel_id=555, bot_token="test-bot-token", content="ignored"
             )  # no raise
+
+
+class TestDashboardStaffLayers:
+    async def test_create_category_refuses_without_the_staff_role(self, staff_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([1, 2]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/layers/categories",
+                    json={"discord_id": 42, "name": "Hair", "z_index": 1},
+                )
+        assert response.status_code == 403
+
+    async def test_create_category_happy_path(self, staff_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/layers/categories",
+                    json={"discord_id": 42, "name": "Hair", "z_index": 3},
+                )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["name"] == "Hair"
+        assert body["z_index"] == 3
+        assert body["options"] == []
+
+    async def test_create_category_rejects_an_empty_name(self, staff_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/layers/categories",
+                    json={"discord_id": 42, "name": "   ", "z_index": 0},
+                )
+        assert response.status_code == 400
+
+    async def test_update_category_renames_and_reorders(self, staff_app, db_session_factory):
+        category_id, _ = await seed_layer_category(db_session_factory, name="Hair", z_index=0)
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.patch(
+                    f"/activity/dashboard/staff/layers/categories/{category_id}",
+                    json={"discord_id": 42, "name": "Hairstyles", "z_index": 9},
+                )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["name"] == "Hairstyles"
+        assert body["z_index"] == 9
+
+    async def test_update_category_refuses_an_unknown_id(self, staff_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.patch(
+                    "/activity/dashboard/staff/layers/categories/999",
+                    json={"discord_id": 42, "name": "Whatever"},
+                )
+        assert response.status_code == 404
+
+    async def test_delete_category_removes_it_and_its_options(
+        self, staff_app_with_uploads, db_session_factory, tmp_path
+    ):
+        (tmp_path / "uploads" / "layers").mkdir(parents=True)
+        image_path = tmp_path / "uploads" / "layers" / "existing.png"
+        image_path.write_bytes(b"fake-png-bytes")
+        category_id, _ = await seed_layer_category(
+            db_session_factory, name="Hair", option_names=["Braid"]
+        )
+        # Point the seeded option at the file actually on disk so deletion
+        # has something real to unlink.
+        async with db_session_factory() as session, session.begin():
+            option = (
+                await session.execute(select(LayerOption).where(LayerOption.category_id == category_id))
+            ).scalar_one()
+            option.image_path = "uploads/layers/existing.png"
+
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app_with_uploads)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    f"/activity/dashboard/staff/layers/categories/{category_id}/delete",
+                    json={"discord_id": 42},
+                )
+        assert response.status_code == 200
+        assert not image_path.exists()
+        async with db_session_factory() as session:
+            assert await session.get(LayerCategory, category_id) is None
+
+    async def test_upload_option_saves_the_file_and_creates_a_row(
+        self, staff_app_with_uploads, db_session_factory, tmp_path
+    ):
+        category_id, _ = await seed_layer_category(db_session_factory, name="Hair")
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app_with_uploads)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    f"/activity/dashboard/staff/layers/categories/{category_id}/options",
+                    data={"discord_id": "42", "name": "Braid"},
+                    files={"file": ("braid.png", b"fake-png-bytes", "image/png")},
+                )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["name"] == "Braid"
+        assert body["image_url"].startswith("/uploads/layers/")
+        saved_path = tmp_path / body["image_url"].removeprefix("/")
+        assert saved_path.exists()
+        assert saved_path.read_bytes() == b"fake-png-bytes"
+
+    async def test_upload_option_rejects_a_disallowed_content_type(
+        self, staff_app_with_uploads, db_session_factory
+    ):
+        category_id, _ = await seed_layer_category(db_session_factory, name="Hair")
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app_with_uploads)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    f"/activity/dashboard/staff/layers/categories/{category_id}/options",
+                    data={"discord_id": "42", "name": "Braid"},
+                    files={"file": ("braid.svg", b"<svg></svg>", "image/svg+xml")},
+                )
+        assert response.status_code == 400
+
+    async def test_upload_option_refuses_without_the_staff_role(
+        self, staff_app_with_uploads, db_session_factory
+    ):
+        category_id, _ = await seed_layer_category(db_session_factory, name="Hair")
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([1, 2]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app_with_uploads)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    f"/activity/dashboard/staff/layers/categories/{category_id}/options",
+                    data={"discord_id": "42", "name": "Braid"},
+                    files={"file": ("braid.png", b"fake-png-bytes", "image/png")},
+                )
+        assert response.status_code == 403
+
+    async def test_delete_option_removes_the_file_and_row(
+        self, staff_app_with_uploads, db_session_factory, tmp_path
+    ):
+        (tmp_path / "uploads" / "layers").mkdir(parents=True)
+        image_path = tmp_path / "uploads" / "layers" / "existing.png"
+        image_path.write_bytes(b"fake-png-bytes")
+        _category_id, (option_id,) = await seed_layer_category(
+            db_session_factory, name="Hair", option_names=["Braid"]
+        )
+        async with db_session_factory() as session, session.begin():
+            option = await session.get(LayerOption, option_id)
+            option.image_path = "uploads/layers/existing.png"
+
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app_with_uploads)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    f"/activity/dashboard/staff/layers/options/{option_id}/delete",
+                    json={"discord_id": 42},
+                )
+        assert response.status_code == 200
+        assert not image_path.exists()
+        async with db_session_factory() as session:
+            assert await session.get(LayerOption, option_id) is None

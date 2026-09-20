@@ -9,13 +9,12 @@ coupling to fix."""
 from __future__ import annotations
 
 import re
-from typing import Any
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from panem_shared import constants
-from panem_shared.appearance import DEFAULT_APPEARANCE_TRAITS, validate_appearance_traits
+from panem_shared import layers as layers_svc
 from panem_shared.content.schemas import District
 from panem_shared.db.models import Character, Shift, User
 from panem_shared.enums import CharacterStatus, ShiftResult
@@ -144,7 +143,7 @@ async def create_character(
     max_characters: int,
     avatar_url: str | None = None,
     job_is_illicit: bool = False,
-    appearance_traits: dict[str, Any] | None = None,
+    appearance_layers: dict[str, int] | None = None,
 ) -> Character:
     if user.banned_at is not None:
         raise NotAllowed("banned")
@@ -155,7 +154,11 @@ async def create_character(
     validate_job_title(job_title)
     if avatar_url:
         validate_avatar_url(avatar_url)
-    traits = validate_appearance_traits(appearance_traits or dict(DEFAULT_APPEARANCE_TRAITS))
+    layers = (
+        await layers_svc.validate_layer_selection(session, appearance_layers)
+        if appearance_layers
+        else None
+    )
     await ensure_name_available(session, name)
 
     if await _active_character_count(session, user.id) >= max_characters:
@@ -170,7 +173,7 @@ async def create_character(
         appearance=appearance,
         backstory=backstory,
         avatar_url=avatar_url or None,
-        appearance_traits=traits,
+        appearance_layers=layers,
         status=CharacterStatus.PENDING.value,
         job_title=job_title,
         shift_phase=shift_phase,

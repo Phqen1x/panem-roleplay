@@ -58,6 +58,7 @@ from panem_api.dashboard_routes import (
     build_housing_router,
     build_identify_router,
     build_jail_router,
+    build_layers_router,
     build_market_router,
     build_residents_router,
     build_social_router,
@@ -331,6 +332,11 @@ def create_app(
     discord_token: str = "",
     staff_role_id: int = 0,
     log_channel_id: int = 0,
+    # Where staff-uploaded layer images get written/read (build_staff_
+    # router's layer-catalog endpoints); defaults to the real bundled
+    # `static/` dir. Overridable so tests can point it at a tmp_path
+    # instead of writing real files into the checked-out static/ tree.
+    static_dir: Path | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -721,6 +727,7 @@ def create_app(
         )
     )
     app.include_router(build_work_router(session_factory=session_factory))
+    app.include_router(build_layers_router(session_factory=session_factory))
     app.include_router(build_market_router(content=content, session_factory=session_factory))
     app.include_router(build_blackmarket_router(content=content, session_factory=session_factory))
     app.include_router(build_travel_router(content=content, session_factory=session_factory))
@@ -736,6 +743,7 @@ def create_app(
     app.include_router(
         build_staff_router(
             session_factory=session_factory,
+            static_dir=static_dir or STATIC_DIR,
             discord_token=discord_token,
             discord_guild_id=discord_guild_id,
             staff_role_id=staff_role_id,
