@@ -19,7 +19,6 @@ from panem_bot.views import (
     SHIFT_PHASE_LABELS,
     ApprovalView,
     IllicitDeclareView,
-    JobTitlePromptView,
     ShiftPhaseSelectView,
 )
 from panem_shared import constants, job_levels
@@ -112,10 +111,10 @@ class CharacterCog(commands.Cog):
             age_str: str,
             appearance: str,
             backstory: str,
-            avatar_url: str,
+            job_title: str,
         ) -> None:
-            await self._prompt_job_title(
-                modal_interaction, district_id, name, age_str, appearance, backstory, avatar_url
+            await self._validate_details_and_prompt_shift_phase(
+                modal_interaction, district_id, name, age_str, appearance, backstory, job_title
             )
 
         max_age = characters_svc.max_age_for_district(district_id)
@@ -124,7 +123,7 @@ class CharacterCog(commands.Cog):
             CharacterDetailsModal(on_submit=on_submit, age_placeholder=placeholder)
         )
 
-    async def _prompt_job_title(
+    async def _validate_details_and_prompt_shift_phase(
         self,
         interaction: discord.Interaction,
         district_id: int,
@@ -132,7 +131,7 @@ class CharacterCog(commands.Cog):
         age_str: str,
         appearance: str,
         backstory: str,
-        avatar_url: str,
+        job_title: str,
     ) -> None:
         try:
             age = int(age_str)
@@ -150,8 +149,7 @@ class CharacterCog(commands.Cog):
                 appearance=appearance,
                 backstory=backstory,
             )
-            if avatar_url:
-                characters_svc.validate_avatar_url(avatar_url)
+            characters_svc.validate_job_title(job_title)
         except ValidationFailed as exc:
             await interaction.response.send_message(t(exc.reason_key, **exc.fmt), ephemeral=True)
             return
@@ -165,54 +163,9 @@ class CharacterCog(commands.Cog):
                 )
                 return
 
-        async def on_job_title(job_interaction: discord.Interaction, job_title: str) -> None:
-            await self._prompt_shift_phase(
-                job_interaction,
-                district_id,
-                name,
-                age,
-                appearance,
-                backstory,
-                avatar_url,
-                job_title,
-            )
-
-        # Discord rejects a modal (`JobTitleModal`) sent directly in
-        # response to `CharacterDetailsModal`'s own MODAL_SUBMIT
-        # interaction -- a button click in between supplies the plain
-        # component interaction `send_modal` needs instead.
-        await interaction.response.send_message(
-            t("job_title_prompt"), view=JobTitlePromptView(on_job_title), ephemeral=True
-        )
-
-    async def _prompt_shift_phase(
-        self,
-        interaction: discord.Interaction,
-        district_id: int,
-        name: str,
-        age: int,
-        appearance: str,
-        backstory: str,
-        avatar_url: str,
-        job_title: str,
-    ) -> None:
-        try:
-            characters_svc.validate_job_title(job_title)
-        except ValidationFailed as exc:
-            await interaction.response.send_message(t(exc.reason_key, **exc.fmt), ephemeral=True)
-            return
-
         async def on_phase_chosen(phase_interaction: discord.Interaction, shift_phase: str) -> None:
             await self._prompt_illicit(
-                phase_interaction,
-                district_id,
-                name,
-                age,
-                appearance,
-                backstory,
-                avatar_url,
-                job_title,
-                shift_phase,
+                phase_interaction, district_id, name, age, appearance, backstory, job_title, shift_phase
             )
 
         await interaction.response.send_message(
@@ -229,7 +182,6 @@ class CharacterCog(commands.Cog):
         age: int,
         appearance: str,
         backstory: str,
-        avatar_url: str,
         job_title: str,
         shift_phase: str,
     ) -> None:
@@ -243,7 +195,6 @@ class CharacterCog(commands.Cog):
                 age,
                 appearance,
                 backstory,
-                avatar_url,
                 job_title,
                 shift_phase,
                 job_is_illicit,
@@ -264,7 +215,6 @@ class CharacterCog(commands.Cog):
         age: int,
         appearance: str,
         backstory: str,
-        avatar_url: str,
         job_title: str,
         shift_phase: str,
         job_is_illicit: bool,
@@ -280,7 +230,6 @@ class CharacterCog(commands.Cog):
                     age=age,
                     appearance=appearance,
                     backstory=backstory,
-                    avatar_url=avatar_url or None,
                     job_title=job_title,
                     shift_phase=shift_phase,
                     job_is_illicit=job_is_illicit,
@@ -495,12 +444,13 @@ class CharacterCog(commands.Cog):
                 return
             character_id = row.id
             district_id = row.district_id
+            current_shift_phase = row.shift_phase
             prefill = {
                 "name": row.name,
                 "age": str(row.age),
                 "appearance": row.appearance,
                 "backstory": row.backstory,
-                "avatar": row.avatar_url or "",
+                "job_title": row.job_title or "",
             }
 
         from panem_bot.modals import CharacterDetailsModal
@@ -511,9 +461,9 @@ class CharacterCog(commands.Cog):
             age_str: str,
             appearance: str,
             backstory: str,
-            avatar_url: str,
+            job_title: str,
         ) -> None:
-            await self._handle_edit_submit(
+            await self._validate_edit_and_prompt_shift_phase(
                 modal_interaction,
                 character_id,
                 district_id,
@@ -521,7 +471,8 @@ class CharacterCog(commands.Cog):
                 age_str,
                 appearance,
                 backstory,
-                avatar_url,
+                job_title,
+                current_shift_phase,
             )
 
         max_age = characters_svc.max_age_for_district(district_id)
@@ -530,7 +481,7 @@ class CharacterCog(commands.Cog):
             CharacterDetailsModal(on_submit=on_submit, age_placeholder=placeholder, prefill=prefill)
         )
 
-    async def _handle_edit_submit(
+    async def _validate_edit_and_prompt_shift_phase(
         self,
         interaction: discord.Interaction,
         character_id: int,
@@ -539,7 +490,8 @@ class CharacterCog(commands.Cog):
         age_str: str,
         appearance: str,
         backstory: str,
-        avatar_url: str,
+        job_title: str,
+        current_shift_phase: str | None,
     ) -> None:
         try:
             age = int(age_str)
@@ -557,8 +509,7 @@ class CharacterCog(commands.Cog):
                 appearance=appearance,
                 backstory=backstory,
             )
-            if avatar_url:
-                characters_svc.validate_avatar_url(avatar_url)
+            characters_svc.validate_job_title(job_title)
         except ValidationFailed as exc:
             await interaction.response.send_message(t(exc.reason_key, **exc.fmt), ephemeral=True)
             return
@@ -577,11 +528,47 @@ class CharacterCog(commands.Cog):
                     t(exc.reason_key, **exc.fmt), ephemeral=True
                 )
                 return
+
+        async def on_phase_chosen(phase_interaction: discord.Interaction, shift_phase: str) -> None:
+            await self._handle_edit_submit(
+                phase_interaction,
+                character_id,
+                name,
+                age,
+                appearance,
+                backstory,
+                job_title,
+                shift_phase,
+            )
+
+        await interaction.response.send_message(
+            "When does your character work their shift?",
+            view=ShiftPhaseSelectView(on_phase_chosen, current_phase=current_shift_phase),
+            ephemeral=True,
+        )
+
+    async def _handle_edit_submit(
+        self,
+        interaction: discord.Interaction,
+        character_id: int,
+        name: str,
+        age: int,
+        appearance: str,
+        backstory: str,
+        job_title: str,
+        shift_phase: str,
+    ) -> None:
+        async with self.bot.db() as session:
+            row = await characters_svc.get_character(session, character_id)
+            if row.status != CharacterStatus.PENDING.value:
+                await interaction.response.send_message(t("not_pending"), ephemeral=True)
+                return
             row.name = name
             row.age = age
             row.appearance = appearance
             row.backstory = backstory
-            row.avatar_url = avatar_url or None
+            row.job_title = job_title
+            row.shift_phase = shift_phase
 
         await interaction.response.send_message(
             f"**{name}** updated and resubmitted for approval.", ephemeral=True

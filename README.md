@@ -2842,3 +2842,44 @@ switch-away-and-back remounts cleanly, and the 26-avatar simultaneous-mount stre
 zero `pageerror`s (the WebGL context-loss hardening from the previous milestone holds up under the new,
 heavier per-instance clone cost). `node --check` clean on every changed/vendored file. No Python,
 database, or API changes -- `ruff` and the full `pytest` suite (984 tests) re-run clean and unchanged.
+
+## Job title moved into `/character create`'s main modal, and both fields are now editable via `/character edit`
+
+Job title used to need its own step: `CharacterDetailsModal` (name/age/appearance/backstory/avatar --
+its full 5-field budget) submitted, then a button ("Set Job Title") had to be clicked to open a
+*second* modal just for that one field, because Discord rejects a modal sent directly in response to
+another modal's own submission (see the `629f284` commit this docstring/comment referenced) -- the
+button supplied the plain, non-modal interaction that second `send_modal` call needed. Asked to fold
+job selection into the modal instead of behind a separate button, job title now lives directly in
+`CharacterDetailsModal` as its 5th field, in place of the avatar URL field that used to occupy that
+slot.
+
+**Making room**: avatar URL was the one field with a dedicated post-creation escape hatch already --
+`/character avatar` exists specifically to set or change it, works before or after approval (its
+underlying query only filters by owner + name, not status; only its autocomplete favors approved
+characters), and the modal's own inline comment already noted it as a "set later" fallback for anyone
+uploading a file instead of a URL. Dropping it from the creation modal removes zero capability, just
+moves *where* it's set.
+
+**Flow now**: `CharacterDetailsModal` (name/age/appearance/backstory/**job title**) submits straight
+into shift-phase selection (a `Select`-based `View`, unchanged -- a fixed list of choices was never
+going to fit as a 6th modal field even after freeing a slot) -- one fewer interaction than before, and
+one less place a modal-chaining rule could bite in the future. `JobTitleModal` and
+`JobTitlePromptView` are gone; the now-unused `job_title_prompt` string went with them.
+
+**`/character edit`**: previously reused `CharacterDetailsModal` for name/age/appearance/backstory/
+avatar but never touched job_title/shift_phase at all -- the *only* way to change those post-creation
+was staff running `/staff give job` on an already-approved character. Since `/character edit` shares
+the same modal class as creation, job title came along for free once it moved into that modal; shift
+phase needed its own follow-up step added, mirroring creation's shape exactly (`ShiftPhaseSelectView`
+shown after the modal submits, now with its `SelectOption`s taking an optional `current_phase` so the
+character's existing phase shows pre-selected instead of forcing a re-pick of something unchanged).
+This is scoped the same way every other edit-command field already was: pending characters only,
+resubmitted for staff approval like any other edit -- `/staff give job` remains the only way to change
+an *approved* character's job, since that's an intentionally different, staff-gated permission model
+this change didn't touch.
+
+Verified: `ruff` clean, `mypy` error count unchanged (148, confirmed identical before/after via
+`git stash`), full `pytest` suite unchanged (984 passed), and a direct Python import of
+`panem_bot.modals`/`panem_bot.views`/`panem_bot.cogs.characters` confirms both removed classes
+(`JobTitleModal`, `JobTitlePromptView`) are actually gone rather than just unreferenced.

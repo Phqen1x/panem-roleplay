@@ -15,7 +15,6 @@ STRINGS: dict[str, str] = {
     "invalid_appearance": "Appearance must be {max} characters or fewer.",
     "invalid_backstory": "Backstory must be {max} characters or fewer.",
     "invalid_job_title": "Job title can't be empty and must be 80 characters or fewer.",
-    "job_title_prompt": "Next, tell us what job your character wants.",
     "mastery_needs_value": "Provide either shifts_completed or level.",
     "invalid_shifts_completed": "shifts_completed must be zero or greater.",
     "invalid_district": "Not a valid district.",

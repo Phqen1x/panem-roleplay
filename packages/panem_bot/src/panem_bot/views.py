@@ -34,9 +34,14 @@ values (`panem_shared.enums.DayPhase`)."""
 
 
 class ShiftPhaseSelect(discord.ui.Select):
-    def __init__(self, on_choose: Callable[[discord.Interaction, str], Awaitable[None]]) -> None:
+    def __init__(
+        self,
+        on_choose: Callable[[discord.Interaction, str], Awaitable[None]],
+        *,
+        current_phase: str | None = None,
+    ) -> None:
         options = [
-            discord.SelectOption(label=label, value=phase)
+            discord.SelectOption(label=label, value=phase, default=phase == current_phase)
             for phase, label in SHIFT_PHASE_LABELS.items()
         ]
         super().__init__(placeholder="Choose when you work your shift...", options=options)
@@ -47,31 +52,14 @@ class ShiftPhaseSelect(discord.ui.Select):
 
 
 class ShiftPhaseSelectView(discord.ui.View):
-    def __init__(self, on_choose: Callable[[discord.Interaction, str], Awaitable[None]]) -> None:
-        super().__init__(timeout=300)
-        self.add_item(ShiftPhaseSelect(on_choose))
-
-
-class JobTitlePromptView(discord.ui.View):
-    """A single button standing between `CharacterDetailsModal`'s
-    submission and `JobTitleModal`'s launch. Discord rejects a modal sent
-    directly in response to another modal's own MODAL_SUBMIT interaction
-    (the legacy Action-Row-wrapped TextInput schema 400s), so this button
-    click supplies the plain component interaction `send_modal` needs --
-    the same kind of interaction `CharacterDetailsModal` itself already
-    opens from (the district select) without issue."""
-
-    def __init__(self, on_submit: Callable[[discord.Interaction, str], Awaitable[None]]) -> None:
-        super().__init__(timeout=300)
-        self._on_submit = on_submit
-
-    @discord.ui.button(label="Set Job Title", style=discord.ButtonStyle.primary)
-    async def set_job_title(
-        self, interaction: discord.Interaction, button: discord.ui.Button[JobTitlePromptView]
+    def __init__(
+        self,
+        on_choose: Callable[[discord.Interaction, str], Awaitable[None]],
+        *,
+        current_phase: str | None = None,
     ) -> None:
-        from panem_bot.modals import JobTitleModal
-
-        await interaction.response.send_modal(JobTitleModal(on_submit=self._on_submit))
+        super().__init__(timeout=300)
+        self.add_item(ShiftPhaseSelect(on_choose, current_phase=current_phase))
 
 
 class IllicitDeclareView(discord.ui.View):
