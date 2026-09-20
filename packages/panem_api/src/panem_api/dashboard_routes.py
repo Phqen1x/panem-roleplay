@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import random
 import secrets
+from typing import Any
 
 import redis.asyncio as redis
 from fastapi import APIRouter, HTTPException
@@ -37,6 +38,7 @@ from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from panem_api import discord_staff
+from panem_shared import appearance as appearance_svc
 from panem_shared import blackmarket as blackmarket_svc
 from panem_shared import characters as characters_svc
 from panem_shared import constants, job_levels, simtime
@@ -85,6 +87,7 @@ class DashboardCharacterSummary(BaseModel):
     id: int
     name: str
     avatar_url: str | None = None
+    appearance_traits: dict[str, Any]
     district_id: int
     current_district_id: int
     money: int
@@ -195,6 +198,8 @@ def build_identify_router(
                         id=c.id,
                         name=c.name,
                         avatar_url=c.avatar_url,
+                        appearance_traits=c.appearance_traits
+                        or appearance_svc.DEFAULT_APPEARANCE_TRAITS,
                         district_id=c.district_id,
                         current_district_id=c.current_district_id,
                         money=c.money,
@@ -216,6 +221,7 @@ class CharacterDetail(BaseModel):
     status: str
     age: int
     appearance: str
+    appearance_traits: dict[str, Any]
     backstory: str
     avatar_url: str | None = None
     proxy_tag: str | None = None
@@ -240,6 +246,7 @@ def _character_detail(
         status=character.status,
         age=character.age,
         appearance=character.appearance,
+        appearance_traits=character.appearance_traits or appearance_svc.DEFAULT_APPEARANCE_TRAITS,
         backstory=character.backstory,
         avatar_url=character.avatar_url,
         proxy_tag=character.proxy_tag,
@@ -270,6 +277,7 @@ class CreateCharacterRequest(BaseModel):
     appearance: str = ""
     backstory: str = ""
     avatar_url: str | None = None
+    appearance_traits: dict[str, Any] | None = None
     job_title: str
     shift_phase: str
     job_is_illicit: bool = False
@@ -283,6 +291,26 @@ class UpdateCharacterRequest(BaseModel):
     discord_id: int
     avatar_url: str | None = None
     proxy_tag: str | None = None
+    appearance_traits: dict[str, Any] | None = None
+
+
+class AppearanceOptionsResponse(BaseModel):
+    gender_presentations: list[str]
+    age_looks: list[str]
+    face_shapes: list[str]
+    expressions: list[str]
+    hair_styles: list[str]
+    facial_hair: list[str]
+    builds: list[str]
+    clothing_styles: list[str]
+    jewelry: list[str]
+    skin_tones: list[str]
+    hair_colors: list[str]
+    eye_colors: list[str]
+    clothing_colors: list[str]
+    height_cm_min: int
+    height_cm_max: int
+    defaults: dict[str, Any]
 
 
 def build_characters_router(
@@ -303,6 +331,32 @@ def build_characters_router(
     without a wider OAuth scope than this feature asks for; see the
     README's note on this simplification."""
     router = APIRouter(prefix="/activity/dashboard/characters", tags=["dashboard"])
+
+    @router.get("/appearance-options", response_model=AppearanceOptionsResponse)
+    async def appearance_options() -> AppearanceOptionsResponse:
+        """The customizer's single source of truth for its palettes -- the
+        frontend never hardcodes its own copy of these lists, it just
+        renders whatever this returns. No `discord_id` needed: this is
+        static, non-sensitive option data, same trust level as the static
+        `/districts` endpoint above this file's own routers."""
+        return AppearanceOptionsResponse(
+            gender_presentations=list(appearance_svc.GENDER_PRESENTATIONS),
+            age_looks=list(appearance_svc.AGE_LOOKS),
+            face_shapes=list(appearance_svc.FACE_SHAPES),
+            expressions=list(appearance_svc.EXPRESSIONS),
+            hair_styles=list(appearance_svc.HAIR_STYLES),
+            facial_hair=list(appearance_svc.FACIAL_HAIR),
+            builds=list(appearance_svc.BUILDS),
+            clothing_styles=list(appearance_svc.CLOTHING_STYLES),
+            jewelry=list(appearance_svc.JEWELRY_OPTIONS),
+            skin_tones=list(appearance_svc.SKIN_TONES),
+            hair_colors=list(appearance_svc.HAIR_COLORS),
+            eye_colors=list(appearance_svc.EYE_COLORS),
+            clothing_colors=list(appearance_svc.CLOTHING_COLORS),
+            height_cm_min=appearance_svc.HEIGHT_CM_MIN,
+            height_cm_max=appearance_svc.HEIGHT_CM_MAX,
+            defaults=dict(appearance_svc.DEFAULT_APPEARANCE_TRAITS),
+        )
 
     @router.get("", response_model=MyCharactersResponse)
     async def list_my_characters(discord_id: int) -> MyCharactersResponse:
@@ -368,6 +422,7 @@ def build_characters_router(
                     appearance=body.appearance,
                     backstory=body.backstory,
                     avatar_url=body.avatar_url,
+                    appearance_traits=body.appearance_traits,
                     job_title=body.job_title,
                     shift_phase=body.shift_phase,
                     job_is_illicit=body.job_is_illicit,
@@ -394,6 +449,10 @@ def build_characters_router(
                 if body.proxy_tag is not None:
                     characters_svc.validate_proxy_tag(body.proxy_tag)
                     character.proxy_tag = body.proxy_tag
+                if body.appearance_traits is not None:
+                    character.appearance_traits = appearance_svc.validate_appearance_traits(
+                        body.appearance_traits
+                    )
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
             current_tick = await _current_tick(session)

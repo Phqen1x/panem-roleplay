@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from panem_api import discord_staff
 from panem_api.app import create_app
+from panem_shared import appearance
 from panem_shared.constants import TRANSIT_TICKS
 from panem_shared.content.loader import ContentBundle
 from panem_shared.content.schemas import (
@@ -1384,6 +1385,117 @@ class TestDashboardCharacters:
                 json={"discord_id": 5, "avatar_url": "not-a-url"},
             )
         assert response.status_code == 400
+
+    async def test_create_stores_a_valid_appearance_traits_submission(
+        self, work_app, db_session_factory
+    ):
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/activity/dashboard/characters",
+                json={
+                    "discord_id": 7,
+                    "district_id": 1,
+                    "name": "Wren",
+                    "age": 15,
+                    "job_title": "Miner",
+                    "shift_phase": "morning",
+                    "appearance_traits": {"hair_style": "mohawk", "build": "stocky"},
+                },
+            )
+        assert response.status_code == 200
+        traits = response.json()["appearance_traits"]
+        assert traits["hair_style"] == "mohawk"
+        assert traits["build"] == "stocky"
+        # Untouched fields still come back filled from the defaults.
+        assert traits["face_shape"] == appearance.DEFAULT_APPEARANCE_TRAITS["face_shape"]
+
+    async def test_create_with_no_appearance_traits_gets_the_defaults(
+        self, work_app, db_session_factory
+    ):
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/activity/dashboard/characters",
+                json={
+                    "discord_id": 8,
+                    "district_id": 1,
+                    "name": "Sabel",
+                    "age": 15,
+                    "job_title": "Baker",
+                    "shift_phase": "morning",
+                },
+            )
+        assert response.status_code == 200
+        assert response.json()["appearance_traits"] == appearance.DEFAULT_APPEARANCE_TRAITS
+
+    async def test_create_rejects_an_invalid_appearance_trait(self, work_app):
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/activity/dashboard/characters",
+                json={
+                    "discord_id": 9,
+                    "district_id": 1,
+                    "name": "Bramble",
+                    "age": 15,
+                    "job_title": "Baker",
+                    "shift_phase": "morning",
+                    "appearance_traits": {"hair_style": "not-a-real-style"},
+                },
+            )
+        assert response.status_code == 400
+
+    async def test_list_fills_appearance_traits_defaults_for_a_row_saved_before_the_field_existed(
+        self, work_app, db_session_factory
+    ):
+        await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"name": "OldRow", "status": CharacterStatus.APPROVED.value},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/activity/dashboard/characters", params={"discord_id": 5})
+        assert response.status_code == 200
+        (character,) = response.json()["characters"]
+        assert character["appearance_traits"] == appearance.DEFAULT_APPEARANCE_TRAITS
+
+    async def test_update_sets_appearance_traits(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.patch(
+                f"/activity/dashboard/characters/{char_id}",
+                json={
+                    "discord_id": 5,
+                    "appearance_traits": {"eye_color": appearance.EYE_COLORS[2]},
+                },
+            )
+        assert response.status_code == 200
+        assert response.json()["appearance_traits"]["eye_color"] == appearance.EYE_COLORS[2]
+
+    async def test_update_rejects_an_invalid_appearance_trait(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.patch(
+                f"/activity/dashboard/characters/{char_id}",
+                json={"discord_id": 5, "appearance_traits": {"height_cm": 999}},
+            )
+        assert response.status_code == 400
+
+    async def test_appearance_options_lists_every_palette(self, work_app):
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/activity/dashboard/characters/appearance-options")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["hair_styles"] == list(appearance.HAIR_STYLES)
+        assert body["skin_tones"] == list(appearance.SKIN_TONES)
+        assert body["height_cm_min"] == appearance.HEIGHT_CM_MIN
+        assert body["height_cm_max"] == appearance.HEIGHT_CM_MAX
+        assert body["defaults"] == appearance.DEFAULT_APPEARANCE_TRAITS
 
     async def test_retire_happy_path(self, work_app, db_session_factory):
         char_id = await seed_character(

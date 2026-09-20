@@ -359,3 +359,58 @@ table.data-table tr.clickable-row:hover {
   border-radius: 8px;
   background: #111;
 }
+
+/* ---------------------------------------------- Character avatar customizer */
+
+.avatar-preview {
+  display: block;
+  margin: 0 auto 12px;
+  border-radius: 8px;
+  background: #171a20;
+}
+
+.avatar-preview.small {
+  max-width: 160px;
+  height: auto;
+}
+
+.avatar-editor {
+  border-top: 1px solid var(--border);
+  margin-top: 10px;
+  padding-top: 10px;
+}
+
+.swatch-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+}
+
+.swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  cursor: pointer;
+  padding: 0;
+}
+
+.swatch.active {
+  border-color: var(--accent);
+}
+
+.jewelry-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  flex: 1;
+}
+
+.jewelry-check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}

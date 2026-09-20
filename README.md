@@ -2601,3 +2601,76 @@ racks up strikes on overshoot; (c) three strikes ends the attempt via the same `
 confirmed by the server's own "The lock holds. 2 attempt(s) left." response. `node --check` clean on
 the rewritten file; no Python changed, so the existing 965-test suite and mypy baseline are both
 unaffected by this one.
+
+## A comprehensive visual character customizer on the Character tab
+
+The Character tab's creation form (and, now, every existing character's card) got a full visual
+customizer instead of just a free-text "appearance" textarea: skin tone, gender presentation, how
+young or old the character looks, face shape and expression, hair style and color, facial hair,
+build, height, clothing style and color, and jewelry (earrings, necklace, nose ring, glasses,
+headband) -- all with a live-updating portrait preview, drawn as original canvas art (no external
+assets), same "original art only" precedent this codebase already established for the /work and
+/lockpick minigames. The free-text `appearance` field is untouched and still means exactly what it
+always did (the player's own written description); the customizer is a separate, additive concern
+that drives a *rendered portrait*, stored as structured trait data alongside it.
+
+**Data model**: a new `panem_shared/appearance.py` holds the fixed option palette for every field
+(`GENDER_PRESENTATIONS`, `AGE_LOOKS`, `FACE_SHAPES`, `EXPRESSIONS`, `HAIR_STYLES`, `FACIAL_HAIR`,
+`BUILDS`, `CLOTHING_STYLES`, `JEWELRY_OPTIONS`, plus fixed hex swatch palettes for
+`SKIN_TONES`/`HAIR_COLORS`/`EYE_COLORS`/`CLOTHING_COLORS` and a `140..210` `height_cm` range) and
+`validate_appearance_traits(traits) -> dict`, which rejects anything outside that palette and always
+returns every field populated (merging onto `DEFAULT_APPEARANCE_TRAITS` for whatever the caller left
+out) -- the same "moved to `panem_shared` because `panem_api` needs it and can't import
+`panem_bot`" reasoning as `jail.py`/`stealing.py`/`characters.py` this session. `Character` gets a new
+nullable `appearance_traits: JSONB` column (migration `f3a9c6e2b7d4`); nullable rather than
+backfilled, since API responses fill in the defaults for display (`character.appearance_traits or
+appearance.DEFAULT_APPEARANCE_TRAITS`) rather than needing every existing row rewritten.
+`panem_shared.characters.create_character` takes an optional `appearance_traits` dict (validated the
+same way, defaulted for the Discord-side `/character create` flow which doesn't send one at all).
+
+**API**: `GET /activity/dashboard/characters/appearance-options` is the customizer's single source of
+truth for every palette -- the frontend never hardcodes its own copy of the option lists, it just
+renders whatever this returns (no `discord_id` needed; this is static, non-sensitive option data,
+same trust level as the existing `/districts` endpoint). `POST /activity/dashboard/characters`
+accepts an optional `appearance_traits` object; `PATCH /activity/dashboard/characters/{id}` accepts
+one too, so a player can restyle an existing character's look after creation, not just at the moment
+they make it -- both routes validate through the same `panem_shared.appearance` function and refuse
+(400) on an unrecognized value. `DashboardCharacterSummary`/`CharacterDetail` both now carry
+`appearance_traits`, always fully populated, so the frontend never needs a second round-trip to render
+a character's portrait from the list/identify responses it already has.
+
+**Rendering**: `static/tabs/avatar_creator.js` exports a single pure function, `renderAvatar(canvas,
+traits)`, that draws a stylized portrait from canvas primitives (arcs, quadratic curves, clip regions)
+-- a torso colored by clothing style/color, a head shaped per `face_shape`, skin/hair/eye colors from
+the trait swatches, eyebrows and a mouth curved per `expression`, optional facial hair, one of ten
+hair styles (bald/buzz/short/bob/shoulder/long/braid/curly/mohawk/bun -- the longer styles draw a
+"back" layer behind the head before the head shape itself, so hair correctly frames rather than
+covers the face), and jewelry drawn last on top. It's a stateless redraw on every change, not an
+animation loop -- a portrait doesn't need one. `static/tabs/character.js`'s new `appearanceEditor(...)`
+component (dropdowns for choice fields via the existing `dropdown()` helper, a row of colored swatch
+buttons for each color field, checkboxes for jewelry, a range slider for height) is shared by the
+create form and by a "Customize appearance" toggle on every existing character's card, both calling
+`renderAvatar` on every control change for an immediate preview, and both sending the same
+`appearance_traits` shape to the API on submit/save.
+
+**A real bug caught during live verification, not just a design note**: the first version of the
+"short" hair style's front cap used a quadratic-curve bulge whose lowest point landed close enough to
+the eyebrow line that, combined with a near-black default hair/eyebrow color, it rendered as a single
+solid band across the upper face instead of hair-then-forehead-then-eyebrows. Caught by actually
+looking at a live screenshot rather than trusting the code by inspection alone -- fixed by clipping
+the shared "crown cap" to a rect well above the brow line for every style, and fixed a second,
+related bug the same screenshot pass caught in the "bob" style (its single low dome extended down
+*across* the eyes rather than only *beside* the face) by rebuilding it as the same tight crown cap
+plus two side flaps that hang past the ears to the jaw. Re-rendered and re-screenshotted all ten hair
+styles after each fix to confirm no other style regressed the same way.
+
+Verified: `uv run ruff check`/`ruff format --check` clean, `mypy` baseline unchanged (148, pre-existing
+`Bot`-vs-`PanemBot` typing gap, same as every prior milestone this session), the migration round-trips
+(`alembic downgrade -1` / `upgrade head`, single head), the full test suite is green (984 tests -- new
+`tests/unit/test_shared_appearance.py` for `validate_appearance_traits`'s option/range/type edge cases,
+plus new `TestDashboardCharacters` cases in `test_api_app.py` covering create/list/patch with
+`appearance_traits` and the new options endpoint), `node --check` clean on both changed/new JS files,
+and a live Playwright pass against a real running server: loaded the dashboard in preview mode, opened
+the Character tab, changed hair style/skin tone in the live customizer, submitted a real character
+creation with those traits, and confirmed via a direct API read-back that the exact submitted values
+(not just the defaults) persisted through creation and came back correctly on the next list load.

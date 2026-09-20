@@ -124,6 +124,13 @@ class Character(TimestampMixin, Base):
 
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     proxy_tag: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    appearance_traits: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    """Structured portrait options for the dashboard's visual character
+    customizer (`panem_shared.appearance`) -- separate from `appearance`
+    above, which stays the player's own free-text description. Nullable
+    rather than defaulted here so existing rows read as "never
+    customized"; API responses fill in `appearance.DEFAULT_APPEARANCE_
+    TRAITS` for display rather than backfilling every row via migration."""
 
     loyalty: Mapped[float] = mapped_column(Float, nullable=False, default=50.0)
     fear: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
