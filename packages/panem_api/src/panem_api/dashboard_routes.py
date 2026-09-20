@@ -199,7 +199,9 @@ def build_identify_router(
                         id=c.id,
                         name=c.name,
                         avatar_url=c.avatar_url,
-                        appearance_layers=c.appearance_layers or {},
+                        appearance_layers=layers_svc.sanitize_stored_selection(
+                            c.appearance_layers
+                        ),
                         district_id=c.district_id,
                         current_district_id=c.current_district_id,
                         money=c.money,
@@ -246,7 +248,7 @@ def _character_detail(
         status=character.status,
         age=character.age,
         appearance=character.appearance,
-        appearance_layers=character.appearance_layers or {},
+        appearance_layers=layers_svc.sanitize_stored_selection(character.appearance_layers),
         backstory=character.backstory,
         avatar_url=character.avatar_url,
         proxy_tag=character.proxy_tag,

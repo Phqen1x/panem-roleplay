@@ -1166,6 +1166,39 @@ class TestDashboardIdentify:
         assert [c["name"] for c in body["characters"]] == ["Wren"]
         assert body["characters"][0]["id"] == approved_id
 
+    async def test_stale_pre_picrew_appearance_data_does_not_500_the_whole_list(
+        self, work_app, db_session_factory
+    ):
+        # The layer-tables migration renamed appearance_traits ->
+        # appearance_layers without touching existing rows' data -- a
+        # character customized under the old fixed-palette system still
+        # has string-valued junk like {"hair_style": "mohawk"} sitting
+        # there, which isn't a valid {category_id: option_id} mapping.
+        # Building the dict[str, int] response straight from that used to
+        # raise a validation error and 500 this endpoint for every
+        # character this discord_id owns, not just the dirty one.
+        dirty_id = await seed_character(
+            db_session_factory,
+            discord_id=42,
+            character_overrides={
+                "name": "OldCustomized",
+                "status": CharacterStatus.APPROVED.value,
+                "appearance_layers": {"hair_style": "mohawk", "skin_tone": "tan"},
+            },
+        )
+        clean_id = await seed_character(
+            db_session_factory,
+            discord_id=42,
+            character_overrides={"name": "Fresh", "status": CharacterStatus.APPROVED.value},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/activity/dashboard/identify", json={"discord_id": 42})
+        assert response.status_code == 200
+        by_id = {c["id"]: c for c in response.json()["characters"]}
+        assert by_id[dirty_id]["appearance_layers"] == {}
+        assert by_id[clean_id]["appearance_layers"] == {}
+
     async def test_accepts_a_real_snowflake_sent_as_a_json_string(
         self, work_app, db_session_factory
     ):
@@ -1492,6 +1525,25 @@ class TestDashboardCharacters:
             db_session_factory,
             discord_id=5,
             character_overrides={"name": "OldRow", "status": CharacterStatus.APPROVED.value},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/activity/dashboard/characters", params={"discord_id": 5})
+        assert response.status_code == 200
+        (character,) = response.json()["characters"]
+        assert character["appearance_layers"] == {}
+
+    async def test_list_sanitizes_stale_pre_picrew_appearance_data(
+        self, work_app, db_session_factory
+    ):
+        await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={
+                "name": "OldRow",
+                "status": CharacterStatus.APPROVED.value,
+                "appearance_layers": {"hair_style": "mohawk"},
+            },
         )
         transport = httpx.ASGITransport(app=work_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

@@ -195,3 +195,29 @@ async def validate_layer_selection(
             raise ValidationFailed("invalid_appearance_layers")
         result[str(category_id)] = option_id
     return result
+
+
+def sanitize_stored_selection(raw: dict[str, int] | None) -> dict[str, int]:
+    """For *reading* a character's stored `appearance_layers`, not writing
+    it (`validate_layer_selection` above is the write-side gate). The
+    migration that introduced this column repurposed it from the old
+    fixed-palette customizer's `appearance_traits` (renamed the column,
+    left the data alone) -- any character customized under that system
+    still has string-valued junk like `{"hair_style": "mohawk"}` sitting
+    here, which isn't a valid `{category_id: option_id}` mapping. Its
+    declared type (`Character.appearance_layers`) says `dict[str, int]`,
+    but that's just the ORM's promise for data written *after* this
+    module existed -- a pre-migration row can still violate it at runtime,
+    which is exactly what building a `dict[str, int]` API response
+    straight from one did: raised a validation error and 500'd
+    `/activity/dashboard/identify` for that row's owner. Silently dropping
+    anything that isn't actually an int value treats stale data as "never
+    customized" instead, the same convention already used for a null
+    column, rather than requiring a separate data-cleanup pass."""
+    if not raw:
+        return {}
+    return {
+        str(key): value
+        for key, value in raw.items()
+        if isinstance(value, int) and not isinstance(value, bool)
+    }
