@@ -2674,3 +2674,84 @@ and a live Playwright pass against a real running server: loaded the dashboard i
 the Character tab, changed hair style/skin tone in the live customizer, submitted a real character
 creation with those traits, and confirmed via a direct API read-back that the exact submitted values
 (not just the defaults) persisted through creation and came back correctly on the next list load.
+
+## The character customizer's portrait upgraded to a real-time 3D model
+
+The 2D canvas portrait above was replaced with a live, orbit-able 3D humanoid model, built from
+Three.js primitive geometries and shaded materials rather than flat canvas arcs -- same trait data,
+same customizer UI, no server-side or data-model changes at all (every field this touches was already
+covered by the previous milestone's `panem_shared.appearance` validation and `appearance_traits`
+storage). This is a pure rendering-layer upgrade.
+
+**Three.js is vendored, not CDN-loaded**: `static/vendor/three.module.min.js` (r160, MIT, see
+`three.LICENSE.md` next to it) was fetched via `npm pack three` and copied in as a single ES module
+file, the same way `/vendor/discord-embedded-app-sdk.js` was vendored earlier this session -- a real
+Discord Activity iframe only ever fetches from this server's own origin, so a CDN dependency
+(`unpkg.com`, `cdn.jsdelivr.net`) would be a hard runtime dependency this codebase has deliberately
+avoided everywhere else.
+
+**Rendering**: `static/tabs/avatar_creator.js` still exports `WIDTH`/`HEIGHT`, but the pure
+`renderAvatar(canvas, traits)` function is gone -- a live 3D scene needs a render loop and owns real
+GPU resources, so the new API is `mountAvatar(container, traits) -> { update(newTraits), dispose() }`.
+The rig is built entirely from primitive geometries (spheres, capsules, cones, tori, boxes) with plain
+`MeshStandardMaterial` colors, no textures or external model/image assets -- consistent with this
+codebase's "original art only" rule, just in 3D instead of 2D. Every trait still maps to something
+visible: `face_shape` picks a head geometry (a box for square, a sphere+cone for a pointed heart chin,
+non-uniform sphere scaling for oval/round/long), `hair_style` builds one of ten distinct shapes from a
+shared "crown cap" (a partial sphere, capped well above the brow so it never overlaps the eyes) plus
+per-style additions (icosahedron clusters for curly, capsule flaps for bob, a box fin for mohawk, a
+sphere bun, back-length capsules for shoulder/long, zigzag capsule segments for braid), `build` scales
+torso/limb width and clothing color, `height_cm` scales the whole rig's Y axis, `expression` bends a
+torus-arc or box mouth and tilts brow boxes, `age_look` adjusts head-to-body proportion and skin
+roughness, and `jewelry` adds small tori/spheres (earrings, nose ring, headband, necklace, glasses)
+positioned off the head/neck. Since trait combinations vary the rig's real height and width a lot (a
+heavyset character with long hair vs. a slim one with none), the camera frames itself from the model's
+actual `THREE.Box3` bounding box on every build rather than a guessed fixed distance -- a fixed
+distance either clipped the extremes or left everyone else tiny in the middle of the frame.
+
+**Interaction**: dragging the preview rotates the camera around the model (plain pointer-event math,
+not a vendored `OrbitControls` module -- a few dozen lines of spherical-coordinate camera positioning
+covers exactly what this needs); when idle for a couple of seconds it resumes a slow auto-rotate, so
+the character reads as a real 3D object rather than a static image even before anyone touches it.
+
+**Lifecycle management, the real cost of switching from a stateless draw to a live scene**: every
+`mountAvatar` call owns a `requestAnimationFrame` loop and a WebGL context, and browsers cap how many
+contexts a page can hold at once. `character.js` was reworked so every place that used to call
+`renderAvatar(canvas, traits)` and move on now tracks the returned `{ el, dispose }`/`{ getTraits,
+dispose }` handles and disposes them at the right time: `characterCard`'s preview and its lazily-built
+"Customize appearance" editor, `createForm`'s editor, and `mount()`'s own `refresh()` (before rebuilding
+the character list) and `unmount()` (called by `app.js` on tab switch, per its existing
+`currentTabHandle.unmount()` convention). Confirmed via Playwright that switching away from the
+Character tab and back mounts a fresh, working set of canvases rather than compounding leaked ones.
+
+**A real robustness gap found via a Playwright stress test, not a hypothetical**: mounting ~26 avatars
+at once in a single page (a deliberate stress test sweeping all hair styles/face shapes/facial
+hair/builds side by side for visual QA, far beyond any real character list) reliably produced
+uncaught `pageerror`s from inside Three.js's internals once enough WebGL contexts were live -- the
+browser evicts/loses older contexts once a cap is hit, and `renderer.render()` throws once its context
+is gone. `mountAvatar` now guards both ends of that: a `try/catch` around the initial
+`WebGLRenderer` construction plus a `renderer.getContext()` null-check falls back to a plain "3D
+preview unavailable" text node if a context can't be created at all, and a `webglcontextlost` listener
+plus a `try/catch` around the per-frame `renderer.render()` call stops that instance's render loop
+cleanly if its context is lost or evicted later, instead of throwing and (as observed before the fix)
+taking down the rest of the page's script execution with it. A real character list never approaches
+anywhere near the ~16-ish context count where this kicks in (even a generous `max_characters_per_user`
+override plus every "Customize appearance" panel open at once tops out around 6-7), but a Discord
+Activity runs inside an embedded webview sharing its context budget with whatever else Discord itself
+draws, so this is real defensive coverage rather than handling only for the test's own sake.
+
+**A real visual bug caught the same way**: the shared hair "crown cap" first used a sphere sweep angle
+wide enough to wrap most of the way down the head, rendering as a solid dark helmet covering the eyes
+on every style that used it (everything except bald/buzz/mohawk/bob) -- confirmed via an actual
+screenshot, not just code inspection, the same live-verification bar this session has held to
+throughout. Narrowing the sweep to stop just above brow height fixed it across every affected style at
+once, re-verified with a fresh screenshot showing the face clearly visible under the hair.
+
+Verified: `node --check` clean on both changed JS files; a live Playwright pass against a real running
+server confirmed the 3D model renders (screenshot-verified, not just "a canvas exists"), drag-to-rotate
+actually changes the rendered frame (screenshot hash comparison, since a WebGL canvas's backing buffer
+isn't reliably readable out-of-band without `preserveDrawingBuffer`, which production code has no
+other reason to set), a trait change rebuilds and re-renders the model, and switching tabs away and
+back remounts cleanly with no leaked contexts or console errors beyond the browser's own benign
+`favicon.ico` 404. No Python, database, or API changes were needed for this milestone -- `ruff`/`mypy`/
+`pytest` all re-run clean and unchanged (984 tests) since nothing on that side was touched.

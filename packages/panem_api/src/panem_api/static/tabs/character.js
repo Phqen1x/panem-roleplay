@@ -10,14 +10,22 @@
 // The visual customizer (skin tone, gender presentation, age look, face
 // shape/expression, hair style/color, facial hair, build, height,
 // clothing style/color, jewelry) is a separate concern from the free-text
-// `appearance` field above: the customizer drives a rendered portrait
-// (`avatar_creator.js`, stored as `appearance_traits` JSON), while
-// `appearance` stays exactly what it always was -- the player's own
+// `appearance` field above: the customizer drives a live-rendered 3D
+// portrait (`avatar_creator.js`, stored as `appearance_traits` JSON),
+// while `appearance` stays exactly what it always was -- the player's own
 // written description. Both a new character and an existing one (via the
 // "Customize appearance" toggle on its card) go through the same
 // `appearanceEditor` component, so restyling later needs no separate UI.
+//
+// `avatar_creator.js`'s 3D preview is a live WebGL scene, not a stateless
+// canvas draw -- `mountAvatar(container, traits)` returns a handle with
+// `update(traits)`/`dispose()`, and every mount here MUST be disposed once
+// its container leaves the DOM (a card is replaced on refresh, the tab is
+// unmounted) or its render loop and GL context leak. Every function below
+// that creates one returns its own `dispose`, and `mount()`'s `refresh()`/
+// `unmount()` are what actually call them.
 import { fetchJson, el, dropdown } from "./_shared.js?v=3";
-import { renderAvatar, WIDTH, HEIGHT } from "./avatar_creator.js?v=3";
+import { mountAvatar } from "./avatar_creator.js?v=5";
 
 const SHIFT_PHASES = ["morning", "afternoon", "evening", "night"];
 
@@ -110,20 +118,18 @@ function appearanceEditor(options, initialTraits) {
     ...(initialTraits || {}),
     jewelry: [...((initialTraits && initialTraits.jewelry) || options.defaults.jewelry)],
   };
-  const canvas = el("canvas", { width: String(WIDTH), height: String(HEIGHT), class: "avatar-preview" });
+  const previewContainer = el("div", { class: "avatar-preview" });
+  const avatar = mountAvatar(previewContainer, traits);
 
-  function redraw() {
-    renderAvatar(canvas, traits);
-  }
   function set(field, value) {
     traits[field] = value;
-    redraw();
+    avatar.update(traits);
   }
 
   const root = el(
     "div",
     { class: "avatar-editor" },
-    canvas,
+    previewContainer,
     fieldRow("Presentation", choiceSelect(options.gender_presentations, traits.gender_presentation, (v) => set("gender_presentation", v))),
     fieldRow("Looks", choiceSelect(options.age_looks, traits.age_look, (v) => set("age_look", v))),
     fieldRow("Face shape", choiceSelect(options.face_shapes, traits.face_shape, (v) => set("face_shape", v))),
@@ -139,9 +145,12 @@ function appearanceEditor(options, initialTraits) {
     fieldRow("Clothing color", colorSwatchPicker(options.clothing_colors, traits.clothing_color, (v) => set("clothing_color", v))),
     fieldRow("Jewelry", jewelryCheckboxes(options.jewelry, traits.jewelry, (v) => set("jewelry", v)))
   );
-  redraw();
 
-  return { el: root, getTraits: () => ({ ...traits, jewelry: [...traits.jewelry] }) };
+  return {
+    el: root,
+    getTraits: () => ({ ...traits, jewelry: [...traits.jewelry] }),
+    dispose: () => avatar.dispose(),
+  };
 }
 
 function characterCard(ctx, character, options, { onChanged }) {
@@ -154,12 +163,8 @@ function characterCard(ctx, character, options, { onChanged }) {
   const tagInput = el("input", { type: "text", value: character.proxy_tag || "", placeholder: "tag::" });
   const resultLine = el("p", { class: "result-line" });
 
-  const previewCanvas = el("canvas", {
-    width: String(WIDTH),
-    height: String(HEIGHT),
-    class: "avatar-preview small",
-  });
-  renderAvatar(previewCanvas, { ...options.defaults, ...character.appearance_traits });
+  const previewContainer = el("div", { class: "avatar-preview small" });
+  const previewAvatar = mountAvatar(previewContainer, { ...options.defaults, ...character.appearance_traits });
 
   const saveBtn = el("button", { class: "btn secondary", type: "button" }, "Save");
   saveBtn.addEventListener("click", async () => {
@@ -220,7 +225,7 @@ function characterCard(ctx, character, options, { onChanged }) {
         });
         appearanceResult.className = "result-line win";
         appearanceResult.textContent = "Saved.";
-        renderAvatar(previewCanvas, editor.getTraits());
+        previewAvatar.update(editor.getTraits());
       } catch (err) {
         appearanceResult.className = "result-line lose";
         appearanceResult.textContent = err.message;
@@ -229,11 +234,11 @@ function characterCard(ctx, character, options, { onChanged }) {
     customizeContainer.append(editor.el, saveAppearanceBtn, appearanceResult);
   });
 
-  return el(
+  const cardEl = el(
     "div",
     { class: "panel" },
     el("h2", { text: `${character.name} (${character.district_name})` }),
-    previewCanvas,
+    previewContainer,
     statusLine,
     el("p", { class: "tab-status" }, `${character.job_title || "no job"} -- ${character.money} money`),
     el("div", { class: "field-row" }, el("label", { text: "Avatar URL" }), avatarInput),
@@ -242,6 +247,14 @@ function characterCard(ctx, character, options, { onChanged }) {
     resultLine,
     customizeContainer
   );
+
+  return {
+    el: cardEl,
+    dispose: () => {
+      previewAvatar.dispose();
+      if (editor) editor.dispose();
+    },
+  };
 }
 
 function createForm(ctx, options, { onCreated }) {
@@ -288,7 +301,7 @@ function createForm(ctx, options, { onCreated }) {
     }
   });
 
-  return el(
+  const formEl = el(
     "div",
     { class: "panel" },
     el("h2", { text: "New character" }),
@@ -305,6 +318,8 @@ function createForm(ctx, options, { onCreated }) {
     submitBtn,
     resultLine
   );
+
+  return { el: formEl, dispose: () => editor.dispose() };
 }
 
 export function mount(root, ctx) {
@@ -312,8 +327,16 @@ export function mount(root, ctx) {
   const statusEl = el("p", { class: "tab-status" });
   const formContainer = el("div", {});
   let options = null;
+  let cardDisposers = [];
+  let formHandle = null;
+
+  function disposeCards() {
+    for (const dispose of cardDisposers) dispose();
+    cardDisposers = [];
+  }
 
   async function refresh() {
+    disposeCards();
     listEl.innerHTML = "";
     const discordId = ctx.discordId();
     if (!discordId) {
@@ -327,7 +350,9 @@ export function mount(root, ctx) {
       );
       statusEl.textContent = "";
       for (const character of body.characters) {
-        listEl.append(characterCard(ctx, character, options, { onChanged: refresh }));
+        const card = characterCard(ctx, character, options, { onChanged: refresh });
+        cardDisposers.push(card.dispose);
+        listEl.append(card.el);
       }
       if (body.characters.length === 0) {
         listEl.append(el("p", { class: "tab-status" }, "No characters yet."));
@@ -346,9 +371,15 @@ export function mount(root, ctx) {
       statusEl.textContent = `Could not load the appearance customizer: ${err.message}`;
       return;
     }
-    formContainer.append(createForm(ctx, options, { onCreated: refresh }));
+    formHandle = createForm(ctx, options, { onCreated: refresh });
+    formContainer.append(formHandle.el);
     await refresh();
   })();
 
-  return {};
+  return {
+    unmount() {
+      disposeCards();
+      if (formHandle) formHandle.dispose();
+    },
+  };
 }

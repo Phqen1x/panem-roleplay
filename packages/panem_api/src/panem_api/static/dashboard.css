@@ -362,16 +362,32 @@ table.data-table tr.clickable-row:hover {
 
 /* ---------------------------------------------- Character avatar customizer */
 
+/* A live Three.js <canvas> (fixed WIDTH x HEIGHT render resolution from
+   avatar_creator.js) sits inside this container. The container itself
+   carries no fixed size -- the canvas's own `width:100%` + `aspect-ratio`
+   below does the scaling, the same way the old canvas-only version relied
+   on the browser preserving a plain <canvas>'s intrinsic aspect ratio when
+   only `max-width` constrains it. `overflow: hidden` keeps the rounded
+   corners clipping the canvas rather than the canvas squaring them off. */
 .avatar-preview {
   display: block;
   margin: 0 auto 12px;
   border-radius: 8px;
   background: #171a20;
+  overflow: hidden;
+}
+
+/* aspect-ratio and cursor are set inline from avatar_creator.js -- WIDTH/
+   HEIGHT stay a single source of truth there rather than duplicated here,
+   and the cursor toggles between grab/grabbing as the user drags. */
+.avatar-preview canvas {
+  display: block;
+  width: 100%;
+  height: auto;
 }
 
 .avatar-preview.small {
   max-width: 160px;
-  height: auto;
 }
 
 .avatar-editor {
