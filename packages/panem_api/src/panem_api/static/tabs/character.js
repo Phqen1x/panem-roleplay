@@ -25,7 +25,7 @@
 // that creates one returns its own `dispose`, and `mount()`'s `refresh()`/
 // `unmount()` are what actually call them.
 import { fetchJson, el, dropdown } from "./_shared.js?v=3";
-import { mountAvatar } from "./avatar_creator.js?v=5";
+import { mountAvatar } from "./avatar_creator.js?v=10";
 
 const SHIFT_PHASES = ["morning", "afternoon", "evening", "night"];
 

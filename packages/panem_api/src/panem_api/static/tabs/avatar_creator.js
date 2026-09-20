@@ -1,13 +1,18 @@
 // A real-time 3D portrait renderer for the Character tab's visual
-// customizer. Built entirely from Three.js primitive geometries (spheres,
-// capsules, cones, tori, boxes) shaded with plain MeshStandardMaterial
-// colors -- no external model/texture assets, same "original art only"
-// precedent this codebase already established for the /work and /lockpick
-// minigames (`static/games/*.js`) and the previous 2D canvas version of
-// this file. Three.js itself is vendored at `/vendor/three.module.min.js`
-// (see `three.LICENSE.md` next to it) rather than loaded from a CDN,
-// mirroring `/vendor/discord-embedded-app-sdk.js`: a real Discord Activity
-// iframe only ever fetches from this server's own origin.
+// customizer. The body is a real downloaded, rigged human mesh (Xbot, from
+// three.js's own bundled example assets -- originally a Mixamo character;
+// see `vendor/models/xbot.LICENSE.md`), retextured and reshaped per-trait
+// via its actual skeleton (bone scaling for build/height/face shape). Face
+// features, hair, facial hair, jewelry, and the clothing overlay are still
+// built from Three.js primitive geometries the same way the first version
+// of this file did -- a fixed downloaded mesh can't vary its face shape or
+// hairstyle across 5x10 trait combinations, but scaling/attaching
+// procedural pieces onto its real skeleton can. Three.js itself, the
+// GLTFLoader/SkeletonUtils addon modules, and the model are all vendored
+// locally under `/vendor/` (see the LICENSE files next to each) rather
+// than loaded from a CDN, mirroring `/vendor/discord-embedded-app-sdk.js`:
+// a real Discord Activity iframe only ever fetches from this server's own
+// origin.
 //
 // `traits` is the same shape `panem_shared.appearance.
 // DEFAULT_APPEARANCE_TRAITS` returns and `validate_appearance_traits`
@@ -26,60 +31,47 @@
 // context here would eventually break every other canvas on the tab.
 
 import * as THREE from "/vendor/three.module.min.js";
+import { GLTFLoader } from "/vendor/three/GLTFLoader.js";
+import { clone as cloneSkeleton } from "/vendor/three/SkeletonUtils.js";
 
 export const WIDTH = 220;
 export const HEIGHT = 260;
 
+const BODY_MODEL_URL = "/vendor/models/xbot.glb";
+
 const BUILD_SCALE = { slim: 0.85, athletic: 0.95, average: 1.0, stocky: 1.14, heavyset: 1.3 };
+
+// Bones whose x/z (not y, so bone-chain length/positioning is untouched)
+// get scaled by BUILD_SCALE to fatten/slim the downloaded body mesh via
+// its own skinning, rather than needing a different mesh per build.
+const GIRTH_BONES = [
+  "mixamorigSpine", "mixamorigSpine1", "mixamorigSpine2",
+  "mixamorigLeftArm", "mixamorigRightArm", "mixamorigLeftForeArm", "mixamorigRightForeArm",
+  "mixamorigLeftUpLeg", "mixamorigRightUpLeg", "mixamorigLeftLeg", "mixamorigRightLeg",
+];
+
+// Non-uniform scale applied to the head bone per face_shape -- the
+// downloaded mesh has one fixed head shape, but scaling the bone it's
+// skinned to reshapes it directly (wider/flatter for "square", stretched
+// for "long", etc.) without any seam or second head mesh.
+const FACE_SHAPE_HEAD_SCALE = {
+  square: { x: 1.12, y: 0.95, z: 1.05 },
+  heart: { x: 0.95, y: 1.05, z: 0.98 },
+  long: { x: 0.88, y: 1.22, z: 0.9 },
+  round: { x: 1.08, y: 0.92, z: 1.05 },
+  oval: { x: 1, y: 1, z: 1 },
+};
 
 function shade(hex, factor) {
   return new THREE.Color(hex).multiplyScalar(factor);
 }
 
-function skinMaterial(traits) {
-  const weathered = traits.age_look === "weathered";
-  return new THREE.MeshStandardMaterial({
-    color: weathered ? shade(traits.skin_tone, 0.92) : new THREE.Color(traits.skin_tone),
-    roughness: weathered ? 0.95 : 0.75,
-    metalness: 0,
-  });
+function skinColorFor(traits) {
+  return traits.age_look === "weathered" ? shade(traits.skin_tone, 0.92) : new THREE.Color(traits.skin_tone);
 }
 
 function hairMaterial(traits) {
   return new THREE.MeshStandardMaterial({ color: new THREE.Color(traits.hair_color), roughness: 0.7 });
-}
-
-// Head geometry varies by `face_shape` -- rather than one mesh type
-// stretched every which way, each shape gets the primitive that actually
-// reads as that shape at low poly counts (a box for "square" looks like a
-// jaw; a sphere+cone reads as a chin for "heart").
-function buildHead(traits) {
-  const group = new THREE.Group();
-  const material = skinMaterial(traits);
-  const r = 0.5 * (traits.age_look === "youthful" ? 1.08 : 1);
-  let head;
-  if (traits.face_shape === "square") {
-    head = new THREE.Mesh(new THREE.BoxGeometry(r * 1.7, r * 1.9, r * 1.6, 2, 2, 2), material);
-  } else if (traits.face_shape === "heart") {
-    head = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 9), material);
-    head.scale.set(1, 0.95, 0.92);
-    const chin = new THREE.Mesh(new THREE.ConeGeometry(r * 0.55, r * 0.7, 10), material);
-    chin.position.y = -r * 0.75;
-    chin.rotation.x = Math.PI;
-    group.add(chin);
-  } else if (traits.face_shape === "long") {
-    head = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 10), material);
-    head.scale.set(0.82, 1.3, 0.85);
-  } else if (traits.face_shape === "round") {
-    head = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 10), material);
-    head.scale.set(1.05, 0.95, 1.0);
-  } else {
-    head = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 10), material); // oval
-    head.scale.set(0.88, 1.08, 0.92);
-  }
-  group.add(head);
-  group.userData.radius = r;
-  return group;
 }
 
 function buildEyes(headRadius, traits) {
@@ -299,14 +291,32 @@ function buildJewelry(headRadius, headCenterY, neckBaseY, jewelry, accentColor) 
   return group;
 }
 
-function buildTorso(traits, buildScale, shoulderWidth) {
+// A procedural "shirt" shell wrapped around the downloaded body mesh's
+// real torso -- that mesh has no separate clothing geometry, so
+// clothing_style/clothing_color still need something to paint onto.
+// `height` is the real torso span (hips-to-neck) read off the body's own
+// skeleton, so this shell fits bodies of any height/build instead of
+// assuming a fixed unit-tall torso.
+function buildTorso(traits, buildScale, shoulderWidth, height) {
   const group = new THREE.Group();
   const clothColor = new THREE.Color(traits.clothing_color);
   const clothMat = new THREE.MeshStandardMaterial({ color: clothColor, roughness: 0.8 });
-  const topR = 0.5 * shoulderWidth * buildScale;
-  const bottomR = 0.42 * buildScale;
-  const height = 1.0;
-  const torso = new THREE.Mesh(new THREE.CylinderGeometry(topR, bottomR, height, 10), clothMat);
+  const topR = height * 0.5 * shoulderWidth * buildScale;
+  const bottomR = height * 0.42 * buildScale;
+  const halfH = height / 2;
+
+  // A revolved, tapered profile (shoulders wide, waist pulled in, hem
+  // flaring back out) rather than a uniform tube -- reads as a worn
+  // garment with an actual silhouette instead of a pipe around the torso.
+  const profile = [
+    new THREE.Vector2(bottomR * 1.05, -halfH),
+    new THREE.Vector2(bottomR * 0.92, -halfH * 0.55),
+    new THREE.Vector2(bottomR * 0.85, -halfH * 0.08),
+    new THREE.Vector2(topR * 0.9, halfH * 0.45),
+    new THREE.Vector2(topR, halfH * 0.85),
+    new THREE.Vector2(topR * 0.68, halfH),
+  ];
+  const torso = new THREE.Mesh(new THREE.LatheGeometry(profile, 16), clothMat);
   group.add(torso);
   group.userData = { topR, bottomR, height };
 
@@ -340,80 +350,134 @@ function buildTorso(traits, buildScale, shoulderWidth) {
   return group;
 }
 
-function buildLimb({ radius, length, color, segments = 6 }) {
-  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.8 });
-  return new THREE.Mesh(new THREE.CapsuleGeometry(radius, length, 2, segments), mat);
+// Clones the downloaded base body (independent skeleton + materials per
+// instance -- SkeletonUtils.clone() shares geometry/materials by default,
+// which would let one character's retint/scale bleed into every other
+// mounted avatar) and applies this character's skin tone, clothing-accent
+// tint, build (bone girth), and face shape (head bone scale).
+function buildBody(baseModel, traits) {
+  const body = cloneSkeleton(baseModel.scene);
+  const buildScale = BUILD_SCALE[traits.build] ?? 1;
+  const skinColor = skinColorFor(traits);
+
+  // The model's raw bind pose is a T-pose (arms out horizontally) -- fine
+  // for retargeting animations onto, useless for a static portrait. The
+  // bundled "idle" clip's first frame is a natural standing stance, so it's
+  // applied once as a static pose (not played/advanced) rather than left
+  // in the bind pose or hand-tuned bone rotations guessed from scratch.
+  const idleClip = THREE.AnimationClip.findByName(baseModel.animations, "idle");
+  if (idleClip) {
+    const mixer = new THREE.AnimationMixer(body);
+    mixer.clipAction(idleClip).play();
+    mixer.update(0);
+  }
+
+  body.traverse((node) => {
+    if (node.isSkinnedMesh) {
+      // Geometry stays shared across every mounted avatar (it's identical,
+      // sizable, and never mutated) -- only the material is per-instance,
+      // so disposeObject() must not free geometry it doesn't own.
+      node.userData.sharedGeometry = true;
+      node.material = node.material.clone();
+      // Both skinned meshes are body/skin (the second is a joint-accent
+      // overlay baked into the source mesh, not separate clothing) --
+      // tinting them differently read as an odd diaper-and-cuffs patchwork
+      // when this was tried, so both just get the skin tone; clothing
+      // color/style live entirely on the procedural shirt shell below.
+      node.material.color.copy(skinColor);
+      node.material.roughness = traits.age_look === "weathered" ? 0.95 : 0.8;
+      node.material.metalness = 0;
+    } else if (node.isBone && GIRTH_BONES.includes(node.name)) {
+      node.scale.set(buildScale, 1, buildScale);
+    }
+  });
+
+  const headBone = body.getObjectByName("mixamorigHead");
+  if (headBone) {
+    const s = FACE_SHAPE_HEAD_SCALE[traits.face_shape] ?? FACE_SHAPE_HEAD_SCALE.oval;
+    headBone.scale.set(s.x, s.y, s.z);
+  }
+
+  body.updateMatrixWorld(true);
+  return body;
 }
 
-// Builds the full rig, positioned so the group's local origin sits at the
-// character's feet. Total height still varies with `height_cm`/hair
-// style/face shape, so `mountAvatar` frames the camera from this group's
-// actual bounding box rather than assuming a fixed size.
-function buildCharacter(traits) {
+// Where to anchor the procedural face/hair/jewelry pieces, read from the
+// body's own skeleton rather than guessed -- bone world positions are
+// unaffected by the girth/face-shape bone scaling above (scale only moves
+// the vertices skinned to a bone, not the bone's own transform), so this
+// stays stable regardless of build/face_shape.
+function computeHeadAnchor(body) {
+  const headBone = body.getObjectByName("mixamorigHead");
+  const neckBone = body.getObjectByName("mixamorigNeck");
+  const headPos = headBone.getWorldPosition(new THREE.Vector3());
+  const neckPos = neckBone.getWorldPosition(new THREE.Vector3());
+
+  // The HeadTop_End *bone* sits wherever the original rig's author put it,
+  // which turned out to be noticeably lower than the mesh's actual scalp --
+  // using it as "the top of the head" pushed every face feature down onto
+  // the lower half of the real head, looking like a huge bare forehead.
+  // The mesh's own true (posed) top, from computeBoundingBox(), tracks the
+  // actual visible skull instead of a rig-author's placement of a marker.
+  let crownY = headPos.y + 0.2;
+  body.traverse((node) => {
+    if (node.isSkinnedMesh && node.name === "Beta_Surface") {
+      node.computeBoundingBox();
+      crownY = node.boundingBox.clone().applyMatrix4(node.matrixWorld).max.y;
+    }
+  });
+
+  const radius = Math.max((crownY - neckPos.y) * 0.5, 0.1);
+  const center = new THREE.Vector3(headPos.x, neckPos.y + radius, headPos.z + radius * 0.15);
+  return { center, radius, neckY: neckPos.y };
+}
+
+function computeTorsoAnchor(body) {
+  const hips = body.getObjectByName("mixamorigHips").getWorldPosition(new THREE.Vector3());
+  const neck = body.getObjectByName("mixamorigNeck").getWorldPosition(new THREE.Vector3());
+  const center = new THREE.Vector3(hips.x, (hips.y + neck.y) / 2, hips.z + 0.02);
+  return { center, height: neck.y - hips.y };
+}
+
+// Builds the full rig around the downloaded, rigged body mesh. Total
+// height still varies with `height_cm`/hair style/face shape, so
+// `mountAvatar` frames the camera from the rig's actual bounds rather than
+// assuming a fixed size.
+function buildCharacter(baseModel, traits) {
   const root = new THREE.Group();
-  const buildScale = BUILD_SCALE[traits.build] ?? 1;
-  const shoulderWidth =
-    traits.gender_presentation === "feminine" ? 0.85 : traits.gender_presentation === "masculine" ? 1.08 : 0.95;
-  const skinColor = new THREE.Color(traits.age_look === "weathered" ? shade(traits.skin_tone, 0.92) : traits.skin_tone);
-  const clothColor = new THREE.Color(traits.clothing_color);
-  const pantsColor = shade(traits.clothing_color, 0.68);
+  const body = buildBody(baseModel, traits);
+  root.add(body);
 
-  const legLength = 1.05;
-  const legRadius = 0.17 * buildScale;
-  for (const side of [-1, 1]) {
-    const leg = buildLimb({ radius: legRadius, length: legLength * 0.6, color: pantsColor });
-    leg.position.set(side * 0.22 * buildScale, legLength / 2 + 0.05, 0);
-    root.add(leg);
-  }
-
-  const hipY = legLength + 0.05;
-  const torso = buildTorso(traits, buildScale, shoulderWidth);
-  torso.position.y = hipY + torso.userData.height / 2;
-  root.add(torso);
-
-  const shoulderY = hipY + torso.userData.height;
-  const armLength = 0.95;
-  const armRadius = 0.13 * buildScale;
-  const sleeveColor = traits.clothing_style === "ragged" ? shade(traits.clothing_color, 0.75) : clothColor;
-  for (const side of [-1, 1]) {
-    const upperArm = buildLimb({ radius: armRadius, length: armLength * 0.55, color: sleeveColor });
-    upperArm.position.set(side * (torso.userData.topR + armRadius * 0.9), shoulderY - armLength * 0.32, 0);
-    upperArm.rotation.z = side * 0.08;
-    root.add(upperArm);
-    const hand = new THREE.Mesh(new THREE.SphereGeometry(armRadius * 0.85, 8, 6), new THREE.MeshStandardMaterial({ color: skinColor, roughness: 0.75 }));
-    hand.position.set(side * (torso.userData.topR + armRadius * 0.9), shoulderY - armLength * 0.72, 0);
-    root.add(hand);
-  }
-
-  const neckY = shoulderY + 0.08;
-  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.18, 0.16, 8), new THREE.MeshStandardMaterial({ color: skinColor, roughness: 0.75 }));
-  neck.position.y = neckY;
-  root.add(neck);
-
-  const headGroup = buildHead(traits);
-  const headR = headGroup.userData.radius;
-  headGroup.position.y = neckY + 0.1 + headR;
-  root.add(headGroup);
+  const headInfo = computeHeadAnchor(body);
+  const headR = headInfo.radius;
 
   const hair = buildHair(headR, traits);
   if (hair) {
-    hair.position.copy(headGroup.position);
+    hair.position.copy(headInfo.center);
     root.add(hair);
   }
   const facialHair = buildFacialHair(headR, traits);
   if (facialHair) {
-    facialHair.position.copy(headGroup.position);
+    facialHair.position.copy(headInfo.center);
     root.add(facialHair);
   }
   const eyes = buildEyes(headR, traits);
-  eyes.position.copy(headGroup.position);
+  eyes.position.copy(headInfo.center);
   root.add(eyes);
   const mouth = buildMouth(headR, traits);
-  mouth.position.add(headGroup.position);
+  mouth.position.add(headInfo.center);
   root.add(mouth);
 
-  const jewelry = buildJewelry(headR, headGroup.position.y, shoulderY, traits.jewelry, "#d9c58a");
+  const jewelry = buildJewelry(headR, headInfo.center.y, headInfo.neckY, traits.jewelry, "#d9c58a");
   if (jewelry) root.add(jewelry);
+
+  const buildScale = BUILD_SCALE[traits.build] ?? 1;
+  const shoulderWidth =
+    traits.gender_presentation === "feminine" ? 0.85 : traits.gender_presentation === "masculine" ? 1.08 : 0.95;
+  const torsoInfo = computeTorsoAnchor(body);
+  const torso = buildTorso(traits, buildScale, shoulderWidth, torsoInfo.height);
+  torso.position.copy(torsoInfo.center);
+  root.add(torso);
 
   const heightScale = 0.82 + ((traits.height_cm - 140) / (210 - 140)) * 0.36; // 0.82..1.18
   root.scale.set(1, heightScale, 1);
@@ -423,7 +487,8 @@ function buildCharacter(traits) {
 
 function disposeObject(object) {
   object.traverse((node) => {
-    if (node.geometry) node.geometry.dispose();
+    if (node.geometry && !node.userData.sharedGeometry) node.geometry.dispose();
+    if (node.isSkinnedMesh && node.skeleton) node.skeleton.dispose();
     if (node.material) {
       const materials = Array.isArray(node.material) ? node.material : [node.material];
       for (const mat of materials) mat.dispose();
@@ -439,6 +504,45 @@ function disposeObject(object) {
 // this is a real possibility in production, not just a test artifact. The
 // returned handle matches mountAvatar's shape so callers never need to
 // special-case it.
+// The base body model is fetched once per page load and reused (cloned)
+// by every mounted avatar -- it's a ~3MB same-origin asset, not something
+// to re-download per character card.
+let baseModelPromise = null;
+function loadBaseModel() {
+  if (!baseModelPromise) {
+    const loader = new GLTFLoader();
+    baseModelPromise = new Promise((resolve, reject) => {
+      loader.load(BODY_MODEL_URL, (gltf) => resolve({ scene: gltf.scene, animations: gltf.animations }), undefined, reject);
+    });
+  }
+  return baseModelPromise;
+}
+
+// A plain Box3.setFromObject(root) silently ignores GPU skinning: a
+// SkinnedMesh's geometry.boundingBox reflects its raw, un-posed vertex
+// buffer (skinning is applied on the GPU at render time, not to the CPU-
+// side geometry), which for this body mesh is a small, distorted shape
+// nothing like its actual T-pose silhouette -- discovered by comparing it
+// against the body's own bone positions, which are unaffected by skinning
+// and read as a normal ~1.8-unit-tall figure. SkinnedMesh.computeBoundingBox()
+// (added in recent three.js) evaluates the true posed shape per vertex, so
+// bounds for the body come from that instead, unioned with plain
+// geometry.boundingBox for every ordinary (non-skinned) procedural mesh.
+function computeCharacterBounds(root) {
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3();
+  root.traverse((node) => {
+    if (node.isSkinnedMesh && typeof node.computeBoundingBox === "function") {
+      node.computeBoundingBox();
+      box.union(node.boundingBox.clone().applyMatrix4(node.matrixWorld));
+    } else if (node.isMesh) {
+      if (!node.geometry.boundingBox) node.geometry.computeBoundingBox();
+      box.union(node.geometry.boundingBox.clone().applyMatrix4(node.matrixWorld));
+    }
+  });
+  return box;
+}
+
 function mountFallback(container) {
   const note = document.createElement("p");
   note.className = "tab-status";
@@ -485,7 +589,7 @@ export function mountAvatar(container, traits) {
   // fixed distance -- otherwise a fixed distance either clips the extremes
   // or leaves everyone else tiny in the middle of the frame.
   function frame(object) {
-    const box = new THREE.Box3().setFromObject(object);
+    const box = computeCharacterBounds(object);
     const size = box.getSize(new THREE.Vector3());
     const vFov = (camera.fov * Math.PI) / 180;
     const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
@@ -511,9 +615,33 @@ export function mountAvatar(container, traits) {
   fill.position.set(-3, 1.5, -2);
   scene.add(fill);
 
-  let character = buildCharacter(traits);
-  scene.add(character);
-  frame(character);
+  // The body model is a same-origin fetch, cached after the first mount,
+  // but still asynchronous -- rebuild() re-runs on the (already-resolved,
+  // after the first call) promise for both the initial build and every
+  // later update() so there's exactly one code path, and a rapid sequence
+  // of update() calls before the model has ever loaded just replaces
+  // `latestTraits` until it resolves rather than racing several builds.
+  let character = null;
+  let disposed = false;
+  let latestTraits = traits;
+  function rebuild(newTraits) {
+    latestTraits = newTraits;
+    loadBaseModel()
+      .then((baseModel) => {
+        if (disposed) return;
+        if (character) {
+          scene.remove(character);
+          disposeObject(character);
+        }
+        character = buildCharacter(baseModel, latestTraits);
+        scene.add(character);
+        frame(character);
+      })
+      .catch((error) => {
+        console.error("avatar_creator: failed to load base body model", error);
+      });
+  }
+  rebuild(traits);
 
   let dragging = false;
   let lastX = 0;
@@ -591,20 +719,17 @@ export function mountAvatar(container, traits) {
 
   return {
     update(newTraits) {
-      scene.remove(character);
-      disposeObject(character);
-      character = buildCharacter(newTraits);
-      scene.add(character);
-      frame(character);
+      rebuild(newTraits);
     },
     dispose() {
+      disposed = true;
       if (rafId !== null) cancelAnimationFrame(rafId);
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointermove", onPointerMove);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
       renderer.domElement.removeEventListener("pointerleave", onPointerUp);
       renderer.domElement.removeEventListener("webglcontextlost", onContextLost);
-      disposeObject(character);
+      if (character) disposeObject(character);
       renderer.dispose();
       if (renderer.domElement.parentNode === container) container.removeChild(renderer.domElement);
     },

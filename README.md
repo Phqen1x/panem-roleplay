@@ -2755,3 +2755,90 @@ other reason to set), a trait change rebuilds and re-renders the model, and swit
 back remounts cleanly with no leaked contexts or console errors beyond the browser's own benign
 `favicon.ico` 404. No Python, database, or API changes were needed for this milestone -- `ruff`/`mypy`/
 `pytest` all re-run clean and unchanged (984 tests) since nothing on that side was touched.
+
+## The 3D avatar's body is now a downloaded, rigged human mesh, not primitive capsules
+
+The previous milestone's 3D model built its whole body -- torso, arms, legs, hands, neck -- from
+Three.js primitives (cylinders, capsules, spheres). Asked for something less pixely/blocky and to use
+a real downloaded 3D human model where possible, the body is now a real, free, openly-licensed rigged
+human mesh instead, with the procedural system from the previous milestone kept for everything a fixed
+mesh can't vary on its own: face features, hair, facial hair, jewelry, and clothing color/style.
+
+**Sourcing the model, given this environment's network restrictions**: general CDNs and asset sites
+(`kenney.nl`, `quaternius.com`, `itch.io`, `cdn.jsdelivr.net`) are not reachable from here -- only
+`registry.npmjs.org` (already used to vendor Three.js itself) and GitHub's own domains
+(`github.com`, `raw.githubusercontent.com`, `codeload.github.com`) are. Searching within that
+constraint, the best fit was `examples/models/gltf/Xbot.glb` from the official
+[three.js repository](https://github.com/mrdoob/three.js) itself (fetched at its `r160` tag to match
+the vendored core exactly) -- a real, fully rigged, human-proportioned character (Mixamo's default "X
+Bot"), already used as example content across the majority of three.js's own official
+skinned-character/animation demos for years. See `vendor/models/xbot.LICENSE.md` for the
+attribution/licensing detail (CC-BY 4.0 via Mixamo/Adobe, bundled here the same way three.js's own repo
+bundles it). Loading a glTF also needed two more addon modules three.js ships outside its core bundle
+-- `GLTFLoader.js` and `SkeletonUtils.js` (plus `BufferGeometryUtils.js`, one of GLTFLoader's own
+dependencies) -- vendored the same way from the same `r160` tag under `vendor/three/`, with their bare
+`from 'three'` import specifiers rewritten to point at the already-vendored core module (they're not
+installed via npm here, so that specifier would otherwise fail to resolve in a browser).
+
+**Rendering**: `mountAvatar` now loads the model once per page load (cached, ~3MB, same-origin) and
+`SkeletonUtils.clone()`s it per mounted avatar, since naively cloning a `SkinnedMesh` shares its
+skeleton and would let one character's pose/retint bleed into every other one on screen; materials are
+explicitly cloned too, since `SkeletonUtils.clone()` shares those by default. Per-trait customization
+now works through the model's own skeleton rather than swapping geometry: `build` scales specific
+limb/torso bones' x/z (not y, so bone-chain length is untouched) to fatten or slim the figure via its
+own skinning; `face_shape` non-uniformly scales the head bone (wider/flatter for square, stretched for
+long, etc.) to reshape the one head mesh per trait instead of needing five different heads; `height_cm`
+still scales the whole rig's Y axis as before. The model's raw bind pose is a T-pose (arms out
+horizontally, meant for retargeting animations onto) -- useless for a static portrait, so the bundled
+`idle` animation clip's very first frame is applied once as a static pose (`AnimationMixer.update(0)`,
+never advanced) rather than left in the bind pose or guessed by hand-tuning bone rotations from
+scratch.
+
+**Attaching the procedural pieces to a real skeleton**: hair, facial hair, eyes, mouth, and jewelry are
+unchanged in how they're built (see the previous section) but now anchor to the body's actual
+`mixamorigHead`/`mixamorigNeck` bone world positions instead of a procedurally-built head sphere's own
+position -- `computeHeadAnchor()` reads those off the cloned skeleton after posing/scaling, so they
+track correctly regardless of build or face-shape distortion (bone *scale* only affects the vertices
+skinned to that bone, not the bone's own transform, so anchoring off bone position stays stable). The
+initial version anchored the head radius off the `mixamorigHeadTop_End` *bone marker*, which turned out
+to sit noticeably lower than the mesh's actual scalp -- caught from the live render, not code review,
+because every face feature clustered onto the lower half of the head with a big bare forehead above
+it. Fixed by measuring the mesh's own true top via `SkinnedMesh.computeBoundingBox()` (see below)
+instead of trusting where the original rig's author placed that marker. Clothing still has nowhere to
+live on the downloaded mesh (it's one continuous skin-toned surface, no separate garment geometry), so
+the previous milestone's procedural torso shell still carries `clothing_style`/`clothing_color`,
+now built from a revolved, tapered `LatheGeometry` profile (shoulders wide, waist pulled in, hem
+flared) instead of a plain cylinder tube, positioned from the body's own hips/neck bone span
+(`computeTorsoAnchor()`) instead of an assumed fixed height. The mesh does carry a second "joint
+accent" skinned surface baked in by its original author (visible at wrists/knees/ankles); tinting that
+differently from the main skin (an early attempt used the clothing color there) read as an odd
+diaper-and-cuffs patchwork, so both surfaces just get the skin tone -- clothing lives entirely on the
+shirt shell.
+
+**A camera-framing bug specific to skinned meshes, also only caught by rendering it**: the existing
+`Box3.setFromObject()` bounding-box framing from the previous milestone silently produced a tiny,
+wrong box for the new body -- a `SkinnedMesh`'s `geometry.boundingBox` reflects its raw, un-posed
+vertex buffer (skinning is applied on the GPU at render time, not to the CPU-side geometry), which
+for this mesh looks nothing like its actual standing silhouette. Confirmed by cross-checking against
+the mesh's own bone positions (a normal, unaffected-by-skinning ~1.8-unit-tall figure) versus the
+naive box (under a meter in every dimension). Fixed with `computeCharacterBounds()`, which calls the
+newer `SkinnedMesh.computeBoundingBox()` (evaluates the true posed shape per vertex) for the body and
+falls back to plain `geometry.boundingBox` for the ordinary procedural meshes, unioning both into one
+correct world-space box.
+
+**Disposal, now that geometry is shared across every mounted avatar**: unlike the fully procedural
+version, the downloaded mesh's geometry is the *same* `BufferGeometry` object referenced by every
+cloned instance (cloning only duplicates the lightweight `Mesh`/`Skeleton` wrappers, not the ~3MB of
+vertex data) -- disposing it when one character unmounts would corrupt every other currently-mounted
+avatar sharing it. Body nodes are tagged `userData.sharedGeometry = true` during construction, and
+`disposeObject()` skips geometry disposal for those (materials are still disposed, since those *are*
+cloned per-instance) and additionally disposes each `SkinnedMesh`'s own cloned `Skeleton` (which can
+hold a GPU bone texture for a skeleton this size).
+
+Verified live via Playwright against a real running server, re-running the exact checks from the
+previous milestone plus fresh screenshots at each fix: the model loads and renders (screenshot-
+verified), drag-to-rotate and a trait change both still visibly alter the frame (hash-compared), tab
+switch-away-and-back remounts cleanly, and the 26-avatar simultaneous-mount stress test still produces
+zero `pageerror`s (the WebGL context-loss hardening from the previous milestone holds up under the new,
+heavier per-instance clone cost). `node --check` clean on every changed/vendored file. No Python,
+database, or API changes -- `ruff` and the full `pytest` suite (984 tests) re-run clean and unchanged.
