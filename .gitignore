@@ -16,6 +16,7 @@ web/dist/
 uv.lock.tmp
 scratch/
 .lemonade/
+dump.rdb
 
 # Staff-uploaded Picrew layer images (panem_shared.layers) -- runtime
 # content written through the dashboard, not source; see deploy/
