@@ -82,7 +82,7 @@ export function mount(boardEl, { onFinish, setStatus, difficulty = 0.5 }) {
 
   boardEl.className = "board-lockpick";
   boardEl.innerHTML = `
-    <canvas id="lockpick-canvas" width="${WIDTH}" height="${HEIGHT}"></canvas>
+    <canvas id="lockpick-canvas" width="${WIDTH}" height="${HEIGHT}" tabindex="0"></canvas>
     <p class="lockpick-meta">
       <span id="lockpick-progress">Progress: 50%</span>
       <span id="lockpick-timer">${Math.ceil(timeLimitS)}s</span>
@@ -229,6 +229,17 @@ export function mount(boardEl, { onFinish, setStatus, difficulty = 0.5 }) {
   // just aimed with a thumb instead.
   function onPointerDown(event) {
     if (done) return;
+    // This game is normally embedded in an <iframe> (the dashboard's Jail/
+    // Crime tabs), which never has keyboard focus by default -- nothing
+    // auto-focuses a newly inserted iframe, and this handler's own
+    // `preventDefault()` below (needed to stop touch-scroll/selection on
+    // tap) also suppresses the click's *default* focus-the-clicked-frame
+    // behavior. Without an explicit focus() call here, W/S's `keydown`
+    // listener (on `window`) never actually fires -- only this pointer
+    // handler, which doesn't need frame focus to receive events on
+    // `canvas` directly -- which looked like "W/S do nothing, only
+    // clicking works" from the outside.
+    canvas.focus();
     const rect = canvas.getBoundingClientRect();
     const y = ((event.clientY - rect.top) / rect.height) * HEIGHT;
     if (y < TRACK_Y + TRACK_H / 2) holdingUp = true;
@@ -249,4 +260,10 @@ export function mount(boardEl, { onFinish, setStatus, difficulty = 0.5 }) {
 
   render();
   rafId = requestAnimationFrame(loop);
+  // Best-effort: some contexts (a direct, non-iframed load) allow this to
+  // actually grab focus immediately, letting W/S work with no click
+  // first. Where it doesn't (an iframe with no prior user gesture in it),
+  // this is a silent no-op and onPointerDown's own focus() call above
+  // covers it on first interaction instead.
+  canvas.focus();
 }

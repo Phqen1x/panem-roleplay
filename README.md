@@ -3010,3 +3010,29 @@ difficulty 0.95, comfortably inside the ~28s time budget -- confirming the win c
 reachable through tracking skill, not luck in either direction. `node --check` clean on all three
 changed files; no Python changed, so the existing 985-test suite and mypy baseline are both
 unaffected by this one.
+
+### Fix: W/S did nothing once embedded in the dashboard's iframe -- only clicking worked
+
+User feedback right after the above shipped: "W and S don't move the bar, i have to left click above
+or below." The Character/Jail tab's own testing (a direct, top-level load of `crime.html`) never hit
+this because a top-level page already owns keyboard focus by default -- the actual player-facing path
+(the dashboard's Jail/Crime tabs embed `crime.html` in a plain `<iframe>`, per `jail.js`/`crime.js`)
+does not, and nothing was ever telling that iframe to take it.
+
+Reproduced with a small local host page that embeds `crime.html` in an `<iframe>` the same way
+`jail.js` does (not committed, deleted after verification) and confirmed via `document.hasFocus()`
+inside the frame: clicking the canvas left the iframe's own document unfocused, so the `keydown`
+listener on `window` (registered inside that iframe) never actually fired -- only the pointer-based
+fallback (a plain DOM event on the canvas element, needing no frame focus at all) responded, which is
+exactly "only clicking works." The root cause was this file's own `onPointerDown`: it already called
+`event.preventDefault()` (needed to stop touch-scroll/selection on tap), which as a side effect also
+suppresses the *default* browser behavior of a click focusing the frame it landed in.
+
+Fixed with an explicit `canvas.focus()` inside `onPointerDown` (a genuine user gesture, so it's
+allowed to grab focus even across frames) plus `tabindex="0"` on the canvas so it's actually
+focusable at all; also tries `canvas.focus()` once on mount as a best-effort for contexts that allow
+it without a prior gesture (harmless no-op where they don't -- the click-driven focus() covers it
+either way). `crime.css` gained one rule suppressing the resulting focus ring, since this focus is
+functional, not a tab-navigation affordance. Re-verified against the same iframe-embedding repro:
+`document.hasFocus()` now reads `true` after a click, and holding W visibly moves the pick. `crime.js`'s
+`ASSET_VERSION` (4 -> 5) and `crime.html`'s matching `/crime.js?v=`/`/crime.css?v=` bumped again.

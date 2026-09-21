@@ -64,6 +64,11 @@ main {
 .board-lockpick canvas {
   touch-action: none;
   cursor: pointer;
+  /* The canvas is given tabindex="0" and explicitly focus()ed on click so
+     the embedding <iframe> actually receives W/S keydown events -- see
+     lockpick.js's onPointerDown comment. That focus is functional, not a
+     tab-navigation affordance, so skip the default ring. */
+  outline: none;
 }
 
 .lockpick-meta {
