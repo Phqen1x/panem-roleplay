@@ -23,6 +23,15 @@ main {
   color: #e0736b;
 }
 
+.instructions {
+  color: var(--muted);
+  font-size: 13px;
+  font-style: italic;
+  line-height: 1.4;
+  margin: 4px auto 12px;
+  max-width: 420px;
+}
+
 #board {
   margin: 16px auto;
 }

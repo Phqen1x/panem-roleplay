@@ -2778,6 +2778,8 @@ class TestDashboardStaff:
         assert response.status_code == 200
         body = response.json()
         assert body["character_name"] == "Wren"
+        assert body["base_ticks"] == 50
+        assert body["prior_bonus_ticks"] == 0
         assert body["applied_ticks"] == 50
         assert body["jailed_until_tick"] == 50
         async with db_session_factory() as session:
@@ -2797,6 +2799,38 @@ class TestDashboardStaff:
             "applied_ticks": 50,
             "reason": "brawling",
         }
+
+    async def test_jail_applied_ticks_includes_the_prior_bonus(
+        self, staff_app, db_session_factory
+    ):
+        # Regression test: a staff member entered ticks=25 and the response
+        # said "jailed for 43 ticks", which read like a bug but is
+        # `commit_to_jail`'s existing priors scaling (`jail_count *
+        # JAIL_PRIOR_TICKS_PER_COUNT`) doing exactly what it's meant to --
+        # the dashboard just didn't surface the breakdown, so it looked
+        # broken. `base_ticks`/`prior_bonus_ticks` exist so the response
+        # (and the Staff tab's result line) can show both halves.
+        char_id = await seed_character(
+            db_session_factory, character_overrides={"name": "Wren", "jail_count": 3}
+        )
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/jail",
+                    json={"discord_id": 42, "character_name": "Wren", "ticks": 25},
+                )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["base_ticks"] == 25
+        assert body["prior_bonus_ticks"] == 18  # 3 priors * JAIL_PRIOR_TICKS_PER_COUNT(6)
+        assert body["applied_ticks"] == 43
+        assert body["jailed_until_tick"] == 43
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.jail_count == 4
 
     async def test_jail_refuses_an_unknown_character(self, staff_app, db_session_factory):
         with patch.object(

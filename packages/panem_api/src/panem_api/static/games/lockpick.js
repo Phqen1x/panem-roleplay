@@ -16,10 +16,11 @@
 export const label = "Lockpick";
 export function instructions() {
   return (
-    "Hold W to push the pick up, S to ease it down. Keep it inside the " +
-    "green pressure zone as it bounces back and forth -- the meter fills " +
-    "while you're on target and drains when you're off. Fill it to turn " +
-    "the lock; let it drain empty and the pick slips free."
+    "The pick keeps sinking on its own -- hold W or click and hold to rise " +
+    "against it. Keep it hovering inside the green pressure zone as it " +
+    "bounces up and down the track -- the meter fills while you're on " +
+    "target and drains when you're off. Fill it to turn the lock; let it " +
+    "drain empty and the pick slips free."
   );
 }
 
@@ -32,22 +33,24 @@ const TRACK_H = 220;
 const METER_X = 150;
 const METER_W = 30;
 const PICK_THICKNESS = 8;
-// ACCEL must exceed DRAG, not just be close to it: each frame first adds
-// accel*dt to the velocity, then subtracts a drag magnitude capped at
-// DRAG*dt in the same direction as that new velocity. Set ACCEL === DRAG
-// (as a previous pass here briefly did) and that cap exactly equals what
-// accel just added, so drag cancels it in full on every single frame --
-// the pick can never move at all no matter how long a key is held. That
-// shipped once and made every "held W/S" test indistinguishable from
-// doing nothing, which is what a wave of confusing playtest numbers
-// turned out to actually be.
-const ACCEL = 5.6; // track-heights/sec^2 applied while a direction is held
-const DRAG = 2.6; // track-heights/sec^2 of always-on resistance
-// MAX_SPEED chosen so a full-speed stop (v^2 / (2*DRAG)) travels less
-// than the smallest zone height (0.16): here that's ~0.11. Any faster and
-// releasing the key "at" the zone overshoots straight through it no
-// matter how good the reaction.
-const MAX_SPEED = 0.75; // track-heights/sec, clamped
+// A one-button "hover" control, not a two-key up/down one: GRAVITY always
+// pulls the pick down, and holding the one control key adds THRUST on top
+// of it. THRUST must exceed GRAVITY by a real margin -- not just barely --
+// or holding the key can't actually make the pick rise at all (the same
+// class of bug as an earlier version of this file's two-key model, where
+// ACCEL and DRAG briefly ended up equal and canceled each other out every
+// frame). Net rising accel is THRUST - GRAVITY; net falling accel while
+// idle is just -GRAVITY.
+const GRAVITY = 1.2; // track-heights/sec^2, always applied downward
+const THRUST = 2.75; // track-heights/sec^2, applied upward only while held
+// MAX_SPEED chosen so a full-speed stop (v^2 / (2*GRAVITY)) travels well
+// under the smallest zone height (0.16): here that's ~0.09. A faster cap
+// means rising at full speed and releasing "at" the zone overshoots
+// straight past it -- the same overshoot bug the earlier two-key model
+// had, measured directly there (a scripted controller topped out around
+// 25%-30% on-target against this physics's first, faster pass at these
+// numbers) before the cap was brought down to fix it.
+const MAX_SPEED = 0.47; // track-heights/sec, clamped in both directions
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -70,25 +73,34 @@ export function mount(boardEl, { onFinish, setStatus, difficulty = 0.5 }) {
   // bounce has a close-to-uniform space-time distribution instead, so
   // "did nothing" and "actively tracked" produce genuinely different
   // on-target rates.
-  const zoneSpeed = 0.16 + clamped * 0.22; // track-heights/sec
+  // Slightly slower than the pick's own top speed (65%-75% of MAX_SPEED)
+  // so a player who's actually tracking it can out-pace it, rather than
+  // the zone being able to outrun the pick outright.
+  const zoneSpeed = MAX_SPEED * (0.6 + clamped * 0.07); // track-heights/sec
   const reversalChance = 0.12; // per-second chance of an early random reversal
 
-  // A constant-speed bounce spends time on any fixed point roughly
-  // proportional to zoneHeight / (1 - zoneHeight) of the whole run --
-  // confirmed by direct measurement (~0.42/0.27/0.18 at difficulty
-  // 0/0.5/0.95, matching this formula closely). That's exactly how often
-  // a pick that never moves at all ends up "on target" by pure chance, so
-  // the win condition has to clear it with real margin -- not eyeballed,
-  // derived from it directly, with a fixed 1.2x safety factor. (An
-  // earlier 1.6x factor was tuned against a version of this file with a
-  // real physics bug -- ACCEL exactly equalling DRAG below, which pinned
-  // the pick's velocity at zero no matter what was held, so every
-  // "tracking" test silently measured the same thing as idle. With that
-  // fixed, a predictive scripted controller clears a ~0.70/0.51/0.27
-  // on-target rate at the three difficulties above, comfortably above
-  // this factor's ~0.51/0.36/0.24 breakeven with real margin to spare.)
-  const passiveFraction = zoneHeight / (1 - zoneHeight);
-  const breakeven = clamp(passiveFraction * 1.2, 0.24, 0.6);
+  // An earlier version of this file derived breakeven from zoneHeight /
+  // (1 - zoneHeight) -- how much of the run a constant-speed bounce
+  // spends on any *interior* fixed point, since that model's idle pick
+  // sat frozen at the track's center. This one-button "hover" model is
+  // different: an idle pick (never held) falls all the way to the floor
+  // (position 0) and stays pinned there, but the zone's own *center*
+  // never goes below `zoneHeight / 2` -- so its covered interval only
+  // ever touches position 0 for a single instant, right at the bottom of
+  // each bounce, not the sustained dwell time an interior point gets.
+  // Measured directly: an idle pick's on-target fraction is ~0.00-0.03 at
+  // every difficulty here, a rounding error next to the old model's
+  // ~0.18-0.43. Idle winning is a non-issue now, so breakeven only needs
+  // enough margin over that ~0.03 idle rate to keep idle a guaranteed
+  // loss -- it doesn't need to climb anywhere near "genuinely hard to
+  // track," which a first pass at this curve (0.3 + clamped*0.15, topping
+  // out at 0.4425) did: a scripted controller with excellent (30-60ms)
+  // reaction time still only reached ~0.43 on-target at the hardest
+  // difficulty, i.e. a strong player was losing at max difficulty
+  // regardless of skill. This flatter curve keeps easy/medium about where
+  // they were while giving the hardest difficulty real headroom above
+  // measured tracked play (~0.5-0.55 on-target at 140ms reaction).
+  const breakeven = 0.25 + clamped * 0.08; // 0.25 (easy) to 0.326 (hardest)
   const totalRate = 0.24; // meter units/sec, fillRate+drainRate -- overall pace
   const fillRate = (1 - breakeven) * totalRate; // meter units/sec while on target
   const drainRate = breakeven * totalRate; // meter units/sec while off target
@@ -123,8 +135,7 @@ export function mount(boardEl, { onFinish, setStatus, difficulty = 0.5 }) {
   let progress = 0.5;
   let pickPos = 0.5;
   let pickVelocity = 0;
-  let holdingUp = false;
-  let holdingDown = false;
+  let holdingUp = false; // the one control: W or a held click/tap
   let rafId = null;
   let lastTs = null;
 
@@ -182,18 +193,12 @@ export function mount(boardEl, { onFinish, setStatus, difficulty = 0.5 }) {
       zoneDir *= -1;
     }
 
-    // The pick has momentum: holding a direction accelerates it, and a
-    // constant drag always pulls that velocity back toward zero, so
-    // letting go doesn't stop it dead but does bleed it off -- the same
-    // "juggling," not "snapping to a spot," feel the old tension wrench
-    // had.
-    let accel = 0;
-    if (holdingUp) accel += ACCEL;
-    if (holdingDown) accel -= ACCEL;
-    pickVelocity += accel * dt;
-    const dragMag = Math.min(Math.abs(pickVelocity), DRAG * dt);
-    pickVelocity -= Math.sign(pickVelocity) * dragMag;
-    pickVelocity = clamp(pickVelocity, -MAX_SPEED, MAX_SPEED);
+    // The pick is always sinking -- GRAVITY applies every frame whether or
+    // not the control is held -- and holding it adds THRUST on top, the
+    // same "hover" feel Stardew's own fishing bar has: let go and it falls
+    // on its own, hold to climb back against it.
+    const accel = (holdingUp ? THRUST : 0) - GRAVITY;
+    pickVelocity = clamp(pickVelocity + accel * dt, -MAX_SPEED, MAX_SPEED);
     pickPos = clamp(pickPos + pickVelocity * dt, 0, 1);
 
     progress = clamp(progress + (onTarget() ? fillRate : -drainRate) * dt, 0, 1);
@@ -269,21 +274,16 @@ export function mount(boardEl, { onFinish, setStatus, difficulty = 0.5 }) {
     if (event.code === "KeyW" || event.code === "ArrowUp") {
       holdingUp = true;
       event.preventDefault();
-    } else if (event.code === "KeyS" || event.code === "ArrowDown") {
-      holdingDown = true;
-      event.preventDefault();
     }
   }
 
   function onKeyUp(event) {
     if (event.code === "KeyW" || event.code === "ArrowUp") holdingUp = false;
-    else if (event.code === "KeyS" || event.code === "ArrowDown") holdingDown = false;
   }
 
-  // Touch/pointer fallback for Activities opened without a keyboard: the
-  // top half of the track pushes up, the bottom half pushes down, held
-  // for as long as the pointer stays down -- same two directions as W/S,
-  // just aimed with a thumb instead.
+  // Touch/pointer fallback for Activities opened without a keyboard: held
+  // anywhere on the canvas, same one control W is -- there's only one
+  // direction to aim now, so there's no top/bottom split to read.
   function onPointerDown(event) {
     if (done) return;
     // This game is normally embedded in an <iframe> (the dashboard's Jail/
@@ -291,22 +291,18 @@ export function mount(boardEl, { onFinish, setStatus, difficulty = 0.5 }) {
     // auto-focuses a newly inserted iframe, and this handler's own
     // `preventDefault()` below (needed to stop touch-scroll/selection on
     // tap) also suppresses the click's *default* focus-the-clicked-frame
-    // behavior. Without an explicit focus() call here, W/S's `keydown`
+    // behavior. Without an explicit focus() call here, W's `keydown`
     // listener (on `window`) never actually fires -- only this pointer
     // handler, which doesn't need frame focus to receive events on
-    // `canvas` directly -- which looked like "W/S do nothing, only
+    // `canvas` directly -- which looked like "W does nothing, only
     // clicking works" from the outside.
     canvas.focus();
-    const rect = canvas.getBoundingClientRect();
-    const y = ((event.clientY - rect.top) / rect.height) * HEIGHT;
-    if (y < TRACK_Y + TRACK_H / 2) holdingUp = true;
-    else holdingDown = true;
+    holdingUp = true;
     event.preventDefault();
   }
 
   function onPointerUp() {
     holdingUp = false;
-    holdingDown = false;
   }
 
   window.addEventListener("keydown", onKeyDown);
@@ -318,9 +314,9 @@ export function mount(boardEl, { onFinish, setStatus, difficulty = 0.5 }) {
   render();
   rafId = requestAnimationFrame(loop);
   // Best-effort: some contexts (a direct, non-iframed load) allow this to
-  // actually grab focus immediately, letting W/S work with no click
-  // first. Where it doesn't (an iframe with no prior user gesture in it),
-  // this is a silent no-op and onPointerDown's own focus() call above
-  // covers it on first interaction instead.
+  // actually grab focus immediately, letting W work with no click first.
+  // Where it doesn't (an iframe with no prior user gesture in it), this is
+  // a silent no-op and onPointerDown's own focus() call above covers it on
+  // first interaction instead.
   canvas.focus();
 }

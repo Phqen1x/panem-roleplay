@@ -57,7 +57,7 @@
 // own status without the player having to reload anything. A no-op when
 // there's no parent to hear it (the normal Discord-launched/plain-link
 // case).
-const ASSET_VERSION = "8";
+const ASSET_VERSION = "9";
 
 const [coinflip, connect4, minesweeper, poison, snake, solitaire] = await Promise.all([
   import(`./games/coinflip.js?v=${ASSET_VERSION}`),
@@ -78,6 +78,7 @@ function gamesForLevel(levelIndex) {
 }
 
 const statusEl = document.getElementById("status");
+const instructionsEl = document.getElementById("instructions");
 const boardEl = document.getElementById("board");
 const resultEl = document.getElementById("result");
 
@@ -178,7 +179,13 @@ async function main() {
   const pool = gamesForLevel(levelIndex);
   const game = pool[Math.floor(Math.random() * pool.length)];
   currentGameLabel = game.label;
-  setStatus(`${info.character_name} works as ${info.job_title}. ${game.instructions(levelIndex)}`);
+  setStatus(`${info.character_name} works as ${info.job_title}: ${game.label}.`);
+  // A dedicated, always-visible line rather than folding the instructions
+  // into the status sentence -- `setStatus` gets overwritten as the game
+  // plays out (win/lose text), which would otherwise take "how to play"
+  // down with it right when a losing round most needs a reminder.
+  instructionsEl.textContent = game.instructions(levelIndex);
+  instructionsEl.hidden = false;
   boardEl.hidden = false;
   game.mount(boardEl, { onFinish: finish, setStatus, levelIndex });
 }

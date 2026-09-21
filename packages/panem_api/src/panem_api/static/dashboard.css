@@ -340,6 +340,20 @@ table.data-table tr.clickable-row:hover {
   background: var(--surface-hover, rgba(255, 255, 255, 0.05));
 }
 
+table.data-table .qty-input {
+  width: 56px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+
+table.data-table .btn {
+  padding: 6px 14px;
+  font-size: 12px;
+}
+
 .jail-cell-wrap {
   max-width: 360px;
   margin: 0 auto 12px;

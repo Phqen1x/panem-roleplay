@@ -2162,6 +2162,8 @@ class StaffJailRequest(BaseModel):
 
 class StaffJailResponse(BaseModel):
     character_name: str
+    base_ticks: int
+    prior_bonus_ticks: int
     applied_ticks: int
     jailed_until_tick: int
 
@@ -2232,6 +2234,7 @@ def build_staff_router(
             if character is None:
                 raise HTTPException(status_code=404, detail="character_not_found")
             current_tick = await _current_tick(session)
+            prior_bonus = (character.jail_count or 0) * constants.JAIL_PRIOR_TICKS_PER_COUNT
             applied = jail_svc.commit_to_jail(character, body.ticks, current_tick)
             assert character.jailed_until_tick is not None  # always set by commit_to_jail
             session.add(
@@ -2244,6 +2247,8 @@ def build_staff_router(
             )
             response = StaffJailResponse(
                 character_name=character.name,
+                base_ticks=body.ticks,
+                prior_bonus_ticks=prior_bonus,
                 applied_ticks=applied,
                 jailed_until_tick=character.jailed_until_tick,
             )

@@ -3116,3 +3116,107 @@ can't return more than one row.) Added a regression test seeding two houses for 
 same district and asserting `/burgle/start` still returns 200. Full suite (`uv run pytest`, 986
 passed), `ruff check`, and the mypy baseline (148, unchanged) all clean; no JS touched, so no
 `ASSET_VERSION` bump needed here.
+
+### Lockpick redesigned again: one-button "hover," not a two-key up/down bar
+
+User feedback on the fishing-bar redesign: the white bar should always be sinking, rising only while
+the player holds W or a click -- not a two-key (W up, S down) momentum control. Rewrote the physics
+around a single control: `GRAVITY` always pulls the pick down every frame, and holding the one key
+adds `THRUST` on top of it (net rising accel is `THRUST - GRAVITY`; net falling accel while idle is
+just `-GRAVITY`). `holdingDown` and the `ACCEL`/`DRAG` pair are gone entirely -- `onKeyDown`/`onKeyUp`
+only listen for `KeyW`/`ArrowUp` now, and a pointer-down anywhere on the canvas (no more top/bottom
+split) sets the same one `holdingUp` flag.
+
+This flipped what "idle" means for the passive-contact analysis the previous pass relied on: under
+the two-key model an untouched pick sat frozen at the track's center (0.5), the same spot the old
+`zoneHeight / (1 - zoneHeight)` breakeven formula assumed sustained interior dwell time for. Under
+gravity, an idle pick instead falls straight to the floor (`pickPos=0`) and sits pinned there -- and
+because the bounce zone's own center is clamped to `[zoneHeight/2, 1-zoneHeight/2]`, its covered
+interval only ever brushes position 0 for a single instant per bounce, not the sustained dwell time an
+interior point gets. Measured directly: idle's on-target fraction dropped to ~0.02-0.03 at every
+difficulty (down from ~0.18-0.43 under the old model) -- idle winning is now a non-issue, so
+`breakeven` only needs a comfortable margin above that ~0.03, not defense against a free win.
+
+Two tuning passes were needed before this held up under measurement, not guesswork:
+
+1. **First-pass physics failed balance testing outright.** With `GRAVITY=1.6, THRUST=4.0,
+   MAX_SPEED=0.8` and the *old* passive-contact-derived breakeven formula still in place, a scripted
+   predictive controller with human-scale (140ms) reaction time only reached ~0.25 on-target at the
+   easiest difficulty against a ~0.51 breakeven the stale formula demanded -- unwinnable. Root cause
+   was two compounding things: `MAX_SPEED=0.8` under `GRAVITY=1.6` gives a stopping distance
+   (`v^2/(2*GRAVITY) = 0.2`) bigger than the zone height (0.16-0.3), so releasing "at" the target
+   overshot straight through it; and the old breakeven formula was demanding a needlessly high bar for
+   a risk (idle winning) the new physics had already made structurally near-zero. Fixed by bringing
+   physics down to `GRAVITY=1.2, THRUST=2.75, MAX_SPEED=0.47` (stopping distance ~0.09, well under the
+   smallest zone height) and replacing breakeven with a flat curve tied to the measured idle rate
+   instead of a formula derived for the old model's dynamics.
+2. **Second pass: the hardest difficulty was still unwinnable.** Re-running the full balance suite
+   with that fix, idle was safely losing everywhere (~0.02-0.03 on-target, all difficulties), but
+   `TRACKED(140ms)` at the hardest difficulty (d=0.95) lost 0/6 with only ~0.27-0.43 on-target against
+   a ~0.4425 breakeven -- even a well-tuned scripted controller with a *better* 60ms reaction time
+   only just scraped 0.43. The zone's top speed at max difficulty (75% of the pick's own `MAX_SPEED`)
+   combined with the breakeven curve's steep climb (`0.3 + clamped*0.15`) made max difficulty hard
+   regardless of skill, not just hard to master. Since idle's ~0.02-0.03 on-target gives huge headroom
+   to work with, eased the zone's top-speed scaling (`0.65-0.75x` -> `0.6-0.67x` of `MAX_SPEED`) and
+   flattened breakeven to `0.25 + clamped*0.08` (0.25-0.326, down from 0.30-0.4425).
+
+Re-verified the whole loop with the same headless-browser harness (real dispatched `keydown`/`keyup`
+events, ~140ms reaction interval, six trials per case): idle 0/6 wins at every difficulty (~0.02
+on-target, safely below breakeven's 0.25 floor everywhere), tracked play 6/6 at the two easier
+difficulties (~0.55-0.58 on-target) and 3/6 at the hardest (~0.39 on-target, comfortably above its
+0.326 breakeven) -- a real, reachable difficulty curve at every setting, not a wall at the top end.
+`node --check` clean; `crime.js`'s `ASSET_VERSION` (7 -> 8) and `crime.html`'s matching `/crime.js?v=`
+bumped to cover this pass (the "add instructions" feature below had already bumped it to 7).
+
+### Added: visible "how to play" instructions on every minigame
+
+User report: none of the minigames (the six `/work` games, plus lockpick/pickpocket) showed the player
+how to play before they were expected to. Every game module already exported an `instructions()`
+function (used nowhere) with real text describing controls and win condition -- this was a
+presentation gap, not a missing-content one. `work.js`/`crime.js` were the actual problem: their only
+status area (`#status`) gets overwritten with win/lose text the instant a round ends, so folding
+instructions into that same line meant they vanished right when a losing round most needed the
+reminder.
+
+Fixed by giving both pages a dedicated `#instructions` element (`.instructions` CSS class, muted
+italic text) that's set once from `game.instructions()` at mount and left untouched for the rest of
+the round, independent of `setStatus()`. Verified with Playwright (`page.route()`-mocked
+`/activity/crime/*` and `/activity/work/*` responses) that `#status` and `#instructions` render
+distinct, correct text on both pages, and that every one of the 8 game modules' `instructions()`
+returns real text via a direct dynamic-import check. `work.js`'s `ASSET_VERSION` (8 -> 9) and
+`work.html`'s matching `?v=`, plus `work.css`'s own `?v=` (2 -> 3) for the new `.instructions` rule,
+bumped; same for `crime.js` (6 -> 7 at the time, then -> 8 for the physics pass above) and
+`crime.html`/`crime.css`.
+
+### Fixed: staff "Jail a character" showing a tick count that didn't match what was typed
+
+User report (with a screenshot): typed `Ticks: 25`, got "Magnus Bane jailed for 43 ticks." Not a bug
+-- `commit_to_jail` (`panem_shared/jail.py`) has always scaled the sentence by the character's priors
+(`jail_count * JAIL_PRIOR_TICKS_PER_COUNT`, 6 ticks per prior jailing), so a repeat offender's actual
+sentence is always longer than the number typed in. Confirmed the exact math against a second report
+from the same user (`Ticks: 2` -> "jailed for 26 ticks", i.e. `2 + 4*6`, consistent with `jail_count`
+having incremented from 3 to 4 between the two reports) -- the feature was working as designed, the
+dashboard just never showed the breakdown, so it read as broken.
+
+Fixed by surfacing the breakdown instead of hiding it: `StaffJailResponse` gained `base_ticks` and
+`prior_bonus_ticks` fields (computed from `jail_count` *before* `commit_to_jail` mutates it), the
+Staff tab's result line now reads "X ticks (Y entered + Z for repeat priors)" when there's a nonzero
+bonus, and a permanent note under the Ticks field explains the priors rule up front rather than only
+after the fact. Added a regression test seeding a character with `jail_count=3` and asserting the
+response's `base_ticks`/`prior_bonus_ticks`/`applied_ticks` match the reported numbers exactly (`25`,
+`18`, `43`). `app.js`'s `ASSET_VERSION` (22 -> 23, which also covers the market-tab change below) and
+`index.html`'s matching `?v=` bumped.
+
+### Market tab: per-row Buy/Sell + quantity, no more typing a good id
+
+User report: buying/selling required typing a good's id into a text field at the bottom of the
+Market tab instead of acting directly on the row you're looking at. Replaced the single bottom
+"good id + qty + Buy/Sell" form with a qty input and an action button on every row: the Prices table
+gets a qty input + Buy button per good, and the Inventory list (previously plain text) is now its own
+table with a qty input (capped at `max={owned qty}`) + Sell button per owned good. Neither table ever
+needs a typed id -- the row's own `good_id` travels straight into the request body from a closure over
+that row's data. Verified with a Playwright harness (mocked `/activity/dashboard/market/*` responses)
+that clicking Buy/Sell on a specific row sends the correct `good_id`/`qty` pair and renders the
+resulting win/caught message. `dashboard.css` gained a `.qty-input`/table-scoped `.btn` sizing rule
+(bumped `?v=` 9 -> 10); `app.js`'s `ASSET_VERSION` bump above covers `tabs/market.js` since `app.js`
+imports every tab module through that one shared version string.

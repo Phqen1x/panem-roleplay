@@ -46,8 +46,12 @@ function jailPanel(ctx) {
       });
       resultLine.className = "result-line win";
       resultLine.textContent =
-        `${body.character_name} jailed for ${body.applied_ticks} ticks ` +
-        `(until tick ${body.jailed_until_tick}).`;
+        body.prior_bonus_ticks > 0
+          ? `${body.character_name} jailed for ${body.applied_ticks} ticks ` +
+            `(${body.base_ticks} entered + ${body.prior_bonus_ticks} for repeat priors) ` +
+            `(until tick ${body.jailed_until_tick}).`
+          : `${body.character_name} jailed for ${body.applied_ticks} ticks ` +
+            `(until tick ${body.jailed_until_tick}).`;
     } catch (err) {
       resultLine.className = "result-line lose";
       resultLine.textContent = err.message;
@@ -60,6 +64,11 @@ function jailPanel(ctx) {
     el("h2", { text: "Jail a character" }),
     el("div", { class: "field-row" }, el("label", { text: "Character" }), nameInput),
     el("div", { class: "field-row" }, el("label", { text: "Ticks" }), ticksInput),
+    el(
+      "p",
+      { class: "tab-status" },
+      "The actual sentence is this base, plus 6 ticks per prior jailing (repeat offenders serve longer)."
+    ),
     el("div", { class: "field-row" }, el("label", { text: "Reason" }), reasonInput),
     el("div", { class: "field-row" }, jailBtn),
     resultLine

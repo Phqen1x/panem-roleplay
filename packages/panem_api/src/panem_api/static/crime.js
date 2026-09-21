@@ -23,7 +23,7 @@
 // in an `<iframe>` for the lockpick/steal/burgle minigames (see
 // static/tabs/jail.js, static/tabs/crime.js) and use it to refresh their
 // own status without a reload. A no-op outside an iframe.
-const ASSET_VERSION = "6";
+const ASSET_VERSION = "8";
 
 const [lockpick, pickpocket] = await Promise.all([
   import(`./games/lockpick.js?v=${ASSET_VERSION}`),
@@ -33,6 +33,7 @@ const [lockpick, pickpocket] = await Promise.all([
 const TITLES = { lockpick: "Pick the lock", steal: "Pick the pocket", burgle: "Pick the lock" };
 
 const statusEl = document.getElementById("status");
+const instructionsEl = document.getElementById("instructions");
 const boardEl = document.getElementById("board");
 const resultEl = document.getElementById("result");
 const titleEl = document.getElementById("page-title");
@@ -118,9 +119,15 @@ async function main() {
   const game = kind === "steal" ? pickpocket : lockpick;
   setStatus(
     kind === "steal"
-      ? `${info.character_name} lines up on ${info.target_name}. ${game.instructions()}`
-      : `${info.character_name} works the lock. ${game.instructions()}`
+      ? `${info.character_name} lines up on ${info.target_name}.`
+      : `${info.character_name} works the lock.`
   );
+  // A dedicated, always-visible line rather than folding the instructions
+  // into the status sentence -- `setStatus` gets overwritten as the
+  // attempt plays out (win/lose text), which would otherwise take "how to
+  // play" down with it right when a losing attempt most needs a reminder.
+  instructionsEl.textContent = game.instructions();
+  instructionsEl.hidden = false;
   boardEl.hidden = false;
   game.mount(boardEl, { onFinish: finish, setStatus, difficulty: info.difficulty });
 }
