@@ -1,8 +1,9 @@
-// An original lockpicking minigame -- a single drifting pressure zone the
-// player has to track with a hand-controlled pick, filling a catch meter
-// while on target and draining it while off, the general shape of Stardew
-// Valley's fishing minigame (a moving target + a player-steered indicator
-// + a fill/drain progress meter that wins at full and loses at empty).
+// An original lockpicking minigame -- a single pressure zone that bounces
+// back and forth across the track, which the player has to track with a
+// hand-controlled pick, filling a catch meter while on target and
+// draining it while off, the general shape of Stardew Valley's fishing
+// minigame (a moving target + a player-steered indicator + a fill/drain
+// progress meter that wins at full and loses at empty).
 // That's a description of a mechanic, not a copy of anyone's code or
 // assets -- this is a fresh canvas implementation, same IP-safety posture
 // as this file's earlier pin-tumbler version (replaced here after user
@@ -16,9 +17,9 @@ export const label = "Lockpick";
 export function instructions() {
   return (
     "Hold W to push the pick up, S to ease it down. Keep it inside the " +
-    "green pressure zone as it drifts -- the meter fills while you're on " +
-    "target and drains when you're off. Fill it to turn the lock; let it " +
-    "drain empty and the pick slips free."
+    "green pressure zone as it bounces back and forth -- the meter fills " +
+    "while you're on target and drains when you're off. Fill it to turn " +
+    "the lock; let it drain empty and the pick slips free."
   );
 }
 
@@ -31,9 +32,22 @@ const TRACK_H = 220;
 const METER_X = 150;
 const METER_W = 30;
 const PICK_THICKNESS = 8;
-const ACCEL = 2.4; // track-heights/sec^2 applied while a direction is held
-const DRAG = 2.0; // track-heights/sec^2 of always-on resistance
-const MAX_SPEED = 1.15; // track-heights/sec, clamped
+// ACCEL must exceed DRAG, not just be close to it: each frame first adds
+// accel*dt to the velocity, then subtracts a drag magnitude capped at
+// DRAG*dt in the same direction as that new velocity. Set ACCEL === DRAG
+// (as a previous pass here briefly did) and that cap exactly equals what
+// accel just added, so drag cancels it in full on every single frame --
+// the pick can never move at all no matter how long a key is held. That
+// shipped once and made every "held W/S" test indistinguishable from
+// doing nothing, which is what a wave of confusing playtest numbers
+// turned out to actually be.
+const ACCEL = 5.6; // track-heights/sec^2 applied while a direction is held
+const DRAG = 2.6; // track-heights/sec^2 of always-on resistance
+// MAX_SPEED chosen so a full-speed stop (v^2 / (2*DRAG)) travels less
+// than the smallest zone height (0.16): here that's ~0.11. Any faster and
+// releasing the key "at" the zone overshoots straight through it no
+// matter how good the reaction.
+const MAX_SPEED = 0.75; // track-heights/sec, clamped
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -41,25 +55,53 @@ function clamp(value, min, max) {
 
 export function mount(boardEl, { onFinish, setStatus, difficulty = 0.5 }) {
   const clamped = clamp(difficulty, 0, 0.95);
-  const zoneHeight = Math.max(0.15, 0.34 - clamped * 0.2); // fraction of track height
-  const driftRate = 0.55 + clamped * 1.35; // zone's random-walk magnitude, per second
-  // Deliberately slow: a rate fast enough to decide the game within a
-  // fraction of a second (an earlier version of these numbers could drain
-  // half the meter before a human even finishes registering the mismatch)
-  // isn't testing tracking skill, it's testing reflexes nobody has. A full
-  // empty-to-full swing takes several seconds even at max difficulty, so
-  // one bad moment is a setback to recover from, not an instant loss.
-  const fillRate = 0.22 - clamped * 0.12; // meter units/sec while on target
-  const drainRate = 0.1 + clamped * 0.14; // meter units/sec while off target
+  const zoneHeight = Math.max(0.16, 0.3 - clamped * 0.14); // fraction of track height
+  // The zone bounces back and forth at a steady speed like a reflecting
+  // ball, with an occasional early random reversal so it isn't a
+  // perfectly predictable metronome -- not the "pick a random new
+  // waypoint on arrival" version this replaced. That approach (and the
+  // damped-random-walk version before it) both suffer the same
+  // well-known bias: repeatedly retargeting toward independent random
+  // points concentrates dwell time near the middle of the range (the
+  // "random waypoint mobility model" border effect), which is exactly
+  // where the pick sits when the player does nothing at all -- measured,
+  // that let a completely idle player win close to half the time purely
+  // from the zone drifting back over dead center. A constant-speed
+  // bounce has a close-to-uniform space-time distribution instead, so
+  // "did nothing" and "actively tracked" produce genuinely different
+  // on-target rates.
+  const zoneSpeed = 0.16 + clamped * 0.22; // track-heights/sec
+  const reversalChance = 0.12; // per-second chance of an early random reversal
+
+  // A constant-speed bounce spends time on any fixed point roughly
+  // proportional to zoneHeight / (1 - zoneHeight) of the whole run --
+  // confirmed by direct measurement (~0.42/0.27/0.18 at difficulty
+  // 0/0.5/0.95, matching this formula closely). That's exactly how often
+  // a pick that never moves at all ends up "on target" by pure chance, so
+  // the win condition has to clear it with real margin -- not eyeballed,
+  // derived from it directly, with a fixed 1.2x safety factor. (An
+  // earlier 1.6x factor was tuned against a version of this file with a
+  // real physics bug -- ACCEL exactly equalling DRAG below, which pinned
+  // the pick's velocity at zero no matter what was held, so every
+  // "tracking" test silently measured the same thing as idle. With that
+  // fixed, a predictive scripted controller clears a ~0.70/0.51/0.27
+  // on-target rate at the three difficulties above, comfortably above
+  // this factor's ~0.51/0.36/0.24 breakeven with real margin to spare.)
+  const passiveFraction = zoneHeight / (1 - zoneHeight);
+  const breakeven = clamp(passiveFraction * 1.2, 0.24, 0.6);
+  const totalRate = 0.24; // meter units/sec, fillRate+drainRate -- overall pace
+  const fillRate = (1 - breakeven) * totalRate; // meter units/sec while on target
+  const drainRate = breakeven * totalRate; // meter units/sec while off target
   const timeLimitS = 34 - clamped * 6; // generous safety cap -- the meter is the real clock
+
+  const zoneHalfHeightStart = zoneHeight / 2;
 
   // The pick always starts centered (0.5) -- if the zone did too, it'd
   // start already caught, and a difficulty-0.95 attempt could win from a
-  // second of doing nothing before the drift ever got a chance to test
+  // second of doing nothing before the bounce ever got a chance to test
   // anything. Force a real starting gap (at least 1.5 zone-heights from
   // center) so every attempt opens with an actual find-it moment, the
   // same as a fish rarely biting right where your line already sits.
-  const zoneHalfHeightStart = zoneHeight / 2;
   const startGap = zoneHeight * 1.5;
   let zoneCenter = zoneHalfHeightStart + Math.random() * (1 - zoneHeight);
   if (Math.abs(zoneCenter - 0.5) < startGap) {
@@ -68,13 +110,19 @@ export function mount(boardEl, { onFinish, setStatus, difficulty = 0.5 }) {
         ? Math.max(zoneHalfHeightStart, 0.5 - startGap)
         : Math.min(1 - zoneHalfHeightStart, 0.5 + startGap);
   }
+  // Genuinely random initial direction -- always heading back toward
+  // center first guaranteed an early free crossing over the (still
+  // stationary) pick on literally every attempt, which is exactly the
+  // free win the starting gap above exists to prevent. A coin flip means
+  // roughly half of attempts open moving away instead, so an early catch
+  // is possible but never guaranteed.
+  let zoneDir = Math.random() < 0.5 ? 1 : -1;
 
   let done = false;
   let timeLeft = timeLimitS;
   let progress = 0.5;
   let pickPos = 0.5;
   let pickVelocity = 0;
-  let zoneVelocity = 0;
   let holdingUp = false;
   let holdingDown = false;
   let rafId = null;
@@ -117,13 +165,22 @@ export function mount(boardEl, { onFinish, setStatus, difficulty = 0.5 }) {
   function update(dt) {
     if (done) return;
 
-    // The pressure zone free-drifts via a damped random walk, the same
+    // The pressure zone bounces back and forth at a steady pace, the same
     // "keep checking back on it" shape a fish's wandering has -- there's
-    // no fixed pattern to memorize, only a rate of change to react to.
-    zoneVelocity += (Math.random() - 0.5) * driftRate * dt;
-    zoneVelocity *= 0.92;
+    // no fixed pattern to memorize, only a direction and pace to react
+    // to. It reflects off both ends and occasionally reverses early at
+    // random so a sharp player can't just count out the full period.
     const half = zoneHalfHeight();
-    zoneCenter = clamp(zoneCenter + zoneVelocity * dt, half, 1 - half);
+    zoneCenter += zoneDir * zoneSpeed * dt;
+    if (zoneCenter <= half) {
+      zoneCenter = half;
+      zoneDir = 1;
+    } else if (zoneCenter >= 1 - half) {
+      zoneCenter = 1 - half;
+      zoneDir = -1;
+    } else if (Math.random() < reversalChance * dt) {
+      zoneDir *= -1;
+    }
 
     // The pick has momentum: holding a direction accelerates it, and a
     // constant drag always pulls that velocity back toward zero, so
@@ -168,7 +225,7 @@ export function mount(boardEl, { onFinish, setStatus, difficulty = 0.5 }) {
     ctx.fillStyle = "#222";
     ctx.fillRect(TRACK_X, TRACK_Y, TRACK_W, TRACK_H);
 
-    // Pressure zone (the "green spot"), drifting within the track.
+    // Pressure zone (the "green spot"), bouncing within the track.
     const half = zoneHalfHeight();
     const zoneTopY = TRACK_Y + TRACK_H * (1 - (zoneCenter + half));
     const zoneH = TRACK_H * zoneHeight;

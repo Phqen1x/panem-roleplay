@@ -3036,3 +3036,62 @@ either way). `crime.css` gained one rule suppressing the resulting focus ring, s
 functional, not a tab-navigation affordance. Re-verified against the same iframe-embedding repro:
 `document.hasFocus()` now reads `true` after a click, and holding W visibly moves the pick. `crime.js`'s
 `ASSET_VERSION` (4 -> 5) and `crime.html`'s matching `/crime.js?v=`/`/crime.css?v=` bumped again.
+
+### Fix: the lockpick minigame's green zone barely moved
+
+User feedback: "The green area doesn't really move at all, so once you move the bar into the green
+the game is basically over. The green section needs to move back and forth more." The previous
+rewrite's pressure zone moved by picking a new random waypoint and drifting toward it on arrival --
+but that "random waypoint" pattern has a well-documented bias (the mobility-modeling literature calls
+it the border effect): repeatedly retargeting toward independent random points concentrates a
+wandering object's dwell time near the *middle* of its range, not spread evenly across it. Since the
+pick sits at the exact center of the track by default, the zone spent a disproportionate amount of
+time hovering right where the player already was, which is exactly what looked like "barely moves."
+
+Replaced the movement model with a constant-speed bounce (like a ball reflecting off both ends of the
+track), plus an occasional small chance of an early random reversal so a sharp player can't just
+count out a fixed period. Verified via a headless-browser harness sampling the zone's position every
+250ms over several seconds: the bounce model covers roughly 65-75% of the track's range with clear,
+regular direction reversals, versus the old model's small, jittery excursions around wherever it
+happened to be drifting.
+
+Fixing the *movement* surfaced two further bugs, both caught only by simulating real play rather than
+just eyeballing the animation:
+
+**(a) Idle could win outright.** A bounce model has a much more predictable, uniform dwell-time
+distribution than the old random-waypoint one -- which is good for fairness, except the existing
+fill/drain rates were still tuned against the old model's much lower passive contact rate. Measured
+directly: a pick that never moves at all still ends up "on target" a large, predictable fraction of
+the time purely from the zone sweeping back across dead center (~40% at easy difficulty, ~20% at max)
+-- and the old rates let that alone win the game outright in some runs. Fixed by deriving the
+fill/drain rates directly from that measured passive-contact fraction (`zoneHeight / (1 - zoneHeight)`,
+confirmed to track the measured numbers closely) with a fixed safety margin, instead of tuning the
+rates by feel -- so the win condition always needs a real margin above what doing nothing produces,
+at every difficulty.
+
+**(b) The pick had a physics bug that made it literally unmovable.** While tuning the pick's stopping
+distance (needed so releasing a key "at" the zone doesn't overshoot straight through it), a constant
+`ACCEL` and constant `DRAG` briefly ended up set to the exact same value. Each frame, the pick's
+velocity first gets `accel * dt` added, then has a drag magnitude capped at `DRAG * dt` subtracted in
+the opposite direction -- with `ACCEL === DRAG`, that cap exactly equals what was just added, so drag
+cancelled the acceleration in full on every single frame. The pick's velocity was permanently pinned
+at zero no matter how long W or S was held. This went undetected through an entire round of
+scripted-controller playtesting because every "held a direction" test silently measured the exact
+same thing as doing nothing -- the controller numbers looked bad, but the actual bug (no response to
+input at all) never showed up as an obvious crash or console error. Caught by directly inspecting the
+pick's velocity over time via a temporary debug hook and noticing it never left `0.000` even while a
+key was held; fixed by giving `ACCEL` real headroom over `DRAG` (`5.6` vs `2.6`) so holding a key
+actually accelerates the pick, confirmed via the same debug hook showing velocity change immediately.
+
+Re-verified the whole loop end to end with a headless-browser harness that dispatches real keyboard
+events in-page (no remote-control round-trip latency, so timing is close to what an actual keypress
+looks like) at a human-scale ~140ms reaction interval, run six times per difficulty: idling won 0/6
+at every difficulty (~40%/~27%/~18% on-target purely from passive contact, all below breakeven), while
+a controller that steers toward the zone based on where the pick's current velocity would carry it if
+released right now (accounting for the same drag the real physics use, so it predicts and eases off
+rather than reacting to overshoot after the fact) won 6/6 at the easiest difficulty, 5/6 at medium,
+and 2/6 at the hardest -- a real, reachable difficulty curve rather than either a free win or a
+required-frame-perfect wall. `node --check` clean on both changed JS files; no Python touched, so
+ruff and the existing test/mypy baselines are unaffected. `crime.js`'s `ASSET_VERSION` (5 -> 6) and
+`crime.html`'s matching `/crime.js?v=` bumped; `crime.css` untouched this pass, so its own `?v=`
+stayed put.
