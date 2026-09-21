@@ -2963,3 +2963,50 @@ correctly wraps back to "None" after cycling through every option. That same liv
 second real bug -- the preview container had no `max-width`, so `aspect-ratio: 3/4` blew it up to
 fill the entire panel's width (nearly 1000px tall) -- fixed by capping it at 320px, the same way the
 old canvas-based version was implicitly bounded by its fixed render resolution.
+
+## Rebuilt the lockpicking minigame again: a Stardew Valley-style fishing bar, not a pin-tumbler puzzle
+
+User feedback on the pin-tumbler version (`## Rebuilt the lockpicking minigame as an actual
+pin-tumbler puzzle` above): "make it so the user has to use the w and s keys to keep the bar in the
+green and make the green part of the bar move around, similarly to how fishing works in stardew
+valley." A different mechanic entirely -- one drifting target zone and one player-steered indicator,
+not several pins juggled against a wandering tension wrench.
+
+Rewrote `games/lockpick.js` again (same IP-safety posture as every version before it: "the general
+shape of a moving target + a player-steered bar + a fill/drain meter" describes a mechanic, not
+anyone's code or assets, so this is a fresh canvas implementation, not a port of Stardew Valley's).
+`label`/`instructions()`/`mount(boardEl, {onFinish, setStatus, difficulty})`'s contract is unchanged
+again, so only `games/lockpick.js` plus `crime.js`'s `ASSET_VERSION` (3 -> 4) and `crime.html`'s
+matching `/crime.js?v=` needed to change -- `crime.css`'s existing `.board-lockpick`/`.lockpick-meta`
+rules were generic enough to reuse as-is.
+
+**The mechanic**: a single vertical track holds a drifting green "pressure zone" (a damped random
+walk, same shape the old tension wrench's drift had) and a white/red "pick" line the player steers
+with **W** (push up) / **S** (ease down) -- momentum-based (holding a direction accelerates it, a
+constant drag bleeds the velocity back off on release, so it's a "juggle," not a "snap to a spot").
+A catch meter next to the track fills while the pick overlaps the zone and drains while it doesn't;
+reaching 100% wins (`onFinish(true)`), draining to 0% loses (`onFinish(false)`) -- a generous overall
+time limit is still a loss condition too, but the meter is the real clock, the same way it is in the
+reference game. `zoneHeight`/`driftRate`/`fillRate`/`drainRate` all scale with the same `difficulty`
+float `panem_shared.jail.lockpick_difficulty`/`stealing.burgle_difficulty` already compute -- a
+longer sentence or a house door reads as a smaller, twitchier zone and a slower-filling meter, not a
+faster needle.
+
+**Two real bugs caught by live testing, not just theoretical**: added a temporary
+`window.__lockpickDebug()` hook (removed before commit, same pattern as the pin-tumbler version's own
+verification) to read the running game's internal state from Playwright and confirmed via a real
+minted attempt against a seeded jailed character that (a) **the pick and zone both defaulted to the
+exact same starting position (0.5)** -- at max difficulty, an idle player could win from doing
+absolutely nothing for under a second, before the drift ever got a chance to test anything; fixed by
+forcing the zone to start at least 1.5 zone-heights away from the pick's fixed center, so every
+attempt opens with an actual find-it moment. (b) **that fix alone flipped the exploit into its
+mirror image**: the original fill/drain rates could swing the meter from full to empty in well under
+a second, meaning the *outcome* was still effectively decided by the random starting gap alone,
+before a human had time to register the mismatch and react -- not a skill test, a coin flip. Fixed by
+slowing both rates roughly 3x (a full empty-to-full swing now takes several seconds even at max
+difficulty), then re-verified: an idling player still reliably loses (~2s), but a scripted controller
+that reads the live zone position each frame and steers toward it wins in ~11 seconds at
+difficulty 0.95, comfortably inside the ~28s time budget -- confirming the win condition is actually
+reachable through tracking skill, not luck in either direction. `node --check` clean on all three
+changed files; no Python changed, so the existing 985-test suite and mypy baseline are both
+unaffected by this one.
