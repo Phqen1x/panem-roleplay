@@ -1868,6 +1868,28 @@ class TestDashboardCrime:
         assert raw["kind"] == "burgle"
         assert raw["property_id"] == house_id
 
+    async def test_burgle_start_with_two_houses_in_the_same_district_does_not_500(
+        self, work_app, db_session_factory
+    ):
+        """Nothing in the housing system stops one character from owning two
+        houses in the same district, so the owner-house lookup can legitimately
+        match more than one `Property` row -- previously that raised an
+        unhandled `MultipleResultsFound` (a 500) from `.scalar_one_or_none()`
+        rather than just picking one."""
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        owner_id = await seed_character(
+            db_session_factory, discord_id=6, character_overrides={"name": "Owner"}
+        )
+        await seed_house(db_session_factory, owner_id=owner_id)
+        await seed_house(db_session_factory, owner_id=owner_id)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/crime/{char_id}/burgle/start",
+                json={"discord_id": 5, "owner": "Owner"},
+            )
+        assert response.status_code == 200
+
     async def test_burgle_start_404s_for_an_unknown_owner(self, work_app, db_session_factory):
         char_id = await seed_character(db_session_factory, discord_id=5)
         transport = httpx.ASGITransport(app=work_app)

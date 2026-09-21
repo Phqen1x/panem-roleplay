@@ -3095,3 +3095,24 @@ required-frame-perfect wall. `node --check` clean on both changed JS files; no P
 ruff and the existing test/mypy baselines are unaffected. `crime.js`'s `ASSET_VERSION` (5 -> 6) and
 `crime.html`'s matching `/crime.js?v=` bumped; `crime.css` untouched this pass, so its own `?v=`
 stayed put.
+
+### Fixed: `POST /activity/dashboard/crime/{id}/burgle/start` 500ing for a real player
+
+User report: a specific attempt at `/burgle/start` 500'd instead of minting an attempt. Reproduced
+locally by seeding an owner who owns *two* houses in the burglar's district and hitting the endpoint --
+`start_burgle`'s house lookup used `.scalar_one_or_none()`, which raises `MultipleResultsFound` (an
+unhandled exception, not a caught `ServiceError`) the moment a query matches more than one row.
+Nothing in the housing system stops a character from buying more than one house in the same district
+(no such uniqueness check exists in `panem_bot.services.housing`), so this was reachable by any
+player who happened to own two houses in one district being targeted for a burglary -- confirmed via
+the exact traceback (`dashboard_routes.py:814`, inside `start_burgle`) against a local reproduction
+before writing the fix.
+
+Fixed by switching that lookup to `.scalars().first()` with a stable `order_by(Property.id)`, so it
+deterministically picks one of the owner's houses instead of erroring when there's more than one.
+(The owner-name lookup two lines above stays `.scalar_one_or_none()` -- `Character.name` carries a
+real case-insensitive unique constraint at the DB level, confirmed directly, so that one genuinely
+can't return more than one row.) Added a regression test seeding two houses for the same owner in the
+same district and asserting `/burgle/start` still returns 200. Full suite (`uv run pytest`, 986
+passed), `ruff check`, and the mypy baseline (148, unchanged) all clean; no JS touched, so no
+`ASSET_VERSION` bump needed here.

@@ -802,16 +802,25 @@ def build_crime_router(
             ).scalar_one_or_none()
             house = None
             if owner_char is not None:
+                # `.scalars().first()`, not `.scalar_one_or_none()` -- nothing in the
+                # housing system stops one character from owning more than one house
+                # in the same district, so this can legitimately match more than one
+                # row; `scalar_one_or_none()` raised `MultipleResultsFound` (an
+                # unhandled 500) the moment a real player actually did. `order_by`
+                # id keeps which house gets targeted stable across repeated attempts
+                # rather than depending on the database's unspecified row order.
                 house = (
                     await session.execute(
-                        select(Property).where(
+                        select(Property)
+                        .where(
                             Property.kind == PropertyKind.HOUSE.value,
                             Property.owner_kind == OwnerKind.CHARACTER.value,
                             Property.owner_id == owner_char.id,
                             Property.district_id == character.current_district_id,
                         )
+                        .order_by(Property.id)
                     )
-                ).scalar_one_or_none()
+                ).scalars().first()
             if house is None:
                 raise HTTPException(status_code=404, detail="burgle_owner_not_found")
 
