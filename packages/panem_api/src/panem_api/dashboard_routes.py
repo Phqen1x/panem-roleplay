@@ -49,10 +49,12 @@ from panem_shared import jail as jail_svc
 from panem_shared import jobs as jobs_svc
 from panem_shared import layers as layers_svc
 from panem_shared import market as market_svc
+from panem_shared import pay as pay_svc
 from panem_shared import poaching as poaching_svc
 from panem_shared import rp_modes as rp_modes_svc
 from panem_shared import stealing as stealing_svc
 from panem_shared import theme as theme_svc
+from panem_shared import trades as trades_svc
 from panem_shared import travel as travel_svc
 from panem_shared.content.loader import ContentBundle
 from panem_shared.db.models import (
@@ -69,6 +71,7 @@ from panem_shared.db.models import (
     Shift,
     StaffAction,
     ThemeProfile,
+    Trade,
     User,
     WorldClock,
 )
@@ -81,6 +84,7 @@ from panem_shared.enums import (
     PropertyKind,
     RpMode,
     SceneStatus,
+    TradeStatus,
 )
 from panem_shared.errors import NotAllowed, NotFound, ServiceError
 from panem_shared.redis_keys import CRIME_ATTEMPT_TTL_S, crime_attempt_key
@@ -2058,6 +2062,274 @@ def build_social_router(
                 participant_character_names=sorted(char_rows),
                 participant_npc_names=sorted(npc_rows),
                 discord_thread_url=thread_url,
+            )
+
+    return router
+
+
+class PayRequest(BaseModel):
+    discord_id: int
+    target: str
+    amount: int
+
+
+class PayResponse(BaseModel):
+    sender_money: int
+    recipient_name: str
+
+
+def build_pay_router(*, session_factory: async_sessionmaker[AsyncSession] | None) -> APIRouter:
+    """`/pay`'s dashboard equivalent -- instant, no confirmation, same
+    trust level as the bot command."""
+    router = APIRouter(prefix="/activity/dashboard/pay", tags=["dashboard"])
+
+    @router.post("/{character_id}", response_model=PayResponse)
+    async def pay(character_id: int, body: PayRequest) -> PayResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            sender = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            recipient = (
+                await session.execute(select(Character).where(Character.name == body.target))
+            ).scalar_one_or_none()
+            if recipient is None:
+                raise HTTPException(status_code=404, detail="character_not_found")
+            try:
+                pay_svc.pay(sender, recipient, body.amount)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            return PayResponse(sender_money=sender.money, recipient_name=recipient.name)
+
+    return router
+
+
+class TradeSummary(BaseModel):
+    id: int
+    initiator_character_id: int
+    initiator_name: str
+    recipient_character_id: int
+    recipient_name: str
+    give_good_id: str | None = None
+    give_qty: int | None = None
+    give_money: int
+    want_good_id: str | None = None
+    want_qty: int | None = None
+    want_money: int
+    status: str
+    # "incoming" for the requesting character's own pending offers to
+    # respond to, "outgoing" for ones they sent themselves -- the
+    # dashboard's Trade panel splits the pending list on this.
+    direction: str
+
+
+class TradeListResponse(BaseModel):
+    trades: list[TradeSummary]
+
+
+class TradeOfferRequest(BaseModel):
+    discord_id: int
+    target: str
+    give_good_id: str | None = None
+    give_qty: int | None = None
+    give_money: int = 0
+    want_good_id: str | None = None
+    want_qty: int | None = None
+    want_money: int = 0
+
+
+class TradeActionRequest(BaseModel):
+    discord_id: int
+
+
+def _trade_summary(trade: Trade, *, initiator_name: str, recipient_name: str, viewer_id: int) -> TradeSummary:
+    return TradeSummary(
+        id=trade.id,
+        initiator_character_id=trade.initiator_character_id,
+        initiator_name=initiator_name,
+        recipient_character_id=trade.recipient_character_id,
+        recipient_name=recipient_name,
+        give_good_id=trade.give_good_id,
+        give_qty=trade.give_qty,
+        give_money=trade.give_money,
+        want_good_id=trade.want_good_id,
+        want_qty=trade.want_qty,
+        want_money=trade.want_money,
+        status=trade.status,
+        direction="outgoing" if trade.initiator_character_id == viewer_id else "incoming",
+    )
+
+
+def build_trade_router(*, session_factory: async_sessionmaker[AsyncSession] | None) -> APIRouter:
+    """`/trade`'s dashboard equivalent -- mirrors the bot's offer/accept/
+    decline/cancel flow 1:1. Unlike the bot (which DMs the recipient an
+    Accept/Decline view), the dashboard has no push channel of its own,
+    so the recipient discovers a pending offer by checking `.../list`
+    themselves -- the same "poll, don't push" posture `build_social_
+    router`'s read-only Engagement panel already has."""
+    router = APIRouter(prefix="/activity/dashboard/trade", tags=["dashboard"])
+
+    @router.get("/{character_id}/list", response_model=TradeListResponse)
+    async def list_trades(character_id: int, discord_id: int) -> TradeListResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            rows = (
+                await session.execute(
+                    select(Trade).where(
+                        Trade.status == TradeStatus.PENDING.value,
+                        (Trade.initiator_character_id == character.id)
+                        | (Trade.recipient_character_id == character.id),
+                    )
+                )
+            ).scalars()
+            summaries = []
+            for trade in rows:
+                initiator = await session.get(Character, trade.initiator_character_id)
+                recipient = await session.get(Character, trade.recipient_character_id)
+                summaries.append(
+                    _trade_summary(
+                        trade,
+                        initiator_name=initiator.name if initiator else "?",
+                        recipient_name=recipient.name if recipient else "?",
+                        viewer_id=character.id,
+                    )
+                )
+            return TradeListResponse(trades=summaries)
+
+    @router.post("/{character_id}/offer", response_model=TradeSummary)
+    async def offer_trade(character_id: int, body: TradeOfferRequest) -> TradeSummary:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            initiator = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            recipient = (
+                await session.execute(select(Character).where(Character.name == body.target))
+            ).scalar_one_or_none()
+            if recipient is None:
+                raise HTTPException(status_code=404, detail="character_not_found")
+            try:
+                trades_svc.check_can_trade(initiator, recipient)
+                trades_svc.validate_offer(
+                    initiator=initiator,
+                    give_good_id=body.give_good_id,
+                    give_qty=body.give_qty,
+                    give_money=body.give_money,
+                    want_good_id=body.want_good_id,
+                    want_qty=body.want_qty,
+                    want_money=body.want_money,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            trade = Trade(
+                initiator_character_id=initiator.id,
+                recipient_character_id=recipient.id,
+                give_good_id=body.give_good_id,
+                give_qty=body.give_qty,
+                give_money=body.give_money,
+                want_good_id=body.want_good_id,
+                want_qty=body.want_qty,
+                want_money=body.want_money,
+                status=TradeStatus.PENDING.value,
+            )
+            session.add(trade)
+            await session.flush()
+            return _trade_summary(
+                trade,
+                initiator_name=initiator.name,
+                recipient_name=recipient.name,
+                viewer_id=initiator.id,
+            )
+
+    async def _resolve_trade_and_character(
+        session: AsyncSession, *, discord_id: int, character_id: int, trade_id: int
+    ) -> tuple[Trade, Character]:
+        character = await _resolve_owned_character(
+            session, discord_id=discord_id, character_id=character_id
+        )
+        trade = await session.get(Trade, trade_id)
+        if trade is None:
+            raise HTTPException(status_code=404, detail="trade_not_found")
+        return trade, character
+
+    @router.post("/{character_id}/{trade_id}/accept", response_model=TradeSummary)
+    async def accept_trade_route(
+        character_id: int, trade_id: int, body: TradeActionRequest
+    ) -> TradeSummary:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            trade, character = await _resolve_trade_and_character(
+                session, discord_id=body.discord_id, character_id=character_id, trade_id=trade_id
+            )
+            if trade.recipient_character_id != character.id:
+                raise HTTPException(status_code=404, detail="trade_not_found")
+            initiator = await session.get(Character, trade.initiator_character_id)
+            if initiator is None:
+                raise HTTPException(status_code=404, detail="character_not_found")
+            try:
+                await trades_svc.accept_trade(
+                    session,
+                    trade=trade,
+                    initiator=initiator,
+                    recipient=character,
+                    now=dt.datetime.now(dt.UTC),
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            return _trade_summary(
+                trade,
+                initiator_name=initiator.name,
+                recipient_name=character.name,
+                viewer_id=character.id,
+            )
+
+    @router.post("/{character_id}/{trade_id}/decline", response_model=TradeSummary)
+    async def decline_trade_route(
+        character_id: int, trade_id: int, body: TradeActionRequest
+    ) -> TradeSummary:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            trade, character = await _resolve_trade_and_character(
+                session, discord_id=body.discord_id, character_id=character_id, trade_id=trade_id
+            )
+            if trade.recipient_character_id != character.id:
+                raise HTTPException(status_code=404, detail="trade_not_found")
+            try:
+                trades_svc.decline_trade(trade, dt.datetime.now(dt.UTC))
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            initiator = await session.get(Character, trade.initiator_character_id)
+            return _trade_summary(
+                trade,
+                initiator_name=initiator.name if initiator else "?",
+                recipient_name=character.name,
+                viewer_id=character.id,
+            )
+
+    @router.post("/{character_id}/{trade_id}/cancel", response_model=TradeSummary)
+    async def cancel_trade_route(
+        character_id: int, trade_id: int, body: TradeActionRequest
+    ) -> TradeSummary:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            trade, character = await _resolve_trade_and_character(
+                session, discord_id=body.discord_id, character_id=character_id, trade_id=trade_id
+            )
+            if trade.initiator_character_id != character.id:
+                raise HTTPException(status_code=404, detail="trade_not_found")
+            try:
+                trades_svc.cancel_trade(trade, dt.datetime.now(dt.UTC))
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            recipient = await session.get(Character, trade.recipient_character_id)
+            return _trade_summary(
+                trade,
+                initiator_name=character.name,
+                recipient_name=recipient.name if recipient else "?",
+                viewer_id=character.id,
             )
 
     return router

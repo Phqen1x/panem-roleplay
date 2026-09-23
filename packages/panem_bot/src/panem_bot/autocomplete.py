@@ -126,6 +126,28 @@ async def affliction_types(
     ]
 
 
+async def any_good(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    """Every good in the content catalog, regardless of district --
+    `/trade offer`'s `give_good`/`want_good` fields aren't location-scoped
+    the way `/market`'s are (a trade is between two characters, wherever
+    they each are), so this searches the whole catalog rather than one
+    district's `produces`/`imports` like `market.py`'s own autocomplete."""
+    bot = interaction.client
+    content = bot.content  # type: ignore[attr-defined]
+    current_lower = current.lower()
+    matches = [
+        good
+        for good_id, good in content.goods.items()
+        if current_lower in good_id.lower() or current_lower in good.name.lower()
+    ]
+    matches.sort(key=lambda g: g.name)
+    return [
+        app_commands.Choice(name=f"{g.name} ({g.id})", value=g.id) for g in matches[:MAX_CHOICES]
+    ]
+
+
 async def districts(
     interaction: discord.Interaction, current: str
 ) -> list[app_commands.Choice[int]]:

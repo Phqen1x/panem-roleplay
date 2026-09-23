@@ -38,6 +38,7 @@ from panem_shared.db.models import (
     Scene,
     Shift,
     StaffAction,
+    Trade,
     User,
 )
 from panem_shared.enums import (
@@ -4134,3 +4135,267 @@ class TestDashboardStaffAfflictionTypes:
                     json={"discord_id": 42},
                 )
         assert response.status_code == 403
+
+
+class TestDashboardPay:
+    async def test_happy_path(self, work_app, db_session_factory):
+        sender_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"money": 100}
+        )
+        await seed_character(
+            db_session_factory,
+            discord_id=6,
+            character_overrides={"name": "Mark", "money": 50},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/pay/{sender_id}",
+                json={"discord_id": 5, "target": "Mark", "amount": 10},
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["sender_money"] == 90
+        assert body["recipient_name"] == "Mark"
+        async with db_session_factory() as session:
+            recipient = (
+                await session.execute(select(Character).where(Character.name == "Mark"))
+            ).scalar_one()
+            assert recipient.money == 60
+
+    async def test_refuses_a_story_mode_recipient(self, work_app, db_session_factory):
+        sender_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"money": 100}
+        )
+        await seed_character(
+            db_session_factory,
+            discord_id=6,
+            character_overrides={"name": "Mark", "rp_mode": "story"},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/pay/{sender_id}",
+                json={"discord_id": 5, "target": "Mark", "amount": 10},
+            )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "pay_mode_forbidden"
+
+    async def test_refuses_insufficient_money(self, work_app, db_session_factory):
+        sender_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"money": 0}
+        )
+        await seed_character(
+            db_session_factory, discord_id=6, character_overrides={"name": "Mark"}
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/pay/{sender_id}",
+                json={"discord_id": 5, "target": "Mark", "amount": 10},
+            )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "pay_insufficient_money"
+
+
+class TestDashboardTrade:
+    async def test_offer_then_accept_moves_money_and_goods(self, work_app, db_session_factory):
+        initiator_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"money": 100}
+        )
+        await seed_character(
+            db_session_factory,
+            discord_id=6,
+            character_overrides={"name": "Mark", "money": 100},
+        )
+        async with db_session_factory() as session, session.begin():
+            session.add(
+                Inventory(
+                    owner_kind=OwnerKind.CHARACTER.value,
+                    owner_id=str(initiator_id),
+                    good_id="grain",
+                    qty=5,
+                )
+            )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            offer_response = await client.post(
+                f"/activity/dashboard/trade/{initiator_id}/offer",
+                json={
+                    "discord_id": 5,
+                    "target": "Mark",
+                    "give_good_id": "grain",
+                    "give_qty": 3,
+                    "want_money": 20,
+                },
+            )
+            assert offer_response.status_code == 200
+            trade_id = offer_response.json()["id"]
+
+            outgoing_list = (
+                await client.get(
+                    f"/activity/dashboard/trade/{initiator_id}/list", params={"discord_id": 5}
+                )
+            ).json()
+            assert outgoing_list["trades"][0]["direction"] == "outgoing"
+
+        async with db_session_factory() as session:
+            mark = (
+                await session.execute(select(Character).where(Character.name == "Mark"))
+            ).scalar_one()
+        mark_id = mark.id
+
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            list_response = await client.get(
+                f"/activity/dashboard/trade/{mark_id}/list", params={"discord_id": 6}
+            )
+            assert list_response.json()["trades"][0]["direction"] == "incoming"
+
+            accept_response = await client.post(
+                f"/activity/dashboard/trade/{mark_id}/{trade_id}/accept",
+                json={"discord_id": 6},
+            )
+        assert accept_response.status_code == 200
+        assert accept_response.json()["status"] == "accepted"
+
+        async with db_session_factory() as session:
+            initiator = await session.get(Character, initiator_id)
+            mark = await session.get(Character, mark_id)
+            assert initiator.money == 120
+            assert mark.money == 80
+            initiator_inv = await session.get(
+                Inventory, (OwnerKind.CHARACTER.value, str(initiator_id), "grain")
+            )
+            mark_inv = await session.get(
+                Inventory, (OwnerKind.CHARACTER.value, str(mark_id), "grain")
+            )
+            assert initiator_inv.qty == 2
+            assert mark_inv.qty == 3
+
+    async def test_offer_refuses_a_story_mode_party(self, work_app, db_session_factory):
+        initiator_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"rp_mode": "story"}
+        )
+        await seed_character(
+            db_session_factory, discord_id=6, character_overrides={"name": "Mark"}
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/trade/{initiator_id}/offer",
+                json={"discord_id": 5, "target": "Mark", "give_money": 10},
+            )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "trade_mode_forbidden"
+
+    async def test_decline_leaves_money_and_goods_untouched(self, work_app, db_session_factory):
+        initiator_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"money": 100}
+        )
+        recipient_id = await seed_character(
+            db_session_factory,
+            discord_id=6,
+            character_overrides={"name": "Mark", "money": 100},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            offer_response = await client.post(
+                f"/activity/dashboard/trade/{initiator_id}/offer",
+                json={"discord_id": 5, "target": "Mark", "give_money": 10, "want_money": 5},
+            )
+            trade_id = offer_response.json()["id"]
+            decline_response = await client.post(
+                f"/activity/dashboard/trade/{recipient_id}/{trade_id}/decline",
+                json={"discord_id": 6},
+            )
+        assert decline_response.status_code == 200
+        assert decline_response.json()["status"] == "declined"
+        async with db_session_factory() as session:
+            initiator = await session.get(Character, initiator_id)
+            recipient = await session.get(Character, recipient_id)
+            assert initiator.money == 100
+            assert recipient.money == 100
+
+    async def test_cancel_only_allowed_by_the_initiator(self, work_app, db_session_factory):
+        initiator_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"money": 100}
+        )
+        recipient_id = await seed_character(
+            db_session_factory,
+            discord_id=6,
+            character_overrides={"name": "Mark", "money": 100},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            offer_response = await client.post(
+                f"/activity/dashboard/trade/{initiator_id}/offer",
+                json={"discord_id": 5, "target": "Mark", "give_money": 10, "want_money": 5},
+            )
+            trade_id = offer_response.json()["id"]
+
+            wrong_cancel = await client.post(
+                f"/activity/dashboard/trade/{recipient_id}/{trade_id}/cancel",
+                json={"discord_id": 6},
+            )
+            assert wrong_cancel.status_code == 404
+
+            cancel_response = await client.post(
+                f"/activity/dashboard/trade/{initiator_id}/{trade_id}/cancel",
+                json={"discord_id": 5},
+            )
+        assert cancel_response.status_code == 200
+        assert cancel_response.json()["status"] == "cancelled"
+
+    async def test_accept_refuses_a_stale_offer_cleanly(self, work_app, db_session_factory):
+        """The offer promised 3 grain, but the initiator's inventory was
+        drained to nothing before the recipient got around to accepting --
+        `accept_trade` re-validates and refuses rather than going negative."""
+        initiator_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"money": 100}
+        )
+        recipient_id = await seed_character(
+            db_session_factory,
+            discord_id=6,
+            character_overrides={"name": "Mark", "money": 100},
+        )
+        async with db_session_factory() as session, session.begin():
+            session.add(
+                Inventory(
+                    owner_kind=OwnerKind.CHARACTER.value,
+                    owner_id=str(initiator_id),
+                    good_id="grain",
+                    qty=3,
+                )
+            )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            offer_response = await client.post(
+                f"/activity/dashboard/trade/{initiator_id}/offer",
+                json={
+                    "discord_id": 5,
+                    "target": "Mark",
+                    "give_good_id": "grain",
+                    "give_qty": 3,
+                    "want_money": 10,
+                },
+            )
+            trade_id = offer_response.json()["id"]
+
+            async with db_session_factory() as session:
+                inv = await session.get(
+                    Inventory, (OwnerKind.CHARACTER.value, str(initiator_id), "grain")
+                )
+                inv.qty = 0
+                await session.commit()
+
+            accept_response = await client.post(
+                f"/activity/dashboard/trade/{recipient_id}/{trade_id}/accept",
+                json={"discord_id": 6},
+            )
+        assert accept_response.status_code == 400
+        assert accept_response.json()["detail"] == "trade_insufficient_inventory"
+        async with db_session_factory() as session:
+            trade = (
+                await session.execute(select(Trade).where(Trade.id == trade_id))
+            ).scalar_one()
+            assert trade.status == "pending"

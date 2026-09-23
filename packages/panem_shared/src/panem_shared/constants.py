@@ -729,3 +729,15 @@ EAT_RELIEF = 60.0
 symmetry, subtracted from `hunger` (floored at `HUNGER_MIN`) -- purely a
 proactive convenience on top of hunger's own existing money-gated
 nightly mechanic, which is unchanged."""
+
+# --------------------------------------------------------------- Trading
+
+TRADE_OFFER_EXPIRY_MINUTES = 60
+"""A `/trade offer` left un-answered this long auto-expires (`Trade.status
+= "expired"`) -- mirrors `EngagementSettings.idle_timeout_minutes`'s
+reasoning: an offer sitting in someone's DMs forever would otherwise stay
+"pending" indefinitely, blocking a fresh offer between the same two
+characters."""
+TRADE_EXPIRY_CHECK_INTERVAL_MINUTES = 5
+"""Same cadence as `ENGAGEMENT_IDLE_CHECK_INTERVAL_MINUTES` -- how often
+the bot's `tasks.loop` scans for trades past `TRADE_OFFER_EXPIRY_MINUTES`."""
