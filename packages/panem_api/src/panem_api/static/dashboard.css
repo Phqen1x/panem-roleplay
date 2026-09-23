@@ -369,7 +369,14 @@ table.data-table td.lose {
   padding: 22px 24px;
   margin-bottom: 20px;
   position: relative;
-  overflow: hidden;
+  /* No `overflow: hidden` here -- every tab's dropdowns
+     (`.custom-select-menu`, `tabs/_shared.js`'s `dropdown()`) are
+     `position: absolute` and meant to spill below their toggle button,
+     often past this panel's own bottom edge; clipping here silently cut
+     them off (looked identical to "the dropdown doesn't open"). None of
+     this panel's other content is full-bleed to its border-radius'd edge
+     (everything sits inside the padding above), so there's nothing left
+     for `overflow: hidden` to usefully clip. */
 }
 
 .panel::before {

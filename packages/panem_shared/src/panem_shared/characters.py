@@ -25,11 +25,13 @@ _NAME_RE = re.compile(r"^[A-Za-z][A-Za-z '\-]{0,31}$")
 
 
 def max_age_for_district(district_id: int) -> int:
-    """Only the Capitol is exempt from the reaping age range -- every other
-    district's characters must be reaping-eligible age (12-18)."""
-    if district_id == constants.CAPITOL_DISTRICT_ID:
-        return constants.CHARACTER_AGE_MAX
-    return constants.NON_CAPITOL_AGE_MAX
+    """Every district (not just the Capitol) allows the full
+    `CHARACTER_AGE_MIN`-`CHARACTER_AGE_MAX` range -- kept as a
+    district-taking function rather than inlining the constant at each call
+    site since callers already have `district_id` in hand and this is the
+    one place that age-eligibility policy lives."""
+    del district_id
+    return constants.CHARACTER_AGE_MAX
 
 
 def validate_character_fields(

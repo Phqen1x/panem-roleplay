@@ -238,7 +238,7 @@ function characterCard(ctx, character, catalog, { onChanged }) {
 
 function createForm(ctx, catalog, { onCreated }) {
   const nameInput = el("input", { type: "text", maxlength: "32" });
-  const ageInput = el("input", { type: "number", value: "16", min: "12", max: "99" });
+  const ageInput = el("input", { type: "number", value: "16", min: "12", max: "89" });
   const districtInput = el("input", { type: "number", value: "1", min: "0", max: "12" });
   const modeSelect = dropdown(RP_MODES);
   const jobInput = el("input", { type: "text", maxlength: "80", placeholder: "Miner, Baker, ..." });

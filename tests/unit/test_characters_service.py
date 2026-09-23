@@ -61,7 +61,7 @@ class TestValidateCharacterFields:
                 district_id=12, name="A" * 33, age=16, appearance="", backstory=""
             )
 
-    @pytest.mark.parametrize("age", [11, 81, 0, -1])
+    @pytest.mark.parametrize("age", [11, 90, 0, -1])
     def test_bad_age(self, age):
         with pytest.raises(ValidationFailed):
             characters_svc.validate_character_fields(
@@ -81,17 +81,16 @@ class TestValidateCharacterFields:
             )
 
 
-class TestCapitolOnlyAdults:
+class TestAnyDistrictAllowsAnyAge:
     def test_capitol_allows_adult(self):
         characters_svc.validate_character_fields(
             district_id=0, name="Plutarch", age=45, appearance="", backstory=""
         )
 
-    def test_non_capitol_rejects_adult(self):
-        with pytest.raises(ValidationFailed):
-            characters_svc.validate_character_fields(
-                district_id=12, name="Haymitch", age=45, appearance="", backstory=""
-            )
+    def test_non_capitol_allows_adult(self):
+        characters_svc.validate_character_fields(
+            district_id=12, name="Haymitch", age=45, appearance="", backstory=""
+        )
 
     def test_non_capitol_allows_reaping_age(self):
         characters_svc.validate_character_fields(
@@ -99,9 +98,9 @@ class TestCapitolOnlyAdults:
         )
 
     def test_max_age_for_district(self):
-        assert characters_svc.max_age_for_district(0) == 80
-        assert characters_svc.max_age_for_district(1) == 18
-        assert characters_svc.max_age_for_district(12) == 18
+        assert characters_svc.max_age_for_district(0) == 89
+        assert characters_svc.max_age_for_district(1) == 89
+        assert characters_svc.max_age_for_district(12) == 89
 
 
 class TestValidateAvatarUrl:

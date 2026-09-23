@@ -15,8 +15,8 @@ class TestMaxAgeForDistrict:
     def test_capitol_allows_adults(self):
         assert shared_characters.max_age_for_district(0) > 18
 
-    def test_other_districts_cap_at_the_reaping_range(self):
-        assert shared_characters.max_age_for_district(1) == 18
+    def test_other_districts_also_allow_adults(self):
+        assert shared_characters.max_age_for_district(1) > 18
 
 
 class TestValidateAvatarUrl:
