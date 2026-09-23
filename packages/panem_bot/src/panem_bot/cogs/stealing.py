@@ -18,7 +18,7 @@ from panem_bot.strings import t
 from panem_shared import constants
 from panem_shared import crime_log as crime_log_svc
 from panem_shared.db.models import Character, CrimeLog, DistrictState, Npc, Property, WorldClock
-from panem_shared.enums import CharacterStatus, OwnerKind, PropertyKind
+from panem_shared.enums import CharacterStatus, OwnerKind, PropertyKind, RpMode
 from panem_shared.stealing import StealResult, StealVictim
 
 _CRIME_LOG_VERBS = {"steal": "Steal", "burgle": "Burgle", "poach": "Poach"}
@@ -113,6 +113,7 @@ class StealingCog(commands.Cog):
                     Character.current_district_id == char.current_district_id,
                     Character.location_id == char.location_id,
                     Character.id != char.id,
+                    Character.rp_mode != RpMode.STORY.value,
                 )
             )
         ).scalar_one_or_none()
@@ -257,6 +258,7 @@ class StealingCog(commands.Cog):
                             Character.current_district_id == char.current_district_id,
                             Character.location_id == char.location_id,
                             Character.id != char.id,
+                            Character.rp_mode != RpMode.STORY.value,
                         )
                     )
                 )

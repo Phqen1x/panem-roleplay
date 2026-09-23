@@ -223,6 +223,15 @@ home." A free route (`panem_bot.services.travel.is_free_route`/
 `is_free_victor_route`) skips this entirely, same as it used to skip the
 cash price."""
 TRANSIT_TICKS = 4
+"""Simulation-mode cross-district transit time -- Life-mode characters
+always use `LIFE_MODE_TRANSIT_TICKS` instead (`panem_shared.travel`);
+Story-mode characters skip transit entirely (no delay, no transport cost)."""
+LIFE_MODE_TRANSIT_TICKS = 1
+"""A flat, distance-independent 1 tick for a Life-mode character's
+cross-district trip -- "traveling to other districts should always take
+exactly one tick to travel regardless of what district they are going
+to." Still spends `TRANSPORT_UNITS_PER_TRIP` like Simulation mode; only
+the delay differs."""
 AWAY_GRACE_DAYS = 18
 """In sim-days, not real ones -- at the default `TICK_INTERVAL_SECONDS`
 (600s) and `TICKS_PER_DAY` (24), one sim-day is 4 real hours, so 18
@@ -661,3 +670,74 @@ probability (market/black-market catches, illicit-work arrest evasion,
 stealing/burglary) scales by this factor -- "bad" (get-caught) odds
 multiply up, "good" (succeed/escape) odds divide down, both clamped to
 stay valid probabilities."""
+
+# ---------------------------------------------------------------- RP modes
+
+MODE_SWITCH_COOLDOWN_DAYS = 3
+"""Real (wall-clock) days, not sim-days -- `panem_shared.rp_modes` is the
+first place in this codebase to gate on `datetime` rather than ticks,
+since a mode switch has to stay available even if the sim process is
+down. `Character.rp_mode_changed_at` being `None` (never switched) never
+triggers this -- the cooldown only starts counting from the first real
+switch."""
+CRIME_TOGGLE_COOLDOWN_DAYS = 1
+"""Same real-day gate as `MODE_SWITCH_COOLDOWN_DAYS`, for a Life-mode
+character's `/character crime` toggle."""
+
+# ------------------------------------------------------------- Sim needs
+
+THIRST_MAX = 100.0
+THIRST_MIN = 0.0
+THIRST_INCREASE_PER_DAY = 15.0
+"""Applied nightly (`panem_sim.systems.needs`, Simulation mode only) when
+`Character.last_drank_tick` isn't today's sim-day -- same shape as
+`HUNGER_INCREASE_UNMET`."""
+THIRST_RELIEF_PER_DRINK = 60.0
+"""`/drink`'s immediate relief, subtracted from `thirst` (floored at
+`THIRST_MIN`)."""
+HEALTH_DECAY_THIRST_THRESHOLD = 70.0
+HEALTH_DECAY_PER_NIGHT_THIRST = 2.0
+"""Mirrors `HEALTH_DECAY_HUNGER_THRESHOLD`/`HEALTH_DECAY_PER_NIGHT`
+exactly, as an additive branch alongside it (not a replacement) -- a
+character can be docked for hunger *and* thirst *and* low sanity the
+same night, each independently."""
+
+SANITY_MAX = 100.0
+SANITY_MIN = 0.0
+SANITY_DECREASE_PER_DAY = 15.0
+"""Applied nightly when `Character.last_entertained_tick` isn't today's
+sim-day -- inverted direction from thirst (sanity's "bad" end is low,
+matching `fatigue`'s own 100=best/0=worst scale)."""
+SANITY_RELIEF_PER_ENTERTAIN = 60.0
+"""`/entertain`'s immediate relief, added to `sanity` (capped at
+`SANITY_MAX`)."""
+HEALTH_DECAY_SANITY_THRESHOLD = 30.0
+HEALTH_DECAY_PER_NIGHT_SANITY = 2.0
+
+EAT_COST = 5
+DRINK_COST = 5
+ENTERTAIN_COST = 5
+"""Same scale as `NIGHTLY_LIVING_COST` -- `/eat`/`/drink`/`/entertain`
+are Simulation-mode-only, once-per-sim-day actions (`last_ate_tick`/
+`last_drank_tick`/`last_entertained_tick`, the same `tick //
+TICKS_PER_DAY` cooldown idiom `last_steal_tick` uses against
+`TICKS_PER_PHASE`) that spend a small amount of money to relieve the
+matching meter on demand, on top of (not instead of) hunger's existing
+passive nightly resolution and thirst/sanity's own passive decay."""
+EAT_RELIEF = 60.0
+"""Mirrors `THIRST_RELIEF_PER_DRINK`/`SANITY_RELIEF_PER_ENTERTAIN` for
+symmetry, subtracted from `hunger` (floored at `HUNGER_MIN`) -- purely a
+proactive convenience on top of hunger's own existing money-gated
+nightly mechanic, which is unchanged."""
+
+# --------------------------------------------------------------- Trading
+
+TRADE_OFFER_EXPIRY_MINUTES = 60
+"""A `/trade offer` left un-answered this long auto-expires (`Trade.status
+= "expired"`) -- mirrors `EngagementSettings.idle_timeout_minutes`'s
+reasoning: an offer sitting in someone's DMs forever would otherwise stay
+"pending" indefinitely, blocking a fresh offer between the same two
+characters."""
+TRADE_EXPIRY_CHECK_INTERVAL_MINUTES = 5
+"""Same cadence as `ENGAGEMENT_IDLE_CHECK_INTERVAL_MINUTES` -- how often
+the bot's `tasks.loop` scans for trades past `TRADE_OFFER_EXPIRY_MINUTES`."""

@@ -29,6 +29,15 @@ import { mountAvatar } from "./avatar_creator.js?v=11";
 
 const SHIFT_PHASES = ["morning", "afternoon", "evening", "night"];
 
+// Simulation first so it's the dropdown's default selection, matching the
+// backend's own default (`RpMode.SIMULATION`) -- `dropdown()` selects
+// whichever option comes first unless told otherwise.
+const RP_MODES = [
+  { value: "simulation", label: "Simulation -- the full experience" },
+  { value: "life", label: "Life -- full economy/crime/work, no housing/needs" },
+  { value: "story", label: "Story -- freeform RP only, no economy/crime/work" },
+];
+
 let catalogPromise = null;
 function loadLayerCatalog(ctx) {
   if (!catalogPromise) {
@@ -124,6 +133,10 @@ function characterCard(ctx, character, catalog, { onChanged }) {
     { class: "tab-status" },
     `${character.status}${character.jailed ? " -- jailed" : ""}`
   );
+  const deathCauseLine =
+    character.status === "dead" && character.death_cause
+      ? el("p", { class: "tab-status" }, `Cause of death: ${character.death_cause}`)
+      : null;
   const avatarInput = el("input", { type: "text", value: character.avatar_url || "", placeholder: "https://..." });
   const tagInput = el("input", { type: "text", value: character.proxy_tag || "", placeholder: "tag::" });
   const resultLine = el("p", { class: "result-line" });
@@ -205,6 +218,7 @@ function characterCard(ctx, character, catalog, { onChanged }) {
     el("h2", { text: `${character.name} (${character.district_name})` }),
     previewContainer,
     statusLine,
+    deathCauseLine,
     el("p", { class: "tab-status" }, `${character.job_title || "no job"} -- ${character.money} money`),
     el("div", { class: "field-row" }, el("label", { text: "Avatar URL" }), avatarInput),
     el("div", { class: "field-row" }, el("label", { text: "Proxy tag" }), tagInput),
@@ -226,6 +240,7 @@ function createForm(ctx, catalog, { onCreated }) {
   const nameInput = el("input", { type: "text", maxlength: "32" });
   const ageInput = el("input", { type: "number", value: "16", min: "12", max: "99" });
   const districtInput = el("input", { type: "number", value: "1", min: "0", max: "12" });
+  const modeSelect = dropdown(RP_MODES);
   const jobInput = el("input", { type: "text", maxlength: "80", placeholder: "Miner, Baker, ..." });
   const phaseSelect = dropdown(SHIFT_PHASES.map((phase) => ({ value: phase, label: phase })));
   const illicitInput = el("input", { type: "checkbox" });
@@ -234,9 +249,28 @@ function createForm(ctx, catalog, { onCreated }) {
   const resultLine = el("p", { class: "result-line" });
   const editor = appearanceEditor(catalog, {});
 
+  const jobRow = el("div", { class: "field-row" }, el("label", { text: "Job title" }), jobInput);
+  const shiftRow = el("div", { class: "field-row" }, el("label", { text: "Shift" }), phaseSelect);
+  const illicitRow = el(
+    "div",
+    { class: "field-row" },
+    el("label", { text: "Illicit job?" }),
+    illicitInput
+  );
+
+  function syncJobFieldsVisibility() {
+    const isStory = modeSelect.value === "story";
+    jobRow.hidden = isStory;
+    shiftRow.hidden = isStory;
+    illicitRow.hidden = isStory;
+  }
+  modeSelect.addEventListener("change", syncJobFieldsVisibility);
+  syncJobFieldsVisibility();
+
   const submitBtn = el("button", { class: "btn", type: "button" }, "Create character");
   submitBtn.addEventListener("click", async () => {
     resultLine.textContent = "";
+    const isStory = modeSelect.value === "story";
     try {
       await ctx.apiFetch("/activity/dashboard/characters", {
         method: "POST",
@@ -248,9 +282,10 @@ function createForm(ctx, catalog, { onCreated }) {
           age: Number(ageInput.value),
           appearance: appearanceInput.value,
           backstory: backstoryInput.value,
-          job_title: jobInput.value,
-          shift_phase: phaseSelect.value,
-          job_is_illicit: illicitInput.checked,
+          rp_mode: modeSelect.value,
+          job_title: isStory ? null : jobInput.value,
+          shift_phase: isStory ? null : phaseSelect.value,
+          job_is_illicit: isStory ? false : illicitInput.checked,
           appearance_layers: editor.getSelection(),
         }),
       });
@@ -273,9 +308,10 @@ function createForm(ctx, catalog, { onCreated }) {
     el("div", { class: "field-row" }, el("label", { text: "Name" }), nameInput),
     el("div", { class: "field-row" }, el("label", { text: "Age" }), ageInput),
     el("div", { class: "field-row" }, el("label", { text: "District" }), districtInput),
-    el("div", { class: "field-row" }, el("label", { text: "Job title" }), jobInput),
-    el("div", { class: "field-row" }, el("label", { text: "Shift" }), phaseSelect),
-    el("div", { class: "field-row" }, el("label", { text: "Illicit job?" }), illicitInput),
+    el("div", { class: "field-row" }, el("label", { text: "RP Mode" }), modeSelect),
+    jobRow,
+    shiftRow,
+    illicitRow,
     el("div", { class: "field-row" }, el("label", { text: "Appearance" }), appearanceInput),
     el("div", { class: "field-row" }, el("label", { text: "Backstory" }), backstoryInput),
     el("h2", { text: "Look" }),

@@ -10,6 +10,7 @@ Re-exported here for every existing call site.
 
 from __future__ import annotations
 
+from panem_shared.travel import apply_instant_arrival as apply_instant_arrival
 from panem_shared.travel import check_can_travel as check_can_travel
 from panem_shared.travel import check_can_travel_district as check_can_travel_district
 from panem_shared.travel import is_free_route as is_free_route
@@ -17,4 +18,6 @@ from panem_shared.travel import is_free_victor_route as is_free_victor_route
 from panem_shared.travel import place as place
 from panem_shared.travel import resolve_location as resolve_location
 from panem_shared.travel import resolve_station as resolve_station
+from panem_shared.travel import should_charge_transport as should_charge_transport
 from panem_shared.travel import spend_transport as spend_transport
+from panem_shared.travel import transit_ticks_for as transit_ticks_for

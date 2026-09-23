@@ -12,18 +12,30 @@ from sqlalchemy import func, select
 
 from panem_bot import autocomplete
 from panem_bot.errors import ServiceError, ValidationFailed
+from panem_bot.services import afflictions as afflictions_svc
 from panem_bot.services import characters as characters_svc
+from panem_bot.services import rp_modes as rp_modes_svc
 from panem_bot.strings import t
 from panem_bot.views import (
     CHAR_ID_FOOTER_PREFIX,
+    RP_MODE_DESCRIPTIONS,
     SHIFT_PHASE_LABELS,
     ApprovalView,
+    ConfirmView,
     IllicitDeclareView,
+    RpModeSelectView,
     ShiftPhaseSelectView,
 )
 from panem_shared import constants, job_levels
-from panem_shared.db.models import Character, Shift, User, WorldClock
-from panem_shared.enums import CharacterStatus, DayPhase
+from panem_shared.db.models import (
+    AfflictionType,
+    Character,
+    CharacterAffliction,
+    Shift,
+    User,
+    WorldClock,
+)
+from panem_shared.enums import CharacterStatus, DayPhase, RpMode
 from panem_shared.simtime import clock_string, phase_time_range
 
 EMBED_FIELD_VALUE_LIMIT = 1024
@@ -100,9 +112,25 @@ class CharacterCog(commands.Cog):
                 )
                 return
 
-        await self._prompt_details(interaction, district_id)
+        await self._prompt_mode(interaction, district_id)
 
-    async def _prompt_details(self, interaction: discord.Interaction, district_id: int) -> None:
+    async def _prompt_mode(self, interaction: discord.Interaction, district_id: int) -> None:
+        async def on_mode_chosen(mode_interaction: discord.Interaction, rp_mode: str) -> None:
+            await self._prompt_details(mode_interaction, district_id, rp_mode)
+
+        mode_lines = "\n".join(
+            f"**{mode.title()}** -- {desc}" for mode, desc in RP_MODE_DESCRIPTIONS.items()
+        )
+        await interaction.response.send_message(
+            "**Choose your character's roleplay mode** (changeable later, with a "
+            f"{constants.MODE_SWITCH_COOLDOWN_DAYS}-real-day cooldown):\n{mode_lines}",
+            view=RpModeSelectView(on_mode_chosen),
+            ephemeral=True,
+        )
+
+    async def _prompt_details(
+        self, interaction: discord.Interaction, district_id: int, rp_mode: str
+    ) -> None:
         from panem_bot.modals import CharacterDetailsModal
 
         async def on_submit(
@@ -114,19 +142,30 @@ class CharacterCog(commands.Cog):
             job_title: str,
         ) -> None:
             await self._validate_details_and_prompt_shift_phase(
-                modal_interaction, district_id, name, age_str, appearance, backstory, job_title
+                modal_interaction,
+                district_id,
+                rp_mode,
+                name,
+                age_str,
+                appearance,
+                backstory,
+                job_title,
             )
 
         max_age = characters_svc.max_age_for_district(district_id)
         placeholder = f"{constants.CHARACTER_AGE_MIN}-{max_age}"
+        is_story = rp_mode == RpMode.STORY.value
         await interaction.response.send_modal(
-            CharacterDetailsModal(on_submit=on_submit, age_placeholder=placeholder)
+            CharacterDetailsModal(
+                on_submit=on_submit, age_placeholder=placeholder, is_story=is_story
+            )
         )
 
     async def _validate_details_and_prompt_shift_phase(
         self,
         interaction: discord.Interaction,
         district_id: int,
+        rp_mode: str,
         name: str,
         age_str: str,
         appearance: str,
@@ -141,6 +180,7 @@ class CharacterCog(commands.Cog):
                 t("invalid_age", min=constants.CHARACTER_AGE_MIN, max=max_age), ephemeral=True
             )
             return
+        is_story = rp_mode == RpMode.STORY.value
         try:
             characters_svc.validate_character_fields(
                 district_id=district_id,
@@ -149,7 +189,8 @@ class CharacterCog(commands.Cog):
                 appearance=appearance,
                 backstory=backstory,
             )
-            characters_svc.validate_job_title(job_title)
+            if not is_story:
+                characters_svc.validate_job_title(job_title)
         except ValidationFailed as exc:
             await interaction.response.send_message(t(exc.reason_key, **exc.fmt), ephemeral=True)
             return
@@ -163,9 +204,34 @@ class CharacterCog(commands.Cog):
                 )
                 return
 
+        if is_story:
+            # Story-mode characters never work -- skip both the shift-phase
+            # and illicit-declaration steps entirely.
+            await self._finish_create(
+                interaction,
+                district_id,
+                rp_mode,
+                name,
+                age,
+                appearance,
+                backstory,
+                None,
+                None,
+                False,
+            )
+            return
+
         async def on_phase_chosen(phase_interaction: discord.Interaction, shift_phase: str) -> None:
             await self._prompt_illicit(
-                phase_interaction, district_id, name, age, appearance, backstory, job_title, shift_phase
+                phase_interaction,
+                district_id,
+                rp_mode,
+                name,
+                age,
+                appearance,
+                backstory,
+                job_title,
+                shift_phase,
             )
 
         await interaction.response.send_message(
@@ -178,6 +244,7 @@ class CharacterCog(commands.Cog):
         self,
         interaction: discord.Interaction,
         district_id: int,
+        rp_mode: str,
         name: str,
         age: int,
         appearance: str,
@@ -191,6 +258,7 @@ class CharacterCog(commands.Cog):
             await self._finish_create(
                 illicit_interaction,
                 district_id,
+                rp_mode,
                 name,
                 age,
                 appearance,
@@ -211,12 +279,13 @@ class CharacterCog(commands.Cog):
         self,
         interaction: discord.Interaction,
         district_id: int,
+        rp_mode: str,
         name: str,
         age: int,
         appearance: str,
         backstory: str,
-        job_title: str,
-        shift_phase: str,
+        job_title: str | None,
+        shift_phase: str | None,
         job_is_illicit: bool,
     ) -> None:
         async with self.bot.db() as session:
@@ -234,6 +303,7 @@ class CharacterCog(commands.Cog):
                     shift_phase=shift_phase,
                     job_is_illicit=job_is_illicit,
                     max_characters=characters_svc.effective_max_characters(user, self.bot.settings),
+                    rp_mode=rp_mode,
                 )
             except ServiceError as exc:
                 await interaction.response.send_message(
@@ -263,13 +333,16 @@ class CharacterCog(commands.Cog):
             embed.add_field(name="Applicant", value=f"<@{applicant_discord_id}>", inline=True)
             embed.add_field(name="District", value=district.name, inline=True)
             embed.add_field(name="Age", value=str(character.age), inline=True)
-            shift_label = SHIFT_PHASE_LABELS.get(character.shift_phase or "", character.shift_phase)
-            illicit_suffix = " [illicit]" if character.job_is_illicit else ""
-            embed.add_field(
-                name="Desired Job",
-                value=f"{character.job_title} ({shift_label} shift){illicit_suffix}",
-                inline=True,
-            )
+            embed.add_field(name="RP Mode", value=character.rp_mode.title(), inline=True)
+            if character.job_title is not None:
+                shift_label = SHIFT_PHASE_LABELS.get(
+                    character.shift_phase or "", character.shift_phase
+                )
+                illicit_suffix = " [illicit]" if character.job_is_illicit else ""
+                job_value = f"{character.job_title} ({shift_label} shift){illicit_suffix}"
+            else:
+                job_value = "-- (Story mode)"
+            embed.add_field(name="Desired Job", value=job_value, inline=True)
             embed.add_field(name="Appearance", value=character.appearance or "-", inline=False)
             embed.add_field(
                 name="Backstory", value=_field_value(character.backstory or "-"), inline=False
@@ -602,6 +675,271 @@ class CharacterCog(commands.Cog):
 
         await interaction.response.send_message(t("character_retired", name=name), ephemeral=True)
 
+    @group.command(name="mode", description="Switch a character's RP mode (real-day cooldown)")
+    @app_commands.describe(character="Character name", new_mode="The mode to switch to")
+    @app_commands.autocomplete(character=autocomplete.own_approved)
+    async def mode(
+        self, interaction: discord.Interaction, character: str, new_mode: RpMode
+    ) -> None:
+        async with self.bot.db() as session:
+            user = await characters_svc.get_or_create_user(session, interaction.user.id)
+            row = (
+                await session.execute(
+                    select(Character).where(
+                        Character.user_id == user.id, Character.name == character
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            try:
+                rp_modes_svc.check_can_switch_mode(row, new_mode, dt.datetime.now(dt.UTC))
+            except ServiceError as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+            character_id, current_mode, name = row.id, row.rp_mode, row.name
+
+        async def on_confirm(confirm_interaction: discord.Interaction) -> None:
+            async with self.bot.db() as confirm_session:
+                char = await confirm_session.get(Character, character_id)
+                if char is None:
+                    await confirm_interaction.response.edit_message(
+                        content=t("character_not_found"), view=None
+                    )
+                    return
+                try:
+                    rp_modes_svc.switch_mode(char, new_mode, dt.datetime.now(dt.UTC))
+                except ServiceError as exc:
+                    await confirm_interaction.response.edit_message(
+                        content=t(exc.reason_key, **exc.fmt), view=None
+                    )
+                    return
+            await confirm_interaction.response.edit_message(
+                content=(
+                    f"**{name}** is now in **{new_mode.value.title()}** mode. "
+                    f"Next switch available in {constants.MODE_SWITCH_COOLDOWN_DAYS} real days."
+                ),
+                view=None,
+            )
+
+        description = RP_MODE_DESCRIPTIONS[new_mode.value]
+        await interaction.response.send_message(
+            f"**{name}** is currently in **{current_mode.title()}** mode.\n"
+            f"Switching to **{new_mode.value.title()}** mode: {description}\n\n"
+            f"This locks in for {constants.MODE_SWITCH_COOLDOWN_DAYS} real days before you can "
+            "switch again. Are you sure?",
+            view=ConfirmView(target_discord_id=interaction.user.id, on_confirm=on_confirm),
+            ephemeral=True,
+        )
+
+    @group.command(name="crime", description="Enable or disable committing/being targeted by crime")
+    @app_commands.describe(character="Character name", enabled="Whether crime should be enabled")
+    @app_commands.autocomplete(character=autocomplete.own_approved)
+    async def crime(self, interaction: discord.Interaction, character: str, enabled: bool) -> None:
+        async with self.bot.db() as session:
+            user = await characters_svc.get_or_create_user(session, interaction.user.id)
+            row = (
+                await session.execute(
+                    select(Character).where(
+                        Character.user_id == user.id, Character.name == character
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            try:
+                rp_modes_svc.check_can_toggle_crime(row, enabled, dt.datetime.now(dt.UTC))
+            except ServiceError as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+            character_id, name = row.id, row.name
+
+        async def on_confirm(confirm_interaction: discord.Interaction) -> None:
+            async with self.bot.db() as confirm_session:
+                char = await confirm_session.get(Character, character_id)
+                if char is None:
+                    await confirm_interaction.response.edit_message(
+                        content=t("character_not_found"), view=None
+                    )
+                    return
+                try:
+                    rp_modes_svc.toggle_crime(char, enabled, dt.datetime.now(dt.UTC))
+                except ServiceError as exc:
+                    await confirm_interaction.response.edit_message(
+                        content=t(exc.reason_key, **exc.fmt), view=None
+                    )
+                    return
+            verb = "enabled" if enabled else "disabled"
+            await confirm_interaction.response.edit_message(
+                content=(
+                    f"**{name}** has crime {verb}. Next toggle available in "
+                    f"{constants.CRIME_TOGGLE_COOLDOWN_DAYS} real day."
+                ),
+                view=None,
+            )
+
+        verb = "enable" if enabled else "disable"
+        consequence = (
+            "You won't be able to commit crime, and no one will be able to commit crime "
+            "against you."
+            if not enabled
+            else "You'll be able to commit crime again, and others will be able to target you."
+        )
+        await interaction.response.send_message(
+            f"{verb.title()} crime for **{name}**? {consequence}\n\n"
+            f"This locks in for {constants.CRIME_TOGGLE_COOLDOWN_DAYS} real day before you can "
+            "toggle again. Are you sure?",
+            view=ConfirmView(target_discord_id=interaction.user.id, on_confirm=on_confirm),
+            ephemeral=True,
+        )
+
+    @group.command(
+        name="afflict", description="Self-inflict an injury or affliction (Life mode only)"
+    )
+    @app_commands.describe(
+        character="Character name",
+        type="Affliction type (from the staff-authored catalog)",
+        cause="What happened, and how",
+    )
+    @app_commands.autocomplete(
+        character=autocomplete.own_approved, type=autocomplete.affliction_types
+    )
+    async def afflict(
+        self, interaction: discord.Interaction, character: str, type: str, cause: str
+    ) -> None:
+        async with self.bot.db() as session:
+            user = await characters_svc.get_or_create_user(session, interaction.user.id)
+            row = (
+                await session.execute(
+                    select(Character).where(
+                        Character.user_id == user.id, Character.name == character
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            if row.rp_mode != RpMode.LIFE.value:
+                await interaction.response.send_message(t("affliction_wrong_mode"), ephemeral=True)
+                return
+            affliction_type = (
+                await session.execute(select(AfflictionType).where(AfflictionType.name == type))
+            ).scalar_one_or_none()
+            if affliction_type is None:
+                await interaction.response.send_message(
+                    t("affliction_type_not_found"), ephemeral=True
+                )
+                return
+            character_id, affliction_type_id, name = row.id, affliction_type.id, row.name
+            affliction_name, description = affliction_type.name, affliction_type.description
+            cure_note = (
+                "PERMANENT -- cannot be cured."
+                if affliction_type.is_permanent
+                else (
+                    f"Cured once {affliction_type.cure_stat} rises above "
+                    f"{affliction_type.cure_threshold:g}."
+                    if affliction_type.cure_stat is not None
+                    else "No automatic cure condition set -- ask staff."
+                )
+            )
+
+        async def on_confirm(confirm_interaction: discord.Interaction) -> None:
+            async with self.bot.db() as confirm_session:
+                char = await confirm_session.get(Character, character_id)
+                affliction_type_row = await confirm_session.get(AfflictionType, affliction_type_id)
+                if char is None or affliction_type_row is None:
+                    await confirm_interaction.response.edit_message(
+                        content=t("character_not_found"), view=None
+                    )
+                    return
+                try:
+                    await afflictions_svc.apply_manual_affliction(
+                        confirm_session,
+                        character=char,
+                        affliction_type=affliction_type_row,
+                        cause=cause,
+                    )
+                except ServiceError as exc:
+                    await confirm_interaction.response.edit_message(
+                        content=t(exc.reason_key, **exc.fmt), view=None
+                    )
+                    return
+            await confirm_interaction.response.edit_message(
+                content=t("affliction_ok", name=name, affliction=affliction_name, cause=cause),
+                view=None,
+            )
+
+        await interaction.response.send_message(
+            f"Afflict **{name}** with **{affliction_name}**? {description}\n"
+            f"{cure_note}\n\nCause: {cause}\n\nThis can't be undone by yourself -- are you sure?",
+            view=ConfirmView(target_discord_id=interaction.user.id, on_confirm=on_confirm),
+            ephemeral=True,
+        )
+
+    @group.command(name="die", description="End your character's life (Life mode only)")
+    @app_commands.describe(character="Character name", cause="How it happened (optional)")
+    @app_commands.autocomplete(character=autocomplete.own_approved)
+    async def die(
+        self, interaction: discord.Interaction, character: str, cause: str | None = None
+    ) -> None:
+        async with self.bot.db() as session:
+            user = await characters_svc.get_or_create_user(session, interaction.user.id)
+            row = (
+                await session.execute(
+                    select(Character).where(
+                        Character.user_id == user.id, Character.name == character
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            if row.rp_mode != RpMode.LIFE.value:
+                await interaction.response.send_message(t("death_wrong_mode"), ephemeral=True)
+                return
+            if row.status == CharacterStatus.DEAD.value:
+                await interaction.response.send_message(
+                    t("character_already_dead", name=row.name), ephemeral=True
+                )
+                return
+            character_id, name = row.id, row.name
+
+        async def on_confirm(confirm_interaction: discord.Interaction) -> None:
+            async with self.bot.db() as confirm_session:
+                char = await confirm_session.get(Character, character_id)
+                if char is None:
+                    await confirm_interaction.response.edit_message(
+                        content=t("character_not_found"), view=None
+                    )
+                    return
+                try:
+                    afflictions_svc.mark_dead(char, cause)
+                except ServiceError as exc:
+                    await confirm_interaction.response.edit_message(
+                        content=t(exc.reason_key, **exc.fmt), view=None
+                    )
+                    return
+            await confirm_interaction.response.edit_message(
+                content=t("death_ok", name=name), view=None
+            )
+
+        await interaction.response.send_message(
+            f"End **{name}**'s life permanently? This cannot be undone.\n\n"
+            + (f"Cause: {cause}" if cause else "No cause given."),
+            view=ConfirmView(
+                target_discord_id=interaction.user.id,
+                on_confirm=on_confirm,
+                confirm_label="End character",
+            ),
+            ephemeral=True,
+        )
+
     @group.command(name="status", description="Show a character's status")
     @app_commands.describe(character="Character name")
     @app_commands.autocomplete(character=autocomplete.own_approved)
@@ -661,11 +999,28 @@ class CharacterCog(commands.Cog):
             jailed_value = (
                 f"Until {clock_string(row.jailed_until_tick)}" if row.jailed_until_tick else "No"
             )
+            active_afflictions = (
+                await session.execute(
+                    select(CharacterAffliction, AfflictionType)
+                    .join(
+                        AfflictionType, CharacterAffliction.affliction_type_id == AfflictionType.id
+                    )
+                    .where(
+                        CharacterAffliction.character_id == row.id,
+                        CharacterAffliction.cured_at.is_(None),
+                    )
+                    .order_by(CharacterAffliction.applied_at)
+                )
+            ).all()
         embed = discord.Embed(title=row.name)
         embed.add_field(name="Status", value=row.status)
+        embed.add_field(name="RP Mode", value=row.rp_mode.title())
         embed.add_field(name="Money", value=str(row.money))
         embed.add_field(name="Hunger", value=str(row.hunger))
         embed.add_field(name="Health", value=str(row.health))
+        if row.rp_mode == RpMode.SIMULATION.value:
+            embed.add_field(name="Thirst", value=str(row.thirst))
+            embed.add_field(name="Sanity", value=str(row.sanity))
         embed.add_field(name="Job", value=job_name)
         embed.add_field(name="Level", value=level_value)
         embed.add_field(name="Shift", value=shift_value)
@@ -676,6 +1031,18 @@ class CharacterCog(commands.Cog):
         if row.positions:
             embed.add_field(
                 name="Positions", value=", ".join(p.title() for p in sorted(row.positions))
+            )
+        if row.status == CharacterStatus.DEAD.value and row.death_cause:
+            embed.add_field(name="Cause of death", value=row.death_cause, inline=False)
+        if active_afflictions:
+            embed.add_field(
+                name="Afflictions",
+                value="\n".join(
+                    f"**{affliction_type.name}**"
+                    + (" (permanent)" if affliction_type.is_permanent else "")
+                    for _affliction, affliction_type in active_afflictions
+                ),
+                inline=False,
             )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 

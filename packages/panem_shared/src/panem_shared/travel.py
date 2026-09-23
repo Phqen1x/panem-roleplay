@@ -18,7 +18,7 @@ from panem_shared import constants
 from panem_shared.constants import CAPITOL_DISTRICT_ID
 from panem_shared.content.schemas import District, Location
 from panem_shared.db.models import Character, Inventory
-from panem_shared.enums import CharacterStatus, LocationKind, OwnerKind, Position
+from panem_shared.enums import CharacterStatus, LocationKind, OwnerKind, Position, RpMode
 from panem_shared.errors import NotAllowed, NotFound
 from panem_shared.jail import check_not_jailed
 from panem_shared.location_access import has_location_access
@@ -32,12 +32,19 @@ def resolve_location(district: District, location_id: str) -> Location:
 
 
 def check_can_travel(*, character: Character, location: Location, current_tick: int) -> None:
-    """FR-LOC-2/3. Raises `NotAllowed` on refusal."""
+    """FR-LOC-2/3. Raises `NotAllowed` on refusal. Story-mode characters
+    bypass the job/position-based location-access gate entirely ("do not
+    need to travel to different locations in their district to RP in
+    them") -- the within-district `/travel` call this backs is optional
+    scenery for them anyway, not a requirement to physically be somewhere
+    before RPing there (that's `proxy.check_can_proxy`'s job)."""
     if character.status == CharacterStatus.DEAD.value:
         raise NotAllowed("character_dead")
     if character.status != CharacterStatus.APPROVED.value:
         raise NotAllowed("character_not_approved")
     check_not_jailed(character, current_tick, "travel_jailed")
+    if character.rp_mode == RpMode.STORY.value:
+        return
     if not has_location_access(
         job_title=character.job_title, has_position=bool(character.positions), location=location
     ):
@@ -104,7 +111,10 @@ def check_can_travel_district(
     (`current_district_id`'s content), not their home. Raises
     `NotAllowed`/`NotFound` on refusal; doesn't check transport stock --
     that's a DB-backed `Inventory` lookup, so it stays in `spend_transport`
-    below rather than duplicated here."""
+    below rather than duplicated here. Story-mode characters skip the
+    "must be at the station" check -- "no travel wait time or cost to
+    travel between districts for these characters" means there's nothing
+    to physically catch a train for."""
     if character.status == CharacterStatus.DEAD.value:
         raise NotAllowed("character_dead")
     if character.status != CharacterStatus.APPROVED.value:
@@ -117,9 +127,49 @@ def check_can_travel_district(
         raise NotAllowed("travel_already_in_transit", name=character.name)
     if destination_id == district.id:
         raise NotAllowed("travel_same_district", name=character.name)
+    if character.rp_mode == RpMode.STORY.value:
+        return
     station = resolve_station(district)
     if character.location_id != station.id:
         raise NotAllowed("travel_not_at_station", name=character.name, station=station.name)
+
+
+def transit_ticks_for(character: Character) -> int:
+    """How many ticks a cross-district trip takes for this character's
+    mode: instant (0) for Story, a flat `LIFE_MODE_TRANSIT_TICKS` (1) for
+    Life regardless of route, and the full `TRANSIT_TICKS` for Simulation
+    -- the only mode still using the sim's own `_resolve_arrivals` delay
+    mechanism as originally designed."""
+    if character.rp_mode == RpMode.STORY.value:
+        return 0
+    if character.rp_mode == RpMode.LIFE.value:
+        return constants.LIFE_MODE_TRANSIT_TICKS
+    return constants.TRANSIT_TICKS
+
+
+def should_charge_transport(character: Character, origin_id: int, destination_id: int) -> bool:
+    """Story-mode trips never cost transport goods, on top of the usual
+    free-route exemptions everyone gets (`is_free_route`)."""
+    if character.rp_mode == RpMode.STORY.value:
+        return False
+    return not is_free_route(character, origin_id, destination_id)
+
+
+def apply_instant_arrival(character: Character, destination: District) -> None:
+    """Applies a Story-mode cross-district trip immediately, mirroring
+    `panem_sim.systems.time._resolve_arrivals`'s own arrival-application
+    logic exactly (station placement, `away_since_tick` clearing) but
+    synchronously -- Story mode never sets `in_transit_until_tick` at all,
+    so there's nothing for the sim tick to resolve later; "no travel wait
+    time" means the destination takes effect the instant the command
+    runs, not up to one tick-interval later."""
+    station = resolve_station(destination)
+    character.current_district_id = destination.id
+    character.location_id = station.id
+    placed = place(destination, station)
+    character.x, character.y = placed if placed is not None else (None, None)
+    if destination.id == character.district_id:
+        character.away_since_tick = None
 
 
 async def spend_transport(session: AsyncSession, character: Character) -> None:

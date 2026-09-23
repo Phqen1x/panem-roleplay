@@ -26,6 +26,7 @@ crime, work, market, travel, residents, housing, characters) adds its own
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import random
 import secrets
@@ -38,6 +39,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from panem_api import discord_staff
+from panem_shared import affliction_types as affliction_types_svc
 from panem_shared import blackmarket as blackmarket_svc
 from panem_shared import characters as characters_svc
 from panem_shared import constants, job_levels, simtime
@@ -47,14 +49,19 @@ from panem_shared import jail as jail_svc
 from panem_shared import jobs as jobs_svc
 from panem_shared import layers as layers_svc
 from panem_shared import market as market_svc
+from panem_shared import pay as pay_svc
 from panem_shared import poaching as poaching_svc
+from panem_shared import rp_modes as rp_modes_svc
 from panem_shared import stealing as stealing_svc
 from panem_shared import theme as theme_svc
+from panem_shared import trades as trades_svc
 from panem_shared import travel as travel_svc
 from panem_shared.content.loader import ContentBundle
 from panem_shared.db.models import (
+    AfflictionType,
     ApartmentLease,
     Character,
+    CharacterAffliction,
     LayerCategory,
     Npc,
     Property,
@@ -64,6 +71,7 @@ from panem_shared.db.models import (
     Shift,
     StaffAction,
     ThemeProfile,
+    Trade,
     User,
     WorldClock,
 )
@@ -74,7 +82,9 @@ from panem_shared.enums import (
     OwnerKind,
     Position,
     PropertyKind,
+    RpMode,
     SceneStatus,
+    TradeStatus,
 )
 from panem_shared.errors import NotAllowed, NotFound, ServiceError
 from panem_shared.redis_keys import CRIME_ATTEMPT_TTL_S, crime_attempt_key
@@ -669,6 +679,8 @@ class CharacterDetail(BaseModel):
     money: int
     jailed_until_tick: int | None = None
     jailed: bool = False
+    rp_mode: str = RpMode.SIMULATION.value
+    death_cause: str | None = None
 
 
 def _character_detail(
@@ -696,6 +708,8 @@ def _character_detail(
         jailed=(
             character.jailed_until_tick is not None and character.jailed_until_tick > current_tick
         ),
+        rp_mode=character.rp_mode,
+        death_cause=character.death_cause,
     )
 
 
@@ -712,9 +726,10 @@ class CreateCharacterRequest(BaseModel):
     backstory: str = ""
     avatar_url: str | None = None
     appearance_layers: dict[str, int] | None = None
-    job_title: str
-    shift_phase: str
+    job_title: str | None = None
+    shift_phase: str | None = None
     job_is_illicit: bool = False
+    rp_mode: str = RpMode.SIMULATION.value
 
 
 class RetireCharacterRequest(BaseModel):
@@ -789,7 +804,10 @@ def build_characters_router(
         factory = _require_session_factory(session_factory)
         if body.district_id not in content.districts:
             raise HTTPException(status_code=400, detail="No such district")
-        if body.shift_phase not in {phase.value for phase in DayPhase}:
+        if body.rp_mode not in {mode.value for mode in RpMode}:
+            raise HTTPException(status_code=400, detail="Invalid RP mode")
+        is_story = body.rp_mode == RpMode.STORY.value
+        if not is_story and body.shift_phase not in {phase.value for phase in DayPhase}:
             raise HTTPException(status_code=400, detail="Invalid shift phase")
         async with session_scope(factory) as session:
             user = await characters_svc.get_or_create_user(session, body.discord_id)
@@ -816,6 +834,7 @@ def build_characters_router(
                     shift_phase=body.shift_phase,
                     job_is_illicit=body.job_is_illicit,
                     max_characters=max_characters,
+                    rp_mode=body.rp_mode,
                 )
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
@@ -915,6 +934,56 @@ def build_layers_router(
             categories = await layers_svc.list_categories(session)
             return LayerCatalogResponse(
                 categories=[_layer_category_response(c) for c in categories]
+            )
+
+    return router
+
+
+class AfflictionTypeResponse(BaseModel):
+    id: int
+    name: str
+    description: str
+    is_permanent: bool
+    cure_stat: str | None = None
+    cure_threshold: float | None = None
+    auto_apply_stat: str | None = None
+    auto_apply_threshold: float | None = None
+
+
+class AfflictionTypeCatalogResponse(BaseModel):
+    types: list[AfflictionTypeResponse]
+
+
+def _affliction_type_response(row: AfflictionType) -> AfflictionTypeResponse:
+    return AfflictionTypeResponse(
+        id=row.id,
+        name=row.name,
+        description=row.description,
+        is_permanent=row.is_permanent,
+        cure_stat=row.cure_stat,
+        cure_threshold=row.cure_threshold,
+        auto_apply_stat=row.auto_apply_stat,
+        auto_apply_threshold=row.auto_apply_threshold,
+    )
+
+
+def build_affliction_types_router(
+    *, session_factory: async_sessionmaker[AsyncSession] | None
+) -> APIRouter:
+    """The catalog players need when self-inflicting (`/character
+    afflict`, a later milestone) -- same public, unauthenticated posture
+    as `build_layers_router`'s read side: non-sensitive staff-authored
+    catalog data, starts out empty until staff add something through
+    `build_staff_router`'s affliction-type endpoints below."""
+    router = APIRouter(prefix="/activity/dashboard/affliction-types", tags=["dashboard"])
+
+    @router.get("", response_model=AfflictionTypeCatalogResponse)
+    async def affliction_type_catalog() -> AfflictionTypeCatalogResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            types = await affliction_types_svc.list_types(session)
+            return AfflictionTypeCatalogResponse(
+                types=[_affliction_type_response(t) for t in types]
             )
 
     return router
@@ -1108,6 +1177,7 @@ def build_crime_router(
                             Character.current_district_id == character.current_district_id,
                             Character.location_id == character.location_id,
                             Character.id != character.id,
+                            Character.rp_mode != RpMode.STORY.value,
                         )
                     )
                 )
@@ -1135,12 +1205,17 @@ def build_crime_router(
     async def burgle_targets(character_id: int, discord_id: int) -> BurgleTargetsResponse:
         """Owners of a house in `character_id`'s current district (not
         their own) -- an improvement over `/burgle`'s bare-string `owner`
-        param, which has no autocomplete on the bot side at all."""
+        param, which has no autocomplete on the bot side at all. Life mode
+        has no housing access at all, so the option shouldn't even show
+        up to them -- an empty list, same shape as a district with no
+        houses, rather than a distinct error."""
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             character = await _resolve_owned_character(
                 session, discord_id=discord_id, character_id=character_id
             )
+            if character.rp_mode == RpMode.LIFE.value:
+                return BurgleTargetsResponse(owners=[])
             owners = (
                 (
                     await session.execute(
@@ -1151,6 +1226,7 @@ def build_crime_router(
                             Property.owner_kind == OwnerKind.CHARACTER.value,
                             Property.district_id == character.current_district_id,
                             Character.id != character.id,
+                            Character.rp_mode != RpMode.STORY.value,
                         )
                     )
                 )
@@ -1779,19 +1855,25 @@ def build_travel_router(
                     destination_id=body.destination_id,
                     current_tick=current_tick,
                 )
-                if not travel_svc.is_free_route(character, origin_district.id, body.destination_id):
+                if travel_svc.should_charge_transport(
+                    character, origin_district.id, body.destination_id
+                ):
                     await travel_svc.spend_transport(session, character)
             except (NotFound, NotAllowed) as exc:
                 raise _http_from_service_error(exc) from exc
             destination_district = content.district(body.destination_id)
-            character.in_transit_until_tick = current_tick + constants.TRANSIT_TICKS
-            character.transit_destination_id = body.destination_id
-            if character.current_district_id == character.district_id:
-                character.away_since_tick = current_tick
+            transit_ticks = travel_svc.transit_ticks_for(character)
+            if transit_ticks == 0:
+                travel_svc.apply_instant_arrival(character, destination_district)
+            else:
+                character.in_transit_until_tick = current_tick + transit_ticks
+                character.transit_destination_id = body.destination_id
+                if character.current_district_id == character.district_id:
+                    character.away_since_tick = current_tick
             return TravelToDistrictResponse(
                 character_name=character.name,
                 destination_district_name=destination_district.name,
-                transit_ticks=constants.TRANSIT_TICKS,
+                transit_ticks=transit_ticks,
             )
 
     return router
@@ -1993,6 +2075,274 @@ def build_social_router(
                 participant_character_names=sorted(char_rows),
                 participant_npc_names=sorted(npc_rows),
                 discord_thread_url=thread_url,
+            )
+
+    return router
+
+
+class PayRequest(BaseModel):
+    discord_id: int
+    target: str
+    amount: int
+
+
+class PayResponse(BaseModel):
+    sender_money: int
+    recipient_name: str
+
+
+def build_pay_router(*, session_factory: async_sessionmaker[AsyncSession] | None) -> APIRouter:
+    """`/pay`'s dashboard equivalent -- instant, no confirmation, same
+    trust level as the bot command."""
+    router = APIRouter(prefix="/activity/dashboard/pay", tags=["dashboard"])
+
+    @router.post("/{character_id}", response_model=PayResponse)
+    async def pay(character_id: int, body: PayRequest) -> PayResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            sender = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            recipient = (
+                await session.execute(select(Character).where(Character.name == body.target))
+            ).scalar_one_or_none()
+            if recipient is None:
+                raise HTTPException(status_code=404, detail="character_not_found")
+            try:
+                pay_svc.pay(sender, recipient, body.amount)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            return PayResponse(sender_money=sender.money, recipient_name=recipient.name)
+
+    return router
+
+
+class TradeSummary(BaseModel):
+    id: int
+    initiator_character_id: int
+    initiator_name: str
+    recipient_character_id: int
+    recipient_name: str
+    give_good_id: str | None = None
+    give_qty: int | None = None
+    give_money: int
+    want_good_id: str | None = None
+    want_qty: int | None = None
+    want_money: int
+    status: str
+    # "incoming" for the requesting character's own pending offers to
+    # respond to, "outgoing" for ones they sent themselves -- the
+    # dashboard's Trade panel splits the pending list on this.
+    direction: str
+
+
+class TradeListResponse(BaseModel):
+    trades: list[TradeSummary]
+
+
+class TradeOfferRequest(BaseModel):
+    discord_id: int
+    target: str
+    give_good_id: str | None = None
+    give_qty: int | None = None
+    give_money: int = 0
+    want_good_id: str | None = None
+    want_qty: int | None = None
+    want_money: int = 0
+
+
+class TradeActionRequest(BaseModel):
+    discord_id: int
+
+
+def _trade_summary(trade: Trade, *, initiator_name: str, recipient_name: str, viewer_id: int) -> TradeSummary:
+    return TradeSummary(
+        id=trade.id,
+        initiator_character_id=trade.initiator_character_id,
+        initiator_name=initiator_name,
+        recipient_character_id=trade.recipient_character_id,
+        recipient_name=recipient_name,
+        give_good_id=trade.give_good_id,
+        give_qty=trade.give_qty,
+        give_money=trade.give_money,
+        want_good_id=trade.want_good_id,
+        want_qty=trade.want_qty,
+        want_money=trade.want_money,
+        status=trade.status,
+        direction="outgoing" if trade.initiator_character_id == viewer_id else "incoming",
+    )
+
+
+def build_trade_router(*, session_factory: async_sessionmaker[AsyncSession] | None) -> APIRouter:
+    """`/trade`'s dashboard equivalent -- mirrors the bot's offer/accept/
+    decline/cancel flow 1:1. Unlike the bot (which DMs the recipient an
+    Accept/Decline view), the dashboard has no push channel of its own,
+    so the recipient discovers a pending offer by checking `.../list`
+    themselves -- the same "poll, don't push" posture `build_social_
+    router`'s read-only Engagement panel already has."""
+    router = APIRouter(prefix="/activity/dashboard/trade", tags=["dashboard"])
+
+    @router.get("/{character_id}/list", response_model=TradeListResponse)
+    async def list_trades(character_id: int, discord_id: int) -> TradeListResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            rows = (
+                await session.execute(
+                    select(Trade).where(
+                        Trade.status == TradeStatus.PENDING.value,
+                        (Trade.initiator_character_id == character.id)
+                        | (Trade.recipient_character_id == character.id),
+                    )
+                )
+            ).scalars()
+            summaries = []
+            for trade in rows:
+                initiator = await session.get(Character, trade.initiator_character_id)
+                recipient = await session.get(Character, trade.recipient_character_id)
+                summaries.append(
+                    _trade_summary(
+                        trade,
+                        initiator_name=initiator.name if initiator else "?",
+                        recipient_name=recipient.name if recipient else "?",
+                        viewer_id=character.id,
+                    )
+                )
+            return TradeListResponse(trades=summaries)
+
+    @router.post("/{character_id}/offer", response_model=TradeSummary)
+    async def offer_trade(character_id: int, body: TradeOfferRequest) -> TradeSummary:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            initiator = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            recipient = (
+                await session.execute(select(Character).where(Character.name == body.target))
+            ).scalar_one_or_none()
+            if recipient is None:
+                raise HTTPException(status_code=404, detail="character_not_found")
+            try:
+                trades_svc.check_can_trade(initiator, recipient)
+                trades_svc.validate_offer(
+                    initiator=initiator,
+                    give_good_id=body.give_good_id,
+                    give_qty=body.give_qty,
+                    give_money=body.give_money,
+                    want_good_id=body.want_good_id,
+                    want_qty=body.want_qty,
+                    want_money=body.want_money,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            trade = Trade(
+                initiator_character_id=initiator.id,
+                recipient_character_id=recipient.id,
+                give_good_id=body.give_good_id,
+                give_qty=body.give_qty,
+                give_money=body.give_money,
+                want_good_id=body.want_good_id,
+                want_qty=body.want_qty,
+                want_money=body.want_money,
+                status=TradeStatus.PENDING.value,
+            )
+            session.add(trade)
+            await session.flush()
+            return _trade_summary(
+                trade,
+                initiator_name=initiator.name,
+                recipient_name=recipient.name,
+                viewer_id=initiator.id,
+            )
+
+    async def _resolve_trade_and_character(
+        session: AsyncSession, *, discord_id: int, character_id: int, trade_id: int
+    ) -> tuple[Trade, Character]:
+        character = await _resolve_owned_character(
+            session, discord_id=discord_id, character_id=character_id
+        )
+        trade = await session.get(Trade, trade_id)
+        if trade is None:
+            raise HTTPException(status_code=404, detail="trade_not_found")
+        return trade, character
+
+    @router.post("/{character_id}/{trade_id}/accept", response_model=TradeSummary)
+    async def accept_trade_route(
+        character_id: int, trade_id: int, body: TradeActionRequest
+    ) -> TradeSummary:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            trade, character = await _resolve_trade_and_character(
+                session, discord_id=body.discord_id, character_id=character_id, trade_id=trade_id
+            )
+            if trade.recipient_character_id != character.id:
+                raise HTTPException(status_code=404, detail="trade_not_found")
+            initiator = await session.get(Character, trade.initiator_character_id)
+            if initiator is None:
+                raise HTTPException(status_code=404, detail="character_not_found")
+            try:
+                await trades_svc.accept_trade(
+                    session,
+                    trade=trade,
+                    initiator=initiator,
+                    recipient=character,
+                    now=dt.datetime.now(dt.UTC),
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            return _trade_summary(
+                trade,
+                initiator_name=initiator.name,
+                recipient_name=character.name,
+                viewer_id=character.id,
+            )
+
+    @router.post("/{character_id}/{trade_id}/decline", response_model=TradeSummary)
+    async def decline_trade_route(
+        character_id: int, trade_id: int, body: TradeActionRequest
+    ) -> TradeSummary:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            trade, character = await _resolve_trade_and_character(
+                session, discord_id=body.discord_id, character_id=character_id, trade_id=trade_id
+            )
+            if trade.recipient_character_id != character.id:
+                raise HTTPException(status_code=404, detail="trade_not_found")
+            try:
+                trades_svc.decline_trade(trade, dt.datetime.now(dt.UTC))
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            initiator = await session.get(Character, trade.initiator_character_id)
+            return _trade_summary(
+                trade,
+                initiator_name=initiator.name if initiator else "?",
+                recipient_name=character.name,
+                viewer_id=character.id,
+            )
+
+    @router.post("/{character_id}/{trade_id}/cancel", response_model=TradeSummary)
+    async def cancel_trade_route(
+        character_id: int, trade_id: int, body: TradeActionRequest
+    ) -> TradeSummary:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            trade, character = await _resolve_trade_and_character(
+                session, discord_id=body.discord_id, character_id=character_id, trade_id=trade_id
+            )
+            if trade.initiator_character_id != character.id:
+                raise HTTPException(status_code=404, detail="trade_not_found")
+            try:
+                trades_svc.cancel_trade(trade, dt.datetime.now(dt.UTC))
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            recipient = await session.get(Character, trade.recipient_character_id)
+            return _trade_summary(
+                trade,
+                initiator_name=character.name,
+                recipient_name=recipient.name if recipient else "?",
+                viewer_id=character.id,
             )
 
     return router
@@ -2611,7 +2961,7 @@ def build_housing_router(
             current_tick = await _current_tick(session)
             _tick, phase, _day, _month = simtime.current(current_tick)
             try:
-                housing_svc.check_can_sleep(phase)
+                housing_svc.check_can_sleep(character, phase)
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
 
@@ -2673,6 +3023,164 @@ class UpdateDistrictMottoRequest(BaseModel):
 class DistrictMottoResponse(BaseModel):
     district_id: int
     motto: str
+
+
+class CreateAfflictionTypeRequest(BaseModel):
+    discord_id: int
+    name: str
+    description: str = ""
+    is_permanent: bool = False
+    cure_stat: str | None = None
+    cure_threshold: float | None = None
+    auto_apply_stat: str | None = None
+    auto_apply_threshold: float | None = None
+
+
+class UpdateAfflictionTypeRequest(BaseModel):
+    discord_id: int
+    name: str | None = None
+    description: str | None = None
+    is_permanent: bool = False
+    cure_stat: str | None = None
+    cure_threshold: float | None = None
+    auto_apply_stat: str | None = None
+    auto_apply_threshold: float | None = None
+
+
+class DeleteAfflictionTypeRequest(BaseModel):
+    discord_id: int
+
+
+class ActiveAfflictionSummary(BaseModel):
+    id: int
+    name: str
+    description: str
+    is_permanent: bool
+    cause: str | None = None
+    applied_at: str
+
+
+class RpModeStatusResponse(BaseModel):
+    """The Milestone 11 home page's data source -- everything about a
+    character's current RP mode in one call (mode, meters, crime toggle,
+    both cooldowns, active afflictions, death). Meters/afflictions are
+    always included regardless of mode -- Life/Story characters just never
+    have anything write to them, so they come back at their column
+    defaults, and the frontend decides whether to show the bars per mode
+    (see `RP_MODE_DESCRIPTIONS`'s shape)."""
+
+    mode: str
+    dead: bool
+    death_cause: str | None = None
+    crime_enabled: bool
+    next_mode_switch_eligible_at: str | None = None
+    next_crime_toggle_eligible_at: str | None = None
+    health: float
+    hunger: float
+    thirst: float
+    fatigue: float
+    sanity: float
+    afflictions: list[ActiveAfflictionSummary]
+
+
+class RpModeSwitchRequest(BaseModel):
+    discord_id: int
+    new_mode: RpMode
+
+
+class RpModeCrimeToggleRequest(BaseModel):
+    discord_id: int
+    enabled: bool
+
+
+def build_rp_mode_router(
+    *,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+) -> APIRouter:
+    """The home page's mode-switch panel (Milestone 11) -- `/character
+    mode`/`/character crime`'s dashboard equivalent, mirroring the bot
+    cog's confirm-then-commit shape (the frontend shows its own
+    confirmation panel first, per the feature's "abundantly clear what the
+    repercussions of switching are" requirement, then calls straight
+    through to `/switch`/`/crime-toggle` once the player confirms)."""
+    router = APIRouter(prefix="/activity/dashboard/mode", tags=["dashboard"])
+
+    async def _status_response(session: AsyncSession, character: Character) -> RpModeStatusResponse:
+        rows = await session.execute(
+            select(CharacterAffliction, AfflictionType)
+            .join(AfflictionType, CharacterAffliction.affliction_type_id == AfflictionType.id)
+            .where(
+                CharacterAffliction.character_id == character.id,
+                CharacterAffliction.cured_at.is_(None),
+            )
+            .order_by(CharacterAffliction.applied_at)
+        )
+        afflictions = [
+            ActiveAfflictionSummary(
+                id=affliction.id,
+                name=affliction_type.name,
+                description=affliction_type.description,
+                is_permanent=affliction_type.is_permanent,
+                cause=affliction.cause,
+                applied_at=affliction.applied_at.isoformat(),
+            )
+            for affliction, affliction_type in rows.all()
+        ]
+        next_switch = rp_modes_svc.next_eligible_switch_at(character)
+        next_toggle = rp_modes_svc.next_eligible_crime_toggle_at(character)
+        return RpModeStatusResponse(
+            mode=character.rp_mode,
+            dead=character.status == CharacterStatus.DEAD.value,
+            death_cause=character.death_cause,
+            crime_enabled=character.crime_enabled is not False,
+            next_mode_switch_eligible_at=next_switch.isoformat() if next_switch else None,
+            next_crime_toggle_eligible_at=next_toggle.isoformat() if next_toggle else None,
+            health=character.health,
+            hunger=character.hunger,
+            thirst=character.thirst,
+            fatigue=character.fatigue,
+            sanity=character.sanity,
+            afflictions=afflictions,
+        )
+
+    @router.get("/{character_id}/status", response_model=RpModeStatusResponse)
+    async def status(character_id: int, discord_id: int) -> RpModeStatusResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            return await _status_response(session, character)
+
+    @router.post("/{character_id}/switch", response_model=RpModeStatusResponse)
+    async def switch(character_id: int, body: RpModeSwitchRequest) -> RpModeStatusResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            try:
+                rp_modes_svc.switch_mode(character, body.new_mode, dt.datetime.now(dt.UTC))
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            return await _status_response(session, character)
+
+    @router.post("/{character_id}/crime-toggle", response_model=RpModeStatusResponse)
+    async def crime_toggle(
+        character_id: int, body: RpModeCrimeToggleRequest
+    ) -> RpModeStatusResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            try:
+                rp_modes_svc.toggle_crime(character, body.enabled, dt.datetime.now(dt.UTC))
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            return await _status_response(session, character)
+
+    return router
 
 
 def build_staff_router(
@@ -2887,5 +3395,70 @@ def build_staff_router(
             ),
         )
         return DistrictMottoResponse(district_id=body.district_id, motto=motto)
+
+    # ---- Affliction-type catalog admin (RP modes feature) --------------
+    # Mirrors the layer-category CRUD immediately above exactly -- a flat
+    # staff-authored catalog, no upload/sub-catalog needed. No staff-log
+    # posting here, same as layer categories/options: this is catalog
+    # management, not a punitive action worth a moderation-log entry the
+    # way `/staff jail` is.
+
+    @router.post("/affliction-types", response_model=AfflictionTypeResponse)
+    async def create_affliction_type(
+        body: CreateAfflictionTypeRequest,
+    ) -> AfflictionTypeResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                row = await affliction_types_svc.create_type(
+                    session,
+                    name=body.name,
+                    description=body.description,
+                    is_permanent=body.is_permanent,
+                    cure_stat=body.cure_stat,
+                    cure_threshold=body.cure_threshold,
+                    auto_apply_stat=body.auto_apply_stat,
+                    auto_apply_threshold=body.auto_apply_threshold,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            return _affliction_type_response(row)
+
+    @router.patch("/affliction-types/{affliction_type_id}", response_model=AfflictionTypeResponse)
+    async def update_affliction_type(
+        affliction_type_id: int, body: UpdateAfflictionTypeRequest
+    ) -> AfflictionTypeResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                row = await affliction_types_svc.update_type(
+                    session,
+                    affliction_type_id,
+                    name=body.name,
+                    description=body.description,
+                    is_permanent=body.is_permanent,
+                    cure_stat=body.cure_stat,
+                    cure_threshold=body.cure_threshold,
+                    auto_apply_stat=body.auto_apply_stat,
+                    auto_apply_threshold=body.auto_apply_threshold,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            return _affliction_type_response(row)
+
+    @router.post("/affliction-types/{affliction_type_id}/delete")
+    async def delete_affliction_type(
+        affliction_type_id: int, body: DeleteAfflictionTypeRequest
+    ) -> dict[str, bool]:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                await affliction_types_svc.delete_type(session, affliction_type_id)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"deleted": True}
 
     return router

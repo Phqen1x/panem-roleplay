@@ -13,7 +13,6 @@ from panem_bot.errors import NotAllowed, NotFound
 from panem_bot.services import characters as characters_svc
 from panem_bot.services import travel as travel_svc
 from panem_bot.strings import t
-from panem_shared import constants
 from panem_shared.db.models import Character, WorldClock
 from panem_shared.simtime import clock_string, seconds_until_next_tick
 from panem_shared.simtime import current as current_sim_time
@@ -109,7 +108,7 @@ class TravelCog(commands.Cog):
                     destination_id=destination_id,
                     current_tick=current_tick,
                 )
-                if not travel_svc.is_free_route(char, origin_district.id, destination_id):
+                if travel_svc.should_charge_transport(char, origin_district.id, destination_id):
                     await travel_svc.spend_transport(session, char)
             except (NotFound, NotAllowed) as exc:
                 await interaction.response.send_message(
@@ -118,21 +117,23 @@ class TravelCog(commands.Cog):
                 return
 
             destination_district = self.bot.content.district(destination_id)  # type: ignore[attr-defined]
-            char.in_transit_until_tick = current_tick + constants.TRANSIT_TICKS
-            char.transit_destination_id = destination_id
-            if char.current_district_id == char.district_id:
-                char.away_since_tick = current_tick
+            transit_ticks = travel_svc.transit_ticks_for(char)
+            if transit_ticks == 0:
+                travel_svc.apply_instant_arrival(char, destination_district)
+            else:
+                char.in_transit_until_tick = current_tick + transit_ticks
+                char.transit_destination_id = destination_id
+                if char.current_district_id == char.district_id:
+                    char.away_since_tick = current_tick
             name, destination_name = char.name, destination_district.name
 
-        await interaction.response.send_message(
-            t(
-                "travel_district_ok",
-                name=name,
-                district=destination_name,
-                ticks=constants.TRANSIT_TICKS,
-            ),
-            ephemeral=True,
-        )
+        if transit_ticks == 0:
+            reply = t("travel_district_instant_ok", name=name, district=destination_name)
+        else:
+            reply = t(
+                "travel_district_ok", name=name, district=destination_name, ticks=transit_ticks
+            )
+        await interaction.response.send_message(reply, ephemeral=True)
 
     @travel.autocomplete("location")
     async def travel_location_autocomplete(

@@ -8,7 +8,7 @@ from panem_bot.services import poaching as poaching_svc
 from panem_shared import constants
 from panem_shared.content.schemas import District, DistrictCulture, DistrictMap, Good, Location
 from panem_shared.db.models import Character, CrimeLog, DistrictState, Inventory
-from panem_shared.enums import CharacterStatus, OwnerKind
+from panem_shared.enums import CharacterStatus, OwnerKind, RpMode
 from panem_shared.simtime import TICKS_PER_PHASE
 
 
@@ -131,6 +131,13 @@ class TestCheckCanPoach:
         with pytest.raises(NotAllowed) as exc_info:
             poaching_svc.check_can_poach(character, district, make_goods(), 10)
         assert exc_info.value.reason_key == "poach_jailed"
+
+    def test_refuses_a_story_mode_character(self):
+        district = make_district()
+        character = make_character(rp_mode=RpMode.STORY.value)
+        with pytest.raises(NotAllowed) as exc_info:
+            poaching_svc.check_can_poach(character, district, make_goods(), 0)
+        assert exc_info.value.reason_key == "crime_mode_forbidden"
 
     def test_allowed_once_jail_has_expired(self):
         district = make_district()

@@ -20,8 +20,10 @@ from dataclasses import dataclass, field
 
 from panem_shared.content.loader import ContentBundle
 from panem_shared.db.models import (
+    AfflictionType,
     ApartmentLease,
     Character,
+    CharacterAffliction,
     DistrictState,
     JobHistory,
     MarketPrice,
@@ -133,3 +135,16 @@ class WorldState:
     """`PropertyAuction` rows `housing.py` creates this tick (a
     foreclosure auto-listing a repossessed property); persisted by
     `tick.py` like `new_shifts`."""
+    affliction_types: list[AfflictionType] = field(default_factory=list)
+    """The staff-authored catalog (`panem_shared.afflictions`), loaded
+    once per tick -- `needs.py` uses it to auto-apply/auto-cure afflictions
+    on Simulation-mode characters via the DB-free `*_sync` helpers."""
+    active_afflictions: dict[int, list[CharacterAffliction]] = field(default_factory=dict)
+    """Every active (`cured_at IS NULL`) `CharacterAffliction`, keyed by
+    `character_id`, each with `affliction_type` already loaded -- mutating
+    `cured_at` on one of these is picked up by the session's own dirty
+    tracking (same as `characters`/`relationships`), no explicit
+    `session.add()` needed for a cure."""
+    new_character_afflictions: list[CharacterAffliction] = field(default_factory=list)
+    """`CharacterAffliction` rows `needs.py` auto-applies this tick;
+    persisted by `tick.py` like `new_shifts`."""

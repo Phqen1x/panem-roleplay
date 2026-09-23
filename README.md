@@ -3651,3 +3651,113 @@ FK-name fix, not just the schema shape). New/extended tests: `test_theme.py`'s
 delete/activate, the 20-profile cap, and the lapsed-donor case) plus a new `TestDashboardThemeAssignment`
 (assign/unassign/resolve, and reset's two different fallback targets depending on whether a
 `character_id` was given).
+
+## RP Modes: Story, Life, and Simulation
+
+Every character now picks an **RP mode** at creation, changeable later (`/character mode`, subject to a
+3-real-day cooldown): **Story** (pure freeform RP -- no economy, crime, housing, work, or NPC interaction,
+no travel cost/delay, and immune to crime targeting), **Life** (the full economy/crime/market/work/travel
+loop, minus housing and the needs system, with crime toggleable off for yourself once per real day), and
+**Simulation** (today's full experience, unchanged, plus two new meters -- thirst and sanity -- alongside
+hunger/health/fatigue). A character's mode defaults to Simulation, matching the game's original,
+unmoded behavior for anyone who doesn't opt into something lighter.
+
+### Gating matrix
+
+| Capability                     | Story                          | Life                              | Simulation                        |
+| ------------------------------- | ------------------------------- | ---------------------------------- | ----------------------------------- |
+| `/rp`, `/tag`, `/scene`         | Yes, from anywhere in-district  | Yes, must be at the location       | Yes, must be at the location       |
+| Economy (market/work/black market) | No                          | Yes                                 | Yes                                  |
+| Crime (steal/burgle/poach)      | Never a victim or an actor      | Actor if `crime_enabled`; victim only if their own `crime_enabled` is on | Always both |
+| Housing                          | No                              | No                                  | Yes                                  |
+| NPC interaction (`/talk`, `/engage` with NPCs) | No             | Yes                                  | Yes                                  |
+| Cross-district travel            | Instant, free                   | Always 1 tick, normal cost          | Normal `TRANSIT_TICKS`, normal cost |
+| Needs (hunger/thirst/sanity/fatigue) | N/A                        | N/A -- no decay, no requirement     | Full system, see below              |
+| Afflictions/death                | N/A -- excluded from the system entirely | Manual only (`/character afflict`, `/character die`) | Automatic, staff-threshold-driven |
+| `/pay`, `/trade`                 | No                               | Yes                                  | Yes                                  |
+
+A Story character is invisible to crime both ways -- `check_can_steal`/`check_can_burgle`/`check_can_poach`
+all refuse the moment either party is Story mode, and target-listing endpoints (bot autocomplete and the
+dashboard's Crime tab) filter Story-mode characters out before they're ever offered as a target.
+
+### Needs (Simulation only)
+
+Simulation characters track five meters: health, hunger, fatigue (existing), plus **thirst** and
+**sanity** (new). Thirst rises and sanity falls passively each night the same way hunger already did;
+crossing `HEALTH_DECAY_THIRST_THRESHOLD`/`HEALTH_DECAY_SANITY_THRESHOLD` costs health. Three commands
+relieve them once per sim-day each: `/eat` (hunger), `/drink` (thirst), `/entertain` (sanity) -- each a
+small money cost, immediate relief, and an immediate `afflictions.check_and_cure` pass so a
+curable-by-this-stat affliction resolves right away rather than waiting for the next tick. Life and Story
+characters are refused outright (`sustenance_mode_forbidden`) -- their meters never move and these
+commands are a no-op for them by design, not an oversight.
+
+### Afflictions and death
+
+A staff-authored catalog (`AfflictionType`: name, description, `is_permanent`, and optional
+cure/auto-apply stat+threshold pairs -- e.g. "cured once health rises above 60%", "auto-applied once
+fatigue falls below 20%") drives two different entry points depending on mode:
+
+- **Simulation**: fully automatic. Every tick, `apply_auto_afflictions_sync`/`apply_auto_death` (pure,
+  DB-free functions called from `panem_sim`'s needs system, since the tick loop has no DB session per
+  system) check each character's current stats against the catalog's auto-apply thresholds and against
+  the death condition, and `check_and_cure_sync` resolves any that have since recovered.
+- **Life**: manual only, via `/character afflict type:<catalog autocomplete> cause:<text>` and
+  `/character die cause:<text>` -- both confirm-gated (a Discord button, restricted to the invoking user)
+  and both refuse outright in any other mode.
+- **Story**: excluded from the system entirely -- no afflictions, no death, ever.
+
+Staff manage the catalog from the dashboard's Staff tab (`afflictionTypesPanel` in `staff.js`) -- create,
+edit, delete, with validation that a permanent type carries no cure fields and that cure/auto-apply
+stat+threshold pairs are complete together, not half-set. The same catalog is read-only-public at
+`GET /activity/dashboard/affliction-types` for the autocomplete/preview players see when self-inflicting.
+Active afflictions and, if dead, the cause of death show on `/character status` and on the dashboard's new
+Home tab.
+
+### `/pay` and `/trade`
+
+Two new player-to-player economy primitives, both Story-mode-forbidden and requiring both parties be
+`APPROVED`:
+
+- **`/pay target:<character> amount:<int>`** -- instant, one-way, no confirmation, same posture as
+  housing's existing rent/purchase transfers.
+- **`/trade offer target:<character> give_good: give_qty: give_money: want_good: want_qty: want_money:`**
+  -- one item-or-money offer per side (not a multi-item cart, a deliberate scope choice to keep the
+  command surface to plain slash parameters rather than a modal-built cart). Posts an Accept/Decline view
+  to the recipient's DMs, restricted to their Discord user id. `accept_trade` **re-validates** both
+  sides' money/inventory at accept time (an offer can go stale between propose and accept) before moving
+  anything, atomically, in one session. `/trade cancel` (initiator-only, while still pending) withdraws
+  an offer; a `tasks.loop` expires stale pending offers after `TRADE_OFFER_EXPIRY_MINUTES`.
+
+The dashboard's Social tab mirrors both 1:1 (`payPanel`/`tradePanel` in `social.js`, reading/writing
+`/activity/dashboard/pay/*` and `/activity/dashboard/trade/*`) -- the Trade panel has no push channel of
+its own the way the bot's DM does, so a recipient discovers a pending offer by reopening the tab (poll,
+not push), the same posture the read-only Engagement panel already has.
+
+### The dashboard's Home tab
+
+A new "Home" tab (now the dashboard's default landing tab) surfaces everything about a character's RP
+mode in one place, reading the same status endpoint (`GET /activity/dashboard/mode/{id}/status`) the
+bot's own `/character mode` confirm view is built against: current mode with a plain-language description,
+the five meters as bar fills (Simulation only -- a "not applicable in this mode" note otherwise), the
+crime toggle (Life only, disabled with a countdown while on cooldown), active afflictions, and a "Change
+Mode" button that opens an in-page confirmation panel -- never `window.confirm()`, given how much rides on
+this choice -- listing the destination mode's consequences as bullet points before the switch actually
+posts.
+
+### Verification
+
+Each of this feature's twelve build milestones (schema; shared pure-logic services; character-creation
+mode selection; travel/RP-location gating; crime/market/housing/NPC-engagement gating; mode-switch and
+crime-toggle commands; Simulation-only needs; the staff affliction catalog; the self-inflict commands;
+pay/trade; the dashboard home page; this final pass) landed as its own commit with its own ruff/mypy/
+pytest/migration-round-trip check. Full suite: **1208 passed**. `ruff check .`: clean. `mypy` across all
+four packages: unchanged pre-existing baseline (156 errors in 7 files, all pre-existing
+`self.bot.db()`/`self.bot.content` attribute-defined findings unrelated to this feature). `alembic heads`:
+single head. Live Playwright passes (local `http.server` + stateful `page.route()` mocks, this session's
+established verification shape) covering: the Home tab landing by default, Simulation-mode meters
+rendering, the mode-switch confirmation flow (bullets updating per selected destination mode, the switch
+call firing, meters/crime panel reacting correctly post-switch), the crime toggle, the afflictions list
+(including a permanent entry), a death-cause line, both cooldown-disabled states (crime toggle and mode
+switch, each showing a countdown), and a full trade cycle on the Social tab (an incoming offer's summary
+line, Accept removing it from the list, sending a new offer with goods+money on both sides, and
+cancelling it).

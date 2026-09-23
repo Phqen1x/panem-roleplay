@@ -49,6 +49,8 @@ COGS = (
     "panem_bot.cogs.dialogue",
     "panem_bot.cogs.housing",
     "panem_bot.cogs.engagements",
+    "panem_bot.cogs.needs",
+    "panem_bot.cogs.trades",
 )
 
 

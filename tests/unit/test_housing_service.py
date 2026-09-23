@@ -6,7 +6,7 @@ from panem_bot.errors import NotAllowed, NotFound
 from panem_bot.services import housing as housing_svc
 from panem_shared import constants
 from panem_shared.db.models import ApartmentLease, Character, Property, PropertyAuction
-from panem_shared.enums import CharacterStatus, DayPhase, OwnerKind, PropertyKind
+from panem_shared.enums import CharacterStatus, DayPhase, OwnerKind, PropertyKind, RpMode
 
 
 def make_character(**overrides: object) -> Character:
@@ -17,6 +17,7 @@ def make_character(**overrides: object) -> Character:
         name="Test",
         age=20,
         status=CharacterStatus.APPROVED.value,
+        rp_mode=RpMode.SIMULATION.value,
         money=10_000,
         reputation=0.0,
         shifts_completed=0,
@@ -54,6 +55,13 @@ class TestCheckCanBuyProperty:
         with pytest.raises(NotAllowed) as exc_info:
             housing_svc.check_can_buy_property(character=character, property_=property_)
         assert exc_info.value.reason_key == "character_dead"
+
+    def test_refuses_a_non_simulation_character(self):
+        character = make_character(rp_mode=RpMode.LIFE.value)
+        property_ = make_property()
+        with pytest.raises(NotAllowed) as exc_info:
+            housing_svc.check_can_buy_property(character=character, property_=property_)
+        assert exc_info.value.reason_key == "housing_mode_forbidden"
 
     def test_refuses_a_property_not_for_sale(self):
         character = make_character()
@@ -253,13 +261,21 @@ class TestFatigue:
 
 class TestCheckCanSleep:
     def test_allows_night_phase(self):
-        housing_svc.check_can_sleep(DayPhase.NIGHT)
+        character = make_character()
+        housing_svc.check_can_sleep(character, DayPhase.NIGHT)
 
     def test_refuses_other_phases(self):
+        character = make_character()
         for phase in (DayPhase.MORNING, DayPhase.AFTERNOON, DayPhase.EVENING):
             with pytest.raises(NotAllowed) as exc_info:
-                housing_svc.check_can_sleep(phase)
+                housing_svc.check_can_sleep(character, phase)
             assert exc_info.value.reason_key == "sleep_wrong_phase"
+
+    def test_refuses_a_non_simulation_character(self):
+        character = make_character(rp_mode=RpMode.LIFE.value)
+        with pytest.raises(NotAllowed) as exc_info:
+            housing_svc.check_can_sleep(character, DayPhase.NIGHT)
+        assert exc_info.value.reason_key == "housing_mode_forbidden"
 
 
 class TestFinancedPurchaseTerms:

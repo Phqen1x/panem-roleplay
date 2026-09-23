@@ -85,6 +85,90 @@ class IllicitDeclareView(discord.ui.View):
         await self._on_choose(interaction, True)
 
 
+RP_MODE_DESCRIPTIONS: dict[str, str] = {
+    "story": "Freeform RP only -- no economy, crime, housing, work, or NPC interaction.",
+    "life": "The full economy/crime/market/work/travel loop, minus housing and daily needs.",
+    "simulation": "The full experience -- economy, crime, housing, and daily needs (hunger/thirst/sanity/fatigue).",
+}
+"""Shown on both the creation prompt (`RpModeSelectView`) and the
+dashboard's mode-switch panel -- keys are `RpMode` values."""
+
+
+class RpModeSelectView(discord.ui.View):
+    """The first step of character creation -- picks `Character.rp_mode`.
+    A plain three-button choice (mirrors `IllicitDeclareView`'s shape)
+    rather than a `Select`, since there are only ever three options and a
+    button lets each carry its own one-line description as a tooltip-free
+    label instead of a bare value string."""
+
+    def __init__(self, on_choose: Callable[[discord.Interaction, str], Awaitable[None]]) -> None:
+        super().__init__(timeout=300)
+        self._on_choose = on_choose
+
+    @discord.ui.button(label="Story", style=discord.ButtonStyle.secondary)
+    async def story(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[RpModeSelectView]
+    ) -> None:
+        await self._on_choose(interaction, "story")
+
+    @discord.ui.button(label="Life", style=discord.ButtonStyle.primary)
+    async def life(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[RpModeSelectView]
+    ) -> None:
+        await self._on_choose(interaction, "life")
+
+    @discord.ui.button(label="Simulation", style=discord.ButtonStyle.success)
+    async def simulation(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[RpModeSelectView]
+    ) -> None:
+        await self._on_choose(interaction, "simulation")
+
+
+class ConfirmView(discord.ui.View):
+    """A generic "are you sure" gate for actions with real, hard-to-undo
+    consequences (switching RP mode, the crime-enabled toggle, self-
+    inflicting an affliction/death) -- restricted to the one player it's
+    for, same shape as `_InviteResponseButton`. The caller supplies the
+    message text (what's about to happen, spelled out) separately; this
+    view is just the two buttons."""
+
+    def __init__(
+        self,
+        *,
+        target_discord_id: int,
+        on_confirm: Callable[[discord.Interaction], Awaitable[None]],
+        confirm_label: str = "Confirm",
+        cancel_label: str = "Cancel",
+    ) -> None:
+        super().__init__(timeout=120)
+        self._target_discord_id = target_discord_id
+        self._on_confirm = on_confirm
+        self.confirm.label = confirm_label
+        self.cancel.label = cancel_label
+
+    async def _guard(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self._target_discord_id:
+            await interaction.response.send_message("That's not yours to confirm.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(style=discord.ButtonStyle.danger)
+    async def confirm(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[ConfirmView]
+    ) -> None:
+        if not await self._guard(interaction):
+            return
+        await self._on_confirm(interaction)
+
+    @discord.ui.button(style=discord.ButtonStyle.secondary)
+    async def cancel(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[ConfirmView]
+    ) -> None:
+        if not await self._guard(interaction):
+            return
+        await interaction.response.edit_message(content="Cancelled -- nothing changed.", view=None)
+
+
 class ChangesNoteModal(discord.ui.Modal, title="Request Changes"):
     note = discord.ui.TextInput(
         label="Note to applicant", style=discord.TextStyle.paragraph, max_length=1000

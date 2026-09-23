@@ -15,7 +15,7 @@ from panem_shared.content.schemas import (
     Location,
 )
 from panem_shared.db.models import Character, DistrictState, Memory, Npc
-from panem_shared.enums import CharacterStatus
+from panem_shared.enums import CharacterStatus, RpMode
 from panem_shared.lemonade import omni
 from panem_shared.settings import Settings
 
@@ -117,6 +117,12 @@ class TestCheckCanTalk:
 
     def test_allows_approved_character(self):
         dialogue.check_can_talk(make_character())
+
+    def test_rejects_a_story_mode_character(self):
+        char = make_character(rp_mode=RpMode.STORY.value)
+        with pytest.raises(NotAllowed) as exc_info:
+            dialogue.check_can_talk(char)
+        assert exc_info.value.reason_key == "npc_interaction_mode_forbidden"
 
 
 class TestResolveProvider:

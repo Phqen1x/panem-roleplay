@@ -1,9 +1,22 @@
-// The "Social" tab: Capitol Neoclassical layout with two panels:
+// The "Social" tab: Capitol Neoclassical layout with two panels, plus the
+// player-to-player economy primitives (Pay, Trade) beneath them:
 // 1. Current Engagement (left): live scene, district plaza illustration,
 //    participant metadata, Discord deep link CTA, and district motto.
 // 2. Residents Directory (right): searchable, filterable citizen table with
 //    monogram avatar badges, status indicators (Available/Working/Busy), and
 //    an interactive dossier modal for resident backstories and stances.
+//
+// The Engagement panel is deliberately read-only + a "Continue in
+// Discord" deep link, not a full chat UI -- per the user's own choice
+// when this feature was scoped: making it fully interactive here would
+// need a dashboard -> Redis -> panem_bot relay (only the bot process
+// holds a token and can post/create Discord threads), which is out of
+// scope for this pass.
+//
+// The Trade panel has no push channel of its own the way the bot's DM +
+// Accept/Decline view does -- a recipient discovers a pending offer by
+// reopening this tab (or switching characters, which remounts it), same
+// "poll, don't push" posture the Engagement panel already has.
 import { fetchJson, el, renderIcon } from "./_shared.js?v=5";
 
 function determineStatus(r) {
@@ -459,13 +472,214 @@ function dossierModal(ctx) {
   return { element: overlay, open };
 }
 
+function payPanel(ctx) {
+  const targetInput = el("input", { type: "text", placeholder: "Character name" });
+  const amountInput = el("input", { type: "number", placeholder: "Amount", min: "1" });
+  const resultLine = el("p", { class: "result-line" });
+  const payBtn = el("button", { class: "btn", type: "button" }, "Pay");
+
+  payBtn.addEventListener("click", async () => {
+    resultLine.textContent = "";
+    const target = targetInput.value.trim();
+    const amount = Number(amountInput.value);
+    if (!target || !Number.isFinite(amount) || amount <= 0) {
+      resultLine.className = "result-line lose";
+      resultLine.textContent = "Name who to pay and a positive amount.";
+      return;
+    }
+    try {
+      const body = await ctx.apiFetch(`/activity/dashboard/pay/${ctx.characterId()}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ discord_id: ctx.discordId(), target, amount }),
+      });
+      resultLine.className = "result-line win";
+      resultLine.textContent = `Paid ${amount} to ${body.recipient_name} (${body.sender_money} left).`;
+      targetInput.value = "";
+      amountInput.value = "";
+    } catch (err) {
+      resultLine.className = "result-line lose";
+      resultLine.textContent = err.message;
+    }
+  });
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "Pay" }),
+    el("div", { class: "field-row" }, el("label", { text: "To" }), targetInput),
+    el("div", { class: "field-row" }, el("label", { text: "Amount" }), amountInput),
+    el("div", { class: "field-row" }, payBtn),
+    resultLine
+  );
+}
+
+function tradeOfferSummary(trade) {
+  const describe = (goodId, qty, money) => {
+    const parts = [];
+    if (goodId && qty) parts.push(`${qty} ${goodId}`);
+    if (money) parts.push(`${money} money`);
+    return parts.length > 0 ? parts.join(" + ") : "nothing";
+  };
+  const give = describe(trade.give_good_id, trade.give_qty, trade.give_money);
+  const want = describe(trade.want_good_id, trade.want_qty, trade.want_money);
+  if (trade.direction === "incoming") {
+    return `${trade.initiator_name} offers you ${give} for ${want}.`;
+  }
+  return `You offered ${trade.recipient_name} ${give} for ${want}.`;
+}
+
+function tradeOfferRow(ctx, trade, { onChanged }) {
+  const resultLine = el("p", { class: "result-line" });
+
+  async function act(action) {
+    resultLine.textContent = "";
+    try {
+      await ctx.apiFetch(
+        `/activity/dashboard/trade/${ctx.characterId()}/${trade.id}/${action}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ discord_id: ctx.discordId() }),
+        }
+      );
+      onChanged();
+    } catch (err) {
+      resultLine.className = "result-line lose";
+      resultLine.textContent = err.message;
+    }
+  }
+
+  const buttons = [];
+  if (trade.direction === "incoming") {
+    const acceptBtn = el("button", { class: "btn", type: "button" }, "Accept");
+    acceptBtn.addEventListener("click", () => act("accept"));
+    const declineBtn = el("button", { class: "btn secondary", type: "button" }, "Decline");
+    declineBtn.addEventListener("click", () => act("decline"));
+    buttons.push(acceptBtn, declineBtn);
+  } else {
+    const cancelBtn = el("button", { class: "btn secondary", type: "button" }, "Cancel");
+    cancelBtn.addEventListener("click", () => act("cancel"));
+    buttons.push(cancelBtn);
+  }
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("p", {}, tradeOfferSummary(trade)),
+    el("div", { class: "field-row" }, ...buttons),
+    resultLine
+  );
+}
+
+function tradePanel(ctx) {
+  const statusEl = el("p", { class: "tab-status" });
+  const listEl = el("div", {});
+
+  const targetInput = el("input", { type: "text", placeholder: "Character name" });
+  const giveGoodInput = el("input", { type: "text", placeholder: "Good id" });
+  const giveQtyInput = el("input", { type: "number", placeholder: "Qty", min: "1" });
+  const giveMoneyInput = el("input", { type: "number", placeholder: "0", value: "0" });
+  const wantGoodInput = el("input", { type: "text", placeholder: "Good id" });
+  const wantQtyInput = el("input", { type: "number", placeholder: "Qty", min: "1" });
+  const wantMoneyInput = el("input", { type: "number", placeholder: "0", value: "0" });
+  const offerResult = el("p", { class: "result-line" });
+  const offerBtn = el("button", { class: "btn", type: "button" }, "Send offer");
+
+  offerBtn.addEventListener("click", async () => {
+    offerResult.textContent = "";
+    const target = targetInput.value.trim();
+    if (!target) {
+      offerResult.className = "result-line lose";
+      offerResult.textContent = "Name who you're offering to.";
+      return;
+    }
+    const giveGood = giveGoodInput.value.trim() || null;
+    const wantGood = wantGoodInput.value.trim() || null;
+    try {
+      await ctx.apiFetch(`/activity/dashboard/trade/${ctx.characterId()}/offer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          discord_id: ctx.discordId(),
+          target,
+          give_good_id: giveGood,
+          give_qty: giveGood ? Number(giveQtyInput.value) || null : null,
+          give_money: Number(giveMoneyInput.value) || 0,
+          want_good_id: wantGood,
+          want_qty: wantGood ? Number(wantQtyInput.value) || null : null,
+          want_money: Number(wantMoneyInput.value) || 0,
+        }),
+      });
+      offerResult.className = "result-line win";
+      offerResult.textContent = "Offer sent.";
+      targetInput.value = "";
+      giveGoodInput.value = "";
+      giveQtyInput.value = "";
+      giveMoneyInput.value = "0";
+      wantGoodInput.value = "";
+      wantQtyInput.value = "";
+      wantMoneyInput.value = "0";
+      await refresh();
+    } catch (err) {
+      offerResult.className = "result-line lose";
+      offerResult.textContent = err.message;
+    }
+  });
+
+  async function refresh() {
+    listEl.innerHTML = "";
+    const characterId = ctx.characterId();
+    const discordId = ctx.discordId();
+    if (!characterId || !discordId) {
+      statusEl.textContent = "Pick a character above first.";
+      return;
+    }
+    try {
+      const body = await ctx.apiFetch(
+        `/activity/dashboard/trade/${characterId}/list?discord_id=${encodeURIComponent(discordId)}`
+      );
+      statusEl.textContent = "";
+      if (body.trades.length === 0) {
+        listEl.append(el("p", { class: "tab-status" }, "No pending trade offers."));
+        return;
+      }
+      for (const trade of body.trades) {
+        listEl.append(tradeOfferRow(ctx, trade, { onChanged: refresh }));
+      }
+    } catch (err) {
+      statusEl.textContent = `Could not load trades: ${err.message}`;
+    }
+  }
+
+  refresh();
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "Trade" }),
+    statusEl,
+    listEl,
+    el("h3", { text: "Offer a trade" }),
+    el("div", { class: "field-row" }, el("label", { text: "To" }), targetInput),
+    el("div", { class: "field-row" }, el("label", { text: "You give: good" }), giveGoodInput),
+    el("div", { class: "field-row" }, el("label", { text: "Qty" }), giveQtyInput),
+    el("div", { class: "field-row" }, el("label", { text: "+ money" }), giveMoneyInput),
+    el("div", { class: "field-row" }, el("label", { text: "You want: good" }), wantGoodInput),
+    el("div", { class: "field-row" }, el("label", { text: "Qty" }), wantQtyInput),
+    el("div", { class: "field-row" }, el("label", { text: "+ money" }), wantMoneyInput),
+    el("div", { class: "field-row" }, offerBtn),
+    offerResult
+  );
+}
+
 export function mount(root, ctx) {
   const modal = dossierModal(ctx);
   const layout = el("div", { class: "social-layout" });
   const eng = engagementPanel(ctx);
   const res = residentsPanel(ctx, (name) => modal.open(name));
   layout.append(eng, res);
-  root.append(layout, modal.element);
+  root.append(layout, modal.element, payPanel(ctx), tradePanel(ctx));
 
   const onMottoUpdated = () => {
     if (typeof eng.refresh === "function") eng.refresh();

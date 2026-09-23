@@ -14,7 +14,7 @@ from panem_shared.content.schemas import (
     Location,
 )
 from panem_shared.db.models import Character, DistrictState, Inventory, MarketOrder, MarketPrice
-from panem_shared.enums import CharacterStatus, OwnerKind
+from panem_shared.enums import CharacterStatus, OwnerKind, RpMode
 
 
 class FixedRng:
@@ -101,6 +101,12 @@ class TestCheckCanTrade:
         with pytest.raises(NotAllowed) as exc_info:
             market_svc.check_can_trade(character)
         assert exc_info.value.reason_key == "character_not_approved"
+
+    def test_story_mode_character_refused(self):
+        character = make_character(rp_mode=RpMode.STORY.value)
+        with pytest.raises(NotAllowed) as exc_info:
+            market_svc.check_can_trade(character)
+        assert exc_info.value.reason_key == "market_mode_forbidden"
 
 
 class TestResolveGood:

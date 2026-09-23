@@ -52,6 +52,7 @@ from starlette.responses import Response
 from starlette.types import Scope
 
 from panem_api.dashboard_routes import (
+    build_affliction_types_router,
     build_blackmarket_router,
     build_characters_router,
     build_crime_router,
@@ -60,10 +61,13 @@ from panem_api.dashboard_routes import (
     build_jail_router,
     build_layers_router,
     build_market_router,
+    build_pay_router,
     build_residents_router,
+    build_rp_mode_router,
     build_social_router,
     build_staff_router,
     build_theme_router,
+    build_trade_router,
     build_travel_router,
     build_work_router,
 )
@@ -770,11 +774,15 @@ def create_app(
     )
     app.include_router(build_work_router(session_factory=session_factory))
     app.include_router(build_layers_router(session_factory=session_factory))
+    app.include_router(build_affliction_types_router(session_factory=session_factory))
     app.include_router(build_market_router(content=content, session_factory=session_factory))
     app.include_router(build_blackmarket_router(content=content, session_factory=session_factory))
     app.include_router(build_travel_router(content=content, session_factory=session_factory))
     app.include_router(build_residents_router(content=content, session_factory=session_factory))
     app.include_router(build_housing_router(content=content, session_factory=session_factory))
+    app.include_router(build_rp_mode_router(session_factory=session_factory))
+    app.include_router(build_pay_router(session_factory=session_factory))
+    app.include_router(build_trade_router(session_factory=session_factory))
     app.include_router(
         build_social_router(
             content=content,

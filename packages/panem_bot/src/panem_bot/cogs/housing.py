@@ -641,10 +641,10 @@ class HousingCog(commands.Cog):
             current_tick = await self._current_tick(session)
             _tick, phase, _day, _month = simtime.current(current_tick)
             try:
-                housing_svc.check_can_sleep(phase)
+                housing_svc.check_can_sleep(char, phase)
             except ServiceError as exc:
                 await interaction.response.send_message(
-                    t(exc.reason_key, name=char.name, **exc.fmt), ephemeral=True
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
                 )
                 return
 

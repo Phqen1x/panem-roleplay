@@ -15,7 +15,7 @@ from panem_shared.db.models import (
     RelationshipRow,
     User,
 )
-from panem_shared.enums import CharacterStatus, OwnerKind, PropertyKind
+from panem_shared.enums import CharacterStatus, OwnerKind, PropertyKind, RpMode
 
 
 class SequenceRng:
@@ -117,6 +117,41 @@ class TestCheckCanSteal:
     def test_allowed_once_jail_has_expired(self):
         character = make_character(jailed_until_tick=5)
         victim = make_npc()
+        stealing_svc.check_can_steal(character, victim, 10)  # no raise
+
+    def test_refuses_a_story_mode_actor(self):
+        character = make_character(rp_mode=RpMode.STORY.value)
+        victim = make_npc()
+        with pytest.raises(NotAllowed) as exc_info:
+            stealing_svc.check_can_steal(character, victim, 10)
+        assert exc_info.value.reason_key == "crime_mode_forbidden"
+
+    def test_refuses_an_actor_who_disabled_crime(self):
+        character = make_character(crime_enabled=False)
+        victim = make_npc()
+        with pytest.raises(NotAllowed) as exc_info:
+            stealing_svc.check_can_steal(character, victim, 10)
+        assert exc_info.value.reason_key == "crime_disabled_by_actor"
+
+    def test_refuses_a_story_mode_character_victim(self):
+        character = make_character()
+        victim = make_character(name="Victim", rp_mode=RpMode.STORY.value, location_id="square")
+        victim.id = 2
+        with pytest.raises(NotAllowed) as exc_info:
+            stealing_svc.check_can_steal(character, victim, 10)
+        assert exc_info.value.reason_key == "victim_is_story_mode"
+
+    def test_refuses_a_character_victim_who_disabled_crime(self):
+        character = make_character()
+        victim = make_character(name="Victim", crime_enabled=False, location_id="square")
+        victim.id = 2
+        with pytest.raises(NotAllowed) as exc_info:
+            stealing_svc.check_can_steal(character, victim, 10)
+        assert exc_info.value.reason_key == "victim_crime_disabled"
+
+    def test_allows_an_npc_victim_with_no_crime_enabled_field(self):
+        character = make_character()
+        victim = make_npc(location_id="square")
         stealing_svc.check_can_steal(character, victim, 10)  # no raise
 
 
@@ -346,6 +381,34 @@ class TestCheckCanBurgle:
         owner = make_character(name="Owner", location_id="home")
         owner.id = 2
         stealing_svc.check_can_burgle(character, house, 10, owner=owner)  # no raise
+
+    def test_refuses_a_story_mode_actor(self):
+        character = make_character(current_district_id=1, rp_mode=RpMode.STORY.value)
+        character.id = 1
+        house = make_house(district_id=1, owner_id=2)
+        with pytest.raises(NotAllowed) as exc_info:
+            stealing_svc.check_can_burgle(character, house, 10)
+        assert exc_info.value.reason_key == "crime_mode_forbidden"
+
+    def test_refuses_a_life_mode_actor(self):
+        """Life mode has no housing access at all -- distinct from the
+        Story-mode block, and refused before the owner-mode check."""
+        character = make_character(current_district_id=1, rp_mode=RpMode.LIFE.value)
+        character.id = 1
+        house = make_house(district_id=1, owner_id=2)
+        with pytest.raises(NotAllowed) as exc_info:
+            stealing_svc.check_can_burgle(character, house, 10)
+        assert exc_info.value.reason_key == "burgle_mode_forbidden"
+
+    def test_refuses_a_story_mode_owner(self):
+        character = make_character(current_district_id=1)
+        character.id = 1
+        house = make_house(district_id=1, owner_id=2)
+        owner = make_character(name="Owner", rp_mode=RpMode.STORY.value)
+        owner.id = 2
+        with pytest.raises(NotAllowed) as exc_info:
+            stealing_svc.check_can_burgle(character, house, 10, owner=owner)
+        assert exc_info.value.reason_key == "victim_is_story_mode"
 
 
 class TestResolveBurgle:

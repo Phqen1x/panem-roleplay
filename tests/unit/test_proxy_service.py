@@ -146,6 +146,11 @@ class TestCanRpInDistrict:
         assert not proxy_svc.can_rp_in_district(char, 5)
         assert not proxy_svc.can_rp_in_district(char, 0)
 
+    def test_story_mode_allowed_anywhere(self):
+        char = make_character(district_id=12, current_district_id=12, positions=[], rp_mode="story")
+        assert proxy_svc.can_rp_in_district(char, 5)
+        assert proxy_svc.can_rp_in_district(char, 0)
+
 
 class TestCanRpAtLocation:
     def test_at_the_location_allowed(self):
@@ -162,6 +167,10 @@ class TestCanRpAtLocation:
 
     def test_gamemaker_bypasses_it(self):
         char = make_character(location_id="hob", positions=["gamemaker"])
+        assert proxy_svc.can_rp_at_location(char, "sq")
+
+    def test_story_mode_bypasses_it(self):
+        char = make_character(location_id="hob", positions=[], rp_mode="story")
         assert proxy_svc.can_rp_at_location(char, "sq")
 
 
@@ -404,6 +413,17 @@ class TestCheckCanProxy:
             character=character, district=district, location_id="meadow", current_tick=0
         )
         assert refusal is not None and refusal.reason_key == "proxy_location_restricted"
+
+    def test_story_mode_bypasses_the_restricted_location_gate(self):
+        loc = Location(
+            id="meadow", name="The Meadow", kind="outskirts", restricted=True, access_jobs=["miner"]
+        )
+        character = make_character(location_id=None, rp_mode="story")
+        district = self.make_district([loc])
+        refusal = proxy_svc.check_can_proxy(
+            character=character, district=district, location_id="meadow", current_tick=0
+        )
+        assert refusal is None
 
     def test_ok(self):
         character = make_character(location_id="sq")

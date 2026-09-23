@@ -75,6 +75,7 @@ STRINGS: dict[str, str] = {
     "travel_district_ok": (
         "**{name}** boards a train for **{district}** -- arriving in {ticks} ticks."
     ),
+    "travel_district_instant_ok": "**{name}** arrives in **{district}**.",
     # Jobs and shifts (FR-JOB, reworked: free-typed job_title + shift_phase,
     # set at character creation and changed only by staff -- no more
     # catalog to apply for/quit/list, or a JobOption-driven ladder to check).
@@ -153,6 +154,66 @@ STRINGS: dict[str, str] = {
     ),
     "blackmarket_good_not_traded": "That good isn't traded on this district's black market.",
     "blackmarket_insufficient_stock": "The black market doesn't have that much {good} left today.",
+    # RP-mode crime gating (shared by /steal, /burgle, /poach)
+    "crime_mode_forbidden": "**{name}** is in Story mode and has no access to crime.",
+    "crime_disabled_by_actor": "**{name}** has crime disabled for themselves right now.",
+    "victim_is_story_mode": "{name} is a Story-mode character and can't be targeted this way.",
+    "victim_crime_disabled": "{name} has crime disabled and can't be targeted this way.",
+    "burgle_mode_forbidden": (
+        "**{name}** is in Life mode, which has no housing access -- burglary isn't available."
+    ),
+    "market_mode_forbidden": "**{name}** is in Story mode and has no access to the markets.",
+    "housing_mode_forbidden": (
+        "**{name}** doesn't have access to the housing system in their current RP mode."
+    ),
+    "npc_interaction_mode_forbidden": "**{name}** is in Story mode and can't interact with NPCs.",
+    # RP-mode switching & crime toggle (/character mode, /character crime)
+    "mode_already_active": "This character is already in {mode} mode.",
+    "mode_switch_on_cooldown": (
+        "This character switched modes too recently -- {hours} hour(s) left before they can "
+        "switch again."
+    ),
+    "crime_toggle_wrong_mode": "Only Life-mode characters can toggle crime on/off for themselves.",
+    "crime_toggle_already_set": "This character's crime setting is already {enabled}.",
+    "crime_toggle_on_cooldown": (
+        "This character already changed their crime setting today -- "
+        "{hours} hour(s) left before they can change it again."
+    ),
+    # Self-inflicted afflictions/death (/character afflict, /character die)
+    "affliction_wrong_mode": (
+        "Only Life-mode characters can self-inflict an affliction -- Simulation mode handles "
+        "this automatically, and Story mode is excluded from the system entirely."
+    ),
+    "affliction_cause_required": "Say how it happened.",
+    "affliction_type_not_found": "No affliction type by that name -- pick one from the list.",
+    "affliction_ok": "**{name}** is now afflicted with **{affliction}**: {cause}",
+    "death_wrong_mode": (
+        "Only Life-mode characters can end their own character this way -- Simulation mode "
+        "handles death automatically, and Story mode is excluded from the system entirely."
+    ),
+    "character_already_dead": "**{name}** is already dead.",
+    "death_ok": "**{name}** has died.",
+    # Player-to-player money/goods (/pay, /trade)
+    "pay_mode_forbidden": "**{name}** is in Story mode and can't send or receive money this way.",
+    "pay_cannot_self": "Can't pay yourself.",
+    "pay_invalid_amount": "Enter a positive amount to pay.",
+    "pay_insufficient_money": "**{name}** doesn't have that much money.",
+    "pay_ok": "**{sender}** pays **{recipient}** {amount} money.",
+    "trade_mode_forbidden": "**{name}** is in Story mode and can't trade this way.",
+    "trade_cannot_self": "Can't trade with yourself.",
+    "trade_negative_money": "Money offered can't be negative.",
+    "trade_good_qty_mismatch": "A good and a quantity must be given together, or not at all.",
+    "trade_invalid_qty": "Quantity must be a positive number.",
+    "trade_empty_offer": "Offer at least some money or a good on each side.",
+    "trade_insufficient_money": "**{name}** doesn't have enough money to cover this trade.",
+    "trade_insufficient_inventory": "**{name}** doesn't have enough of that good to cover this trade.",
+    "trade_not_pending": "This trade offer isn't pending anymore.",
+    "trade_offer_sent": "Trade offer sent to **{name}** -- waiting on their response.",
+    "trade_accepted": "Trade accepted -- goods and money have changed hands.",
+    "trade_declined": "Trade declined.",
+    "trade_cancelled": "Trade offer cancelled.",
+    "trade_not_found": "No trade offer by that id.",
+    "trade_not_yours_to_cancel": "That isn't your trade offer to cancel.",
     # Stealing (contraband system: /steal)
     "steal_target_not_found": "No one by that name is here to steal from.",
     "steal_not_here": "**{name}** needs to be at the same location as the mark to try this.",
@@ -232,6 +293,16 @@ STRINGS: dict[str, str] = {
     "the start of the morning one.",
     "sleep_ok": "**{name}** sleeps {ticks} tick(s) and restores {restored} fatigue "
     "(now {fatigue}/100).",
+    # Sustenance (Simulation mode: /eat, /drink, /entertain)
+    "sustenance_mode_forbidden": "**{name}** doesn't need to eat, drink, or entertain "
+    "themselves in their current RP mode.",
+    "sustenance_insufficient_funds": "**{name}** can't afford that ({cost} money).",
+    "already_ate_today": "**{name}** has already eaten today.",
+    "already_drank_today": "**{name}** has already had something to drink today.",
+    "already_entertained_today": "**{name}** has already entertained themselves today.",
+    "eat_ok": "**{name}** eats and feels better (hunger now {hunger}/100).",
+    "drink_ok": "**{name}** has something to drink (thirst now {thirst}/100).",
+    "entertain_ok": "**{name}** takes some time to unwind (sanity now {sanity}/100).",
     # NPC engagements (group RP threads with one or more NPCs, plus other players'
     # characters by invitation)
     "engagement_no_location": "**{name}** hasn't traveled anywhere yet -- use `/travel`, "

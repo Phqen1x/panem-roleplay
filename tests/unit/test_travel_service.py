@@ -113,6 +113,14 @@ class TestCheckCanTravel:
             character=character, location=location, current_tick=0
         )  # no raise
 
+    def test_story_mode_bypasses_the_restricted_location_gate(self):
+        district = make_district()
+        character = make_character(job_title=None, positions=[], rp_mode="story")
+        location = travel_svc.resolve_location(district, "labs")
+        travel_svc.check_can_travel(
+            character=character, location=location, current_tick=0
+        )  # no raise
+
 
 class TestResolveStation:
     def test_finds_the_station_location(self):
@@ -278,6 +286,57 @@ class TestCheckCanTravelDistrict:
                 character=character, district=district, destination_id=1, current_tick=100
             )
         assert exc_info.value.reason_key == "travel_not_at_station"
+
+    def test_story_mode_does_not_need_to_be_at_the_station(self):
+        district = make_district()
+        character = make_character(location_id="square", rp_mode="story")
+        travel_svc.check_can_travel_district(
+            character=character, district=district, destination_id=1, current_tick=100
+        )  # no raise
+
+
+class TestTransitTicksFor:
+    def test_story_mode_is_instant(self):
+        character = make_character(rp_mode="story")
+        assert travel_svc.transit_ticks_for(character) == 0
+
+    def test_life_mode_is_flat_one_tick(self):
+        character = make_character(rp_mode="life")
+        assert travel_svc.transit_ticks_for(character) == constants.LIFE_MODE_TRANSIT_TICKS
+
+    def test_simulation_mode_uses_the_full_transit_time(self):
+        character = make_character(rp_mode="simulation")
+        assert travel_svc.transit_ticks_for(character) == constants.TRANSIT_TICKS
+
+
+class TestShouldChargeTransport:
+    def test_story_mode_never_pays(self):
+        character = make_character(rp_mode="story", district_id=12, positions=[])
+        assert travel_svc.should_charge_transport(character, 12, 3) is False
+
+    def test_life_mode_pays_for_a_non_free_route(self):
+        character = make_character(rp_mode="life", district_id=12, positions=[])
+        assert travel_svc.should_charge_transport(character, 12, 3) is True
+
+    def test_life_mode_does_not_pay_for_the_free_route_home(self):
+        character = make_character(rp_mode="life", district_id=12, positions=[])
+        assert travel_svc.should_charge_transport(character, 3, 12) is False
+
+
+class TestApplyInstantArrival:
+    def test_moves_the_character_to_the_destination_station(self):
+        destination = make_district()
+        destination.id = 3
+        character = make_character(current_district_id=12, location_id="station")
+        travel_svc.apply_instant_arrival(character, destination)
+        assert character.current_district_id == 3
+        assert character.location_id == "station"
+
+    def test_clears_away_since_tick_when_arriving_home(self):
+        destination = make_district()
+        character = make_character(district_id=12, current_district_id=3, away_since_tick=50)
+        travel_svc.apply_instant_arrival(character, destination)
+        assert character.away_since_tick is None
 
 
 class TestPlace:

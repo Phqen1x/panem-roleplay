@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 
 from panem_shared import constants
-from panem_shared.db.models import Character, Npc
-from panem_shared.enums import CharacterStatus, DayPhase
+from panem_shared.db.models import AfflictionType, Character, CharacterAffliction, Npc
+from panem_shared.enums import AfflictionSource, CharacterStatus, DayPhase, RpMode
 from panem_sim.rng import tick_rng
 from panem_sim.state import TickContext, WorldState
 from panem_sim.systems import needs
@@ -18,10 +18,13 @@ def make_character(**overrides: object) -> Character:
         name="Test",
         age=20,
         status=CharacterStatus.APPROVED.value,
+        rp_mode=RpMode.SIMULATION.value,
         money=0,
         hunger=0.0,
         health=100.0,
         fatigue=100.0,
+        thirst=0.0,
+        sanity=100.0,
     )
     defaults.update(overrides)
     return Character(**defaults)  # type: ignore[arg-type]
@@ -183,3 +186,173 @@ class TestNpcNeeds:
         assert npc.money == pytest.approx(0.0)
         assert npc.hunger == 80.0 - constants.HUNGER_DECREASE_MET
         assert npc.health == 95.0 - constants.HEALTH_DECAY_PER_NIGHT
+
+
+class TestModeGating:
+    def test_life_mode_characters_are_left_entirely_untouched(self):
+        character = make_character(
+            rp_mode=RpMode.LIFE.value, money=0, hunger=0.0, health=100.0, thirst=0.0, sanity=100.0
+        )
+        state = WorldState(
+            districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
+        )
+
+        needs.run(state, make_ctx(tick=constants.TICKS_PER_DAY))
+
+        assert character.money == 0
+        assert character.hunger == 0.0
+        assert character.health == 100.0
+        assert character.thirst == 0.0
+        assert character.sanity == 100.0
+
+    def test_story_mode_characters_are_left_entirely_untouched(self):
+        character = make_character(rp_mode=RpMode.STORY.value, money=0, thirst=0.0, sanity=100.0)
+        state = WorldState(
+            districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
+        )
+
+        needs.run(state, make_ctx(tick=constants.TICKS_PER_DAY))
+
+        assert character.thirst == 0.0
+        assert character.sanity == 100.0
+
+
+class TestThirstAndSanity:
+    def test_thirst_rises_when_not_drunk_today(self):
+        character = make_character(thirst=0.0, last_drank_tick=None)
+        state = WorldState(
+            districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
+        )
+
+        needs.run(state, make_ctx(tick=constants.TICKS_PER_DAY))
+
+        assert character.thirst == constants.THIRST_INCREASE_PER_DAY
+
+    def test_thirst_holds_steady_if_drunk_earlier_that_same_day(self):
+        character = make_character(thirst=20.0, last_drank_tick=5)
+        state = WorldState(
+            districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
+        )
+
+        needs.run(state, make_ctx(tick=constants.TICKS_PER_DAY))
+
+        assert character.thirst == 20.0
+
+    def test_high_thirst_erodes_health(self):
+        character = make_character(
+            thirst=constants.HEALTH_DECAY_THIRST_THRESHOLD,
+            last_drank_tick=None,
+            health=50.0,
+            money=constants.NIGHTLY_LIVING_COST * 2,
+        )
+        state = WorldState(
+            districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
+        )
+
+        needs.run(state, make_ctx(tick=constants.TICKS_PER_DAY))
+
+        assert character.health == pytest.approx(
+            50.0 + constants.HEALTH_RECOVERY_PER_NIGHT - constants.HEALTH_DECAY_PER_NIGHT_THIRST
+        )
+
+    def test_sanity_falls_when_not_entertained_today(self):
+        character = make_character(sanity=100.0, last_entertained_tick=None)
+        state = WorldState(
+            districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
+        )
+
+        needs.run(state, make_ctx(tick=constants.TICKS_PER_DAY))
+
+        assert character.sanity == 100.0 - constants.SANITY_DECREASE_PER_DAY
+
+    def test_sanity_holds_steady_if_entertained_earlier_that_same_day(self):
+        character = make_character(sanity=90.0, last_entertained_tick=5)
+        state = WorldState(
+            districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
+        )
+
+        needs.run(state, make_ctx(tick=constants.TICKS_PER_DAY))
+
+        assert character.sanity == 90.0
+
+    def test_low_sanity_erodes_health(self):
+        character = make_character(
+            sanity=constants.HEALTH_DECAY_SANITY_THRESHOLD,
+            last_entertained_tick=None,
+            health=50.0,
+            money=constants.NIGHTLY_LIVING_COST * 2,
+        )
+        state = WorldState(
+            districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
+        )
+
+        needs.run(state, make_ctx(tick=constants.TICKS_PER_DAY))
+
+        assert character.health == pytest.approx(
+            50.0 + constants.HEALTH_RECOVERY_PER_NIGHT - constants.HEALTH_DECAY_PER_NIGHT_SANITY
+        )
+
+
+class TestAutoAfflictionsAndDeath:
+    def test_applies_a_catalog_affliction_once_a_stat_crosses_its_threshold(self):
+        character = make_character(thirst=90.0, money=constants.NIGHTLY_LIVING_COST * 2)
+        character.id = 1
+        affliction_type = AfflictionType(
+            name="Dehydrated",
+            description="",
+            is_permanent=False,
+            auto_apply_stat="thirst",
+            auto_apply_threshold=1000.0,
+        )
+        state = WorldState(
+            districts={},
+            npcs={},
+            npc_schedules={},
+            characters={1: character},
+            open_shifts=[],
+            affliction_types=[affliction_type],
+        )
+
+        needs.run(state, make_ctx(tick=constants.TICKS_PER_DAY))
+
+        assert len(state.new_character_afflictions) == 1
+        assert state.new_character_afflictions[0].character_id == 1
+
+    def test_cures_an_active_affliction_once_its_stat_recovers(self):
+        character = make_character(sanity=80.0, money=constants.NIGHTLY_LIVING_COST * 2)
+        character.id = 1
+        affliction_type = AfflictionType(
+            name="Nightmares",
+            description="",
+            is_permanent=False,
+            cure_stat="sanity",
+            cure_threshold=60.0,
+        )
+        active_row = CharacterAffliction(
+            character_id=1, affliction_type_id=1, source=AfflictionSource.MANUAL.value
+        )
+        active_row.affliction_type = affliction_type
+        state = WorldState(
+            districts={},
+            npcs={},
+            npc_schedules={},
+            characters={1: character},
+            open_shifts=[],
+            active_afflictions={1: [active_row]},
+        )
+
+        needs.run(state, make_ctx(tick=constants.TICKS_PER_DAY))
+
+        assert active_row.cured_at is not None
+
+    def test_dies_automatically_once_health_bottoms_out(self):
+        character = make_character(money=0, hunger=constants.HEALTH_DECAY_HUNGER_THRESHOLD)
+        character.health = constants.HEALTH_MIN
+        state = WorldState(
+            districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
+        )
+
+        needs.run(state, make_ctx(tick=constants.TICKS_PER_DAY))
+
+        assert character.status == CharacterStatus.DEAD.value
+        assert character.death_cause is not None
