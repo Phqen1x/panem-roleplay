@@ -81,6 +81,7 @@ class LocationKind(enum.StrEnum):
     RESIDENTIAL = "residential"
     OUTSKIRTS = "outskirts"
     STATION = "station"
+    JAIL = "jail"
 
 
 class Position(enum.StrEnum):

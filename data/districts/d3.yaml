@@ -69,6 +69,10 @@ locations:
   kind: market
   capacity: 30
   illicit: true
+- id: jail
+  name: District Three Jail
+  kind: jail
+  capacity: 40
 map:
   image: maps/d3.png
   width: 1600
@@ -98,6 +102,9 @@ map:
     black_market:
     - 1200
     - 650
+    jail:
+    - 950
+    - 150
 quota:
   good: electronics
   amount: 700

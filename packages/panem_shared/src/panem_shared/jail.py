@@ -10,7 +10,9 @@ from __future__ import annotations
 import random
 
 from panem_shared import constants
+from panem_shared.content.schemas import District, Location
 from panem_shared.db.models import Character, DistrictState
+from panem_shared.enums import LocationKind
 from panem_shared.errors import NotAllowed
 
 
@@ -159,6 +161,16 @@ def resolve_illicit_heat(
             1.0, district_row.peacekeeper_pressure + ARREST_PRESSURE_DELTA
         )
     return True
+
+
+def find_jail_location(district: District) -> Location | None:
+    """The district's `kind: jail` location -- content validation
+    (`District._check_locations`) guarantees every district has exactly
+    one, so `None` here only ever means a hand-built `District` (a test
+    fixture) that skipped it. Used by `panem_bot.services.proxy.check_can_
+    proxy`'s jailed carve-out to find the one thread a jailed character
+    may still RP in."""
+    return next((loc for loc in district.locations if loc.kind == LocationKind.JAIL), None)
 
 
 def check_is_jailed(character: Character, current_tick: int) -> None:

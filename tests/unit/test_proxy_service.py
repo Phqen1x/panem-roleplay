@@ -311,6 +311,55 @@ class TestCheckCanProxy:
         )
         assert refusal is None
 
+    def test_jailed_allowed_in_the_jail_thread_of_their_home_district(self):
+        character = make_character(jailed_until_tick=100, district_id=12, current_district_id=12)
+        district = self.make_district([Location(id="cell", name="The Cell", kind="jail")])
+        refusal = proxy_svc.check_can_proxy(
+            character=character, district=district, location_id="cell", current_tick=10
+        )
+        assert refusal is None
+
+    def test_jailed_allowed_in_the_jail_thread_of_the_district_they_were_caught_in(self):
+        # Home is district 12, but they were caught (and are still jailed)
+        # in district 5 -- either district's cell thread is fair game.
+        character = make_character(jailed_until_tick=100, district_id=12, current_district_id=5)
+        district = self.make_district([Location(id="cell", name="The Cell", kind="jail")])
+        district = district.model_copy(update={"id": 5})
+        refusal = proxy_svc.check_can_proxy(
+            character=character, district=district, location_id="cell", current_tick=10
+        )
+        assert refusal is None
+
+    def test_jailed_still_refused_elsewhere_in_an_allowed_district(self):
+        character = make_character(jailed_until_tick=100, district_id=12, current_district_id=12)
+        district = self.make_district(
+            [
+                Location(id="cell", name="The Cell", kind="jail"),
+                Location(id="sq", name="Square", kind="public"),
+            ]
+        )
+        refusal = proxy_svc.check_can_proxy(
+            character=character, district=district, location_id="sq", current_tick=10
+        )
+        assert refusal is not None and refusal.reason_key == "proxy_character_jailed"
+
+    def test_jailed_refused_in_a_jail_thread_of_an_unrelated_district(self):
+        character = make_character(jailed_until_tick=100, district_id=12, current_district_id=12)
+        district = self.make_district([Location(id="cell", name="The Cell", kind="jail")])
+        district = district.model_copy(update={"id": 7})
+        refusal = proxy_svc.check_can_proxy(
+            character=character, district=district, location_id="cell", current_tick=10
+        )
+        assert refusal is not None and refusal.reason_key == "proxy_character_jailed"
+
+    def test_jailed_refused_when_the_district_has_no_jail_location(self):
+        character = make_character(jailed_until_tick=100, district_id=12, current_district_id=12)
+        district = self.make_district([Location(id="sq", name="Square", kind="public")])
+        refusal = proxy_svc.check_can_proxy(
+            character=character, district=district, location_id="sq", current_tick=10
+        )
+        assert refusal is not None and refusal.reason_key == "proxy_character_jailed"
+
     def test_wrong_district_refused(self):
         character = make_character(district_id=5, current_district_id=5)
         district = self.make_district([Location(id="sq", name="Square", kind="public")])

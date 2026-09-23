@@ -98,6 +98,18 @@ class TestCheckCanSteal:
 
         stealing_svc.check_can_steal(character, victim, TICKS_PER_PHASE)  # no raise
 
+    def test_raises_when_jailed(self):
+        character = make_character(jailed_until_tick=100)
+        victim = make_npc()
+        with pytest.raises(NotAllowed) as exc_info:
+            stealing_svc.check_can_steal(character, victim, 10)
+        assert exc_info.value.reason_key == "steal_jailed"
+
+    def test_allowed_once_jail_has_expired(self):
+        character = make_character(jailed_until_tick=5)
+        victim = make_npc()
+        stealing_svc.check_can_steal(character, victim, 10)  # no raise
+
 
 class TestResolveSteal:
     async def test_success_moves_money_with_no_consequence(self, db_session):
@@ -282,6 +294,14 @@ class TestCheckCanBurgle:
         with pytest.raises(NotAllowed) as exc_info:
             stealing_svc.check_can_burgle(character, house, 1)
         assert exc_info.value.reason_key == "steal_on_cooldown"
+
+    def test_raises_when_jailed(self):
+        character = make_character(current_district_id=1, jailed_until_tick=100)
+        character.id = 1
+        house = make_house(district_id=1)
+        with pytest.raises(NotAllowed) as exc_info:
+            stealing_svc.check_can_burgle(character, house, 10)
+        assert exc_info.value.reason_key == "burgle_jailed"
 
     def test_allowed_for_a_stranger_s_house(self):
         character = make_character(current_district_id=1)

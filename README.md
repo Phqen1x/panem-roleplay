@@ -3286,3 +3286,68 @@ crime.css, 4 -> 5) bumped; `app.js`'s `ASSET_VERSION` (23 -> 24, covering `tabs/
 `index.html`'s matching `?v=` bumped too. New migration `b4d7f1a8c3e9` round-tripped up/down/up
 clean; full test suite (`test_poaching_service.py` rewritten for the new split, `test_api_app.py`
 gained poach-cooldown/start/status/result coverage) passes at 997 (up from 987).
+
+### Jailed characters: locked out of stealing/burgling/poaching, and confined to a real jail cell thread
+
+User asks: "Disallow jailed players from stealing, burgling, or poaching. They shouldn't be able to
+travel either. ... make a forum thread on setup in each forum for the jail and they are only allowed
+to RP within the jail thread for their district, or the district in which they were jailed, while
+jailed. Other players can also 'visit' the district jail and talk to inmates via simply traveling to
+that forum channel without being jailed."
+
+Travel was already fully blocked for a jailed character (`panem_shared.travel.check_can_travel`/
+`check_can_travel_district` already call `panem_shared.jail.check_not_jailed` -- confirmed by
+reading the code rather than re-adding a check that was already there). `/steal`/`/burgle`/`/poach`
+had no such gate at all, so a jailed character could still pickpocket, break into a house, or go
+hunting from inside their cell. Added the same `check_not_jailed` call `check_can_travel` already
+uses to `panem_shared.stealing.check_can_steal`/`check_can_burgle` and `panem_shared.poaching.check_
+can_poach`, each with its own reason key (`steal_jailed`, `burgle_jailed`, `poach_jailed`) -- these
+flow straight through the existing generic `ServiceError` -> `t(reason_key)` (bot) / HTTP 400 detail
+(dashboard) handling every other refusal already uses, so no cog/route changes were needed beyond
+the one `check_not_jailed` line in each service function.
+
+**The jail cell as a real, travelable `Location`.** Rather than build a parallel "confined to a
+special channel" system, jail became an ordinary `kind: jail` `Location` (new `LocationKind.JAIL`)
+authored once per district (`data/districts/*.yaml`, all 13 -- one `- id: jail` entry each, e.g.
+"District Twelve Jail", "The Capitol Jail"). This means `scripts/setup_guild.py` needed *zero* code
+changes: its existing `ensure_ambient_posts`/`_location_tags` already iterate every `district.
+locations` entry to give each one a forum tag and a pinned ambient thread inside that district's
+roleplay forum -- the jail location gets exactly the same treatment as the Square or the Hob,
+automatically, the moment content declares it. Same reasoning covers the dashboard's Travel tab
+(`dashboard_routes.py`'s `district.locations` iteration) and the map: nothing needed touching there
+either. A `Location.kind == "jail"` isn't `restricted` (default `false`), so `has_location_access`
+already lets anyone travel there -- this is exactly how "other players can visit ... via simply
+traveling to that forum channel" falls out of the existing travel/RP system for free: a free
+character who travels to the jail location gets `location_id` set to it like any other location, and
+`can_rp_at_location` matches it like any other location. `District._check_locations` now also
+rejects more than one `kind: jail` location per district (a real authoring-mistake guard), but
+doesn't *require* one -- making it a third hard-required kind (alongside station/public) would have
+forced every hand-built `District(...)` test fixture across ~18 files (many written before jail
+existed) to grow one just to keep constructing; `panem_shared.jail.find_jail_location` and its one
+caller already treat "this district has no jail location" as a normal, handled `None` case rather
+than an invariant violation, so the softer check costs nothing in practice while still catching a
+real content bug (duplicate jail locations, the same way duplicate location names are already
+rejected).
+
+**The actual RP restriction, for the jailed character themselves.** `panem_bot.services.proxy.check_
+can_proxy` already refused a jailed character outright (`proxy_character_jailed`) in *every* thread --
+stricter than what was asked. Replaced the blanket refusal with a carve-out: a jailed character may
+still post, but only in the one thread that models their cell -- the jail location's own scene, and
+only in their home district (`Character.district_id`) or the district they were actually jailed in
+(`Character.current_district_id`, which stays frozen at whichever district they were in the moment
+they were jailed, since travel is refused outright the whole time they're locked up -- no new column
+needed to track "where they were jailed," the existing field already can't move). Every other
+thread -- including a different location's scene in one of those same two districts -- is still
+refused with the same `proxy_character_jailed` reason as before. New `panem_shared.jail.find_jail_
+location(district) -> Location | None` looks up a district's jail location by kind; `panem_bot.
+services.proxy._jailed_district_allowed` checks the home-or-jailed-in district match.
+
+Verified with new unit coverage: `test_content_loader.py` (every real district has exactly one jail
+location), `test_shared_jail.py` (`find_jail_location` found/`None` cases), `test_stealing_service.py`
+/`test_poaching_service.py` (jailed refusal + reason key for all three actions, still allowed once the
+sentence expires), and `test_proxy_service.py` (five new cases: allowed in the home district's cell,
+allowed in the arrest district's cell, still refused elsewhere in an otherwise-allowed district,
+refused in an unrelated district's cell, refused when the district has no jail location at all). Full
+suite passes at 1010 (up from 997); `uv run python scripts/lemonade_omni.py build` regenerated the two
+committed dialogue-context collection JSONs (`data/lemonade/collections/*.json`), which embed a
+per-district location summary that the new jail locations changed.

@@ -112,6 +112,19 @@ class District(BaseModel):
             raise ValueError(f"district {self.id} has no `kind: station` location (FR-LOC-7)")
         if LocationKind.PUBLIC not in kinds:
             raise ValueError(f"district {self.id} has no `kind: public` location (FR-CHR-4)")
+        # A `kind: jail` location isn't required at the schema level (every
+        # real district under `data/` ships exactly one -- enforced by
+        # `tests/unit/test_content_loader.py` instead, the same way the
+        # style checks below don't hard-require every content-authored
+        # kind). Keeping it a soft convention rather than a third required
+        # kind here avoids forcing every hand-built `District(...)` test
+        # fixture across the suite (many of them predate jail entirely) to
+        # carry one just to satisfy validation; `panem_shared.jail.find_
+        # jail_location` and its callers already treat "no jail location"
+        # as a normal, handled case rather than an invariant violation.
+        jail_kinds = [k for k in kinds if k == LocationKind.JAIL]
+        if len(jail_kinds) > 1:
+            raise ValueError(f"district {self.id} has {len(jail_kinds)} `kind: jail` locations")
 
         return self
 

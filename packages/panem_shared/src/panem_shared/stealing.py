@@ -17,7 +17,12 @@ from panem_shared import constants
 from panem_shared.db.models import Character, DistrictState, Npc, Property, RelationshipRow
 from panem_shared.enums import CharacterStatus, OwnerKind, PropertyKind
 from panem_shared.errors import NotAllowed
-from panem_shared.jail import commit_to_jail, crackdown_bad_odds, crackdown_good_odds
+from panem_shared.jail import (
+    check_not_jailed,
+    commit_to_jail,
+    crackdown_bad_odds,
+    crackdown_good_odds,
+)
 from panem_shared.relationships import relationship_key
 from panem_shared.simtime import TICKS_PER_PHASE
 
@@ -39,12 +44,13 @@ class StealResult:
 
 def check_can_steal(character: Character, victim: StealVictim, current_tick: int) -> None:
     """Raises `NotAllowed` unless `character` can attempt this steal:
-    approved, physically at the same location as `victim`, and hasn't
-    already tried once this day-phase (`Character.last_steal_tick`,
-    compared via `tick // TICKS_PER_PHASE` -- the same boundary math
-    `panem_shared.simtime.is_phase_boundary` uses)."""
+    approved, not currently jailed, physically at the same location as
+    `victim`, and hasn't already tried once this day-phase (`Character.
+    last_steal_tick`, compared via `tick // TICKS_PER_PHASE` -- the same
+    boundary math `panem_shared.simtime.is_phase_boundary` uses)."""
     if character.status != CharacterStatus.APPROVED.value:
         raise NotAllowed("character_not_approved")
+    check_not_jailed(character, current_tick, "steal_jailed")
     if character.location_id is None or character.location_id != victim.location_id:
         raise NotAllowed("steal_not_here", name=character.name)
     if (
@@ -58,9 +64,10 @@ def check_can_burgle(
     character: Character, house: Property, current_tick: int, *, owner: Character | None = None
 ) -> None:
     """Raises `NotAllowed` unless `character` can attempt this burglary:
-    approved, physically in the house's district (`Property` carries no
-    `location_id` the way a person does, so district presence is the
-    closest match to "same location as you"), not its own owner, hasn't
+    approved, not currently jailed, physically in the house's district
+    (`Property` carries no `location_id` the way a person does, so
+    district presence is the closest match to "same location as you"),
+    not its own owner, hasn't
     already stolen or burgled this day-phase -- the same `last_steal_
     tick` cooldown `/steal` uses -- and, when `owner` is given (the
     caller already looked it up to find the house), not currently home:
@@ -69,6 +76,7 @@ def check_can_burgle(
     skips this check rather than refusing every burglary."""
     if character.status != CharacterStatus.APPROVED.value:
         raise NotAllowed("character_not_approved")
+    check_not_jailed(character, current_tick, "burgle_jailed")
     if house.kind != PropertyKind.HOUSE.value:
         raise NotAllowed("burgle_not_a_house")
     if character.current_district_id != house.district_id:

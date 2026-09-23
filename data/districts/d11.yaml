@@ -63,6 +63,10 @@ locations:
   access_jobs:
   - d11_picker
   - d11_presser
+- id: jail
+  name: District Eleven Jail
+  kind: jail
+  capacity: 40
 map:
   image: maps/d11.png
   width: 1600
@@ -89,6 +93,9 @@ map:
     outskirts:
     - 1400
     - 800
+    jail:
+    - 950
+    - 150
 quota:
   good: produce
   amount: 1300

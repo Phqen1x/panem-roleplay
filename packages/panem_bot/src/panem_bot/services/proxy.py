@@ -11,6 +11,7 @@ from panem_shared.constants import PROXY_MESSAGE_MAX_LEN
 from panem_shared.content.schemas import District, Location
 from panem_shared.db.models import Character, Npc, Scene
 from panem_shared.enums import CharacterStatus, Position, SceneKind
+from panem_shared.jail import find_jail_location
 from panem_shared.location_access import has_location_access as has_location_access
 
 
@@ -119,6 +120,16 @@ class ProxyRefusal:
     reason_key: str
 
 
+def _jailed_district_allowed(character: Character, district_id: int) -> bool:
+    """While jailed, a character may only be played in the district they
+    call home (`Character.district_id`) or the one they were actually
+    caught in (`Character.current_district_id` -- travel is refused
+    outright for a jailed character, `panem_shared.travel.check_can_
+    travel`/`check_can_travel_district`, so this stays frozen at whichever
+    district they were in the moment they were jailed)."""
+    return district_id in (character.district_id, character.current_district_id)
+
+
 def check_can_proxy(
     *, character: Character, district: District, location_id: str | None, current_tick: int
 ) -> ProxyRefusal | None:
@@ -130,7 +141,20 @@ def check_can_proxy(
     if character.status != CharacterStatus.APPROVED.value:
         return ProxyRefusal("character_not_approved")
     if character.jailed_until_tick is not None and character.jailed_until_tick > current_tick:
-        return ProxyRefusal("proxy_character_jailed")
+        # A jailed character isn't blocked from RP outright -- they're
+        # confined to the one thread that models their cell: the jail
+        # location's own scene, in either their home district or the one
+        # they were actually jailed in. Every other thread (including
+        # scenes elsewhere in one of those same two districts) is still
+        # refused, same as before this carve-out existed.
+        jail_location = find_jail_location(district)
+        if (
+            jail_location is None
+            or location_id != jail_location.id
+            or not _jailed_district_allowed(character, district.id)
+        ):
+            return ProxyRefusal("proxy_character_jailed")
+        return None
     if not can_rp_in_district(character, district.id):
         return ProxyRefusal("proxy_wrong_district")
 

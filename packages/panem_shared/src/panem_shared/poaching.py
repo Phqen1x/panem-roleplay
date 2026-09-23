@@ -27,7 +27,7 @@ from panem_shared.content.schemas import District, Good, Location
 from panem_shared.db.models import Character, DistrictState, Inventory
 from panem_shared.enums import CharacterStatus, LocationKind, OwnerKind
 from panem_shared.errors import NotAllowed, NotFound
-from panem_shared.jail import commit_to_jail
+from panem_shared.jail import check_not_jailed, commit_to_jail
 from panem_shared.simtime import TICKS_PER_PHASE
 
 PEACEKEEPER_PRESSURE_DELTA = 0.05
@@ -80,6 +80,7 @@ def check_can_poach(
     it's meant to be."""
     if character.status != CharacterStatus.APPROVED.value:
         raise NotAllowed("character_not_approved")
+    check_not_jailed(character, current_tick, "poach_jailed")
     location = resolve_outskirts(district)
     if character.location_id != location.id:
         raise NotAllowed("poach_not_at_outskirts", name=character.name, location=location.name)

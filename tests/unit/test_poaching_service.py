@@ -124,6 +124,19 @@ class TestCheckCanPoach:
         # no raise
         poaching_svc.check_can_poach(character, district, make_goods(), TICKS_PER_PHASE)
 
+    def test_raises_when_jailed(self):
+        district = make_district()
+        character = make_character(jailed_until_tick=100)
+        with pytest.raises(NotAllowed) as exc_info:
+            poaching_svc.check_can_poach(character, district, make_goods(), 10)
+        assert exc_info.value.reason_key == "poach_jailed"
+
+    def test_allowed_once_jail_has_expired(self):
+        district = make_district()
+        character = make_character(jailed_until_tick=5)
+        # no raise
+        poaching_svc.check_can_poach(character, district, make_goods(), 10)
+
 
 class TestPoachDifficulty:
     def test_flat_and_derived_from_the_archery_base_success_constant(self):

@@ -83,6 +83,10 @@ locations:
   kind: market
   capacity: 30
   illicit: true
+- id: jail
+  name: District Two Jail
+  kind: jail
+  capacity: 40
 map:
   image: maps/d2.png
   width: 1600
@@ -118,6 +122,9 @@ map:
     black_market:
     - 1200
     - 650
+    jail:
+    - 950
+    - 150
 quota:
   good: weapons
   amount: 900

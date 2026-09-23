@@ -71,6 +71,10 @@ locations:
   illicit: true
   job_ids:
   - d8_smuggler
+- id: jail
+  name: District Eight Jail
+  kind: jail
+  capacity: 40
 map:
   image: maps/d8.png
   width: 1600
@@ -100,6 +104,9 @@ map:
     loading_dock:
     - 1100
     - 900
+    jail:
+    - 950
+    - 150
 quota:
   good: textiles
   amount: 1100

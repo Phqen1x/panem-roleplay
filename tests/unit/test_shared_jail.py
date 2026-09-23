@@ -9,9 +9,28 @@ import pytest
 
 from panem_shared import constants
 from panem_shared import jail as shared_jail
+from panem_shared.content.schemas import District, DistrictCulture, DistrictMap, Location
 from panem_shared.db.models import Character, DistrictState
 from panem_shared.enums import CharacterStatus
 from panem_shared.errors import NotAllowed
+
+
+def make_district(extra_locations: list[Location]) -> District:
+    locations = [
+        Location(id="square", name="Square", kind="public"),
+        Location(id="station", name="Station", kind="station"),
+        *extra_locations,
+    ]
+    coords = {loc.id: (0, 0) for loc in locations}
+    return District(
+        id=12,
+        name="District Twelve",
+        industry="coal",
+        population_base=100,
+        culture=DistrictCulture(),
+        locations=locations,
+        map=DistrictMap(image="x.png", width=10, height=10, location_coords=coords),
+    )
 
 
 def make_district_row(**overrides: object) -> DistrictState:
@@ -290,3 +309,16 @@ class TestCrackdownOdds:
     def test_bad_odds_clamp_at_one(self):
         row = make_district_row(crackdown_until_tick=100)
         assert shared_jail.crackdown_bad_odds(0.9, row, 10) == 1.0
+
+
+class TestFindJailLocation:
+    def test_finds_the_jail_location(self):
+        jail = Location(id="jail", name="The Jail", kind="jail")
+        district = make_district([jail])
+        found = shared_jail.find_jail_location(district)
+        assert found is not None
+        assert found.id == "jail"
+
+    def test_none_when_district_has_no_jail(self):
+        district = make_district([])
+        assert shared_jail.find_jail_location(district) is None

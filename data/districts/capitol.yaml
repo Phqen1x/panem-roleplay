@@ -85,6 +85,10 @@ locations:
   restricted: true
   access_items:
   - capitol_pass
+- id: jail
+  name: The Capitol Jail
+  kind: jail
+  capacity: 40
 map:
   image: maps/capitol.png
   width: 1600
@@ -116,4 +120,7 @@ map:
     - 200
     justice:
     - 800
+    - 150
+    jail:
+    - 950
     - 150

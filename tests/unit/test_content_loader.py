@@ -24,6 +24,12 @@ class TestRealContentFiles:
             assert "station" in kinds
             assert "public" in kinds
 
+    def test_every_district_has_exactly_one_jail(self):
+        bundle = load_content(REPO_DATA_DIR)
+        for district in bundle.districts.values():
+            jail_locations = [loc for loc in district.locations if loc.kind.value == "jail"]
+            assert len(jail_locations) == 1, district.id
+
     def test_goods_and_jobs_and_routes_present(self):
         bundle = load_content(REPO_DATA_DIR)
         assert len(bundle.goods) > 0
