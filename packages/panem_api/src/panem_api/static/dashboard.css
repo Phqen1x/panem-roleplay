@@ -692,3 +692,39 @@ table.data-table .btn {
   color: var(--muted);
   text-align: center;
 }
+
+.meter-row {
+  margin-bottom: 10px;
+}
+
+.meter-label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.meter-track {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  height: 10px;
+  overflow: hidden;
+}
+
+.meter-fill {
+  background: var(--accent);
+  height: 100%;
+}
+
+.affliction-list,
+.mode-switch-bullets {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+
+.affliction-list li,
+.mode-switch-bullets li {
+  margin-bottom: 4px;
+}

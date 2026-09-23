@@ -31,7 +31,7 @@ const STEP_TIMEOUT_MS = 8000;
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "29";
+const ASSET_VERSION = "30";
 
 // Mirrors `panem_shared.theme`'s `DEFAULT_BACKGROUND_HEX`/`DEFAULT_ACCENT_
 // HEX`/`DEFAULT_PANEL_HEX`/`DEFAULT_TEXT_HEX`, which themselves mirror
@@ -47,8 +47,9 @@ const DEFAULT_THEME = {
   profile_id: null,
 };
 
-const TABS = ["map", "character", "work", "market", "travel", "social", "jail", "crime", "housing"];
+const TABS = ["home", "map", "character", "work", "market", "travel", "social", "jail", "crime", "housing"];
 const TAB_LABELS = {
+  home: "Home",
   map: "Map",
   character: "Character",
   work: "Work",
