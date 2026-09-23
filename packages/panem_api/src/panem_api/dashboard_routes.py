@@ -1105,6 +1105,7 @@ def build_crime_router(
                             Character.current_district_id == character.current_district_id,
                             Character.location_id == character.location_id,
                             Character.id != character.id,
+                            Character.rp_mode != RpMode.STORY.value,
                         )
                     )
                 )
@@ -1132,12 +1133,17 @@ def build_crime_router(
     async def burgle_targets(character_id: int, discord_id: int) -> BurgleTargetsResponse:
         """Owners of a house in `character_id`'s current district (not
         their own) -- an improvement over `/burgle`'s bare-string `owner`
-        param, which has no autocomplete on the bot side at all."""
+        param, which has no autocomplete on the bot side at all. Life mode
+        has no housing access at all, so the option shouldn't even show
+        up to them -- an empty list, same shape as a district with no
+        houses, rather than a distinct error."""
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             character = await _resolve_owned_character(
                 session, discord_id=discord_id, character_id=character_id
             )
+            if character.rp_mode == RpMode.LIFE.value:
+                return BurgleTargetsResponse(owners=[])
             owners = (
                 (
                     await session.execute(
@@ -1148,6 +1154,7 @@ def build_crime_router(
                             Property.owner_kind == OwnerKind.CHARACTER.value,
                             Property.district_id == character.current_district_id,
                             Character.id != character.id,
+                            Character.rp_mode != RpMode.STORY.value,
                         )
                     )
                 )
@@ -2614,7 +2621,7 @@ def build_housing_router(
             current_tick = await _current_tick(session)
             _tick, phase, _day, _month = simtime.current(current_tick)
             try:
-                housing_svc.check_can_sleep(phase)
+                housing_svc.check_can_sleep(character, phase)
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
 

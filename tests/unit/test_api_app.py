@@ -2428,6 +2428,24 @@ class TestDashboardCrime:
         targets = {(t["name"], t["kind"]) for t in response.json()["targets"]}
         assert targets == {("Mark", "player"), ("Effie", "npc")}
 
+    async def test_steal_targets_excludes_story_mode_characters(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"location_id": "square"}
+        )
+        await seed_character(
+            db_session_factory,
+            discord_id=6,
+            character_overrides={"name": "Mark", "location_id": "square", "rp_mode": "story"},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/crime/{char_id}/steal-targets",
+                params={"discord_id": 5},
+            )
+        assert response.status_code == 200
+        assert response.json()["targets"] == []
+
     async def test_burgle_targets_lists_house_owners_in_district(
         self, work_app, db_session_factory
     ):
@@ -2444,6 +2462,25 @@ class TestDashboardCrime:
             )
         assert response.status_code == 200
         assert response.json()["owners"] == ["Owner"]
+
+    async def test_burgle_targets_is_empty_for_a_life_mode_character(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"rp_mode": "life"}
+        )
+        owner_id = await seed_character(
+            db_session_factory, discord_id=6, character_overrides={"name": "Owner"}
+        )
+        await seed_house(db_session_factory, owner_id=owner_id)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/crime/{char_id}/burgle-targets",
+                params={"discord_id": 5},
+            )
+        assert response.status_code == 200
+        assert response.json()["owners"] == []
 
     async def test_steal_start_mints_an_attempt(self, work_app, db_session_factory):
         char_id = await seed_character(

@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from panem_shared import constants
 from panem_shared.content.schemas import District, Good, Location
 from panem_shared.db.models import Character, DistrictState, Inventory, MarketOrder, MarketPrice
-from panem_shared.enums import CharacterStatus, LocationKind, OwnerKind
+from panem_shared.enums import CharacterStatus, LocationKind, OwnerKind, RpMode
 from panem_shared.errors import NotAllowed, NotFound
 from panem_shared.jail import commit_to_jail, crackdown_bad_odds
 
@@ -62,6 +62,8 @@ def resolve_market_location(character: Character, district: District) -> Locatio
 def check_can_trade(character: Character) -> None:
     if character.status != CharacterStatus.APPROVED.value:
         raise NotAllowed("character_not_approved")
+    if character.rp_mode == RpMode.STORY.value:
+        raise NotAllowed("market_mode_forbidden", name=character.name)
 
 
 def resolve_good(district: District, goods: dict[str, Good], good_id: str) -> Good:

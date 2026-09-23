@@ -29,7 +29,7 @@ from panem_shared.db.models import (
     Property,
     PropertyAuction,
 )
-from panem_shared.enums import CharacterStatus, DayPhase, JobLevel, OwnerKind, PropertyKind
+from panem_shared.enums import CharacterStatus, DayPhase, JobLevel, OwnerKind, PropertyKind, RpMode
 from panem_shared.errors import NotAllowed, NotFound
 
 
@@ -38,6 +38,12 @@ def _check_alive_and_approved(character: Character) -> None:
         raise NotAllowed("character_dead")
     if character.status != CharacterStatus.APPROVED.value:
         raise NotAllowed("character_not_approved")
+    if character.rp_mode != RpMode.SIMULATION.value:
+        # Housing is Simulation-only -- Life mode has "no access to the
+        # housing system and whatnot," and Story mode never touches the
+        # economy at all. Every buy/rent/sleep/refinance/auction/inn-stay
+        # check in this module routes through here.
+        raise NotAllowed("housing_mode_forbidden", name=character.name)
 
 
 def check_can_buy_property(*, character: Character, property_: Property) -> None:
@@ -176,13 +182,17 @@ def dock_fatigue(character: Character, amount: float) -> None:
     character.fatigue = max(constants.FATIGUE_MIN, character.fatigue - amount)
 
 
-def check_can_sleep(phase: DayPhase) -> None:
+def check_can_sleep(character: Character, phase: DayPhase) -> None:
     """Sleep is only available during `DayPhase.NIGHT` -- "between the
     end of the evening shift and the beginning of the morning one," which
     per `panem_shared.simtime`'s phase order (night, morning, afternoon,
-    evening) is exactly the night phase."""
+    evening) is exactly the night phase. Simulation-only, same as the
+    rest of this module -- Life/Story have "no requirement to sleep at
+    night," which extends to no `/sleep` mechanic at all rather than an
+    optional one nothing enforces."""
+    _check_alive_and_approved(character)
     if phase != DayPhase.NIGHT:
-        raise NotAllowed("sleep_wrong_phase")
+        raise NotAllowed("sleep_wrong_phase", name=character.name)
 
 
 # ------------------------------------------------------- mortgages/refinance

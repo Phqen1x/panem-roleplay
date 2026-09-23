@@ -22,7 +22,7 @@ from panem_shared.db.models import (
     MarketPrice,
     RelationshipRow,
 )
-from panem_shared.enums import CharacterStatus, OwnerKind, Stance
+from panem_shared.enums import CharacterStatus, OwnerKind, RpMode, Stance
 
 
 class FixedRng:
@@ -170,6 +170,14 @@ class TestCheckCanTrade:
         with pytest.raises(NotAllowed) as exc_info:
             await blackmarket_svc.check_can_trade(db_session, character, fence)
         assert exc_info.value.reason_key == "character_not_approved"
+
+    async def test_story_mode_character_refused(self, db_session):
+        character = make_character(rp_mode=RpMode.STORY.value)
+        fence = make_fence()
+        await add_trust(db_session, character.id, fence.id, Stance.LOVES.value)
+        with pytest.raises(NotAllowed) as exc_info:
+            await blackmarket_svc.check_can_trade(db_session, character, fence)
+        assert exc_info.value.reason_key == "market_mode_forbidden"
 
 
 class TestBuy:

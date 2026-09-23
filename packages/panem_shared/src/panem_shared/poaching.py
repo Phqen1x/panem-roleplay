@@ -26,7 +26,7 @@ from panem_shared import constants
 from panem_shared.content.schemas import District, Good, Location
 from panem_shared.crime_log import record_crime_log
 from panem_shared.db.models import Character, DistrictState, Inventory
-from panem_shared.enums import CharacterStatus, LocationKind, OwnerKind
+from panem_shared.enums import CharacterStatus, LocationKind, OwnerKind, RpMode
 from panem_shared.errors import NotAllowed, NotFound
 from panem_shared.jail import check_not_jailed, commit_to_jail
 from panem_shared.simtime import TICKS_PER_PHASE
@@ -78,9 +78,13 @@ def check_can_poach(
     boundary math) `panem_shared.stealing.check_can_steal` uses for
     `last_steal_tick` -- unlimited poaching would make it a strictly
     better market allocation instead of the occasional coping mechanism
-    it's meant to be."""
+    it's meant to be. Story mode has no crime access at all -- "no ...
+    crime" -- since poaching has no player victim, only the actor's own
+    mode matters here."""
     if character.status != CharacterStatus.APPROVED.value:
         raise NotAllowed("character_not_approved")
+    if character.rp_mode == RpMode.STORY.value:
+        raise NotAllowed("crime_mode_forbidden", name=character.name)
     check_not_jailed(character, current_tick, "poach_jailed")
     location = resolve_outskirts(district)
     if character.location_id != location.id:

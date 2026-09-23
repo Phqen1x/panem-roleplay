@@ -28,7 +28,7 @@ from panem_bot.errors import NotAllowed
 from panem_shared import constants
 from panem_shared.content.schemas import District, Location
 from panem_shared.db.models import Character, DistrictState, Memory, Npc
-from panem_shared.enums import CharacterStatus
+from panem_shared.enums import CharacterStatus, RpMode
 from panem_shared.lemonade import omni
 from panem_shared.memory import retrieve as retrieve_memories
 from panem_shared.settings import Settings
@@ -41,6 +41,8 @@ STAMINA_KEY_PREFIX = "talk:stamina"
 def check_can_talk(character: Character) -> None:
     if character.status != CharacterStatus.APPROVED.value:
         raise NotAllowed("character_not_approved")
+    if character.rp_mode == RpMode.STORY.value:
+        raise NotAllowed("npc_interaction_mode_forbidden", name=character.name)
 
 
 def _stamina_key(npc_id: str, tick: int) -> str:

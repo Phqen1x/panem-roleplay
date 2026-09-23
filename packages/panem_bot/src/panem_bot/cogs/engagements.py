@@ -41,6 +41,7 @@ from panem_shared.enums import (
     ChannelKind,
     CharacterStatus,
     OwnerKind,
+    RpMode,
     SceneKind,
     SceneStatus,
     Stance,
@@ -406,6 +407,13 @@ class EngagementCog(commands.Cog):
             matched_npcs, remaining_names = engagements_svc.resolve_npc_participants(
                 names, list(npc_candidates)
             )
+            if matched_npcs and char.rp_mode == RpMode.STORY.value:
+                # Story mode can still /engage with other players -- "can't
+                # interact at all with NPCs" only rules out this branch.
+                await interaction.followup.send(
+                    t("npc_interaction_mode_forbidden", name=char.name), ephemeral=True
+                )
+                return
 
             char_rows = (
                 (

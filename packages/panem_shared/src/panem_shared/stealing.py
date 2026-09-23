@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from panem_shared import constants
 from panem_shared.crime_log import record_crime_log
 from panem_shared.db.models import Character, DistrictState, Npc, Property, RelationshipRow
-from panem_shared.enums import CharacterStatus, OwnerKind, PropertyKind
+from panem_shared.enums import CharacterStatus, OwnerKind, PropertyKind, RpMode
 from panem_shared.errors import NotAllowed
 from panem_shared.jail import (
     check_not_jailed,
@@ -43,6 +43,33 @@ class StealResult:
     amount: int
 
 
+def _check_crime_mode(character: Character) -> None:
+    """Shared by `check_can_steal`/`check_can_burgle`/`check_can_poach`'s
+    actor-side gate: Story mode has no crime access at all ("no ...
+    crime"), and a Life-mode character can opt out of committing crime
+    entirely (`Character.crime_enabled`, `/character crime`) -- Simulation
+    can never disable it."""
+    if character.rp_mode == RpMode.STORY.value:
+        raise NotAllowed("crime_mode_forbidden", name=character.name)
+    if character.crime_enabled is False:
+        raise NotAllowed("crime_disabled_by_actor", name=character.name)
+
+
+def _check_crime_victim_mode(victim: StealVictim) -> None:
+    """Shared by `check_can_steal`/`check_can_burgle`'s victim-side gate,
+    only meaningful for a `Character` victim (an `Npc` has neither field):
+    Story-mode characters can never be stolen from/burgled at all
+    ("cannot be stolen from, burgled, etc."), and a Life-mode victim who's
+    opted out via `crime_enabled=False` can't have crime committed
+    against them either."""
+    if not isinstance(victim, Character):
+        return
+    if victim.rp_mode == RpMode.STORY.value:
+        raise NotAllowed("victim_is_story_mode", name=victim.name)
+    if victim.crime_enabled is False:
+        raise NotAllowed("victim_crime_disabled", name=victim.name)
+
+
 def check_can_steal(character: Character, victim: StealVictim, current_tick: int) -> None:
     """Raises `NotAllowed` unless `character` can attempt this steal:
     approved, not currently jailed, physically at the same location as
@@ -51,6 +78,8 @@ def check_can_steal(character: Character, victim: StealVictim, current_tick: int
     boundary math `panem_shared.simtime.is_phase_boundary` uses)."""
     if character.status != CharacterStatus.APPROVED.value:
         raise NotAllowed("character_not_approved")
+    _check_crime_mode(character)
+    _check_crime_victim_mode(victim)
     check_not_jailed(character, current_tick, "steal_jailed")
     if character.location_id is None or character.location_id != victim.location_id:
         raise NotAllowed("steal_not_here", name=character.name)
@@ -77,6 +106,14 @@ def check_can_burgle(
     skips this check rather than refusing every burglary."""
     if character.status != CharacterStatus.APPROVED.value:
         raise NotAllowed("character_not_approved")
+    _check_crime_mode(character)
+    if character.rp_mode == RpMode.LIFE.value:
+        # Life mode has no housing access at all -- "fundamentally unable
+        # to burgle houses" -- distinct from the Story-mode block above,
+        # which _check_crime_mode already covers.
+        raise NotAllowed("burgle_mode_forbidden", name=character.name)
+    if owner is not None:
+        _check_crime_victim_mode(owner)
     check_not_jailed(character, current_tick, "burgle_jailed")
     if house.kind != PropertyKind.HOUSE.value:
         raise NotAllowed("burgle_not_a_house")

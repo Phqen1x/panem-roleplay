@@ -154,6 +154,19 @@ STRINGS: dict[str, str] = {
     ),
     "blackmarket_good_not_traded": "That good isn't traded on this district's black market.",
     "blackmarket_insufficient_stock": "The black market doesn't have that much {good} left today.",
+    # RP-mode crime gating (shared by /steal, /burgle, /poach)
+    "crime_mode_forbidden": "**{name}** is in Story mode and has no access to crime.",
+    "crime_disabled_by_actor": "**{name}** has crime disabled for themselves right now.",
+    "victim_is_story_mode": "{name} is a Story-mode character and can't be targeted this way.",
+    "victim_crime_disabled": "{name} has crime disabled and can't be targeted this way.",
+    "burgle_mode_forbidden": (
+        "**{name}** is in Life mode, which has no housing access -- burglary isn't available."
+    ),
+    "market_mode_forbidden": "**{name}** is in Story mode and has no access to the markets.",
+    "housing_mode_forbidden": (
+        "**{name}** doesn't have access to the housing system in their current RP mode."
+    ),
+    "npc_interaction_mode_forbidden": "**{name}** is in Story mode and can't interact with NPCs.",
     # Stealing (contraband system: /steal)
     "steal_target_not_found": "No one by that name is here to steal from.",
     "steal_not_here": "**{name}** needs to be at the same location as the mark to try this.",

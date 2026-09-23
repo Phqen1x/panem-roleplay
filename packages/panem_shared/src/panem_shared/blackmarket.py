@@ -31,7 +31,7 @@ from panem_shared.db.models import (
     MarketPrice,
     RelationshipRow,
 )
-from panem_shared.enums import CharacterStatus, LocationKind, OwnerKind, Stance
+from panem_shared.enums import CharacterStatus, LocationKind, OwnerKind, RpMode, Stance
 from panem_shared.errors import NotAllowed, NotFound
 from panem_shared.jail import commit_to_jail, crackdown_bad_odds
 from panem_shared.relationships import relationship_key
@@ -83,6 +83,8 @@ async def check_can_trade(session: AsyncSession, character: Character, fence: Np
     to the fence, or someone they merely tolerate, gets nothing."""
     if character.status != CharacterStatus.APPROVED.value:
         raise NotAllowed("character_not_approved")
+    if character.rp_mode == RpMode.STORY.value:
+        raise NotAllowed("market_mode_forbidden", name=character.name)
     key = relationship_key(
         (OwnerKind.CHARACTER.value, str(character.id)), (OwnerKind.NPC.value, fence.id)
     )
