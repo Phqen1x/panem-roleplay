@@ -130,7 +130,8 @@ def make_content_with_job() -> ContentBundle:
 def make_content_with_outskirts() -> ContentBundle:
     """Same shape as `make_content_with_job`, plus a district-1 `outskirts`
     location and a `food`-category good, for `/activity/dashboard/crime/
-    poach` tests (`resolve_poach` needs both to find anything to yield)."""
+    poach` and `/activity/crime/*` poach tests (`check_can_poach`/
+    `apply_poach_outcome` need both to find anything to yield)."""
     locations = [
         Location(id="square", name="The Square", kind="public"),
         Location(id="station", name="Rail Station", kind="station"),
@@ -950,6 +951,28 @@ class TestCrimeAttemptStatus:
         assert body["character_name"] == "Wren"
         assert body["target_name"] is None
 
+    async def test_poach_status(self, poach_app, db_session_factory):
+        char_id = await seed_character(db_session_factory)
+        redis_client = poach_app.state.fake_redis
+        redis_client.store[crime_attempt_key("a1")] = json.dumps(
+            {
+                "kind": "poach",
+                "character_id": char_id,
+                "district_id": 1,
+                "good_id": "grain",
+                "current_tick": 0,
+            }
+        )
+        transport = httpx.ASGITransport(app=poach_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/activity/crime/a1")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["kind"] == "poach"
+        assert body["character_name"] == "Wren"
+        assert body["target_name"] is None
+        assert 0.0 <= body["difficulty"] <= 1.0
+
 
 class TestCrimeAttemptResult:
     async def test_503s_when_not_configured(self):
@@ -1059,6 +1082,81 @@ class TestCrimeAttemptResult:
         assert response.status_code == 200
         body = response.json()
         assert body["amount"] == round(1000.0 * constants.BURGLE_YIELD_FRACTION)
+
+    async def test_poach_win_grants_the_good(self, poach_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, character_overrides={"money": 100})
+        redis_client = poach_app.state.fake_redis
+        redis_client.store[crime_attempt_key("a1")] = json.dumps(
+            {
+                "kind": "poach",
+                "character_id": char_id,
+                "district_id": 1,
+                "good_id": "grain",
+                "current_tick": 0,
+            }
+        )
+        transport = httpx.ASGITransport(app=poach_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            with patch("random.Random.random", return_value=0.99):  # not caught
+                response = await client.post("/activity/crime/a1/result", json={"won": True})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is True
+        assert body["caught"] is False
+        assert body["good_name"] == "Grain"
+        from panem_shared import constants
+
+        assert body["qty"] == constants.POACH_YIELD_QTY
+
+    async def test_poach_loss_grants_nothing_but_does_not_jail(self, poach_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, character_overrides={"money": 100})
+        redis_client = poach_app.state.fake_redis
+        redis_client.store[crime_attempt_key("a1")] = json.dumps(
+            {
+                "kind": "poach",
+                "character_id": char_id,
+                "district_id": 1,
+                "good_id": "grain",
+                "current_tick": 0,
+            }
+        )
+        transport = httpx.ASGITransport(app=poach_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            with patch("random.Random.random", return_value=0.99):  # not caught
+                response = await client.post("/activity/crime/a1/result", json={"won": False})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is False
+        assert body["caught"] is False
+        assert body["good_name"] is None
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.jailed_until_tick is None
+
+    async def test_poach_caught_reports_the_fine_regardless_of_the_shot(
+        self, poach_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, character_overrides={"money": 100})
+        redis_client = poach_app.state.fake_redis
+        redis_client.store[crime_attempt_key("a1")] = json.dumps(
+            {
+                "kind": "poach",
+                "character_id": char_id,
+                "district_id": 1,
+                "good_id": "grain",
+                "current_tick": 0,
+            }
+        )
+        transport = httpx.ASGITransport(app=poach_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            with patch("random.Random.random", return_value=0.0):  # caught
+                response = await client.post("/activity/crime/a1/result", json={"won": True})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["caught"] is True
+        assert body["success"] is False
+        assert body["good_name"] is None
+        assert body["fine"] > 0
 
     async def test_one_shot_a_second_post_404s(self, work_app, db_session_factory):
         char_id = await seed_character(
@@ -1913,44 +2011,49 @@ class TestDashboardCrime:
             )
         assert response.status_code == 400
 
-    async def test_poach_success_grants_the_good(self, poach_app, db_session_factory):
+    async def test_poach_start_mints_an_attempt(self, poach_app, db_session_factory):
         char_id = await seed_character(
             db_session_factory, discord_id=5, character_overrides={"location_id": "outskirts"}
         )
         transport = httpx.ASGITransport(app=poach_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            with patch("random.Random.random", return_value=0.99):
-                response = await client.post(
-                    f"/activity/dashboard/crime/{char_id}/poach",
-                    json={"discord_id": 5},
-                )
+            response = await client.post(
+                f"/activity/dashboard/crime/{char_id}/poach/start",
+                json={"discord_id": 5},
+            )
         assert response.status_code == 200
         body = response.json()
-        assert body["caught"] is False
-        assert body["good_name"] == "Grain"
+        assert body["target_name"] is None
+        redis_client = poach_app.state.fake_redis
+        raw = json.loads(redis_client.store[crime_attempt_key(body["attempt_id"])])
+        assert raw == {
+            "kind": "poach",
+            "character_id": char_id,
+            "district_id": 1,
+            "good_id": "grain",
+            "current_tick": 0,
+        }
 
-    async def test_poach_caught_reports_the_fine(self, poach_app, db_session_factory):
-        char_id = await seed_character(
-            db_session_factory, discord_id=5, character_overrides={"location_id": "outskirts"}
-        )
-        transport = httpx.ASGITransport(app=poach_app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            with patch("random.Random.random", return_value=0.0):
-                response = await client.post(
-                    f"/activity/dashboard/crime/{char_id}/poach",
-                    json={"discord_id": 5},
-                )
-        assert response.status_code == 200
-        body = response.json()
-        assert body["caught"] is True
-        assert body["fine"] > 0
-
-    async def test_poach_refuses_when_not_at_outskirts(self, poach_app, db_session_factory):
+    async def test_poach_start_refuses_when_not_at_outskirts(self, poach_app, db_session_factory):
         char_id = await seed_character(db_session_factory, discord_id=5)
         transport = httpx.ASGITransport(app=poach_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(
-                f"/activity/dashboard/crime/{char_id}/poach",
+                f"/activity/dashboard/crime/{char_id}/poach/start",
+                json={"discord_id": 5},
+            )
+        assert response.status_code == 400
+
+    async def test_poach_start_refuses_on_cooldown(self, poach_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"location_id": "outskirts", "last_poach_tick": 0},
+        )
+        transport = httpx.ASGITransport(app=poach_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/crime/{char_id}/poach/start",
                 json={"discord_id": 5},
             )
         assert response.status_code == 400

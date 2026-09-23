@@ -127,7 +127,11 @@ STRINGS: dict[str, str] = {
     "poach_no_outskirts": "There's nowhere to poach in this district.",
     "poach_not_at_outskirts": "**{name}** needs to be at **{location}** to try poaching.",
     "poach_nothing_to_poach": "There's nothing worth poaching here.",
+    "poach_on_cooldown": "**{name}** already tried poaching this phase of the day.",
     "poach_ok": "**{name}** slips back with {qty}x {good}, unseen.",
+    "poach_miss": "**{name}** can't land the shot and comes back empty-handed.",
+    "poach_game_ready": "**{name}** nocks an arrow at the treeline -- go make the shot!",
+    "poach_already_tried": "This hunt has already been tried!",
     "poach_caught": (
         "**{name}** is caught poaching -- fined {fine} money and held for {jail_ticks} ticks."
     ),

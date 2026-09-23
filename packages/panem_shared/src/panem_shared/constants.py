@@ -565,6 +565,13 @@ POACH_YIELD_QTY = 1
 attempt yields -- deliberately modest (an /work shift's `PLAYER_SHIFT_
 OUTPUT_QTY` is the same order of magnitude), so poaching supplements a
 short market allocation rather than replacing it outright."""
+POACH_ARCHERY_BASE_SUCCESS = 0.6
+"""The RNG-fallback stand-in for the archery minigame's own "3+ hits out
+of 5 arrows in 30 seconds" win condition -- used when no Activity is
+configured or the player hits Skip (a single roll instead of simulating
+five shots), and doubles as `poach_difficulty()`'s cosmetic client-side
+sizing input, the same way `STEAL_FROM_*_BASE_SUCCESS` feeds both
+`roll_and_apply_steal` and `steal_difficulty`."""
 
 JAIL_PRIOR_TICKS_PER_COUNT = 6
 """Extra jail ticks added to a base sentence per prior jailing

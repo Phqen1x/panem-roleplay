@@ -80,6 +80,7 @@ from panem_shared.db.session import session_scope
 from panem_shared.jail import apply_lockpick_attempt, lockpick_difficulty, resolve_illicit_heat
 from panem_shared.job_levels import job_level_for_shifts
 from panem_shared.logging import get_logger
+from panem_shared.poaching import apply_poach_outcome, poach_difficulty
 from panem_shared.redis_keys import (
     crime_attempt_key,
     crime_interaction_key,
@@ -248,6 +249,10 @@ class CrimeResultResponse(BaseModel):
     caught: bool = False
     amount: int = 0
     tries_left: int | None = None
+    # Set for `/poach` only: what was actually brought home (or not).
+    good_name: str | None = None
+    qty: int | None = None
+    fine: int | None = None
 
 
 async def _read_positions(redis_client: redis.Redis, district_id: int) -> Positions:
@@ -605,6 +610,10 @@ def create_app(
                 return CrimeAttemptStatus(
                     kind=kind, character_name=character.name, difficulty=burgle_difficulty()
                 )
+            if kind == "poach":
+                return CrimeAttemptStatus(
+                    kind=kind, character_name=character.name, difficulty=poach_difficulty()
+                )
             raise HTTPException(status_code=400, detail="Unknown crime kind")
 
     @app.post("/activity/crime/{attempt_id}/result", response_model=CrimeResultResponse)
@@ -695,6 +704,27 @@ def create_app(
                     alerted=result.alerted,
                     caught=result.caught,
                     amount=result.amount,
+                )
+            elif kind == "poach":
+                good = content.goods[attempt["good_id"]]
+                poach_result = await apply_poach_outcome(
+                    session,
+                    character=character,
+                    good=good,
+                    district_id=attempt["district_id"],
+                    current_tick=attempt["current_tick"],
+                    success=body.won,
+                    rng=rng,
+                )
+                banner = "This hunt has already been tried!"
+                response_obj = CrimeResultResponse(
+                    kind=kind,
+                    character_name=character.name,
+                    success=poach_result.good is not None,
+                    caught=poach_result.caught,
+                    good_name=poach_result.good.name if poach_result.good is not None else None,
+                    qty=constants.POACH_YIELD_QTY if poach_result.good is not None else None,
+                    fine=constants.POACH_FINE if poach_result.caught else None,
                 )
             else:
                 raise HTTPException(status_code=400, detail="Unknown crime kind")

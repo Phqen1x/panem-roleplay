@@ -10,13 +10,27 @@ from discord.ext import commands
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from panem_bot import autocomplete
+from panem_bot import activity_launch, autocomplete
 from panem_bot.errors import ServiceError
 from panem_bot.services import characters as characters_svc
 from panem_bot.services import poaching as poaching_svc
 from panem_bot.strings import t
 from panem_shared import constants
+from panem_shared.content.schemas import Good
 from panem_shared.db.models import Character, WorldClock
+
+
+def _poach_result_text(result: poaching_svc.PoachResult, name: str) -> str:
+    if result.caught:
+        return t(
+            "poach_caught",
+            name=name,
+            fine=constants.POACH_FINE,
+            jail_ticks=constants.POACH_JAIL_TICKS,
+        )
+    if result.good is None:
+        return t("poach_miss", name=name)
+    return t("poach_ok", name=name, qty=constants.POACH_YIELD_QTY, good=result.good.name)
 
 
 class PoachingCog(commands.Cog):
@@ -37,6 +51,29 @@ class PoachingCog(commands.Cog):
         clock = await session.get(WorldClock, 1)
         return clock.tick if clock is not None else 0
 
+    async def _resolve_poach_text(
+        self, char_id: int, good_id: str, district_id: int, current_tick: int
+    ) -> str:
+        """The RNG-fallback skill check (no Activity configured, or the
+        player hits Skip) -- shared by the instant path below and the
+        launch message's Skip button."""
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            char = await session.get(Character, char_id)
+            if char is None:
+                return t("character_not_found")
+            content = self.bot.content  # type: ignore[attr-defined]
+            good = content.goods[good_id]
+            result = await poaching_svc.roll_and_apply_poach(
+                session,
+                character=char,
+                good=good,
+                district_id=district_id,
+                current_tick=current_tick,
+                rng=random.Random(),
+            )
+            name = char.name
+        return _poach_result_text(result, name)
+
     @app_commands.command(
         name="poach", description="Try to poach food at your district's outskirts"
     )
@@ -52,33 +89,50 @@ class PoachingCog(commands.Cog):
             content = self.bot.content  # type: ignore[attr-defined]
             district = content.district(char.current_district_id)
             current_tick = await self._current_tick(session)
+            good: Good
             try:
-                result = await poaching_svc.resolve_poach(
-                    session,
-                    character=char,
-                    district=district,
-                    goods=content.goods,
-                    current_tick=current_tick,
-                    rng=random.Random(),
-                )
+                good = poaching_svc.check_can_poach(char, district, content.goods, current_tick)
             except ServiceError as exc:
                 await interaction.response.send_message(
                     t(exc.reason_key, **exc.fmt), ephemeral=True
                 )
                 return
-            name = char.name
+            char.last_poach_tick = current_tick
+            char_id, char_name = char.id, char.name
+            district_id, good_id = district.id, good.id
 
-        if result.caught:
-            text = t(
-                "poach_caught",
-                name=name,
-                fine=constants.POACH_FINE,
-                jail_ticks=constants.POACH_JAIL_TICKS,
+        activity_url = self.bot.settings.activity_public_url  # type: ignore[attr-defined]
+        if not activity_url:
+            text = await self._resolve_poach_text(char_id, good_id, district_id, current_tick)
+            await interaction.response.send_message(text, ephemeral=True)
+            return
+
+        attempt_id = activity_launch.new_attempt_id()
+        await activity_launch.create_crime_attempt(
+            self.bot,
+            attempt_id,
+            {
+                "kind": "poach",
+                "character_id": char_id,
+                "district_id": district_id,
+                "good_id": good_id,
+                "current_tick": current_tick,
+            },
+        )
+
+        async def on_skip(skip_interaction: discord.Interaction) -> None:
+            await activity_launch.forget_crime_attempt(self.bot, attempt_id)
+            text = await self._resolve_poach_text(char_id, good_id, district_id, current_tick)
+            await skip_interaction.response.edit_message(
+                content=t("poach_already_tried"), view=None
             )
-        else:
-            assert result.good is not None
-            text = t("poach_ok", name=name, qty=constants.POACH_YIELD_QTY, good=result.good.name)
-        await interaction.response.send_message(text, ephemeral=True)
+            await skip_interaction.followup.send(text, ephemeral=True)
+
+        view = activity_launch.crime_launch_view(activity_url, "poach", attempt_id, on_skip)
+        await interaction.response.send_message(
+            t("poach_game_ready", name=char_name), view=view, ephemeral=True
+        )
+        await activity_launch.remember_crime_interaction(self.bot, attempt_id, interaction)
 
 
 async def setup(bot: commands.Bot) -> None:

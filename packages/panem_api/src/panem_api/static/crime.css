@@ -89,3 +89,28 @@ main {
   font-size: 13px;
   margin: 0;
 }
+
+/* --------------------------------------------------------------- Archery */
+
+.board-archery {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.board-archery canvas {
+  background: #111;
+  border-radius: 8px;
+  cursor: crosshair;
+}
+
+.archery-meta {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 360px;
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0;
+}

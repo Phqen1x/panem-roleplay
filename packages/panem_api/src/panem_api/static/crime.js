@@ -12,25 +12,33 @@
 // `kind: "burgle"` (breaking into a house) both play the same lockpick
 // minigame -- picking a lock is picking a lock either way, just against
 // a cell door or a house door -- while `kind: "steal"` plays the
-// pickpocket timing minigame instead.
+// pickpocket timing minigame instead, and `kind: "poach"` plays the
+// archery target-practice minigame.
 //
 // `?v=` cache-busting matches work.js's own reasoning: bump
 // ASSET_VERSION (and crime.html's/crime.css's matching `?v=`) any time
-// this file or anything under games/lockpick.js|pickpocket.js changes.
+// this file or anything under games/lockpick.js|pickpocket.js|archery.js
+// changes.
 //
 // Like work.js, this page notifies a parent window (via postMessage) once
 // an attempt is resolved -- the dashboard's Jail/Crime tabs embed this page
-// in an `<iframe>` for the lockpick/steal/burgle minigames (see
+// in an `<iframe>` for the lockpick/steal/burgle/poach minigames (see
 // static/tabs/jail.js, static/tabs/crime.js) and use it to refresh their
 // own status without a reload. A no-op outside an iframe.
-const ASSET_VERSION = "8";
+const ASSET_VERSION = "9";
 
-const [lockpick, pickpocket] = await Promise.all([
+const [lockpick, pickpocket, archery] = await Promise.all([
   import(`./games/lockpick.js?v=${ASSET_VERSION}`),
   import(`./games/pickpocket.js?v=${ASSET_VERSION}`),
+  import(`./games/archery.js?v=${ASSET_VERSION}`),
 ]);
 
-const TITLES = { lockpick: "Pick the lock", steal: "Pick the pocket", burgle: "Pick the lock" };
+const TITLES = {
+  lockpick: "Pick the lock",
+  steal: "Pick the pocket",
+  burgle: "Pick the lock",
+  poach: "Hunt at the outskirts",
+};
 
 const statusEl = document.getElementById("status");
 const instructionsEl = document.getElementById("instructions");
@@ -67,6 +75,15 @@ function describeResult(body) {
   if (kind === "lockpick") {
     if (body.success) return `${body.character_name} works the lock loose and slips out.`;
     return `The lock holds. ${body.tries_left} attempt(s) left.`;
+  }
+  if (kind === "poach") {
+    if (body.caught) {
+      return `${body.character_name} is caught poaching -- fined ${body.fine} money and jailed.`;
+    }
+    if (body.success) {
+      return `${body.character_name} slips back with ${body.qty}x ${body.good_name}, unseen.`;
+    }
+    return `${body.character_name} can't land the shot and comes back empty-handed.`;
   }
   const verb = kind === "burgle" ? "breaking in" : "going for the pocket";
   if (body.success) {
@@ -116,11 +133,13 @@ async function main() {
     return;
   }
   titleEl.textContent = TITLES[kind] || "Contraband";
-  const game = kind === "steal" ? pickpocket : lockpick;
+  const game = kind === "steal" ? pickpocket : kind === "poach" ? archery : lockpick;
   setStatus(
     kind === "steal"
       ? `${info.character_name} lines up on ${info.target_name}.`
-      : `${info.character_name} works the lock.`
+      : kind === "poach"
+        ? `${info.character_name} draws a bow at the treeline.`
+        : `${info.character_name} works the lock.`
   );
   // A dedicated, always-visible line rather than folding the instructions
   // into the status sentence -- `setStatus` gets overwritten as the

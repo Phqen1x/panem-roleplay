@@ -1,9 +1,7 @@
-// The "Crime" tab: mirrors /steal, /burgle, /poach. Steal/burgle mint a
+// The "Crime" tab: mirrors /steal, /burgle, /poach. All three mint a
 // crime attempt (same shape /activity/crime/{id} already reads) and play
-// via an embedded crime.html <iframe>, reusing the pickpocket/lockpick
-// minigames unmodified -- same pattern as static/tabs/jail.js. /poach
-// never launches an Activity on the bot side either, so it resolves
-// instantly here too.
+// via an embedded crime.html <iframe>, reusing the pickpocket/lockpick/
+// archery minigames unmodified -- same pattern as static/tabs/jail.js.
 import { fetchJson, el, dropdown } from "./_shared.js?v=3";
 
 // How long crime.html's own result screen (posted via postMessage, see
@@ -164,18 +162,15 @@ export function mount(root, ctx) {
   poachBtn.addEventListener("click", async () => {
     resultLine.textContent = "";
     try {
-      const body = await ctx.apiFetch(`/activity/dashboard/crime/${ctx.characterId()}/poach`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ discord_id: ctx.discordId() }),
-      });
-      if (body.caught) {
-        resultLine.className = "result-line lose";
-        resultLine.textContent = `Caught! Fined ${body.fine} and jailed.`;
-      } else {
-        resultLine.className = "result-line win";
-        resultLine.textContent = `Poached ${body.qty}x ${body.good_name}.`;
-      }
+      const body = await ctx.apiFetch(
+        `/activity/dashboard/crime/${ctx.characterId()}/poach/start`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ discord_id: ctx.discordId() }),
+        }
+      );
+      mountMinigame(body.attempt_id, "poach");
     } catch (err) {
       resultLine.className = "result-line lose";
       resultLine.textContent = err.message;

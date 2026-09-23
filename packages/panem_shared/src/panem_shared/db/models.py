@@ -176,6 +176,10 @@ class Character(TimestampMixin, Base):
     """The tick of this character's last `/steal` attempt (success or
     not) -- gates the once-per-day-phase cooldown by comparing `tick //
     simtime.TICKS_PER_PHASE` to this same division of `last_steal_tick`."""
+    last_poach_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """The tick of this character's last `/poach` attempt (caught or
+    not) -- same once-per-day-phase cooldown shape as `last_steal_tick`,
+    gated in `panem_shared.poaching.check_can_poach`."""
     in_games: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     housing_property_id: Mapped[int | None] = mapped_column(
         ForeignKey("properties.id", use_alter=True, name="fk_characters_housing_property_id"),

@@ -3220,3 +3220,69 @@ that clicking Buy/Sell on a specific row sends the correct `good_id`/`qty` pair 
 resulting win/caught message. `dashboard.css` gained a `.qty-input`/table-scoped `.btn` sizing rule
 (bumped `?v=` 9 -> 10); `app.js`'s `ASSET_VERSION` bump above covers `tabs/market.js` since `app.js`
 imports every tab module through that one shared version string.
+
+### `/poach` gets a once-per-day-phase cooldown, and a real minigame: archery target practice
+
+User asks: "add a cooldown to poaching" and "add a target practice minigame for poaching that
+requires people to aim a bow and arrow and hit a target 3/5 times they shoot within 30 seconds."
+
+**The cooldown.** `/poach` had no cooldown at all -- unlike `/steal`/`/burgle`, which already gate
+on `Character.last_steal_tick` compared via `tick // TICKS_PER_PHASE` (once per in-world day-phase),
+poaching could be repeated every tick, making it a strictly better food source than the market
+allocation it's meant to only supplement. Added `Character.last_poach_tick` (migration
+`b4d7f1a8c3e9`, same nullable `Integer` shape as `last_steal_tick`) and the identical boundary check
+in `panem_shared.poaching.check_can_poach`, now taking a `current_tick` parameter; refusal reads
+`poach_on_cooldown`. `resolve_poach`/`roll_and_apply_poach` set the cooldown up front, same ordering
+`resolve_steal` uses (gate, then mark the attempt spent, then resolve) so a caught attempt still
+burns the cooldown.
+
+**The minigame.** Previously `/poach` was a single server-side roll (`POACH_DETECTION_PROB` for
+getting caught, otherwise an automatic yield) -- no player skill involved at all, unlike every other
+crime (`/lockpick`, `/steal`, `/burgle`) which launches an Activity minigame. Gave it one: a new
+`games/archery.js` module, aim with the mouse at a moving bullseye target and click to loose an
+arrow -- 5 arrows, 30 real-time seconds, land at least 3 hits to bring the hunt home (exactly the
+spec: "hit a target 3/5 times they shoot within 30 seconds"). The target's radius and drift speed
+scale with a cosmetic `difficulty` the same way `games/pickpocket.js`'s pocket-zone width/needle
+speed do; a canvas HUD row (`Arrows:`/`Hits:`/`Time:`) tracks all three counters live. The game ends
+the instant the 5th arrow lands or the clock hits zero, calling `onFinish(hits >= 3)` exactly once --
+same single-result contract every other minigame module here follows.
+
+Wiring this in meant `/poach` joining the same attempt-launch shape `/steal`/`/burgle` already use,
+since it previously never went through an Activity at all:
+- `panem_shared/poaching.py`: `resolve_poach` (the old one-shot roll) split into `check_can_poach`
+  (gate, now cooldown-aware), `apply_poach_outcome` (takes the minigame's `success` bool, still rolls
+  `POACH_DETECTION_PROB` for getting caught -- a peacekeeper can notice a hunt regardless of whether
+  the shots landed, same as before), `roll_and_apply_poach` (the RNG-fallback stand-in for "no
+  Activity configured" or the Skip button, rolling a single `POACH_ARCHERY_BASE_SUCCESS` chance
+  instead of simulating five shots), and `resolve_poach` itself kept as the top-level gate+cooldown+
+  RNG-fallback wrapper -- exactly `panem_shared.stealing`'s own `check_can_steal`/`apply_steal_
+  outcome`/`roll_and_apply_steal`/`resolve_steal` split. New `poach_difficulty()` mirrors `burgle_
+  difficulty()`'s flat shape (`1 - POACH_ARCHERY_BASE_SUCCESS`).
+- `panem_bot/cogs/poaching.py`: `/poach` now mints a Redis crime attempt (`kind: "poach"`, storing
+  `good_id` alongside `district_id`/`current_tick` since the good is resolved once up front) and
+  shows a Play/Skip launch message via the same `activity_launch` plumbing `/steal`/`/burgle` use,
+  falling back to an instant RNG-resolved reply when no `ACTIVITY_PUBLIC_URL` is configured.
+- `panem_api/app.py`: `/activity/crime/{id}` and `.../result` gained a `poach` branch alongside
+  `lockpick`/`steal`/`burgle`; `CrimeResultResponse` gained `good_name`/`qty`/`fine` fields for it.
+- `panem_api/dashboard_routes.py`: the old instant-resolve `POST .../poach` replaced with `POST
+  .../poach/start` (mints the same Redis attempt shape), matching `.../steal/start`/`.../burgle/
+  start`; `CrimeStartResponse.target_name` made optional since poach has no single target.
+- `static/crime.js`: imports `games/archery.js` alongside lockpick/pickpocket, dispatches to it for
+  `kind: "poach"`, and `describeResult()` gained a poach branch (caught/success/miss text). `static/
+  tabs/crime.js`'s Poach button now mints an attempt and mounts the same `crime.html` iframe steal/
+  burgle already use, instead of resolving instantly inline.
+- New CSS (`crime.css`): `.board-archery`/`.archery-meta`, matching the existing `.board-lockpick`/
+  `.board-pickpocket` pattern.
+
+Verified with a Playwright harness (a temporary standalone page importing `games/archery.js`
+directly, deleted before commit): read the game's own rendered canvas pixels back to find the live
+target's on-screen position (scanning for its `#7cd992` bullseye-core color) and clicked exactly
+there for all 5 shots -- 5/5 hits, `onFinish(true)`, no console errors; a second run firing all 5
+shots at a fixed corner away from the target's start position produced 0/5 hits and `onFinish(false)`;
+confirmed the arrow counter reaches `0` and the game ends the instant the 5th shot lands (doesn't
+hang waiting for more input), and that the on-screen timer counts down in real time rather than
+freezing. `crime.js`'s `ASSET_VERSION` (8 -> 9) and `crime.html`'s matching `?v=` (crime.js and
+crime.css, 4 -> 5) bumped; `app.js`'s `ASSET_VERSION` (23 -> 24, covering `tabs/crime.js`) and
+`index.html`'s matching `?v=` bumped too. New migration `b4d7f1a8c3e9` round-tripped up/down/up
+clean; full test suite (`test_poaching_service.py` rewritten for the new split, `test_api_app.py`
+gained poach-cooldown/start/status/result coverage) passes at 997 (up from 987).

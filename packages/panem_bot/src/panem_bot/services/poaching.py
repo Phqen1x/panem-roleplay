@@ -14,11 +14,20 @@ from panem_shared.poaching import (
     PoachResult as PoachResult,
 )
 from panem_shared.poaching import (
+    apply_poach_outcome as apply_poach_outcome,
+)
+from panem_shared.poaching import (
     check_can_poach as check_can_poach,
+)
+from panem_shared.poaching import (
+    poach_difficulty as poach_difficulty,
 )
 from panem_shared.poaching import (
     resolve_outskirts as resolve_outskirts,
 )
 from panem_shared.poaching import (
     resolve_poach as resolve_poach,
+)
+from panem_shared.poaching import (
+    roll_and_apply_poach as roll_and_apply_poach,
 )

@@ -624,18 +624,12 @@ class BurgleStartRequest(BaseModel):
 class CrimeStartResponse(BaseModel):
     attempt_id: str
     difficulty: float
-    target_name: str
+    # `None` for `/poach`, which has no single target the way steal/burgle do.
+    target_name: str | None = None
 
 
-class PoachRequest(BaseModel):
+class PoachStartRequest(BaseModel):
     discord_id: int
-
-
-class PoachResponse(BaseModel):
-    caught: bool
-    good_name: str | None = None
-    qty: int | None = None
-    fine: int | None = None
 
 
 def build_crime_router(
@@ -645,10 +639,9 @@ def build_crime_router(
     redis_client: redis.Redis,
 ) -> APIRouter:
     """The Crime tab's REST surface: mirrors `/steal`, `/burgle`, `/poach`.
-    Steal/burgle-start mint a crime attempt exactly like their Discord
-    commands do (same Redis shape `/activity/crime/{id}` reads) for the
-    dashboard to embed in an iframe; `/poach` never launches an Activity on
-    the bot side either, so this resolves it instantly, same as there."""
+    All three `*-start` routes mint a crime attempt exactly like their
+    Discord commands do (same Redis shape `/activity/crime/{id}` reads) for
+    the dashboard to embed in an iframe."""
     router = APIRouter(prefix="/activity/dashboard/crime", tags=["dashboard"])
 
     @router.get("/{character_id}/steal-targets", response_model=StealTargetsResponse)
@@ -851,8 +844,8 @@ def build_crime_router(
             attempt_id=attempt_id, difficulty=difficulty, target_name=body.owner
         )
 
-    @router.post("/{character_id}/poach", response_model=PoachResponse)
-    async def poach(character_id: int, body: PoachRequest) -> PoachResponse:
+    @router.post("/{character_id}/poach/start", response_model=CrimeStartResponse)
+    async def start_poach(character_id: int, body: PoachStartRequest) -> CrimeStartResponse:
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             character = await _resolve_owned_character(
@@ -861,22 +854,30 @@ def build_crime_router(
             district = content.district(character.current_district_id)
             current_tick = await _current_tick(session)
             try:
-                result = await poaching_svc.resolve_poach(
-                    session,
-                    character=character,
-                    district=district,
-                    goods=content.goods,
-                    current_tick=current_tick,
-                    rng=random.Random(),
+                good = poaching_svc.check_can_poach(
+                    character, district, content.goods, current_tick
                 )
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
-        if result.caught:
-            return PoachResponse(caught=True, fine=constants.POACH_FINE)
-        assert result.good is not None
-        return PoachResponse(
-            caught=False, good_name=result.good.name, qty=constants.POACH_YIELD_QTY
+            character.last_poach_tick = current_tick
+            district_id, good_id = district.id, good.id
+            difficulty = poaching_svc.poach_difficulty()
+
+        attempt_id = secrets.token_urlsafe(16)
+        await redis_client.set(
+            crime_attempt_key(attempt_id),
+            json.dumps(
+                {
+                    "kind": "poach",
+                    "character_id": character_id,
+                    "district_id": district_id,
+                    "good_id": good_id,
+                    "current_tick": current_tick,
+                }
+            ),
+            ex=CRIME_ATTEMPT_TTL_S,
         )
+        return CrimeStartResponse(attempt_id=attempt_id, difficulty=difficulty)
 
     return router
 

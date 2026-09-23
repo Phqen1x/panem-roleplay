@@ -28,6 +28,7 @@ from panem_shared.db.models import Character, DistrictState, Inventory
 from panem_shared.enums import CharacterStatus, LocationKind, OwnerKind
 from panem_shared.errors import NotAllowed, NotFound
 from panem_shared.jail import commit_to_jail
+from panem_shared.simtime import TICKS_PER_PHASE
 
 PEACEKEEPER_PRESSURE_DELTA = 0.05
 """Mirrors `panem_bot.services.market.ILLICIT_PRESSURE_DELTA` exactly --
@@ -67,14 +68,26 @@ def resolve_outskirts(district: District) -> Location:
     return location
 
 
-def check_can_poach(character: Character, district: District, goods: dict[str, Good]) -> Good:
+def check_can_poach(
+    character: Character, district: District, goods: dict[str, Good], current_tick: int
+) -> Good:
     """Raises `NotAllowed`/`NotFound` on refusal; otherwise returns the
-    good a successful attempt would yield."""
+    good a successful attempt would yield. Gates a once-per-day-phase
+    cooldown off `Character.last_poach_tick`, the same shape (and
+    boundary math) `panem_shared.stealing.check_can_steal` uses for
+    `last_steal_tick` -- unlimited poaching would make it a strictly
+    better market allocation instead of the occasional coping mechanism
+    it's meant to be."""
     if character.status != CharacterStatus.APPROVED.value:
         raise NotAllowed("character_not_approved")
     location = resolve_outskirts(district)
     if character.location_id != location.id:
         raise NotAllowed("poach_not_at_outskirts", name=character.name, location=location.name)
+    if (
+        character.last_poach_tick is not None
+        and character.last_poach_tick // TICKS_PER_PHASE == current_tick // TICKS_PER_PHASE
+    ):
+        raise NotAllowed("poach_on_cooldown", name=character.name)
     good = _primary_food_good(district, goods)
     if good is None:  # pragma: no cover -- no shipped district lacks a food good
         raise NotFound("poach_nothing_to_poach")
@@ -108,6 +121,66 @@ async def _apply_caught_consequence(
         )
 
 
+def poach_difficulty() -> float:
+    """0..1 difficulty for the archery minigame -- flat, like
+    `panem_shared.stealing.burgle_difficulty()` (no per-target tiering
+    the way `/steal` has), derived from the same `POACH_ARCHERY_BASE_
+    SUCCESS` the RNG-fallback path rolls against, so a harder-looking
+    client-side target genuinely tracks a lower auto-resolve odds."""
+    return 1.0 - constants.POACH_ARCHERY_BASE_SUCCESS
+
+
+async def apply_poach_outcome(
+    session: AsyncSession,
+    *,
+    character: Character,
+    good: Good,
+    district_id: int,
+    current_tick: int,
+    success: bool,
+    rng: random.Random,
+) -> PoachResult:
+    """Given whether the archery minigame itself was won (3+ hits out of
+    5 arrows in 30 seconds) -- or the RNG-fallback roll standing in for
+    it -- resolves the rest: a peacekeeper can still notice regardless of
+    how the hunt itself went (`POACH_DETECTION_PROB`, unchanged from
+    before the minigame existed), and only a clean, unnoticed attempt
+    that also landed its shots brings anything home."""
+    if rng.random() < constants.POACH_DETECTION_PROB:
+        await _apply_caught_consequence(session, character, district_id, current_tick)
+        return PoachResult(caught=True, good=None)
+    if not success:
+        return PoachResult(caught=False, good=None)
+    await _grant_good(session, character, good.id, constants.POACH_YIELD_QTY)
+    return PoachResult(caught=False, good=good)
+
+
+async def roll_and_apply_poach(
+    session: AsyncSession,
+    *,
+    character: Character,
+    good: Good,
+    district_id: int,
+    current_tick: int,
+    rng: random.Random,
+) -> PoachResult:
+    """The RNG-fallback skill check (no Activity configured, or the
+    player hits Skip) -- split out from `resolve_poach` so `/poach`'s
+    cog can call this directly for an already-validated, already-
+    cooldown-set attempt, the same split `panem_shared.stealing.roll_
+    and_apply_steal` makes for `/steal`."""
+    success = rng.random() < constants.POACH_ARCHERY_BASE_SUCCESS
+    return await apply_poach_outcome(
+        session,
+        character=character,
+        good=good,
+        district_id=district_id,
+        current_tick=current_tick,
+        success=success,
+        rng=rng,
+    )
+
+
 async def resolve_poach(
     session: AsyncSession,
     *,
@@ -117,9 +190,15 @@ async def resolve_poach(
     current_tick: int,
     rng: random.Random,
 ) -> PoachResult:
-    good = check_can_poach(character, district, goods)
-    if rng.random() < constants.POACH_DETECTION_PROB:
-        await _apply_caught_consequence(session, character, district.id, current_tick)
-        return PoachResult(caught=True, good=None)
-    await _grant_good(session, character, good.id, constants.POACH_YIELD_QTY)
-    return PoachResult(caught=False, good=good)
+    """Top-level convenience wrapper: gate, set the cooldown, then the
+    RNG-fallback roll -- mirrors `panem_shared.stealing.resolve_steal`."""
+    good = check_can_poach(character, district, goods, current_tick)
+    character.last_poach_tick = current_tick
+    return await roll_and_apply_poach(
+        session,
+        character=character,
+        good=good,
+        district_id=district.id,
+        current_tick=current_tick,
+        rng=rng,
+    )
