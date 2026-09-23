@@ -69,6 +69,7 @@ from panem_api.dashboard_routes import (
     build_theme_router,
     build_trade_router,
     build_travel_router,
+    build_vitals_router,
     build_work_router,
 )
 from panem_shared import constants
@@ -780,6 +781,7 @@ def create_app(
     app.include_router(build_travel_router(content=content, session_factory=session_factory))
     app.include_router(build_residents_router(content=content, session_factory=session_factory))
     app.include_router(build_housing_router(content=content, session_factory=session_factory))
+    app.include_router(build_vitals_router(content=content, session_factory=session_factory))
     app.include_router(build_rp_mode_router(session_factory=session_factory))
     app.include_router(build_pay_router(session_factory=session_factory))
     app.include_router(build_trade_router(session_factory=session_factory))

@@ -366,7 +366,14 @@ def make_content_with_market() -> ContentBundle:
     return ContentBundle(
         districts={0: make_district(0, "The Capitol"), 1: district_1},
         goods={
-            "grain": Good(id="grain", name="Grain", base_price=2.0, category="food"),
+            "grain": Good(
+                id="grain",
+                name="Grain",
+                base_price=2.0,
+                category="food",
+                hunger_value=15.0,
+                cook_method="oven",
+            ),
             "contraband": Good(
                 id="contraband", name="Contraband", base_price=10.0, category="illicit"
             ),
@@ -390,6 +397,45 @@ def make_content_with_market() -> ContentBundle:
 @pytest.fixture
 def market_app(db_session_factory):
     content = make_content_with_market()
+    redis_client = FakeRedis()
+    app = create_app(content=content, redis_client=redis_client, session_factory=db_session_factory)
+    app.state.fake_redis = redis_client  # type: ignore[attr-defined]
+    return app
+
+
+def make_content_with_vitals() -> ContentBundle:
+    """`grain` (cookable/bakeable, `hunger_value=15`, `cook_method="oven"`)
+    and `produce` (drinkable, `thirst_value=25`) -- for `/activity/
+    dashboard/vitals` tests. `coal` stays a pure ingredient (no consumption
+    value) so an "owned but not edible/drinkable" good is available too."""
+    return ContentBundle(
+        districts={0: make_district(0, "The Capitol"), 1: make_district(1, "District 1")},
+        goods={
+            "grain": Good(
+                id="grain",
+                name="Grain",
+                base_price=2.0,
+                category="food",
+                hunger_value=15.0,
+                cook_method="oven",
+            ),
+            "produce": Good(
+                id="produce",
+                name="Fruits/Drinks",
+                base_price=3.0,
+                category="food",
+                thirst_value=25.0,
+            ),
+            "coal": Good(id="coal", name="Coal", base_price=1.0, category="fuel"),
+        },
+        jobs={},
+        routes=[],
+    )
+
+
+@pytest.fixture
+def vitals_app(db_session_factory):
+    content = make_content_with_vitals()
     redis_client = FakeRedis()
     app = create_app(content=content, redis_client=redis_client, session_factory=db_session_factory)
     app.state.fake_redis = redis_client  # type: ignore[attr-defined]
@@ -2839,6 +2885,8 @@ class TestDashboardMarket:
         assert response.status_code == 200
         body = response.json()
         assert [p["good_id"] for p in body["prices"]] == ["grain"]
+        assert body["prices"][0]["hunger_value"] == 15.0
+        assert body["prices"][0]["cook_method"] == "oven"
         assert body["inventory"] == []
 
     async def test_buy_happy_path(self, market_app, db_session_factory):
@@ -3583,6 +3631,133 @@ class TestDashboardHousing:
         async with db_session_factory() as session:
             character = await session.get(Character, char_id)
             assert character.money == 180
+
+
+async def give_inventory(session_factory, character_id: int, good_id: str, qty: int) -> None:
+    async with session_factory() as session, session.begin():
+        session.add(
+            Inventory(
+                owner_kind=OwnerKind.CHARACTER.value,
+                owner_id=str(character_id),
+                good_id=good_id,
+                qty=qty,
+            )
+        )
+
+
+class TestDashboardVitals:
+    async def test_status_lists_owned_edible_and_drinkable_goods(
+        self, vitals_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        await give_inventory(db_session_factory, char_id, "grain", 2)
+        await give_inventory(db_session_factory, char_id, "produce", 1)
+        await give_inventory(db_session_factory, char_id, "coal", 3)
+        transport = httpx.ASGITransport(app=vitals_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/vitals/{char_id}/status", params={"discord_id": 5}
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert [g["good_id"] for g in body["edible"]] == ["grain"]
+        assert body["edible"][0]["cook_method"] == "oven"
+        assert [g["good_id"] for g in body["drinkable"]] == ["produce"]
+        assert body["has_bed"] is False
+        assert len(body["entertainment"]) == 6
+        assert {g["game_id"] for g in body["entertainment"]} == {
+            "minesweeper",
+            "snake",
+            "connect4",
+            "coinflip",
+            "poison",
+            "solitaire",
+        }
+
+    async def test_eat_consumes_inventory_and_relieves_hunger(
+        self, vitals_app, db_session_factory
+    ):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"hunger": 50.0}
+        )
+        await give_inventory(db_session_factory, char_id, "grain", 2)
+        transport = httpx.ASGITransport(app=vitals_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/vitals/{char_id}/eat",
+                json={"discord_id": 5, "good_id": "grain"},
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["hunger"] == 35.0
+        async with db_session_factory() as session:
+            row = await session.get(Inventory, (OwnerKind.CHARACTER.value, str(char_id), "grain"))
+            assert row.qty == 1
+
+    async def test_eat_with_bonus_doubles_a_cookable_goods_relief(
+        self, vitals_app, db_session_factory
+    ):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"hunger": 50.0}
+        )
+        await give_inventory(db_session_factory, char_id, "grain", 1)
+        transport = httpx.ASGITransport(app=vitals_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/vitals/{char_id}/eat",
+                json={"discord_id": 5, "good_id": "grain", "bonus": True},
+            )
+        assert response.status_code == 200
+        assert response.json()["hunger"] == 20.0
+
+    async def test_eat_refuses_without_inventory(self, vitals_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=vitals_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/vitals/{char_id}/eat",
+                json={"discord_id": 5, "good_id": "grain"},
+            )
+        assert response.status_code == 400
+
+    async def test_drink_consumes_inventory_and_relieves_thirst(
+        self, vitals_app, db_session_factory
+    ):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"thirst": 50.0}
+        )
+        await give_inventory(db_session_factory, char_id, "produce", 1)
+        transport = httpx.ASGITransport(app=vitals_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/vitals/{char_id}/drink",
+                json={"discord_id": 5, "good_id": "produce"},
+            )
+        assert response.status_code == 200
+        assert response.json()["thirst"] == 25.0
+
+    async def test_entertain_credits_the_games_sanity_value(self, vitals_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"sanity": 50.0}
+        )
+        transport = httpx.ASGITransport(app=vitals_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/vitals/{char_id}/entertain",
+                json={"discord_id": 5, "game_id": "solitaire"},
+            )
+        assert response.status_code == 200
+        assert response.json()["sanity"] == 65.0
+
+    async def test_entertain_refuses_an_unknown_game(self, vitals_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=vitals_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/vitals/{char_id}/entertain",
+                json={"discord_id": 5, "game_id": "chess"},
+            )
+        assert response.status_code == 400
 
 
 class TestDashboardStaff:

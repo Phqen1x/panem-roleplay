@@ -53,6 +53,7 @@ from panem_shared import pay as pay_svc
 from panem_shared import poaching as poaching_svc
 from panem_shared import rp_modes as rp_modes_svc
 from panem_shared import stealing as stealing_svc
+from panem_shared import sustenance as sustenance_svc
 from panem_shared import theme as theme_svc
 from panem_shared import trades as trades_svc
 from panem_shared import travel as travel_svc
@@ -1530,6 +1531,12 @@ class GoodPrice(BaseModel):
     good_id: str
     name: str
     price: float
+    # Vitals tab feature -- "replenishment values listed... in the
+    # market" -- populated straight from content, zero/None for goods
+    # that aren't directly consumable (see `content.schemas.Good`).
+    hunger_value: float = 0.0
+    thirst_value: float = 0.0
+    cook_method: str | None = None
 
 
 class InventoryItem(BaseModel):
@@ -1590,7 +1597,16 @@ def build_market_router(
                 if good is None:
                     continue
                 price = await market_svc.get_price(session, district.id, good)
-                prices.append(GoodPrice(good_id=good_id, name=good.name, price=price))
+                prices.append(
+                    GoodPrice(
+                        good_id=good_id,
+                        name=good.name,
+                        price=price,
+                        hunger_value=good.hunger_value,
+                        thirst_value=good.thirst_value,
+                        cook_method=good.cook_method,
+                    )
+                )
             inventory = await _inventory_items(session, content, character_id)
         return MarketStatusResponse(prices=prices, inventory=inventory)
 
@@ -2975,6 +2991,202 @@ def build_housing_router(
             return HousingSleepResponse(
                 ticks=sleep_ticks, restored=round(restored, 1), fatigue=round(character.fatigue, 1)
             )
+
+    return router
+
+
+ENTERTAINMENT_LABELS: dict[str, str] = {
+    "minesweeper": "Minesweeper",
+    "snake": "Snake",
+    "connect4": "Connect Four",
+    "coinflip": "Coin Flip",
+    "poison": "Pick Your Poison",
+    "solitaire": "Solitaire",
+}
+
+
+class VitalsConsumable(BaseModel):
+    good_id: str
+    name: str
+    qty: int
+    hunger_value: float
+    thirst_value: float
+    cook_method: str | None = None
+
+
+class VitalsEntertainmentOption(BaseModel):
+    game_id: str
+    label: str
+    sanity_value: float
+
+
+class VitalsStatusResponse(BaseModel):
+    hunger: float
+    thirst: float
+    sanity: float
+    fatigue: float
+    health: float
+    has_bed: bool
+    max_sleep_ticks: int
+    fatigue_restore_per_tick: float
+    edible: list[VitalsConsumable]
+    drinkable: list[VitalsConsumable]
+    entertainment: list[VitalsEntertainmentOption]
+
+
+class VitalsEatRequest(BaseModel):
+    discord_id: int
+    good_id: str
+    bonus: bool = False
+
+
+class VitalsEatResponse(BaseModel):
+    good_id: str
+    good_name: str
+    hunger: float
+
+
+class VitalsDrinkRequest(BaseModel):
+    discord_id: int
+    good_id: str
+
+
+class VitalsDrinkResponse(BaseModel):
+    good_id: str
+    good_name: str
+    thirst: float
+
+
+class VitalsEntertainRequest(BaseModel):
+    discord_id: int
+    game_id: str
+
+
+class VitalsEntertainResponse(BaseModel):
+    game_id: str
+    sanity: float
+
+
+def build_vitals_router(
+    *, content: ContentBundle, session_factory: async_sessionmaker[AsyncSession] | None
+) -> APIRouter:
+    """The Vitals tab's REST surface: eat/drink/entertain, inventory-gated
+    per `panem_shared.sustenance`'s rewrite (see that module's docstring).
+    Sleep has no route of its own here -- the frontend calls the existing
+    `POST /activity/dashboard/housing/{id}/sleep` directly; this router's
+    status endpoint just hands back what that panel needs for its live
+    preview (`has_bed`/`max_sleep_ticks`/`fatigue_restore_per_tick`)."""
+    router = APIRouter(prefix="/activity/dashboard/vitals", tags=["dashboard"])
+
+    @router.get("/{character_id}/status", response_model=VitalsStatusResponse)
+    async def vitals_status(character_id: int, discord_id: int) -> VitalsStatusResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            current_tick = await _current_tick(session)
+            pairs = await sustenance_svc.owned_consumables(session, character, content.goods)
+            edible = [
+                VitalsConsumable(
+                    good_id=good.id,
+                    name=good.name,
+                    qty=row.qty,
+                    hunger_value=good.hunger_value,
+                    thirst_value=good.thirst_value,
+                    cook_method=good.cook_method,
+                )
+                for row, good in pairs
+                if good.hunger_value > 0
+            ]
+            drinkable = [
+                VitalsConsumable(
+                    good_id=good.id,
+                    name=good.name,
+                    qty=row.qty,
+                    hunger_value=good.hunger_value,
+                    thirst_value=good.thirst_value,
+                    cook_method=good.cook_method,
+                )
+                for row, good in pairs
+                if good.thirst_value > 0
+            ]
+            entertainment = [
+                VitalsEntertainmentOption(
+                    game_id=game_id,
+                    label=ENTERTAINMENT_LABELS.get(game_id, game_id.title()),
+                    sanity_value=sanity_value,
+                )
+                for game_id, sanity_value in constants.ENTERTAINMENT_SANITY_VALUES.items()
+            ]
+            has_bed = housing_svc.has_a_bed(character)
+            max_sleep_ticks = simtime.ticks_remaining_in_phase(current_tick)
+            fatigue_restore_per_tick = housing_svc.fatigue_restored(1, has_bed=has_bed)
+        return VitalsStatusResponse(
+            hunger=round(character.hunger, 1),
+            thirst=round(character.thirst, 1),
+            sanity=round(character.sanity, 1),
+            fatigue=round(character.fatigue, 1),
+            health=round(character.health, 1),
+            has_bed=has_bed,
+            max_sleep_ticks=max_sleep_ticks,
+            fatigue_restore_per_tick=round(fatigue_restore_per_tick, 2),
+            edible=edible,
+            drinkable=drinkable,
+            entertainment=entertainment,
+        )
+
+    @router.post("/{character_id}/eat", response_model=VitalsEatResponse)
+    async def vitals_eat(character_id: int, body: VitalsEatRequest) -> VitalsEatResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            good = content.goods.get(body.good_id)
+            if good is None:
+                raise HTTPException(status_code=404, detail="good_not_edible")
+            current_tick = await _current_tick(session)
+            try:
+                hunger = await sustenance_svc.eat(
+                    session, character, good, current_tick, bonus=body.bonus
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return VitalsEatResponse(good_id=good.id, good_name=good.name, hunger=round(hunger, 1))
+
+    @router.post("/{character_id}/drink", response_model=VitalsDrinkResponse)
+    async def vitals_drink(character_id: int, body: VitalsDrinkRequest) -> VitalsDrinkResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            good = content.goods.get(body.good_id)
+            if good is None:
+                raise HTTPException(status_code=404, detail="good_not_drinkable")
+            current_tick = await _current_tick(session)
+            try:
+                thirst = await sustenance_svc.drink(session, character, good, current_tick)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return VitalsDrinkResponse(good_id=good.id, good_name=good.name, thirst=round(thirst, 1))
+
+    @router.post("/{character_id}/entertain", response_model=VitalsEntertainResponse)
+    async def vitals_entertain(
+        character_id: int, body: VitalsEntertainRequest
+    ) -> VitalsEntertainResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            current_tick = await _current_tick(session)
+            try:
+                sanity = sustenance_svc.entertain(character, body.game_id, current_tick)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return VitalsEntertainResponse(game_id=body.game_id, sanity=round(sanity, 1))
 
     return router
 
