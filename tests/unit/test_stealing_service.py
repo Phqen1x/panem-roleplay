@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import select
 
 from panem_bot.errors import NotAllowed
 from panem_bot.services import stealing as stealing_svc
 from panem_shared import constants
-from panem_shared.db.models import Character, DistrictState, Npc, Property, RelationshipRow
+from panem_shared.db.models import (
+    Character,
+    CrimeLog,
+    DistrictState,
+    Npc,
+    Property,
+    RelationshipRow,
+    User,
+)
 from panem_shared.enums import CharacterStatus, OwnerKind, PropertyKind
 
 
@@ -416,6 +425,26 @@ class TestRollAndApplySteal:
         assert result.success is True
         assert character.money == result.amount
 
+    async def test_logs_the_attempt(self, db_session):
+        character = make_character(money=0)
+        victim = make_npc(name="Mark", money=50.0)
+        await stealing_svc.roll_and_apply_steal(
+            db_session,
+            character=character,
+            victim=victim,
+            district_row=None,
+            current_tick=10,
+            rng=SequenceRng([0.0]),
+        )
+        row = (await db_session.execute(select(CrimeLog))).scalar_one()
+        assert row.character_id == character.id
+        assert row.kind == "steal"
+        assert row.tick == 10
+        assert row.success is True
+        assert row.caught is False
+        assert row.target_name == "Mark"
+        assert row.amount > 0
+
 
 class TestRollAndApplyBurgle:
     async def test_does_not_touch_the_cooldown(self, db_session):
@@ -423,7 +452,7 @@ class TestRollAndApplyBurgle:
         await stealing_svc.roll_and_apply_burgle(
             db_session,
             character=character,
-            house_value=1000.0,
+            house=make_house(suggested_price=1000.0),
             district_row=None,
             current_tick=42,
             rng=SequenceRng([0.0]),
@@ -435,7 +464,7 @@ class TestRollAndApplyBurgle:
         result = await stealing_svc.roll_and_apply_burgle(
             db_session,
             character=character,
-            house_value=1000.0,
+            house=make_house(suggested_price=1000.0),
             district_row=None,
             current_tick=10,
             rng=SequenceRng([0.0]),
@@ -443,3 +472,39 @@ class TestRollAndApplyBurgle:
         assert result.success is True
         assert result.amount == round(1000.0 * constants.BURGLE_YIELD_FRACTION)
         assert character.money == result.amount
+
+    async def test_logs_the_attempt_with_the_owner_s_name(self, db_session):
+        db_session.add(User(id=1, discord_id=1))
+        await db_session.flush()
+        character = make_character(money=0)
+        character.id = 1
+        owner = make_character(name="Peeta", money=0)
+        owner.id = 2
+        db_session.add(owner)
+        await db_session.flush()
+        house = make_house(suggested_price=1000.0, owner_id=owner.id)
+        await stealing_svc.roll_and_apply_burgle(
+            db_session,
+            character=character,
+            house=house,
+            district_row=None,
+            current_tick=10,
+            rng=SequenceRng([0.0]),
+        )
+        row = (await db_session.execute(select(CrimeLog))).scalar_one()
+        assert row.kind == "burgle"
+        assert row.target_name == "Peeta"
+
+    async def test_logs_no_target_name_for_an_npc_owned_house(self, db_session):
+        character = make_character(money=0)
+        house = make_house(suggested_price=1000.0, owner_kind=OwnerKind.NPC.value, owner_id=None)
+        await stealing_svc.roll_and_apply_burgle(
+            db_session,
+            character=character,
+            house=house,
+            district_row=None,
+            current_tick=10,
+            rng=SequenceRng([0.0]),
+        )
+        row = (await db_session.execute(select(CrimeLog))).scalar_one()
+        assert row.target_name is None

@@ -3351,3 +3351,43 @@ refused in an unrelated district's cell, refused when the district has no jail l
 suite passes at 1010 (up from 997); `uv run python scripts/lemonade_omni.py build` regenerated the two
 committed dialogue-context collection JSONs (`data/lemonade/collections/*.json`), which embed a
 per-district location summary that the new jail locations changed.
+
+### A `/steal`/`/burgle`/`/poach` activity log: success, what was taken, and who from
+
+User asks: "Add a steal/burgle/poach log that shows whether you were successful, what you stole, and
+who you stole it from."
+
+New `CrimeLog` table (migration `c7e2a4f9b1d6`) -- one row per resolved attempt: `kind`, `tick`,
+`success`, `caught`, `target_name`, `good_name`, `amount`. `character_id` is deliberately *not* a real
+foreign key (the same choice `StaffAction.staff_discord_id` already made): `apply_steal_outcome`/
+`apply_burgle_outcome`/`apply_poach_outcome` are exercised by a lot of unit tests against a
+lightweight, never-persisted `Character` fixture, and a real Postgres FK would reject every one of
+those writes outright. `target_name`/`good_name` are plain snapshot strings rather than ids, so a log
+entry stays readable even after the NPC/character/good it names is gone or renamed.
+
+Written from a single new shared module, `panem_shared/crime_log.py` (`record_crime_log`/`list_crime_
+log`), called once inside each of `apply_steal_outcome`/`apply_burgle_outcome`/`apply_poach_outcome`
+right before they return -- the one funnel both the RNG-fallback roll and the Activity minigame's own
+result already share, so every attempt gets logged identically no matter which path resolved it, with
+zero changes needed at either call site. `apply_burgle_outcome`'s signature changed from taking just
+`house_value: float` to the whole `house: Property`, so it can look up and log the owner's name itself
+(`None` for an NPC-owned/unclaimed house, which `/burgle owner:<name>` can't target anyway since it
+only searches `Character` rows) -- updated both of its callers (`roll_and_apply_burgle` and `panem_
+api/app.py`'s crime-attempt result endpoint) and the handful of unit tests that called it directly.
+
+Two ways to view it, matching this session's usual dual-surface pattern:
+- **Bot**: new `/crimelog character:<name>` (ephemeral), listing recent attempts most-recent-first,
+  e.g. "**Steal** (tick 120) -- got away with 42 money from Mark." / "**Poach** (tick 118) -- caught,
+  fined and jailed."
+- **Dashboard**: new `GET /activity/dashboard/crime/{character_id}/log` endpoint, and a "Recent
+  Activity" table at the bottom of the Crime tab (`tabs/crime.js`) that loads on mount and refreshes
+  automatically after every minigame result (the same `postMessage` listener that already clears the
+  iframe). `dashboard.css` gained `table.data-table td.win`/`.lose` color rules (bumped `?v=` 10 -> 11,
+  matching `.result-line.win`/`.lose`'s existing colors); `app.js`'s `ASSET_VERSION` (24 -> 25, covering
+  `tabs/crime.js`) and `index.html`'s matching `?v=` bumped too.
+
+New tests: `test_crime_log.py` (`record_crime_log`/`list_crime_log` directly), extended `test_stealing_
+service.py` (log rows for steal and burgle, including the owner-name lookup with both a character-owned
+and an NPC-owned house) and `test_poaching_service.py` (log rows for a clean success and a caught
+attempt), and `test_api_app.py` (the dashboard log endpoint: ordering, empty history, non-owner
+refusal). Full suite passes at 1023 (up from 1010).

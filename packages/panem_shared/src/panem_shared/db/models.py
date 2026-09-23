@@ -695,6 +695,51 @@ class StaffAction(TimestampMixin, Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
 
+class CrimeLog(TimestampMixin, Base):
+    """One resolved `/steal`, `/burgle`, or `/poach` attempt -- written by
+    `panem_shared.stealing.apply_steal_outcome`/`apply_burgle_outcome` and
+    `panem_shared.poaching.apply_poach_outcome` (the one funnel every
+    attempt passes through either way: the RNG-fallback roll or the
+    Activity minigame's own result), so both paths log identically and no
+    cog/endpoint has to remember to call this separately.
+
+    `target_name`/`good_name` are plain snapshot strings, not foreign
+    keys -- the same choice `StaffAction.target` already made -- so a log
+    entry stays readable even after the NPC/character/good it names is
+    gone or renamed."""
+
+    __tablename__ = "crime_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    character_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    """Not a real FK (same choice `StaffAction.staff_discord_id` already
+    made) -- `apply_steal_outcome`/`apply_burgle_outcome`/`apply_poach_
+    outcome` are exercised by plenty of unit tests against a lightweight,
+    never-persisted `Character` fixture (a real Postgres FK would reject
+    every one of those writes), and a log entry outliving a deleted
+    character is a feature here, not a bug."""
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    """`"steal"` | `"burgle"` | `"poach"`."""
+    tick: Mapped[int] = mapped_column(Integer, nullable=False)
+    success: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    """A clean, unnoticed win -- for `/poach` this means the shot landed
+    *and* no peacekeeper noticed; `caught` is tracked separately since a
+    caught attempt is always `success=False` but not every failure was a
+    catch (a steal/burgle can also just miss, or get spotted and escape)."""
+    caught: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    target_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    """Who it was taken from -- the victim's name for `/steal`, the
+    house's owner for `/burgle` (`None` for an NPC/unclaimed house, which
+    the existing `/burgle owner:<name>` flow can't target anyway), always
+    `None` for `/poach` (no victim)."""
+    good_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    """Set only for a successful `/poach` -- `/steal`/`/burgle` take
+    money, not goods."""
+    amount: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    """Money taken (steal/burgle) or units of `good_name` taken (poach);
+    `0` on anything but a clean success."""
+
+
 class LayerCategory(TimestampMixin, Base):
     """One "part" of the Picrew-style character portrait (e.g. "Base",
     "Hair", "Eyes") -- a stack position (`z_index`, lower renders behind

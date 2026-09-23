@@ -41,6 +41,7 @@ from panem_api import discord_staff
 from panem_shared import blackmarket as blackmarket_svc
 from panem_shared import characters as characters_svc
 from panem_shared import constants, job_levels, simtime
+from panem_shared import crime_log as crime_log_svc
 from panem_shared import housing as housing_svc
 from panem_shared import jail as jail_svc
 from panem_shared import jobs as jobs_svc
@@ -632,6 +633,21 @@ class PoachStartRequest(BaseModel):
     discord_id: int
 
 
+class CrimeLogEntry(BaseModel):
+    kind: str
+    tick: int
+    success: bool
+    caught: bool
+    target_name: str | None = None
+    good_name: str | None = None
+    amount: int
+    created_at: str
+
+
+class CrimeLogResponse(BaseModel):
+    entries: list[CrimeLogEntry]
+
+
 def build_crime_router(
     *,
     content: ContentBundle,
@@ -878,6 +894,34 @@ def build_crime_router(
             ex=CRIME_ATTEMPT_TTL_S,
         )
         return CrimeStartResponse(attempt_id=attempt_id, difficulty=difficulty)
+
+    @router.get("/{character_id}/log", response_model=CrimeLogResponse)
+    async def crime_log(character_id: int, discord_id: int) -> CrimeLogResponse:
+        """The character's own recent `/steal`/`/burgle`/`/poach` history,
+        most recent first -- `CrimeLog` rows `apply_steal_outcome`/`apply_
+        burgle_outcome`/`apply_poach_outcome` already write on every
+        resolved attempt, RNG-fallback or Activity minigame alike."""
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            rows = await crime_log_svc.list_crime_log(session, character_id)
+        return CrimeLogResponse(
+            entries=[
+                CrimeLogEntry(
+                    kind=row.kind,
+                    tick=row.tick,
+                    success=row.success,
+                    caught=row.caught,
+                    target_name=row.target_name,
+                    good_name=row.good_name,
+                    amount=row.amount,
+                    created_at=row.created_at.isoformat(),
+                )
+                for row in rows
+            ]
+        )
 
     return router
 

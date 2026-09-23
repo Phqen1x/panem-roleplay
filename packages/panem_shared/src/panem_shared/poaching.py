@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from panem_shared import constants
 from panem_shared.content.schemas import District, Good, Location
+from panem_shared.crime_log import record_crime_log
 from panem_shared.db.models import Character, DistrictState, Inventory
 from panem_shared.enums import CharacterStatus, LocationKind, OwnerKind
 from panem_shared.errors import NotAllowed, NotFound
@@ -146,14 +147,28 @@ async def apply_poach_outcome(
     it -- resolves the rest: a peacekeeper can still notice regardless of
     how the hunt itself went (`POACH_DETECTION_PROB`, unchanged from
     before the minigame existed), and only a clean, unnoticed attempt
-    that also landed its shots brings anything home."""
+    that also landed its shots brings anything home. Logs the attempt to
+    `CrimeLog` either way, the same as `apply_steal_outcome`/`apply_
+    burgle_outcome`."""
     if rng.random() < constants.POACH_DETECTION_PROB:
         await _apply_caught_consequence(session, character, district_id, current_tick)
-        return PoachResult(caught=True, good=None)
-    if not success:
-        return PoachResult(caught=False, good=None)
-    await _grant_good(session, character, good.id, constants.POACH_YIELD_QTY)
-    return PoachResult(caught=False, good=good)
+        result = PoachResult(caught=True, good=None)
+    elif not success:
+        result = PoachResult(caught=False, good=None)
+    else:
+        await _grant_good(session, character, good.id, constants.POACH_YIELD_QTY)
+        result = PoachResult(caught=False, good=good)
+    await record_crime_log(
+        session,
+        character_id=character.id,
+        kind="poach",
+        tick=current_tick,
+        success=result.good is not None,
+        caught=result.caught,
+        good_name=result.good.name if result.good is not None else None,
+        amount=constants.POACH_YIELD_QTY if result.good is not None else 0,
+    )
+    return result
 
 
 async def roll_and_apply_poach(

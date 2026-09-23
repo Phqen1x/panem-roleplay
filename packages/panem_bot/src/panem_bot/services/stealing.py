@@ -117,7 +117,7 @@ async def resolve_burgle(
     return await roll_and_apply_burgle(
         session,
         character=character,
-        house_value=house.suggested_price,
+        house=house,
         district_row=district_row,
         current_tick=current_tick,
         rng=rng,
@@ -128,7 +128,7 @@ async def roll_and_apply_burgle(
     session: AsyncSession,
     *,
     character: Character,
-    house_value: float,
+    house: Property,
     district_row: DistrictState | None,
     current_tick: int,
     rng: random.Random,
@@ -142,7 +142,7 @@ async def roll_and_apply_burgle(
     return await apply_burgle_outcome(
         session,
         character=character,
-        house_value=house_value,
+        house=house,
         district_row=district_row,
         current_tick=current_tick,
         success=success,

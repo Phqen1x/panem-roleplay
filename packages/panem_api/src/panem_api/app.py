@@ -690,7 +690,7 @@ def create_app(
                 result = await apply_burgle_outcome(
                     session,
                     character=character,
-                    house_value=house.suggested_price,
+                    house=house,
                     district_row=district_row,
                     current_tick=attempt["current_tick"],
                     success=body.won,

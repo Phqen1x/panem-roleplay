@@ -182,6 +182,8 @@ STRINGS: dict[str, str] = {
     ),
     "burgle_game_ready": "**{name}** kneels at {owner}'s door, pick in hand -- go pick the lock!",
     "burgle_already_tried": "This break-in has already been tried!",
+    "crimelog_header": "**{name}**'s recent crime log:",
+    "crimelog_empty": "**{name}** hasn't attempted any crimes yet.",
     # Housing (buying/renting houses/apartments/inns, fatigue, sleep)
     "housing_not_found": "No property by that id.",
     "housing_nothing_available": "Nothing is available in this district right now.",

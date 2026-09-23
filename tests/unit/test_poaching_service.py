@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import select
 
 from panem_bot.errors import NotAllowed, NotFound
 from panem_bot.services import poaching as poaching_svc
 from panem_shared import constants
 from panem_shared.content.schemas import District, DistrictCulture, DistrictMap, Good, Location
-from panem_shared.db.models import Character, DistrictState, Inventory
+from panem_shared.db.models import Character, CrimeLog, DistrictState, Inventory
 from panem_shared.enums import CharacterStatus, OwnerKind
 from panem_shared.simtime import TICKS_PER_PHASE
 
@@ -168,6 +169,50 @@ class TestApplyPoachOutcome:
         assert character.money == 100
         inv = await db_session.get(Inventory, (OwnerKind.CHARACTER.value, "1", "grain"))
         assert inv.qty == constants.POACH_YIELD_QTY
+
+    async def test_logs_a_successful_attempt(self, db_session):
+        character = make_character(money=100)
+        good = make_goods()["grain"]
+
+        await poaching_svc.apply_poach_outcome(
+            db_session,
+            character=character,
+            good=good,
+            district_id=12,
+            current_tick=7,
+            success=True,
+            rng=SequenceRng([0.99]),
+        )
+
+        row = (await db_session.execute(select(CrimeLog))).scalar_one()
+        assert row.character_id == character.id
+        assert row.kind == "poach"
+        assert row.tick == 7
+        assert row.success is True
+        assert row.caught is False
+        assert row.target_name is None
+        assert row.good_name == "Grain"
+        assert row.amount == constants.POACH_YIELD_QTY
+
+    async def test_logs_a_caught_attempt_with_no_good(self, db_session):
+        character = make_character(money=100, jailed_until_tick=None)
+        good = make_goods()["grain"]
+
+        await poaching_svc.apply_poach_outcome(
+            db_session,
+            character=character,
+            good=good,
+            district_id=12,
+            current_tick=0,
+            success=True,
+            rng=SequenceRng([0.0]),  # below the detection threshold
+        )
+
+        row = (await db_session.execute(select(CrimeLog))).scalar_one()
+        assert row.success is False
+        assert row.caught is True
+        assert row.good_name is None
+        assert row.amount == 0
 
     async def test_success_adds_to_existing_inventory(self, db_session):
         db_session.add(

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from panem_shared import constants
+from panem_shared.crime_log import record_crime_log
 from panem_shared.db.models import Character, DistrictState, Npc, Property, RelationshipRow
 from panem_shared.enums import CharacterStatus, OwnerKind, PropertyKind
 from panem_shared.errors import NotAllowed
@@ -196,27 +197,42 @@ async def apply_steal_outcome(
     """Given whether the pickpocket skill check itself succeeded -- a
     roll (`STEAL_FROM_*_BASE_SUCCESS`), or the pickpocket minigame's own
     result when `/steal` launched via Activity -- resolves the rest: a
-    clean, consequence-free lift, or the alert/escape/caught chain."""
+    clean, consequence-free lift, or the alert/escape/caught chain. Logs
+    the attempt to `CrimeLog` either way (`record_crime_log`) -- this is
+    the one funnel both the RNG-fallback and Activity paths already share,
+    so the log stays complete without either caller doing it separately."""
     if success:
         amount = min(int(victim.money), rng.randint(*constants.STEAL_YIELD_MONEY_RANGE))
         victim.money -= amount
         character.money += amount
-        return StealResult(True, False, False, amount)
-    return await _apply_alert_escape_caught(
+        result = StealResult(True, False, False, amount)
+    else:
+        result = await _apply_alert_escape_caught(
+            session,
+            character=character,
+            victim=victim,
+            district_row=district_row,
+            current_tick=current_tick,
+            rng=rng,
+        )
+    await record_crime_log(
         session,
-        character=character,
-        victim=victim,
-        district_row=district_row,
-        current_tick=current_tick,
-        rng=rng,
+        character_id=character.id,
+        kind="steal",
+        tick=current_tick,
+        success=result.success,
+        caught=result.caught,
+        target_name=victim.name,
+        amount=result.amount,
     )
+    return result
 
 
 async def apply_burgle_outcome(
     session: AsyncSession,
     *,
     character: Character,
-    house_value: float,
+    house: Property,
     district_row: DistrictState | None,
     current_tick: int,
     success: bool,
@@ -226,18 +242,40 @@ async def apply_burgle_outcome(
     alert/escape/caught shape, a payout from the house's own value
     (`BURGLE_YIELD_FRACTION` of `suggested_price`, capped at
     `BURGLE_YIELD_CAP`) instead of debiting a victim, and no
-    `RelationshipRow` to touch (a house has no single NPC standing)."""
+    `RelationshipRow` to touch (a house has no single NPC standing).
+    Takes the whole `house` (not just its `suggested_price`, the previous
+    signature) so the `CrimeLog` entry can name its owner -- `None` for an
+    NPC-owned/unclaimed house, which the existing `/burgle owner:<name>`
+    flow can't target anyway since it only searches `Character` rows."""
+    owner_name: str | None = None
+    if house.owner_kind == OwnerKind.CHARACTER.value and house.owner_id is not None:
+        owner = await session.get(Character, house.owner_id)
+        if owner is not None:
+            owner_name = owner.name
     if success:
         amount = min(
-            constants.BURGLE_YIELD_CAP, round(house_value * constants.BURGLE_YIELD_FRACTION)
+            constants.BURGLE_YIELD_CAP,
+            round(house.suggested_price * constants.BURGLE_YIELD_FRACTION),
         )
         character.money += amount
-        return StealResult(True, False, False, amount)
-    return await _apply_alert_escape_caught(
+        result = StealResult(True, False, False, amount)
+    else:
+        result = await _apply_alert_escape_caught(
+            session,
+            character=character,
+            victim=None,
+            district_row=district_row,
+            current_tick=current_tick,
+            rng=rng,
+        )
+    await record_crime_log(
         session,
-        character=character,
-        victim=None,
-        district_row=district_row,
-        current_tick=current_tick,
-        rng=rng,
+        character_id=character.id,
+        kind="burgle",
+        tick=current_tick,
+        success=result.success,
+        caught=result.caught,
+        target_name=owner_name,
+        amount=result.amount,
     )
+    return result

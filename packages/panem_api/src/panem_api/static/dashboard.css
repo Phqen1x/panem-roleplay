@@ -206,6 +206,14 @@ header {
   color: #e0736b;
 }
 
+table.data-table td.win {
+  color: #7cd992;
+}
+
+table.data-table td.lose {
+  color: #e0736b;
+}
+
 @media (max-width: 640px) {
   .work-layout {
     flex-direction: column;

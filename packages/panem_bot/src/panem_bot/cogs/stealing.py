@@ -16,9 +16,29 @@ from panem_bot.services import characters as characters_svc
 from panem_bot.services import stealing as stealing_svc
 from panem_bot.strings import t
 from panem_shared import constants
-from panem_shared.db.models import Character, DistrictState, Npc, Property, WorldClock
+from panem_shared import crime_log as crime_log_svc
+from panem_shared.db.models import Character, CrimeLog, DistrictState, Npc, Property, WorldClock
 from panem_shared.enums import CharacterStatus, OwnerKind, PropertyKind
 from panem_shared.stealing import StealResult, StealVictim
+
+_CRIME_LOG_VERBS = {"steal": "Steal", "burgle": "Burgle", "poach": "Poach"}
+
+
+def _describe_crime_log_entry(entry: CrimeLog) -> str:
+    verb = _CRIME_LOG_VERBS.get(entry.kind, entry.kind)
+    if entry.caught:
+        return f"**{verb}** (tick {entry.tick}) -- caught, fined and jailed."
+    if entry.kind == "poach":
+        if entry.good_name:
+            return (
+                f"**{verb}** (tick {entry.tick}) -- brought home {entry.amount}x {entry.good_name}."
+            )
+        return f"**{verb}** (tick {entry.tick}) -- came back empty-handed."
+    if entry.success:
+        target = f" from {entry.target_name}" if entry.target_name else ""
+        return f"**{verb}** (tick {entry.tick}) -- got away with {entry.amount} money{target}."
+    target = f" ({entry.target_name})" if entry.target_name else ""
+    return f"**{verb}** (tick {entry.tick}) -- failed{target}."
 
 
 def _strip_at(name: str) -> str:
@@ -281,7 +301,7 @@ class StealingCog(commands.Cog):
             result = await stealing_svc.roll_and_apply_burgle(
                 session,
                 character=char,
-                house_value=house.suggested_price,
+                house=house,
                 district_row=district_row,
                 current_tick=current_tick,
                 rng=random.Random(),
@@ -371,6 +391,30 @@ class StealingCog(commands.Cog):
             t("burgle_game_ready", name=char_name, owner=owner), view=view, ephemeral=True
         )
         await activity_launch.remember_crime_interaction(self.bot, attempt_id, interaction)
+
+    # ------------------------------------------------------------ /crimelog
+
+    @app_commands.command(
+        name="crimelog", description="Show a character's recent steal/burgle/poach attempts"
+    )
+    @app_commands.describe(character="Character name")
+    @app_commands.autocomplete(character=autocomplete.own_approved)
+    async def crimelog(self, interaction: discord.Interaction, character: str) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            char = await self._get_character(session, interaction.user.id, character)
+            if char is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            entries = await crime_log_svc.list_crime_log(session, char.id)
+            name = char.name
+
+        if not entries:
+            await interaction.response.send_message(t("crimelog_empty", name=name), ephemeral=True)
+            return
+        lines = [_describe_crime_log_entry(entry) for entry in entries]
+        await interaction.response.send_message(
+            t("crimelog_header", name=name) + "\n" + "\n".join(lines), ephemeral=True
+        )
 
 
 async def setup(bot: commands.Bot) -> None:

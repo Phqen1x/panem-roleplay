@@ -38,8 +38,33 @@ export function mount(root, ctx) {
   const resultLine = el("p", { class: "result-line" });
   const iframeHost = el("div", {});
   const statusEl = el("p", { class: "tab-status" });
+  const logBody = el("tbody", {});
+  const logStatus = el("p", { class: "tab-status" });
+  const logPanel = el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "Recent Activity" }),
+    logStatus,
+    el(
+      "table",
+      { class: "data-table" },
+      el(
+        "thead",
+        {},
+        el(
+          "tr",
+          {},
+          el("th", { text: "Crime" }),
+          el("th", { text: "Result" }),
+          el("th", { text: "Detail" }),
+          el("th", { text: "Tick" })
+        )
+      ),
+      logBody
+    )
+  );
 
-  root.append(statusEl, stealPanel, burglePanel, poachPanel, resultLine, iframeHost);
+  root.append(statusEl, stealPanel, burglePanel, poachPanel, resultLine, iframeHost, logPanel);
 
   let messageListener = null;
   let closeResultTimer = null;
@@ -78,9 +103,64 @@ export function mount(root, ctx) {
           closeResultTimer = null;
           iframeHost.innerHTML = "";
         }, RESULT_DISPLAY_MS);
+        loadLog();
       }
     };
     window.addEventListener("message", messageListener);
+  }
+
+  function describeLogEntry(entry) {
+    const verb = { steal: "Steal", burgle: "Burgle", poach: "Poach" }[entry.kind] || entry.kind;
+    if (entry.caught) {
+      return { verb, result: "Caught", cls: "lose", detail: "Fined and jailed" };
+    }
+    if (entry.kind === "poach") {
+      if (entry.good_name) {
+        return { verb, result: "Success", cls: "win", detail: `${entry.amount}x ${entry.good_name}` };
+      }
+      return { verb, result: "Missed", cls: "", detail: "Came back empty-handed" };
+    }
+    if (entry.success) {
+      const from = entry.target_name ? ` from ${entry.target_name}` : "";
+      return { verb, result: "Success", cls: "win", detail: `${entry.amount} money${from}` };
+    }
+    return { verb, result: "Failed", cls: "", detail: entry.target_name || "No one to blame" };
+  }
+
+  async function loadLog() {
+    const characterId = ctx.characterId();
+    const discordId = ctx.discordId();
+    if (!characterId || !discordId) {
+      logBody.innerHTML = "";
+      logStatus.textContent = "";
+      return;
+    }
+    try {
+      const body = await ctx.apiFetch(
+        `/activity/dashboard/crime/${characterId}/log?discord_id=${encodeURIComponent(discordId)}`
+      );
+      logBody.innerHTML = "";
+      if (body.entries.length === 0) {
+        logStatus.textContent = "No crimes attempted yet.";
+        return;
+      }
+      logStatus.textContent = "";
+      for (const entry of body.entries) {
+        const { verb, result, cls, detail } = describeLogEntry(entry);
+        logBody.append(
+          el(
+            "tr",
+            {},
+            el("td", { text: verb }),
+            el("td", { class: cls, text: result }),
+            el("td", { text: detail }),
+            el("td", { text: String(entry.tick) })
+          )
+        );
+      }
+    } catch (err) {
+      logStatus.textContent = `Could not load activity: ${err.message}`;
+    }
   }
 
   async function loadOptions() {
@@ -178,6 +258,7 @@ export function mount(root, ctx) {
   });
 
   loadOptions();
+  loadLog();
 
   return {
     unmount() {

@@ -2058,6 +2058,66 @@ class TestDashboardCrime:
             )
         assert response.status_code == 400
 
+    async def test_log_returns_recent_entries_most_recent_first(
+        self, poach_app, db_session_factory
+    ):
+        from panem_shared.db.models import CrimeLog
+
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        async with db_session_factory() as session, session.begin():
+            session.add(
+                CrimeLog(
+                    character_id=char_id,
+                    kind="steal",
+                    tick=1,
+                    success=True,
+                    caught=False,
+                    target_name="Mark",
+                    amount=15,
+                )
+            )
+            session.add(
+                CrimeLog(
+                    character_id=char_id,
+                    kind="poach",
+                    tick=2,
+                    success=True,
+                    caught=False,
+                    good_name="Grain",
+                    amount=1,
+                )
+            )
+        transport = httpx.ASGITransport(app=poach_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/crime/{char_id}/log", params={"discord_id": 5}
+            )
+        assert response.status_code == 200
+        entries = response.json()["entries"]
+        assert [e["kind"] for e in entries] == ["poach", "steal"]
+        assert entries[0]["good_name"] == "Grain"
+        assert entries[1]["target_name"] == "Mark"
+        assert entries[1]["amount"] == 15
+
+    async def test_log_empty_for_a_character_with_no_history(self, poach_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=poach_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/crime/{char_id}/log", params={"discord_id": 5}
+            )
+        assert response.status_code == 200
+        assert response.json()["entries"] == []
+
+    async def test_log_refuses_a_non_owner(self, poach_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=poach_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/crime/{char_id}/log", params={"discord_id": 999}
+            )
+        assert response.status_code == 404
+
 
 class TestDashboardWork:
     async def test_status_reports_job_and_level(self, work_app, db_session_factory):
