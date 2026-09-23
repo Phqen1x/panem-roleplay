@@ -6,6 +6,7 @@ import pytest
 
 from panem_shared.content.errors import ContentValidationError
 from panem_shared.content.loader import load_content
+from panem_shared.content.schemas import Good
 
 REPO_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 
@@ -439,3 +440,53 @@ map:
         )
         with pytest.raises(ContentValidationError, match="workplace"):
             load_content(tmp_path)
+
+
+class TestGoodConsumptionFields:
+    """`hunger_value`/`thirst_value`/`cook_method` (Vitals tab feature) --
+    optional and default to "not consumable" so every pre-existing good in
+    the other 13 district YAMLs keeps loading unchanged."""
+
+    def test_defaults_to_not_consumable(self):
+        good = Good(id="rock", name="Rock", base_price=1.0, category="materials")
+        assert good.hunger_value == 0.0
+        assert good.thirst_value == 0.0
+        assert good.cook_method is None
+
+    def test_accepts_explicit_consumption_values(self):
+        good = Good(
+            id="fish",
+            name="Seafood",
+            base_price=5.0,
+            category="food",
+            hunger_value=20.0,
+            cook_method="stove",
+        )
+        assert good.hunger_value == 20.0
+        assert good.cook_method == "stove"
+
+    def test_rejects_an_unknown_cook_method(self):
+        with pytest.raises(ValueError, match="cook_method"):
+            Good(
+                id="fish",
+                name="Seafood",
+                base_price=5.0,
+                category="food",
+                cook_method="microwave",
+            )
+
+    def test_real_goods_yaml_has_the_expected_consumption_values(self):
+        bundle = load_content(REPO_DATA_DIR)
+        assert bundle.goods["fish"].hunger_value == 20.0
+        assert bundle.goods["fish"].cook_method == "stove"
+        assert bundle.goods["livestock"].hunger_value == 25.0
+        assert bundle.goods["livestock"].cook_method == "stove"
+        assert bundle.goods["grain"].hunger_value == 15.0
+        assert bundle.goods["grain"].cook_method == "oven"
+        assert bundle.goods["produce"].thirst_value == 25.0
+        assert bundle.goods["produce"].cook_method is None
+        # A non-food good stays fully inert -- no accidental consumption.
+        assert bundle.goods["coal"].hunger_value == 0.0
+        assert bundle.goods["coal"].thirst_value == 0.0
+        # `oil` is a pure ingredient: food category, but not directly eaten.
+        assert bundle.goods["oil"].hunger_value == 0.0

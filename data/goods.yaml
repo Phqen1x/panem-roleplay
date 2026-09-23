@@ -28,6 +28,8 @@
   base_price: 5.0
   perishable: true
   category: food
+  hunger_value: 20.0
+  cook_method: stove
 - id: power
   name: Power
   base_price: 3.0
@@ -53,6 +55,8 @@
   base_price: 2.0
   perishable: true
   category: food
+  hunger_value: 15.0
+  cook_method: oven
 - id: oil
   name: Cooking Oil
   base_price: 4.0
@@ -63,11 +67,14 @@
   base_price: 12.0
   perishable: true
   category: food
+  hunger_value: 25.0
+  cook_method: stove
 - id: produce
   name: Fruits/Drinks
   base_price: 3.0
   perishable: true
   category: food
+  thirst_value: 25.0
 - id: medicine
   name: Medicine
   base_price: 15.0
