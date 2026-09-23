@@ -297,9 +297,52 @@ NIGHTLY_LIVING_COST_NPC = 5.0
 HUNGER_MAX = 100.0
 HUNGER_MIN = 0.0
 HUNGER_INCREASE_UNMET = 15.0
-"""Hunger gained on a night the living cost can't be paid."""
+"""Hunger gained on a night the living cost can't be paid. NPC-only as of
+the Vitals tab feature -- see `HUNGER_PHASE_DECAY_MIN`/`MAX` for the player
+path, which no longer piggybacks on the living-cost mechanic."""
 HUNGER_DECREASE_MET = 10.0
-"""Hunger lost on a night the living cost is paid."""
+"""Hunger lost on a night the living cost is paid. Still used by NPCs and
+by the housing inn-stay perk ("a paid night's lodging includes a hearty
+meal") -- the player passive-decay path no longer uses this either, per
+the Vitals tab feature (eating a specific owned good is what relieves
+hunger now, via `Good.hunger_value`)."""
+HUNGER_PHASE_DECAY_MIN = 10.0
+HUNGER_PHASE_DECAY_MAX = 20.0
+"""Vitals tab feature: a Simulation character's `hunger` climbs by a
+random amount in this range every sim-phase (`panem_sim.systems.needs`,
+`simtime.TICKS_PER_PHASE` -- 4 times a day), independent of
+`NIGHTLY_LIVING_COST`/money entirely. Uncapped, choice-driven eating from
+inventory (`panem_shared.sustenance`) is what keeps this in check now,
+not a once-a-day cooldown -- decay had to move to a faster, per-phase
+cadence for that balance to hold."""
+THIRST_PHASE_DECAY_MIN = 10.0
+THIRST_PHASE_DECAY_MAX = 20.0
+"""Mirrors `HUNGER_PHASE_DECAY_MIN`/`MAX` exactly, for `thirst`."""
+COOK_BONUS_MULTIPLIER = 2.0
+"""Landing the cook/bake minigame's timing window (Vitals tab feature,
+`static/games/cook.js`/`bake.js`) doubles that good's `hunger_value` for
+the eat that follows -- "increase replenish value by 100%." Missing
+early or late means the base `hunger_value` only, never zero."""
+SANITY_GAIN_PER_INTERACTION = 2.0
+"""A small passive sanity gain alongside `FATIGUE_COST_PER_INTERACTION`'s
+dock in `cogs/proxy.py`'s `_apply_rp_credit` -- "sending role play
+messages... should replenish a little sanity each time." Same qualifying
+gate (`shifts_svc.meets_rp_credit`), Simulation mode only, uncapped
+repeats (bounded only by `SANITY_MAX`)."""
+ENTERTAINMENT_SANITY_VALUES: dict[str, float] = {
+    "minesweeper": 15.0,
+    "snake": 12.0,
+    "connect4": 18.0,
+    "coinflip": 8.0,
+    "poison": 8.0,
+    "solitaire": 15.0,
+}
+"""Vitals tab feature: the Entertainment panel's six `/work` leisure
+minigames (`static/games/*.js`), each crediting `sanity` by this flat
+amount on completion -- win or lose, since the point is playing, not
+winning. First-pass tuning values; the crime skill-check games (lockpick/
+pickpocket/archery) are deliberately absent -- they stay tied to their
+actual crime/jailbreak/poaching outcomes, not reused here."""
 HEALTH_MAX = 100.0
 HEALTH_MIN = 0.0
 HEALTH_DECAY_HUNGER_THRESHOLD = 70.0

@@ -105,7 +105,7 @@ async def _return_stock(session: AsyncSession, district_id: int, good: Good, qty
         row.supply += qty
 
 
-async def _adjust_inventory(
+async def adjust_inventory(
     session: AsyncSession, character: Character, good_id: str, delta: int
 ) -> int:
     """Applies `delta` to a character's `good_id` stock, creating the row
@@ -173,7 +173,7 @@ async def buy(
     await _reserve_stock(session, district.id, good, qty)
 
     character.money -= total
-    await _adjust_inventory(session, character, good_id, qty)
+    await adjust_inventory(session, character, good_id, qty)
     session.add(
         MarketOrder(
             district_id=district.id,
@@ -211,7 +211,7 @@ async def sell(
     price = await get_price(session, district.id, good) * constants.SELL_DISCOUNT
     total = round(qty * price)
 
-    await _adjust_inventory(session, character, good_id, -qty)
+    await adjust_inventory(session, character, good_id, -qty)
     await _return_stock(session, district.id, good, qty)
     character.money += total
     session.add(

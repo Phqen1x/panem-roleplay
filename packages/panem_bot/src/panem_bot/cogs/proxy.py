@@ -37,7 +37,7 @@ from panem_shared.db.models import (
     User,
     WorldClock,
 )
-from panem_shared.enums import ChannelKind, CharacterStatus, OwnerKind
+from panem_shared.enums import ChannelKind, CharacterStatus, OwnerKind, RpMode
 from panem_shared.relationships import relationship_key
 
 
@@ -172,7 +172,12 @@ class ProxyCog(commands.Cog):
         other players and NPCs," and RP is the interaction signal this
         codebase already has a length gate for (`meets_rp_credit`), so it
         doubles as the fatigue-interaction gate too rather than inventing
-        a second threshold."""
+        a second threshold.
+
+        Same qualifying message also trickles `sanity` back up by
+        `SANITY_GAIN_PER_INTERACTION` (Simulation mode only -- Life/Story
+        characters don't track sanity) -- "sending role play messages...
+        should replenish a little sanity each time" (Vitals tab feature)."""
         clock = await session.get(WorldClock, 1)
         current_tick = clock.tick if clock is not None else 0
         character.last_active_tick = current_tick
@@ -180,6 +185,11 @@ class ProxyCog(commands.Cog):
         qualifies = shifts_svc.meets_rp_credit(content)
         if qualifies:
             housing_svc.dock_fatigue(character, constants.FATIGUE_COST_PER_INTERACTION)
+            if character.rp_mode == RpMode.SIMULATION.value:
+                character.sanity = min(
+                    constants.SANITY_MAX,
+                    character.sanity + constants.SANITY_GAIN_PER_INTERACTION,
+                )
 
         open_shift = (
             await session.execute(

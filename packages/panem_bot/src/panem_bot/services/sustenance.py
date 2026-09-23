@@ -14,3 +14,4 @@ from panem_shared.sustenance import check_can_entertain as check_can_entertain
 from panem_shared.sustenance import drink as drink
 from panem_shared.sustenance import eat as eat
 from panem_shared.sustenance import entertain as entertain
+from panem_shared.sustenance import owned_consumables as owned_consumables

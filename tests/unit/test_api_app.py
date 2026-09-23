@@ -1238,10 +1238,10 @@ class TestDashboardIdentify:
             "is_staff": False,
             "is_donor": False,
             "theme": {
-                "background_hex": "#14161c",
-                "accent_hex": "#e0a72e",
-                "panel_hex": "#1b1f27",
-                "text_hex": "#d7dbe4",
+                "background_hex": "#0a0c10",
+                "accent_hex": "#c5a059",
+                "panel_hex": "#12161f",
+                "text_hex": "#f1f3f7",
                 "profile_id": None,
             },
             "theme_profiles": [],
@@ -1410,10 +1410,10 @@ class TestDashboardIdentify:
         body = response.json()
         assert body["is_donor"] is True
         assert body["theme"] == {
-            "background_hex": "#14161c",
-            "accent_hex": "#e0a72e",
-            "panel_hex": "#1b1f27",
-            "text_hex": "#d7dbe4",
+            "background_hex": "#0a0c10",
+            "accent_hex": "#c5a059",
+            "panel_hex": "#12161f",
+            "text_hex": "#f1f3f7",
             "profile_id": None,
         }
         assert body["theme_profiles"] == []
@@ -1451,10 +1451,10 @@ def _profile_payload(
 
 
 DEFAULT_THEME_JSON = {
-    "background_hex": "#14161c",
-    "accent_hex": "#e0a72e",
-    "panel_hex": "#1b1f27",
-    "text_hex": "#d7dbe4",
+    "background_hex": "#0a0c10",
+    "accent_hex": "#c5a059",
+    "panel_hex": "#12161f",
+    "text_hex": "#f1f3f7",
     "profile_id": None,
 }
 
