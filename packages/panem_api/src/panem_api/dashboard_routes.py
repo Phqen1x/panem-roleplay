@@ -34,7 +34,7 @@ from pathlib import Path
 import redis.asyncio as redis
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
-from sqlalchemy import case, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from panem_api import discord_staff
@@ -63,6 +63,7 @@ from panem_shared.db.models import (
     Scene,
     Shift,
     StaffAction,
+    ThemeProfile,
     User,
     WorldClock,
 )
@@ -96,6 +97,11 @@ class DashboardCharacterSummary(BaseModel):
     money: int
     jailed_until_tick: int | None = None
     jailed: bool = False
+    # Only ever non-null for a currently donor account (see `_theme_for_
+    # user`'s old docstring, now `_resolve_theme`) -- lets the theme
+    # picker's profile list show which characters a profile is assigned to
+    # without a separate round trip per character.
+    theme_profile_id: int | None = None
 
 
 class IdentifyRequest(BaseModel):
@@ -103,12 +109,30 @@ class IdentifyRequest(BaseModel):
 
 
 class DashboardTheme(BaseModel):
-    """The two CSS custom properties `static/style.css`'s `:root` defines
-    (`--bg`, `--accent`), as a per-user override -- see `panem_shared.
-    theme`'s module docstring for the donor gate this sits behind."""
+    """The four CSS custom properties `static/style.css`'s `:root` defines
+    (`--bg`, `--accent`, `--panel`, `--text`), resolved for a particular
+    account (and, optionally, one of its characters) -- see `panem_shared.
+    theme`'s module docstring for the donor gate and the named-profile
+    system this sits behind. `profile_id` names which `ThemeProfile`
+    produced these values (`None` for the plain default, e.g. a non-donor,
+    a lapsed donor, or an account/character that's never had one
+    assigned/activated) -- the frontend uses it to highlight the active
+    profile in its list without a second lookup."""
 
     background_hex: str = theme_svc.DEFAULT_BACKGROUND_HEX
     accent_hex: str = theme_svc.DEFAULT_ACCENT_HEX
+    panel_hex: str = theme_svc.DEFAULT_PANEL_HEX
+    text_hex: str = theme_svc.DEFAULT_TEXT_HEX
+    profile_id: int | None = None
+
+
+class ThemeProfileSummary(BaseModel):
+    id: int
+    name: str
+    background_hex: str
+    accent_hex: str
+    panel_hex: str
+    text_hex: str
 
 
 class IdentifyResponse(BaseModel):
@@ -117,19 +141,14 @@ class IdentifyResponse(BaseModel):
     is_donor: bool = False
     # Always present, even for a non-donor -- `app.js` applies this
     # unconditionally on load so the dashboard renders a saved theme (a
-    # currently-donor account's) or the plain default (everyone else's)
-    # the same way, with no special-casing at the call site.
+    # currently-donor account's general profile) or the plain default
+    # (everyone else's) the same way, with no special-casing at the call
+    # site. This is the *account-level* theme (no character context) --
+    # once a character is selected, the frontend re-resolves via `GET
+    # .../theme/resolve?character_id=` for that character's own override.
     theme: DashboardTheme = Field(default_factory=DashboardTheme)
-
-
-class SetThemeRequest(BaseModel):
-    discord_id: int
-    background_hex: str
-    accent_hex: str
-
-
-class ResetThemeRequest(BaseModel):
-    discord_id: int
+    # Empty for a non-donor/lapsed donor, same surfacing rule as `theme`.
+    theme_profiles: list[ThemeProfileSummary] = Field(default_factory=list)
 
 
 def _require_session_factory(
@@ -174,19 +193,49 @@ def _http_from_service_error(exc: ServiceError) -> HTTPException:
     return HTTPException(status_code=status, detail=exc.reason_key)
 
 
-def _theme_for_user(user: User, *, is_donor: bool) -> DashboardTheme:
-    """Only a *currently* donor-role-holding account ever sees its custom
-    colors -- a lapsed donor's saved hex values stay in the row (`User.
-    dashboard_background_hex`/`dashboard_accent_hex`, in case the role
-    comes back) but this returns the plain default for them meanwhile,
-    honoring "only donors get custom backgrounds" even for someone who
-    customized once and later lost the role."""
-    if not is_donor:
+def _theme_profile_summary(profile: ThemeProfile) -> ThemeProfileSummary:
+    return ThemeProfileSummary(
+        id=profile.id,
+        name=profile.name,
+        background_hex=profile.background_hex,
+        accent_hex=profile.accent_hex,
+        panel_hex=profile.panel_hex,
+        text_hex=profile.text_hex,
+    )
+
+
+def _theme_for_profile(profile: ThemeProfile | None) -> DashboardTheme:
+    if profile is None:
         return DashboardTheme()
     return DashboardTheme(
-        background_hex=user.dashboard_background_hex or theme_svc.DEFAULT_BACKGROUND_HEX,
-        accent_hex=user.dashboard_accent_hex or theme_svc.DEFAULT_ACCENT_HEX,
+        background_hex=profile.background_hex,
+        accent_hex=profile.accent_hex,
+        panel_hex=profile.panel_hex,
+        text_hex=profile.text_hex,
+        profile_id=profile.id,
     )
+
+
+async def _resolve_theme(
+    session: AsyncSession, *, user: User, character: Character | None
+) -> DashboardTheme:
+    """The effective theme for `user`, optionally narrowed to one of their
+    characters -- assumes the donor gate has *already* been checked by the
+    caller (every call site below either just verified `is_donor` or
+    returns the plain default itself first when it hasn't). Resolution
+    order: `character`'s own assigned profile (if a character was given
+    and it has one), else the account's general active profile, else the
+    plain default -- the same "character overrides general" shape
+    `Character.theme_profile_id`'s docstring describes."""
+    profile_id = None
+    if character is not None and character.theme_profile_id is not None:
+        profile_id = character.theme_profile_id
+    elif user.active_theme_profile_id is not None:
+        profile_id = user.active_theme_profile_id
+    if profile_id is None:
+        return DashboardTheme()
+    profile = await session.get(ThemeProfile, profile_id)
+    return _theme_for_profile(profile)
 
 
 def build_identify_router(
@@ -245,6 +294,16 @@ def build_identify_router(
             )
             characters = rows.scalars().all()
             current_tick = await _current_tick(session)
+            theme_profiles: list[ThemeProfileSummary] = []
+            if is_donor:
+                profile_rows = await session.execute(
+                    select(ThemeProfile)
+                    .where(ThemeProfile.user_id == user.id)
+                    .order_by(ThemeProfile.id)
+                )
+                theme_profiles = [
+                    _theme_profile_summary(p) for p in profile_rows.scalars().all()
+                ]
             return IdentifyResponse(
                 characters=[
                     DashboardCharacterSummary(
@@ -260,15 +319,75 @@ def build_identify_router(
                         jailed_until_tick=c.jailed_until_tick,
                         jailed=c.jailed_until_tick is not None
                         and c.jailed_until_tick > current_tick,
+                        theme_profile_id=c.theme_profile_id if is_donor else None,
                     )
                     for c in characters
                 ],
                 is_staff=is_staff,
                 is_donor=is_donor,
-                theme=_theme_for_user(user, is_donor=is_donor),
+                theme=(
+                    await _resolve_theme(session, user=user, character=None)
+                    if is_donor
+                    else DashboardTheme()
+                ),
+                theme_profiles=theme_profiles,
             )
 
     return router
+
+
+MAX_THEME_PROFILES_PER_USER = 20
+
+
+class ThemeProfileCreateRequest(BaseModel):
+    discord_id: int
+    name: str
+    background_hex: str
+    accent_hex: str
+    panel_hex: str
+    text_hex: str
+
+
+class ThemeProfileUpdateRequest(BaseModel):
+    discord_id: int
+    name: str | None = None
+    background_hex: str | None = None
+    accent_hex: str | None = None
+    panel_hex: str | None = None
+    text_hex: str | None = None
+
+
+class ThemeProfileActionRequest(BaseModel):
+    discord_id: int
+
+
+class ThemeProfileAssignRequest(BaseModel):
+    discord_id: int
+    character_id: int
+
+
+class ThemeUnassignRequest(BaseModel):
+    discord_id: int
+    character_id: int
+
+
+class ThemeResolveRequest(BaseModel):
+    discord_id: int
+    character_id: int | None = None
+
+
+class ThemeProfileListResponse(BaseModel):
+    profiles: list[ThemeProfileSummary]
+    active_profile_id: int | None = None
+
+
+class ResetThemeRequest(BaseModel):
+    discord_id: int
+    # When given, resets that character's own assignment (falls back to
+    # the account's general profile); omitted resets the account's general
+    # profile itself (falls back to the plain default). Either way this
+    # never deletes a saved profile -- just clears one FK.
+    character_id: int | None = None
 
 
 def build_theme_router(
@@ -278,48 +397,241 @@ def build_theme_router(
     discord_guild_id: int = 0,
     donor_role_ids: frozenset[int] = frozenset(),
 ) -> APIRouter:
-    """The color-wheel popup's REST surface -- donor-only (`panem_shared.
-    theme`'s module docstring). Every route here re-checks `discord_staff.
-    fetch_has_any_role` itself rather than trusting a client-supplied flag
-    (`/identify`'s `is_donor` is cosmetic, only used to decide whether
-    `app.js` shows the button at all) -- the same posture `build_staff_
-    router`'s `_require_staff` already uses for the Staff tab."""
+    """The color-wheel popup's REST surface -- donor-only for every write
+    (`panem_shared.theme`'s module docstring). Every write route here
+    re-checks `discord_staff.fetch_has_any_role` itself rather than
+    trusting a client-supplied flag (`/identify`'s `is_donor` is cosmetic,
+    only used to decide whether `app.js` shows the button at all) -- the
+    same posture `build_staff_router`'s `_require_staff` already uses for
+    the Staff tab. The one read route (`GET .../resolve`) never 403s --
+    like the old single-color `_theme_for_user`, a non-donor/lapsed-donor
+    request just gets the plain default back."""
     router = APIRouter(prefix="/activity/dashboard/theme", tags=["dashboard"])
 
-    async def _require_donor(discord_id: int) -> None:
-        ok = await discord_staff.fetch_has_any_role(
+    async def _is_donor(discord_id: int) -> bool:
+        return await discord_staff.fetch_has_any_role(
             discord_id,
             bot_token=discord_token,
             guild_id=discord_guild_id,
             role_ids=donor_role_ids,
         )
-        if not ok:
+
+    async def _require_donor(discord_id: int) -> None:
+        if not await _is_donor(discord_id):
             raise HTTPException(status_code=403, detail="donor_only")
 
-    @router.post("", response_model=DashboardTheme)
-    async def set_theme(body: SetThemeRequest) -> DashboardTheme:
+    async def _resolve_owned_profile(
+        session: AsyncSession, *, discord_id: int, profile_id: int
+    ) -> tuple[User, ThemeProfile]:
+        """Mirrors `_resolve_owned_character`'s trust model: 404 (not 403)
+        for a profile that exists but belongs to someone else, same as an
+        unknown id -- there's no session/login here to make that
+        distinction worth exposing to the caller."""
+        user_row = await session.execute(select(User).where(User.discord_id == discord_id))
+        user = user_row.scalar_one_or_none()
+        profile = await session.get(ThemeProfile, profile_id) if user is not None else None
+        if user is None or profile is None or profile.user_id != user.id:
+            raise HTTPException(status_code=404, detail="No such theme profile")
+        return user, profile
+
+    async def _profiles_list_response(
+        session: AsyncSession, user: User
+    ) -> ThemeProfileListResponse:
+        rows = await session.execute(
+            select(ThemeProfile).where(ThemeProfile.user_id == user.id).order_by(ThemeProfile.id)
+        )
+        return ThemeProfileListResponse(
+            profiles=[_theme_profile_summary(p) for p in rows.scalars().all()],
+            active_profile_id=user.active_theme_profile_id,
+        )
+
+    # POST (not GET), and `/resolve` below too, deliberately: both need a
+    # `discord_id` and both go through `_require_donor` -> `discord_staff.
+    # fetch_has_any_role`, which does its own outbound `httpx.AsyncClient.
+    # get(...)` to Discord's REST API -- a GET route here, calling out to
+    # another GET under the hood, is awkward to unit-test with the
+    # `patch.object(httpx.AsyncClient, "get", ...)` convention this test
+    # suite already uses for that Discord call, since it patches the
+    # method for every `AsyncClient` instance including the test's own.
+    # `POST /activity/dashboard/identify` (a read) already sets this same
+    # precedent for the same reason.
+    @router.post("/profiles/list", response_model=ThemeProfileListResponse)
+    async def list_profiles(body: ThemeProfileActionRequest) -> ThemeProfileListResponse:
+        await _require_donor(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            user_row = await session.execute(
+                select(User).where(User.discord_id == body.discord_id)
+            )
+            user = user_row.scalar_one_or_none()
+            if user is None:
+                return ThemeProfileListResponse(profiles=[], active_profile_id=None)
+            return await _profiles_list_response(session, user)
+
+    @router.post("/profiles", response_model=ThemeProfileSummary)
+    async def create_profile(body: ThemeProfileCreateRequest) -> ThemeProfileSummary:
         await _require_donor(body.discord_id)
         try:
+            name = theme_svc.validate_profile_name(body.name)
             background_hex = theme_svc.validate_hex_color(body.background_hex)
             accent_hex = theme_svc.validate_hex_color(body.accent_hex)
+            panel_hex = theme_svc.validate_hex_color(body.panel_hex)
+            text_hex = theme_svc.validate_hex_color(body.text_hex)
         except ServiceError as exc:
             raise _http_from_service_error(exc) from exc
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             user = await characters_svc.get_or_create_user(session, body.discord_id)
-            user.dashboard_background_hex = background_hex
-            user.dashboard_accent_hex = accent_hex
-        return DashboardTheme(background_hex=background_hex, accent_hex=accent_hex)
+            count_row = await session.execute(
+                select(func.count()).select_from(ThemeProfile).where(ThemeProfile.user_id == user.id)
+            )
+            if count_row.scalar_one() >= MAX_THEME_PROFILES_PER_USER:
+                raise HTTPException(status_code=400, detail="theme_profile_limit_reached")
+            profile = ThemeProfile(
+                user_id=user.id,
+                name=name,
+                background_hex=background_hex,
+                accent_hex=accent_hex,
+                panel_hex=panel_hex,
+                text_hex=text_hex,
+            )
+            session.add(profile)
+            await session.flush()
+            return _theme_profile_summary(profile)
+
+    @router.patch("/profiles/{profile_id}", response_model=ThemeProfileSummary)
+    async def update_profile(
+        profile_id: int, body: ThemeProfileUpdateRequest
+    ) -> ThemeProfileSummary:
+        await _require_donor(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            _, profile = await _resolve_owned_profile(
+                session, discord_id=body.discord_id, profile_id=profile_id
+            )
+            try:
+                if body.name is not None:
+                    profile.name = theme_svc.validate_profile_name(body.name)
+                if body.background_hex is not None:
+                    profile.background_hex = theme_svc.validate_hex_color(body.background_hex)
+                if body.accent_hex is not None:
+                    profile.accent_hex = theme_svc.validate_hex_color(body.accent_hex)
+                if body.panel_hex is not None:
+                    profile.panel_hex = theme_svc.validate_hex_color(body.panel_hex)
+                if body.text_hex is not None:
+                    profile.text_hex = theme_svc.validate_hex_color(body.text_hex)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            return _theme_profile_summary(profile)
+
+    @router.post("/profiles/{profile_id}/delete", response_model=ThemeProfileListResponse)
+    async def delete_profile(
+        profile_id: int, body: ThemeProfileActionRequest
+    ) -> ThemeProfileListResponse:
+        await _require_donor(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            user, profile = await _resolve_owned_profile(
+                session, discord_id=body.discord_id, profile_id=profile_id
+            )
+            # `ondelete="SET NULL"` on both `User.active_theme_profile_id`
+            # and `Character.theme_profile_id` clears any reference to this
+            # row at the database level -- nothing to clear by hand here.
+            await session.delete(profile)
+            await session.flush()
+            await session.refresh(user)
+            return await _profiles_list_response(session, user)
+
+    @router.post("/profiles/{profile_id}/activate", response_model=DashboardTheme)
+    async def activate_profile(profile_id: int, body: ThemeProfileActionRequest) -> DashboardTheme:
+        """Sets this profile as the account's general default -- the "save
+        in general to go back to" half of the feature request."""
+        await _require_donor(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            user, profile = await _resolve_owned_profile(
+                session, discord_id=body.discord_id, profile_id=profile_id
+            )
+            user.active_theme_profile_id = profile.id
+            return _theme_for_profile(profile)
+
+    @router.post("/profiles/{profile_id}/assign", response_model=DashboardTheme)
+    async def assign_profile(profile_id: int, body: ThemeProfileAssignRequest) -> DashboardTheme:
+        """Assigns this profile to one specific character, overriding the
+        account's general default while that character is selected."""
+        await _require_donor(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            _, profile = await _resolve_owned_profile(
+                session, discord_id=body.discord_id, profile_id=profile_id
+            )
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=body.character_id
+            )
+            character.theme_profile_id = profile.id
+            return _theme_for_profile(profile)
+
+    @router.post("/unassign", response_model=DashboardTheme)
+    async def unassign_profile(body: ThemeUnassignRequest) -> DashboardTheme:
+        """Clears a character's own profile assignment -- it goes back to
+        following whatever the account's general profile resolves to."""
+        await _require_donor(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=body.character_id
+            )
+            character.theme_profile_id = None
+            user_row = await session.execute(select(User).where(User.discord_id == body.discord_id))
+            user = user_row.scalar_one_or_none()
+            if user is None:
+                return DashboardTheme()
+            return await _resolve_theme(session, user=user, character=character)
 
     @router.post("/reset", response_model=DashboardTheme)
     async def reset_theme(body: ResetThemeRequest) -> DashboardTheme:
+        """The picker's "Reset to default" button: clears whichever context
+        is currently open -- never deletes a saved profile, just the one FK
+        pointing at it. With a `character_id`, that means clearing *that
+        character's own* assignment, which falls back to the account's
+        general profile if one is active (not necessarily the plain
+        default -- same "character overrides general" order `_resolve_
+        theme` always uses). Without one, it clears the account's general
+        profile itself, which has no further fallback."""
         await _require_donor(body.discord_id)
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             user = await characters_svc.get_or_create_user(session, body.discord_id)
-            user.dashboard_background_hex = None
-            user.dashboard_accent_hex = None
-        return DashboardTheme()
+            if body.character_id is not None:
+                character = await _resolve_owned_character(
+                    session, discord_id=body.discord_id, character_id=body.character_id
+                )
+                character.theme_profile_id = None
+                return await _resolve_theme(session, user=user, character=character)
+            user.active_theme_profile_id = None
+            return DashboardTheme()
+
+    @router.post("/resolve", response_model=DashboardTheme)
+    async def resolve_theme(body: ThemeResolveRequest) -> DashboardTheme:
+        """Called by `app.js` whenever the selected character changes (and
+        on initial load with no character yet) to get the effective theme
+        for that context. Never 403s -- a non-donor/lapsed donor just gets
+        the plain default, the same non-throwing shape `/identify`'s
+        `theme` field already has."""
+        if not await _is_donor(body.discord_id):
+            return DashboardTheme()
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            user_row = await session.execute(select(User).where(User.discord_id == body.discord_id))
+            user = user_row.scalar_one_or_none()
+            if user is None:
+                return DashboardTheme()
+            character = None
+            if body.character_id is not None:
+                character = await _resolve_owned_character(
+                    session, discord_id=body.discord_id, character_id=body.character_id
+                )
+            return await _resolve_theme(session, user=user, character=character)
 
     return router
 

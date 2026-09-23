@@ -2,9 +2,13 @@
 // to the header's top-right corner (`app.js` only unhides `#theme-picker`
 // when `/activity/dashboard/identify` reports `is_donor`) that opens a
 // Discord-role-color-picker-style panel -- a saturation/value square plus
-// a hue strip, driving a live hex swatch/text field, for each of the two
-// customizable colors (background, accent). See `panem_shared.theme`'s
-// module docstring for the server-side gate and persistence this feeds.
+// a hue strip, driving a live hex swatch/text field, for each of the four
+// customizable colors (background, accent, panel, text) -- plus a small
+// profile manager: named, savable presets a donor can set as their
+// account's general default and/or assign to individual characters. See
+// `panem_shared.theme`'s module docstring for the server-side gate and
+// the profile system this feeds, and `dashboard_routes.build_theme_router`
+// for the REST surface each button here calls through `app.js`'s ctx.
 //
 // Original canvas-free widget built from two layered CSS gradients (the
 // classic SV-square trick: a black-to-transparent vertical gradient over
@@ -16,8 +20,12 @@
 // `?v=` on its `import ... from "./theme_picker.js?v=N"` line) any time
 // this file's exports change -- same convention `tabs/_shared.js` documents.
 
-const TARGETS = ["background", "accent"];
-const TARGET_LABELS = { background: "Background", accent: "Accent" };
+const TARGETS = ["background", "accent", "panel", "text"];
+const TARGET_LABELS = { background: "Background", accent: "Accent", panel: "Panel", text: "Text" };
+// Mirrors `panem_shared.theme`'s `DEFAULT_*_HEX` constants, which
+// themselves mirror `style.css`'s `:root` values -- only used to seed the
+// picker before the first real theme (`getTheme()`) is available.
+const DEFAULTS = { background: "#14161c", accent: "#e0a72e", panel: "#1b1f27", text: "#d7dbe4" };
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -88,6 +96,10 @@ function isValidHex(value) {
   return /^#[0-9a-fA-F]{6}$/.test(value);
 }
 
+function escapeHtml(value) {
+  return value.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+
 // Drags via pointer capture rather than window-level mousemove/mouseup
 // listeners: capturing the pointer on the element itself means `pointermove`
 // keeps firing on it (with real coordinates, even past its edges) for the
@@ -112,15 +124,46 @@ function attachDrag(el, onMove) {
 // relative` via CSS) -- hidden/shown by app.js based on `is_donor`, never
 // unmounted, so this only needs to be called once.
 //
-// getTheme(): () => {background_hex, accent_hex}, the last-*saved* theme --
-// read when the popup opens (and by `refresh()`, e.g. after `/identify`
-// loads a saved theme, or right after a save/reset resolves) to seed both
-// targets' pickers and as the value an unsaved edit reverts to on close.
-// onPreview(theme): called on every drag/type, for instant CSS-var preview.
-// onSave(theme)/onReset(): return a Promise of the persisted `{background_
-// hex, accent_hex}` (or throw) -- this shows a status line and calls
-// `onPreview` with the result either way.
-export function mountThemePicker(container, { getTheme, onPreview, onSave, onReset }) {
+// getTheme(): () => {background_hex, accent_hex, panel_hex, text_hex,
+// profile_id}, the theme currently resolved+applied for whatever context
+// app.js is showing (the account's general default, or the selected
+// character's own override) -- read whenever the popup opens/refreshes,
+// and as the value an unsaved edit reverts to on close.
+// getProfiles(): () => [{id, name, background_hex, accent_hex, panel_hex,
+// text_hex}], every profile this donor has saved.
+// getActiveProfileId(): () => number|null, the account's general default
+// profile id (for the "Default ✓" label).
+// getCharacter(): () => {id, name, themeProfileId}|null, the dashboard's
+// currently selected character, if any -- controls whether the "assign to
+// this character" row shows at all.
+// onPreview(theme): called on every drag/type/profile-pick, for instant
+// CSS-var preview -- no network call.
+// onSaveNew({name, ...theme}) -> Promise<profile>: creates a new profile.
+// onUpdate(id, {name, ...theme}) -> Promise<profile>: overwrites one.
+// onDelete(id) -> Promise<void>.
+// onActivate(id) -> Promise<void>: sets the account's general default.
+// onAssign(id, characterId) -> Promise<void>: assigns to one character.
+// onUnassign(characterId) -> Promise<void>: clears a character's override.
+// onReset() -> Promise<void>: resets the *current context* (character if
+// one is selected, else the account's general default) to the plain
+// default style.
+export function mountThemePicker(
+  container,
+  {
+    getTheme,
+    getProfiles,
+    getActiveProfileId,
+    getCharacter,
+    onPreview,
+    onSaveNew,
+    onUpdate,
+    onDelete,
+    onActivate,
+    onAssign,
+    onUnassign,
+    onReset,
+  }
+) {
   container.innerHTML = `
     <button type="button" class="theme-picker-toggle" aria-label="Customize dashboard colors"
       title="Customize dashboard colors" aria-expanded="false"></button>
@@ -141,8 +184,27 @@ export function mountThemePicker(container, { getTheme, onPreview, onSave, onRes
         <span>#</span>
         <input type="text" class="theme-picker-hex-input" maxlength="6" spellcheck="false" />
       </label>
+
+      <div class="theme-picker-profiles">
+        <label class="theme-picker-profile-row">
+          <span>Profile</span>
+          <select class="theme-profile-select"></select>
+        </label>
+        <input type="text" class="theme-profile-name-input" placeholder="Profile name" maxlength="40" />
+        <div class="theme-picker-actions">
+          <button type="button" class="theme-btn theme-profile-save-btn">Save as New</button>
+          <button type="button" class="theme-btn theme-profile-update-btn">Update</button>
+        </div>
+        <div class="theme-picker-actions">
+          <button type="button" class="theme-btn theme-profile-activate-btn">Set as Default</button>
+          <button type="button" class="theme-btn theme-profile-delete-btn">Delete</button>
+        </div>
+        <div class="theme-picker-actions theme-picker-assign-row" hidden>
+          <button type="button" class="theme-btn theme-profile-assign-btn"></button>
+        </div>
+      </div>
+
       <div class="theme-picker-actions">
-        <button type="button" class="theme-save-btn">Save</button>
         <button type="button" class="theme-reset-btn">Reset to default</button>
       </div>
       <p class="theme-picker-status" hidden></p>
@@ -155,7 +217,6 @@ export function mountThemePicker(container, { getTheme, onPreview, onSave, onRes
   const hueEl = container.querySelector(".theme-picker-hue");
   const hueHandle = container.querySelector(".theme-picker-hue-handle");
   const hexInput = container.querySelector(".theme-picker-hex-input");
-  const saveBtn = container.querySelector(".theme-save-btn");
   const resetBtn = container.querySelector(".theme-reset-btn");
   const statusEl = container.querySelector(".theme-picker-status");
   const targetButtons = [...container.querySelectorAll(".theme-target-btn")];
@@ -163,13 +224,29 @@ export function mountThemePicker(container, { getTheme, onPreview, onSave, onRes
     TARGETS.map((t) => [t, container.querySelector(`[data-swatch="${t}"]`)])
   );
 
-  // Two independent HSV states, one per target -- switching which color
-  // you're editing (Background <-> Accent) must not discard whatever the
-  // other one was mid-edited to, and both feed `onPreview` together on
-  // every change so the live preview always reflects both at once.
-  let hsv = { background: hexToHsv("#14161c"), accent: hexToHsv("#e0a72e") };
+  const profileSelect = container.querySelector(".theme-profile-select");
+  const nameInput = container.querySelector(".theme-profile-name-input");
+  const saveNewBtn = container.querySelector(".theme-profile-save-btn");
+  const updateBtn = container.querySelector(".theme-profile-update-btn");
+  const activateBtn = container.querySelector(".theme-profile-activate-btn");
+  const deleteBtn = container.querySelector(".theme-profile-delete-btn");
+  const assignRow = container.querySelector(".theme-picker-assign-row");
+  const assignBtn = container.querySelector(".theme-profile-assign-btn");
+  const actionButtons = [saveNewBtn, updateBtn, activateBtn, deleteBtn, assignBtn, resetBtn];
+
+  // Four independent HSV states, one per target -- switching which color
+  // you're editing must not discard whatever another one was mid-edited
+  // to, and all four feed `onPreview` together on every change so the
+  // live preview always reflects all of them at once.
+  let hsv = Object.fromEntries(TARGETS.map((t) => [t, hexToHsv(DEFAULTS[t])]));
   let activeTarget = "background";
-  let saving = false;
+  // The profile (if any) whose colors are currently loaded into `hsv` --
+  // null means "editing without an associated saved profile". Sticky
+  // across slider/hex edits (so tweaking a loaded profile's color and
+  // hitting Update still targets it), cleared on delete or on explicitly
+  // picking "Unsaved colors" from the dropdown.
+  let loadedProfileId = null;
+  let busy = false;
 
   function currentHex(target) {
     const { h, s, v } = hsv[target];
@@ -177,7 +254,17 @@ export function mountThemePicker(container, { getTheme, onPreview, onSave, onRes
   }
 
   function currentTheme() {
-    return { background_hex: currentHex("background"), accent_hex: currentHex("accent") };
+    return {
+      background_hex: currentHex("background"),
+      accent_hex: currentHex("accent"),
+      panel_hex: currentHex("panel"),
+      text_hex: currentHex("text"),
+    };
+  }
+
+  function findProfile(id) {
+    if (id == null) return null;
+    return getProfiles().find((p) => p.id === id) || null;
   }
 
   function setStatus(text) {
@@ -203,6 +290,36 @@ export function mountThemePicker(container, { getTheme, onPreview, onSave, onRes
   function render() {
     renderSwatches();
     renderActivePicker();
+  }
+
+  function renderProfileSelect() {
+    const profiles = getProfiles();
+    profileSelect.innerHTML =
+      `<option value="">Unsaved colors</option>` +
+      profiles.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join("");
+    profileSelect.value = loadedProfileId != null ? String(loadedProfileId) : "";
+  }
+
+  function renderProfileControls() {
+    renderProfileSelect();
+    const hasLoaded = loadedProfileId != null;
+    updateBtn.disabled = !hasLoaded;
+    deleteBtn.disabled = !hasLoaded;
+    activateBtn.disabled = !hasLoaded;
+    activateBtn.textContent =
+      hasLoaded && getActiveProfileId() === loadedProfileId ? "Default ✓" : "Set as Default";
+
+    const character = getCharacter();
+    if (!character) {
+      assignRow.hidden = true;
+      return;
+    }
+    assignRow.hidden = false;
+    const isAssigned = hasLoaded && character.themeProfileId === loadedProfileId;
+    assignBtn.disabled = !hasLoaded;
+    assignBtn.textContent = isAssigned
+      ? `Stop using for ${character.name}`
+      : `Use for ${character.name}`;
   }
 
   function emitPreview() {
@@ -243,10 +360,47 @@ export function mountThemePicker(container, { getTheme, onPreview, onSave, onRes
     });
   }
 
+  function loadProfileIntoPicker(profile) {
+    loadedProfileId = profile.id;
+    hsv = {
+      background: hexToHsv(profile.background_hex),
+      accent: hexToHsv(profile.accent_hex),
+      panel: hexToHsv(profile.panel_hex),
+      text: hexToHsv(profile.text_hex),
+    };
+    nameInput.value = profile.name;
+    render();
+    renderProfileControls();
+  }
+
+  profileSelect.addEventListener("change", () => {
+    if (profileSelect.value === "") {
+      loadedProfileId = null;
+      nameInput.value = "";
+      renderProfileControls();
+      return;
+    }
+    const profile = findProfile(Number(profileSelect.value));
+    if (!profile) return;
+    loadProfileIntoPicker(profile);
+    // Preview this saved profile live without activating/assigning it --
+    // "so you can see what it will look like if you choose it."
+    onPreview(currentTheme());
+  });
+
   function syncFromSaved() {
     const theme = getTheme();
-    hsv = { background: hexToHsv(theme.background_hex), accent: hexToHsv(theme.accent_hex) };
+    hsv = {
+      background: hexToHsv(theme.background_hex),
+      accent: hexToHsv(theme.accent_hex),
+      panel: hexToHsv(theme.panel_hex),
+      text: hexToHsv(theme.text_hex),
+    };
+    loadedProfileId = theme.profile_id ?? null;
+    const profile = findProfile(loadedProfileId);
+    nameInput.value = profile ? profile.name : "";
     render();
+    renderProfileControls();
   }
 
   function closePopup({ revert = true } = {}) {
@@ -259,29 +413,85 @@ export function mountThemePicker(container, { getTheme, onPreview, onSave, onRes
     }
   }
 
-  async function withStatus(action, busyText) {
-    if (saving) return;
-    saving = true;
-    saveBtn.disabled = true;
-    resetBtn.disabled = true;
+  function setBusy(isBusy) {
+    busy = isBusy;
+    for (const btn of actionButtons) btn.disabled = isBusy;
+    if (!isBusy) renderProfileControls(); // restores correct per-state enabled/disabled
+  }
+
+  async function runBusy(action, busyText) {
+    if (busy) return;
+    setBusy(true);
     setStatus(busyText);
     try {
-      const saved = await action();
+      await action();
       setStatus("Saved.");
-      hsv = { background: hexToHsv(saved.background_hex), accent: hexToHsv(saved.accent_hex) };
-      render();
-      onPreview(saved);
     } catch (err) {
       setStatus(`Couldn't save: ${err.message}`);
     } finally {
-      saving = false;
-      saveBtn.disabled = false;
-      resetBtn.disabled = false;
+      setBusy(false);
     }
   }
 
-  saveBtn.addEventListener("click", () => withStatus(() => onSave(currentTheme()), "Saving…"));
-  resetBtn.addEventListener("click", () => withStatus(() => onReset(), "Resetting…"));
+  saveNewBtn.addEventListener("click", () =>
+    runBusy(async () => {
+      const profile = await onSaveNew({ name: nameInput.value, ...currentTheme() });
+      loadedProfileId = profile.id;
+      nameInput.value = profile.name;
+      renderProfileControls();
+    }, "Saving…")
+  );
+
+  updateBtn.addEventListener("click", () => {
+    if (loadedProfileId == null) return;
+    const id = loadedProfileId;
+    return runBusy(async () => {
+      const profile = await onUpdate(id, { name: nameInput.value, ...currentTheme() });
+      nameInput.value = profile.name;
+      renderProfileControls();
+    }, "Saving…");
+  });
+
+  deleteBtn.addEventListener("click", () => {
+    if (loadedProfileId == null) return;
+    const id = loadedProfileId;
+    return runBusy(async () => {
+      await onDelete(id);
+      loadedProfileId = null;
+      syncFromSaved();
+      onPreview(getTheme());
+    }, "Deleting…");
+  });
+
+  activateBtn.addEventListener("click", () => {
+    if (loadedProfileId == null) return;
+    const id = loadedProfileId;
+    return runBusy(async () => {
+      await onActivate(id);
+      syncFromSaved();
+      onPreview(getTheme());
+    }, "Setting default…");
+  });
+
+  assignBtn.addEventListener("click", () => {
+    const character = getCharacter();
+    if (!character || loadedProfileId == null) return;
+    const isAssigned = character.themeProfileId === loadedProfileId;
+    return runBusy(async () => {
+      if (isAssigned) await onUnassign(character.id);
+      else await onAssign(loadedProfileId, character.id);
+      syncFromSaved();
+      onPreview(getTheme());
+    }, isAssigned ? "Removing…" : "Assigning…");
+  });
+
+  resetBtn.addEventListener("click", () =>
+    runBusy(async () => {
+      await onReset();
+      syncFromSaved();
+      onPreview(getTheme());
+    }, "Resetting…")
+  );
 
   toggleBtn.addEventListener("click", () => {
     if (popup.hidden) {
@@ -301,12 +511,13 @@ export function mountThemePicker(container, { getTheme, onPreview, onSave, onRes
   });
 
   render();
+  renderProfileControls();
 
   return {
-    // Called by app.js whenever the saved theme changes from outside this
-    // widget (a fresh `/identify` response, or right after this widget's
-    // own save/reset already applied it -- a redundant-but-harmless call
-    // in that case, since `hsv` already matches).
+    // Called by app.js whenever the saved theme, profile list, or selected
+    // character changes from outside this widget (a fresh `/identify` or
+    // `/theme/resolve` response, or right after this widget's own actions
+    // already applied one -- a redundant-but-harmless call in that case).
     refresh() {
       if (popup.hidden) return; // no need to touch a closed popup's state
       syncFromSaved();

@@ -25,20 +25,25 @@
 // in an `<iframe>` for the lockpick/steal/burgle/poach minigames (see
 // static/tabs/jail.js, static/tabs/crime.js) and use it to refresh their
 // own status without a reload. A no-op outside an iframe.
-const ASSET_VERSION = "11";
+const ASSET_VERSION = "12";
 
-// Donor dashboard theme (`static/theme_picker.js`'s popup, saved via
-// `POST /activity/dashboard/theme`): `app.js` mirrors the saved `--bg`/
-// `--accent` CSS custom properties to localStorage on every load, so this
-// same-origin page -- opened either directly or in the dashboard's Jail/
-// Crime tabs' iframe, with no Discord identity of its own to ask
-// `/identify` -- picks up the same colors. Best-effort: a missing/blocked
-// value just leaves `style.css`'s plain default in place.
+// Donor dashboard theme (`static/theme_picker.js`'s popup, saved via the
+// profile endpoints under `/activity/dashboard/theme/profiles`): `app.js`
+// mirrors the resolved `--bg`/`--accent`/`--panel`/`--text` CSS custom
+// properties to localStorage on every load, so this same-origin page --
+// opened either directly or in the dashboard's Jail/Crime tabs' iframe,
+// with no Discord identity of its own to ask `/identify` -- picks up the
+// same colors. Best-effort: a missing/blocked value just leaves
+// `style.css`'s plain default in place for that one property.
 try {
   const bg = window.localStorage.getItem("panem_theme_bg");
   const accent = window.localStorage.getItem("panem_theme_accent");
+  const panel = window.localStorage.getItem("panem_theme_panel");
+  const text = window.localStorage.getItem("panem_theme_text");
   if (bg) document.documentElement.style.setProperty("--bg", bg);
   if (accent) document.documentElement.style.setProperty("--accent", accent);
+  if (panel) document.documentElement.style.setProperty("--panel", panel);
+  if (text) document.documentElement.style.setProperty("--text", text);
 } catch {
   // Private browsing / blocked storage -- falls back to the default theme.
 }

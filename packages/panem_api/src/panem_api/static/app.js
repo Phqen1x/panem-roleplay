@@ -24,7 +24,7 @@
 // together) -- there's still no cryptographic auth here, same documented
 // gap as the rest of this process.
 import { fetchJson, el } from "./tabs/_shared.js?v=3";
-import { mountThemePicker } from "./theme_picker.js?v=1";
+import { mountThemePicker } from "./theme_picker.js?v=2";
 
 const DISCORD_SDK_URL = "/vendor/discord-embedded-app-sdk.js";
 const STEP_TIMEOUT_MS = 8000;
@@ -34,11 +34,18 @@ const STEP_TIMEOUT_MS = 8000;
 const ASSET_VERSION = "25";
 
 // Mirrors `panem_shared.theme`'s `DEFAULT_BACKGROUND_HEX`/`DEFAULT_ACCENT_
-// HEX`, which themselves mirror `style.css`'s `:root` values -- what a
-// non-donor, a never-customized donor, or a reset renders. Duplicated
-// here (rather than fetched) so the dashboard never has to round-trip to
-// the server just to know its own default colors.
-const DEFAULT_THEME = { background_hex: "#14161c", accent_hex: "#e0a72e" };
+// HEX`/`DEFAULT_PANEL_HEX`/`DEFAULT_TEXT_HEX`, which themselves mirror
+// `style.css`'s `:root` values -- what a non-donor, a never-customized
+// donor, or a reset renders. Duplicated here (rather than fetched) so the
+// dashboard never has to round-trip to the server just to know its own
+// default colors.
+const DEFAULT_THEME = {
+  background_hex: "#14161c",
+  accent_hex: "#e0a72e",
+  panel_hex: "#1b1f27",
+  text_hex: "#d7dbe4",
+  profile_id: null,
+};
 
 const TABS = ["map", "character", "work", "market", "travel", "social", "jail", "crime", "housing"];
 const TAB_LABELS = {
@@ -76,6 +83,13 @@ const state = {
   isStaff: false,
   isDonor: false,
   theme: DEFAULT_THEME,
+  themeProfiles: [],
+  // The account's general/default profile id (independent of whatever the
+  // *currently selected character* resolves to, which can differ -- see
+  // `dashboard_routes._resolve_theme`'s "character overrides general"
+  // order). Tracked separately so the picker can always show "Default"
+  // correctly even while a character-specific profile is what's applied.
+  activeThemeProfileId: null,
 };
 
 let currentTabHandle = null;
@@ -112,19 +126,67 @@ function writeStorage(key, value) {
   }
 }
 
-// Sets the two CSS custom properties `style.css`'s `:root` defines
-// (`--bg`, `--accent`) live -- both the donor theme picker's drag preview
-// and the actual saved theme go through this one function. Also mirrors
-// the values to localStorage so `work.html`/`crime.html` (same-origin
-// iframes the dashboard's Work/Jail/Crime tabs embed, with no Discord
-// identity of their own to ask `/identify` themselves) pick up the same
-// colors -- the same "app.js writes, another same-origin page reads"
-// convention `panem_character_id` already established.
+// Sets the four CSS custom properties `style.css`'s `:root` defines
+// (`--bg`, `--accent`, `--panel`, `--text`) live -- both the donor theme
+// picker's drag preview and the actual resolved theme go through this one
+// function. Also mirrors the values to localStorage so `work.html`/
+// `crime.html` (same-origin iframes the dashboard's Work/Jail/Crime tabs
+// embed, with no Discord identity of their own to ask `/identify`
+// themselves) pick up the same colors -- the same "app.js writes, another
+// same-origin page reads" convention `panem_character_id` already
+// established.
 function applyTheme(theme) {
   document.documentElement.style.setProperty("--bg", theme.background_hex);
   document.documentElement.style.setProperty("--accent", theme.accent_hex);
+  document.documentElement.style.setProperty("--panel", theme.panel_hex);
+  document.documentElement.style.setProperty("--text", theme.text_hex);
   writeStorage("panem_theme_bg", theme.background_hex);
   writeStorage("panem_theme_accent", theme.accent_hex);
+  writeStorage("panem_theme_panel", theme.panel_hex);
+  writeStorage("panem_theme_text", theme.text_hex);
+}
+
+function currentCharacter() {
+  return state.characters.find((c) => c.id === state.characterId) || null;
+}
+
+// Keeps `state.characters` in sync after an assign/unassign resolves, so
+// the picker's "Use for <character>"/"Stop using for <character>" toggle
+// (which reads `getCharacter().themeProfileId`) reflects the change
+// immediately without waiting for the next `/identify`.
+function patchCharacterThemeProfile(characterId, profileId) {
+  const character = state.characters.find((c) => c.id === characterId);
+  if (character) character.theme_profile_id = profileId;
+}
+
+async function themeApiPost(path, body) {
+  return fetchJson(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+// Re-resolves the effective theme for the current context (the selected
+// character's own override if it has one, else the account's general
+// default, else the plain default -- `dashboard_routes._resolve_theme`)
+// and applies it live. Called whenever that context changes: the selected
+// character, or a fresh `/identify`.
+async function refreshResolvedTheme() {
+  if (!state.isDonor) return;
+  const discordId = getDiscordId();
+  if (!discordId) return;
+  try {
+    state.theme = await themeApiPost("/activity/dashboard/theme/resolve", {
+      discord_id: discordId,
+      character_id: state.characterId,
+    });
+  } catch (err) {
+    console.warn("Could not resolve dashboard theme:", err);
+    state.theme = DEFAULT_THEME;
+  }
+  applyTheme(state.theme);
+  if (themePickerHandle) themePickerHandle.refresh();
 }
 
 let themePickerHandle = null;
@@ -133,28 +195,103 @@ function setupThemePicker() {
   if (themePickerHandle) return;
   themePickerHandle = mountThemePicker(themePickerEl, {
     getTheme: () => state.theme,
+    getProfiles: () => state.themeProfiles,
+    getActiveProfileId: () => state.activeThemeProfileId,
+    getCharacter: () => {
+      const character = currentCharacter();
+      return character
+        ? { id: character.id, name: character.name, themeProfileId: character.theme_profile_id ?? null }
+        : null;
+    },
     onPreview: applyTheme,
-    onSave: async (theme) => {
+    onSaveNew: async ({ name, background_hex, accent_hex, panel_hex, text_hex }) => {
       const discordId = getDiscordId();
       if (!discordId) throw new Error("no Discord id");
-      const saved = await fetchJson("/activity/dashboard/theme", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ discord_id: discordId, ...theme }),
+      const profile = await themeApiPost("/activity/dashboard/theme/profiles", {
+        discord_id: discordId,
+        name,
+        background_hex,
+        accent_hex,
+        panel_hex,
+        text_hex,
       });
-      state.theme = saved;
-      return saved;
+      state.themeProfiles = [...state.themeProfiles, profile];
+      return profile;
+    },
+    onUpdate: async (id, { name, background_hex, accent_hex, panel_hex, text_hex }) => {
+      const discordId = getDiscordId();
+      if (!discordId) throw new Error("no Discord id");
+      const profile = await fetchJson(`/activity/dashboard/theme/profiles/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          discord_id: discordId,
+          name,
+          background_hex,
+          accent_hex,
+          panel_hex,
+          text_hex,
+        }),
+      });
+      state.themeProfiles = state.themeProfiles.map((p) => (p.id === id ? profile : p));
+      return profile;
+    },
+    onDelete: async (id) => {
+      const discordId = getDiscordId();
+      if (!discordId) throw new Error("no Discord id");
+      const list = await themeApiPost(`/activity/dashboard/theme/profiles/${id}/delete`, {
+        discord_id: discordId,
+      });
+      state.themeProfiles = list.profiles;
+      state.activeThemeProfileId = list.active_profile_id;
+      for (const character of state.characters) {
+        if (character.theme_profile_id === id) character.theme_profile_id = null;
+      }
+      // Whatever was applied might have just been deleted out from under
+      // the current context -- re-resolve rather than guess what it fell
+      // back to.
+      await refreshResolvedTheme();
+    },
+    onActivate: async (id) => {
+      const discordId = getDiscordId();
+      if (!discordId) throw new Error("no Discord id");
+      await themeApiPost(`/activity/dashboard/theme/profiles/${id}/activate`, {
+        discord_id: discordId,
+      });
+      state.activeThemeProfileId = id;
+      await refreshResolvedTheme();
+    },
+    onAssign: async (id, characterId) => {
+      const discordId = getDiscordId();
+      if (!discordId) throw new Error("no Discord id");
+      await themeApiPost(`/activity/dashboard/theme/profiles/${id}/assign`, {
+        discord_id: discordId,
+        character_id: characterId,
+      });
+      patchCharacterThemeProfile(characterId, id);
+      if (state.characterId === characterId) await refreshResolvedTheme();
+    },
+    onUnassign: async (characterId) => {
+      const discordId = getDiscordId();
+      if (!discordId) throw new Error("no Discord id");
+      await themeApiPost("/activity/dashboard/theme/unassign", {
+        discord_id: discordId,
+        character_id: characterId,
+      });
+      patchCharacterThemeProfile(characterId, null);
+      if (state.characterId === characterId) await refreshResolvedTheme();
     },
     onReset: async () => {
       const discordId = getDiscordId();
       if (!discordId) throw new Error("no Discord id");
-      const saved = await fetchJson("/activity/dashboard/theme/reset", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ discord_id: discordId }),
+      const character = currentCharacter();
+      await themeApiPost("/activity/dashboard/theme/reset", {
+        discord_id: discordId,
+        character_id: character ? character.id : null,
       });
-      state.theme = saved;
-      return saved;
+      if (character) patchCharacterThemeProfile(character.id, null);
+      else state.activeThemeProfileId = null;
+      await refreshResolvedTheme();
     },
   });
 }
@@ -318,6 +455,9 @@ async function selectCharacter(id) {
   writeStorage("panem_character_id", String(id));
   const chosen = state.characters.find((c) => c.id === id);
   if (chosen) characterToggleEl.textContent = characterLabel(chosen);
+  // A donor's theme can be assigned per-character -- switching characters
+  // may mean switching the applied colors too.
+  await refreshResolvedTheme();
   await showTab(currentTabName());
 }
 
@@ -359,6 +499,8 @@ async function refreshIdentity() {
     state.isStaff = false;
     state.isDonor = false;
     state.theme = DEFAULT_THEME;
+    state.themeProfiles = [];
+    state.activeThemeProfileId = null;
     applyTheme(state.theme);
     themePickerEl.hidden = true;
     renderCharacterOptions();
@@ -374,21 +516,30 @@ async function refreshIdentity() {
     state.characters = body.characters;
     state.isStaff = Boolean(body.is_staff);
     state.isDonor = Boolean(body.is_donor);
+    // `body.theme` here has no character context (`/identify` doesn't
+    // know which one's selected) -- it's the account's general theme, so
+    // its `profile_id` is exactly the account's general default.
     state.theme = body.theme || DEFAULT_THEME;
+    state.themeProfiles = body.theme_profiles || [];
+    state.activeThemeProfileId = state.theme.profile_id ?? null;
   } catch (err) {
     console.warn("Could not load characters:", err);
     state.characters = [];
     state.isStaff = false;
     state.isDonor = false;
     state.theme = DEFAULT_THEME;
+    state.themeProfiles = [];
+    state.activeThemeProfileId = null;
   }
   applyTheme(state.theme);
   themePickerEl.hidden = !state.isDonor;
+  renderCharacterOptions(); // may set state.characterId from localStorage
   if (state.isDonor) {
     setupThemePicker();
-    if (themePickerHandle) themePickerHandle.refresh();
+    // Now that the selected character (if any) is known, re-resolve for
+    // that specific context -- it may differ from the general theme above.
+    await refreshResolvedTheme();
   }
-  renderCharacterOptions();
   setupNav();
 }
 

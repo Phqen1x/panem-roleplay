@@ -57,16 +57,61 @@ class User(TimestampMixin, Base):
     max_characters_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
     """`/staff character_limit`; NULL means the guild default applies."""
 
-    dashboard_background_hex: Mapped[str | None] = mapped_column(String(7), nullable=True)
-    dashboard_accent_hex: Mapped[str | None] = mapped_column(String(7), nullable=True)
-    """Donor-only dashboard theme override (`POST /activity/dashboard/
-    theme`, `panem_shared.theme`), each `#rrggbb`. NULL means the default
-    style applies -- also true for a lapsed donor's saved value, which
-    `dashboard_routes.build_identify_router` only surfaces while `is_donor`
-    still holds, so these two columns stay set (not cleared) if a donor
-    role is later revoked, in case it comes back."""
+    active_theme_profile_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "theme_profiles.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_users_active_theme_profile_id",
+        ),
+        nullable=True,
+    )
+    """The donor dashboard's general/default `ThemeProfile` (`panem_shared.
+    theme`) -- applied whenever the currently selected character (if any)
+    has no `Character.theme_profile_id` of its own. NULL means the plain
+    default style. Only ever *surfaced* while `is_donor` still holds
+    (`dashboard_routes._resolve_theme`), so this stays set (not cleared) if
+    a donor role is later revoked, in case it comes back.
+
+    `use_alter=True` (+ an explicit `name=`, matching the migration's own
+    `op.create_foreign_key` name): `ThemeProfile.user_id` points back at
+    `users.id`, so without it `Base.metadata.create_all`/`drop_all` (every
+    test's DB fixture) can't topologically sort the two tables -- same
+    cyclic-FK situation, and the same fix, as `Character.
+    housing_property_id`'s own docstring already explains in more depth."""
 
     characters: Mapped[list[Character]] = relationship(back_populates="user")
+    theme_profiles: Mapped[list[ThemeProfile]] = relationship(
+        back_populates="user",
+        foreign_keys="ThemeProfile.user_id",
+        cascade="all, delete-orphan",
+    )
+
+
+class ThemeProfile(TimestampMixin, Base):
+    """A named, donor-saved set of the four dashboard colors (`panem_shared.
+    theme`) -- `POST /activity/dashboard/theme/profiles`. A donor can save
+    any number, set one as their account's general default
+    (`User.active_theme_profile_id`) and/or assign different ones to
+    different characters (`Character.theme_profile_id`) -- e.g. one look
+    for one character, a different one for another. Deleting a profile
+    (`POST .../profiles/{id}/delete`) just issues a plain `DELETE`;
+    `ondelete="SET NULL"` on both referencing FKs is what clears any
+    account/character still pointing at it rather than leaving a dangling
+    id -- an unassigned character/account just falls back to the next
+    theme in the resolution order (`dashboard_routes._resolve_theme`)."""
+
+    __tablename__ = "theme_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(40), nullable=False)
+    background_hex: Mapped[str] = mapped_column(String(7), nullable=False)
+    accent_hex: Mapped[str] = mapped_column(String(7), nullable=False)
+    panel_hex: Mapped[str] = mapped_column(String(7), nullable=False)
+    text_hex: Mapped[str] = mapped_column(String(7), nullable=False)
+
+    user: Mapped[User] = relationship(back_populates="theme_profiles", foreign_keys=[user_id])
 
 
 class Character(TimestampMixin, Base):
@@ -133,6 +178,13 @@ class Character(TimestampMixin, Base):
 
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     proxy_tag: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    theme_profile_id: Mapped[int | None] = mapped_column(
+        ForeignKey("theme_profiles.id", ondelete="SET NULL"), nullable=True
+    )
+    """Overrides `User.active_theme_profile_id` while this character is the
+    dashboard's currently selected one -- lets a donor give different
+    characters different looks (`panem_shared.theme`). NULL falls back to
+    the account's general profile."""
     appearance_layers: Mapped[dict[str, int] | None] = mapped_column(JSONB, nullable=True)
     """The dashboard's Picrew-style portrait: `{category_id (as a string,
     since JSON object keys always are): option_id}`, one selection per

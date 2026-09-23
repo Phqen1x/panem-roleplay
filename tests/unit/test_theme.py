@@ -8,7 +8,15 @@ import pytest
 
 from panem_shared.errors import ValidationFailed
 from panem_shared.settings import Settings
-from panem_shared.theme import DEFAULT_ACCENT_HEX, DEFAULT_BACKGROUND_HEX, validate_hex_color
+from panem_shared.theme import (
+    DEFAULT_ACCENT_HEX,
+    DEFAULT_BACKGROUND_HEX,
+    DEFAULT_PANEL_HEX,
+    DEFAULT_TEXT_HEX,
+    PROFILE_NAME_MAX_LEN,
+    validate_hex_color,
+    validate_profile_name,
+)
 
 
 class TestValidateHexColor:
@@ -40,6 +48,28 @@ class TestValidateHexColor:
         these. Regression guard against the two drifting apart silently."""
         assert DEFAULT_BACKGROUND_HEX == "#14161c"
         assert DEFAULT_ACCENT_HEX == "#e0a72e"
+        assert DEFAULT_PANEL_HEX == "#1b1f27"
+        assert DEFAULT_TEXT_HEX == "#d7dbe4"
+
+
+class TestValidateProfileName:
+    def test_accepts_a_plain_name(self):
+        assert validate_profile_name("Midnight") == "Midnight"
+
+    def test_strips_surrounding_whitespace(self):
+        assert validate_profile_name("  Midnight  ") == "Midnight"
+
+    def test_rejects_blank(self):
+        with pytest.raises(ValidationFailed):
+            validate_profile_name("   ")
+
+    def test_accepts_the_max_length(self):
+        name = "x" * PROFILE_NAME_MAX_LEN
+        assert validate_profile_name(name) == name
+
+    def test_rejects_over_the_max_length(self):
+        with pytest.raises(ValidationFailed):
+            validate_profile_name("x" * (PROFILE_NAME_MAX_LEN + 1))
 
 
 class TestDonorRoleIdSet:

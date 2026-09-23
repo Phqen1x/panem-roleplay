@@ -3549,3 +3549,105 @@ extended `TestDashboardIdentify` (is_donor true/false, set/reset happy paths, in
 403 on both write routes, and the lapsed-donor case -- a saved theme stops being surfaced the moment
 `is_donor` reads false, without the row itself being cleared). Full suite passes at 1046 (up from 1023);
 mypy's pre-existing 148-error baseline unaffected; migration `653865b0f6f6` verified up/down/up.
+
+### Extending the theme picker: Panel/Text colors, and named per-character/general profiles
+
+User asks: "For the color picker, add an option to adjust the color of all the panels in each tab (one
+color they all share) and the color for all the text. Also, allow users to save 'profiles' for different
+color presets that they can assign to different characters and save in general to go back to, and they
+should be able to name these profiles as well."
+
+**Two more colors.** `style.css`'s `:root` already had `--panel` (every card/table/input background) and
+`--text` (body copy color) sitting right alongside `--bg`/`--accent`, just never exposed to the picker.
+`panem_shared/theme.py` gained `DEFAULT_PANEL_HEX`/`DEFAULT_TEXT_HEX` (mirroring those values exactly,
+same convention as the original two defaults) and `theme_picker.js`'s `TARGETS` grew from
+`["background", "accent"]` to `["background", "accent", "panel", "text"]` -- same SV-square/hue-strip/
+hex-field mechanism, now rendered as a 2x2 grid of target buttons (four no longer fit comfortably in one
+row at the popup's original 200px width, so the popup widened to 240px alongside it) with four
+independent in-progress HSV states.
+
+**From "one slot per account" to named, reusable profiles.** The prior version stored exactly one
+`{background_hex, accent_hex}` pair directly on `User`. That shape has no room for "save a few presets
+and switch between them" or "a different look per character," so this rework replaces it outright with a
+new `ThemeProfile` table (migration `a2520b13ef46`, chained after `653865b0f6f6`) --
+`id, user_id, name, background_hex, accent_hex, panel_hex, text_hex` -- plus two new FK columns:
+`User.active_theme_profile_id` (the account's general default) and `Character.theme_profile_id` (a
+per-character override). There's no migration path from the old two scalar columns to a named profile
+(there's no name to give one), so the migration just drops them -- a donor who'd already customized
+starts over with one Save, the same "never-customized == default" meaning `NULL` always carried.
+
+Both new FK columns point at `theme_profiles.id`, and `theme_profiles.user_id` points back at `users.id`
+-- a mutual reference that `Base.metadata.create_all`/`drop_all` (every test's DB fixture) can't
+topologically sort on its own. Fixed the same way this codebase already fixed the identical situation for
+`Character.housing_property_id` <-> `Property.owner_id`: `use_alter=True` plus an explicit
+`name="fk_users_active_theme_profile_id"` on the `User` side, and the migration adds that one column
+without an inline FK, then `op.create_foreign_key(...)` with the same name right after (with
+`op.drop_constraint(...)` before the column drop on the way back down).
+
+**Resolution order.** `dashboard_routes._resolve_theme(session, user, character)`: the given character's
+own `theme_profile_id` if it has one, else the account's `active_theme_profile_id`, else the plain
+default -- "a character overrides the general look, which is there to go back to." `/identify` still
+returns a `theme` field (now with `panel_hex`/`text_hex`/`profile_id` added), but it's resolved with no
+character context (the account's general theme) since `/identify` runs before a character is even picked
+client-side; `theme_profiles` (the donor's saved list, empty for a non-donor or lapsed donor -- same
+surfacing rule as before) rides along in the same response so the picker doesn't need a separate fetch
+for the common case.
+
+**The profile endpoints**, all under `build_theme_router`, all donor-gated the same way as before (every
+write re-checks `fetch_has_any_role` itself): `POST .../theme/profiles` (create, capped at 20 per account
+-- `MAX_THEME_PROFILES_PER_USER`), `POST .../theme/profiles/list` (list -- see below for why this is a
+POST, not the `GET` its "list" name would suggest), `PATCH .../theme/profiles/{id}` (rename/recolor,
+partial), `POST .../theme/profiles/{id}/delete`, `POST .../theme/profiles/{id}/activate` (sets the
+account's general default), `POST .../theme/profiles/{id}/assign` (sets one character's override), `POST
+.../theme/unassign` (clears a character's override, falling back to general), and `POST .../theme/reset`
+(now takes an optional `character_id` -- given, it clears *that character's* assignment, which may fall
+back to a still-active general profile rather than the plain default; omitted, it clears the account's
+general profile itself, same as before). `POST .../theme/resolve` (also a POST) is what `app.js` calls
+every time the selected character changes, to get that specific context's effective theme -- it never
+403s, same non-throwing shape `/identify`'s `theme` field already had for a non-donor.
+
+Deleting a profile relies on `ondelete="SET NULL"` on both FKs to clear any account/character still
+pointing at it -- nothing to clear by hand in the route itself.
+
+**Why `/profiles/list` and `/resolve` are POST, not GET, despite reading data:** both need a `discord_id`
+and go through `_require_donor` -> `discord_staff.fetch_has_any_role`, which does its own outbound
+`httpx.AsyncClient.get(...)` call to Discord's REST API. This test suite's existing convention for
+mocking that Discord call is `patch.object(httpx.AsyncClient, "get", AsyncMock(...))` -- which patches
+the method on the *class*, so it also intercepts the test's own `client.get(...)` call to a `GET` route
+under test, returning the fake Discord response instead of ever reaching the app. `POST /activity/
+dashboard/identify` (a read, despite the verb) already sidesteps this same issue for the same reason;
+these two new endpoints follow that precedent rather than fighting it.
+
+**The picker UI's profile manager.** Below the four color targets: a `<select>` listing every saved
+profile (plus "Unsaved colors"), a name text field, and four action buttons -- **Save as New** (creates,
+then loads the new profile so Update/Delete/Set as Default are immediately usable on it without a manual
+reselect), **Update** (overwrites the loaded profile's name+colors), **Set as Default** (shows "Default
+✓" once it is one), and **Delete** -- plus, only when a character is currently selected in the dashboard,
+a fifth button that toggles between "Use for `<character>`" and "Stop using for `<character>`" depending
+on whether the loaded profile is that character's current override. Picking a profile from the dropdown
+loads its colors into the four pickers *and* live-previews it immediately (matches the original request's
+"adjusts the background live so you can see what it will look like if you choose it," now extended to
+previewing a saved profile before committing to it via Activate/Assign). **Reset to default** now resets
+whichever context is open -- the selected character's own assignment if one is selected, else the
+account's general profile -- rather than always the account-wide slot.
+
+`app.js` tracks `state.themeProfiles` and `state.activeThemeProfileId` (the general default, kept
+separate from whatever theme is *currently applied*, which can be a character-specific override) and adds
+`refreshResolvedTheme()`, called after every `/identify` and on every character switch
+(`selectCharacter`), to re-resolve and re-apply `--bg`/`--accent`/`--panel`/`--text` for whichever
+character (if any) is now selected. `work.js`/`crime.js`'s existing localStorage mirroring extended to the
+two new keys (`panem_theme_panel`/`panem_theme_text`), same best-effort fallback as the original two.
+
+Verified live with Playwright: creating a named profile and dragging the SV square first (so it's not
+just the default colors), Save as New posting the right body and the select immediately showing it
+loaded, Set as Default posting `activate` and `--bg` updating to match, the assign row appearing only
+with a character selected and offering "Use for `<name>`", assigning posting the right `character_id` and
+the button flipping to "Stop using" on reopen, and Reset (with a character selected) falling back to the
+still-active general profile's color rather than the plain default -- plus a live drag on the Panel target
+confirming `--panel` updates independently. Full backend suite passes at 1065 (up from 1046); ruff/mypy
+clean against the existing baselines; migration `a2520b13ef46` verified up/down/up (round-tripping the
+FK-name fix, not just the schema shape). New/extended tests: `test_theme.py`'s
+`TestValidateProfileName`, and `test_api_app.py`'s `TestDashboardThemeProfiles` (create/list/update/
+delete/activate, the 20-profile cap, and the lapsed-donor case) plus a new `TestDashboardThemeAssignment`
+(assign/unassign/resolve, and reset's two different fallback targets depending on whether a
+`character_id` was given).

@@ -1234,7 +1234,14 @@ class TestDashboardIdentify:
             "characters": [],
             "is_staff": False,
             "is_donor": False,
-            "theme": {"background_hex": "#14161c", "accent_hex": "#e0a72e"},
+            "theme": {
+                "background_hex": "#14161c",
+                "accent_hex": "#e0a72e",
+                "panel_hex": "#1b1f27",
+                "text_hex": "#d7dbe4",
+                "profile_id": None,
+            },
+            "theme_profiles": [],
         }
 
     async def test_is_staff_true_when_discord_reports_the_staff_role(
@@ -1399,7 +1406,14 @@ class TestDashboardIdentify:
         assert response.status_code == 200
         body = response.json()
         assert body["is_donor"] is True
-        assert body["theme"] == {"background_hex": "#14161c", "accent_hex": "#e0a72e"}
+        assert body["theme"] == {
+            "background_hex": "#14161c",
+            "accent_hex": "#e0a72e",
+            "panel_hex": "#1b1f27",
+            "text_hex": "#d7dbe4",
+            "profile_id": None,
+        }
+        assert body["theme_profiles"] == []
 
     async def test_is_donor_false_without_a_donor_role(self, donor_app):
         with patch.object(
@@ -1414,89 +1428,447 @@ class TestDashboardIdentify:
         assert response.json()["is_donor"] is False
 
 
-class TestDashboardTheme:
-    async def test_refuses_a_non_donor(self, donor_app):
+def _profile_payload(
+    *,
+    discord_id: int = 42,
+    name: str = "Midnight",
+    background_hex: str = "#112233",
+    accent_hex: str = "#445566",
+    panel_hex: str = "#223344",
+    text_hex: str = "#eeeeee",
+) -> dict[str, object]:
+    return {
+        "discord_id": discord_id,
+        "name": name,
+        "background_hex": background_hex,
+        "accent_hex": accent_hex,
+        "panel_hex": panel_hex,
+        "text_hex": text_hex,
+    }
+
+
+DEFAULT_THEME_JSON = {
+    "background_hex": "#14161c",
+    "accent_hex": "#e0a72e",
+    "panel_hex": "#1b1f27",
+    "text_hex": "#d7dbe4",
+    "profile_id": None,
+}
+
+
+class TestDashboardThemeProfiles:
+    """The named-profile system (`POST/GET/PATCH .../theme/profiles`,
+    activate/assign/unassign, and the character-aware reset/resolve
+    endpoints) that replaced the single-slot `POST /activity/dashboard/
+    theme` this class used to cover."""
+
+    async def test_create_refuses_a_non_donor(self, donor_app):
         with patch.object(
             httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([1, 2]))
         ):
             transport = httpx.ASGITransport(app=donor_app)
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
                 response = await client.post(
-                    "/activity/dashboard/theme",
-                    json={"discord_id": 42, "background_hex": "#112233", "accent_hex": "#445566"},
+                    "/activity/dashboard/theme/profiles", json=_profile_payload()
                 )
         assert response.status_code == 403
 
-    async def test_rejects_an_invalid_hex_color(self, donor_app):
+    async def test_create_rejects_an_invalid_hex_color(self, donor_app):
         with patch.object(
             httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([888]))
         ):
             transport = httpx.ASGITransport(app=donor_app)
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
                 response = await client.post(
-                    "/activity/dashboard/theme",
-                    json={
-                        "discord_id": 42,
-                        "background_hex": "not-a-color",
-                        "accent_hex": "#445566",
-                    },
+                    "/activity/dashboard/theme/profiles",
+                    json=_profile_payload(background_hex="not-a-color"),
                 )
         assert response.status_code == 400
 
-    async def test_sets_and_persists_a_custom_theme(self, donor_app):
-        with patch.object(
-            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([888]))
-        ):
-            transport = httpx.ASGITransport(app=donor_app)
-            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-                set_response = await client.post(
-                    "/activity/dashboard/theme",
-                    json={"discord_id": 42, "background_hex": "#112233", "accent_hex": "#445566"},
-                )
-                assert set_response.status_code == 200
-                assert set_response.json() == {
-                    "background_hex": "#112233",
-                    "accent_hex": "#445566",
-                }
-                identify_response = await client.post(
-                    "/activity/dashboard/identify", json={"discord_id": 42}
-                )
-        assert identify_response.json()["theme"] == {
-            "background_hex": "#112233",
-            "accent_hex": "#445566",
-        }
-
-    async def test_normalizes_uppercase_hex_to_lowercase(self, donor_app):
+    async def test_create_rejects_a_blank_name(self, donor_app):
         with patch.object(
             httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([888]))
         ):
             transport = httpx.ASGITransport(app=donor_app)
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
                 response = await client.post(
-                    "/activity/dashboard/theme",
-                    json={"discord_id": 42, "background_hex": "#ABCDEF", "accent_hex": "#123ABC"},
+                    "/activity/dashboard/theme/profiles", json=_profile_payload(name="   ")
                 )
-        assert response.json() == {"background_hex": "#abcdef", "accent_hex": "#123abc"}
+        assert response.status_code == 400
 
-    async def test_reset_clears_a_saved_theme(self, donor_app):
+    async def test_create_normalizes_uppercase_hex_to_lowercase(self, donor_app):
         with patch.object(
             httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([888]))
         ):
             transport = httpx.ASGITransport(app=donor_app)
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/theme/profiles",
+                    json=_profile_payload(background_hex="#ABCDEF", accent_hex="#123ABC"),
+                )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["background_hex"] == "#abcdef"
+        assert body["accent_hex"] == "#123abc"
+
+    async def test_create_then_list_returns_the_saved_profile(self, donor_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([888]))
+        ):
+            transport = httpx.ASGITransport(app=donor_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                created = (
+                    await client.post("/activity/dashboard/theme/profiles", json=_profile_payload())
+                ).json()
+                list_response = await client.post(
+                    "/activity/dashboard/theme/profiles/list", json={"discord_id": 42}
+                )
+        assert list_response.status_code == 200
+        body = list_response.json()
+        assert body["active_profile_id"] is None
+        assert body["profiles"] == [created]
+
+    async def test_list_refuses_a_non_donor(self, donor_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([1, 2]))
+        ):
+            transport = httpx.ASGITransport(app=donor_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/theme/profiles/list", json={"discord_id": 42}
+                )
+        assert response.status_code == 403
+
+    async def test_update_changes_only_the_given_fields(self, donor_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([888]))
+        ):
+            transport = httpx.ASGITransport(app=donor_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                created = (
+                    await client.post("/activity/dashboard/theme/profiles", json=_profile_payload())
+                ).json()
+                updated = await client.patch(
+                    f"/activity/dashboard/theme/profiles/{created['id']}",
+                    json={"discord_id": 42, "name": "Renamed"},
+                )
+        assert updated.status_code == 200
+        body = updated.json()
+        assert body["name"] == "Renamed"
+        assert body["background_hex"] == created["background_hex"]
+
+    async def test_update_404s_for_another_accounts_profile(self, donor_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([888]))
+        ):
+            transport = httpx.ASGITransport(app=donor_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                created = (
+                    await client.post(
+                        "/activity/dashboard/theme/profiles", json=_profile_payload(discord_id=42)
+                    )
+                ).json()
+                response = await client.patch(
+                    f"/activity/dashboard/theme/profiles/{created['id']}",
+                    json={"discord_id": 999999, "name": "Stolen"},
+                )
+        assert response.status_code == 404
+
+    async def test_activate_sets_the_general_default(self, donor_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([888]))
+        ):
+            transport = httpx.ASGITransport(app=donor_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                created = (
+                    await client.post("/activity/dashboard/theme/profiles", json=_profile_payload())
+                ).json()
+                activated = await client.post(
+                    f"/activity/dashboard/theme/profiles/{created['id']}/activate",
+                    json={"discord_id": 42},
+                )
+                identify_response = await client.post(
+                    "/activity/dashboard/identify", json={"discord_id": 42}
+                )
+        assert activated.status_code == 200
+        assert activated.json()["profile_id"] == created["id"]
+        assert activated.json()["background_hex"] == created["background_hex"]
+        identify_body = identify_response.json()
+        assert identify_body["theme"]["profile_id"] == created["id"]
+        assert identify_body["theme"]["background_hex"] == created["background_hex"]
+
+    async def test_activate_refuses_a_non_donor(self, donor_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([888]))
+        ):
+            transport = httpx.ASGITransport(app=donor_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                created = (
+                    await client.post("/activity/dashboard/theme/profiles", json=_profile_payload())
+                ).json()
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([1, 2]))
+        ):
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    f"/activity/dashboard/theme/profiles/{created['id']}/activate",
+                    json={"discord_id": 42},
+                )
+        assert response.status_code == 403
+
+    async def test_delete_clears_the_general_default(self, donor_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([888]))
+        ):
+            transport = httpx.ASGITransport(app=donor_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                created = (
+                    await client.post("/activity/dashboard/theme/profiles", json=_profile_payload())
+                ).json()
                 await client.post(
-                    "/activity/dashboard/theme",
-                    json={"discord_id": 42, "background_hex": "#112233", "accent_hex": "#445566"},
+                    f"/activity/dashboard/theme/profiles/{created['id']}/activate",
+                    json={"discord_id": 42},
+                )
+                deleted = await client.post(
+                    f"/activity/dashboard/theme/profiles/{created['id']}/delete",
+                    json={"discord_id": 42},
+                )
+                identify_response = await client.post(
+                    "/activity/dashboard/identify", json={"discord_id": 42}
+                )
+        assert deleted.status_code == 200
+        assert deleted.json() == {"profiles": [], "active_profile_id": None}
+        assert identify_response.json()["theme"] == DEFAULT_THEME_JSON
+
+    async def test_delete_404s_for_an_unknown_profile(self, donor_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([888]))
+        ):
+            transport = httpx.ASGITransport(app=donor_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/theme/profiles/999999/delete",
+                    json={"discord_id": 42},
+                )
+        assert response.status_code == 404
+
+    async def test_profile_limit_is_enforced(self, donor_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([888]))
+        ):
+            transport = httpx.ASGITransport(app=donor_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                for i in range(20):
+                    response = await client.post(
+                        "/activity/dashboard/theme/profiles",
+                        json=_profile_payload(name=f"Preset {i}"),
+                    )
+                    assert response.status_code == 200
+                over_limit = await client.post(
+                    "/activity/dashboard/theme/profiles", json=_profile_payload(name="One Too Many")
+                )
+        assert over_limit.status_code == 400
+
+    async def test_a_lapsed_donor_stops_seeing_their_active_profile(self, donor_app):
+        """A saved profile is only ever *surfaced* while the account
+        currently holds the donor role -- the row/assignment isn't
+        cleared (in case the role comes back), but `/identify` renders the
+        plain default the moment `is_donor` reads false, honoring "only
+        donors get custom backgrounds" even for someone who customized
+        once and later lost the role."""
+        transport = httpx.ASGITransport(app=donor_app)
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([888]))
+        ):
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                created = (
+                    await client.post("/activity/dashboard/theme/profiles", json=_profile_payload())
+                ).json()
+                await client.post(
+                    f"/activity/dashboard/theme/profiles/{created['id']}/activate",
+                    json={"discord_id": 42},
+                )
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([1, 2]))
+        ):
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                identify_response = await client.post(
+                    "/activity/dashboard/identify", json={"discord_id": 42}
+                )
+        assert identify_response.json()["theme"] == DEFAULT_THEME_JSON
+        assert identify_response.json()["theme_profiles"] == []
+
+
+class TestDashboardThemeAssignment:
+    """Per-character theme overrides (`.../profiles/{id}/assign`,
+    `.../unassign`) and the character-aware `.../reset`/`.../resolve`
+    endpoints -- "assign to different characters" and "save in general to
+    go back to" from the feature request."""
+
+    async def test_resolve_is_the_plain_default_for_a_non_donor(self, donor_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([1, 2]))
+        ):
+            transport = httpx.ASGITransport(app=donor_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/theme/resolve", json={"discord_id": 42}
+                )
+        assert response.status_code == 200
+        assert response.json() == DEFAULT_THEME_JSON
+
+    async def test_assign_overrides_the_general_default_for_one_character(
+        self, donor_app, db_session_factory
+    ):
+        character_id = await seed_character(db_session_factory, discord_id=42)
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([888]))
+        ):
+            transport = httpx.ASGITransport(app=donor_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                general = (
+                    await client.post(
+                        "/activity/dashboard/theme/profiles",
+                        json=_profile_payload(name="General", background_hex="#111111"),
+                    )
+                ).json()
+                per_character = (
+                    await client.post(
+                        "/activity/dashboard/theme/profiles",
+                        json=_profile_payload(name="For Wren", background_hex="#222222"),
+                    )
+                ).json()
+                await client.post(
+                    f"/activity/dashboard/theme/profiles/{general['id']}/activate",
+                    json={"discord_id": 42},
+                )
+                await client.post(
+                    f"/activity/dashboard/theme/profiles/{per_character['id']}/assign",
+                    json={"discord_id": 42, "character_id": character_id},
+                )
+                for_character = await client.post(
+                    "/activity/dashboard/theme/resolve",
+                    json={"discord_id": 42, "character_id": character_id},
+                )
+                without_character = await client.post(
+                    "/activity/dashboard/theme/resolve", json={"discord_id": 42}
+                )
+                identify_response = await client.post(
+                    "/activity/dashboard/identify", json={"discord_id": 42}
+                )
+        assert for_character.json()["background_hex"] == "#222222"
+        assert for_character.json()["profile_id"] == per_character["id"]
+        assert without_character.json()["background_hex"] == "#111111"
+        identify_character = identify_response.json()["characters"][0]
+        assert identify_character["theme_profile_id"] == per_character["id"]
+
+    async def test_unassign_falls_back_to_the_general_default(self, donor_app, db_session_factory):
+        character_id = await seed_character(db_session_factory, discord_id=42)
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([888]))
+        ):
+            transport = httpx.ASGITransport(app=donor_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                general = (
+                    await client.post(
+                        "/activity/dashboard/theme/profiles",
+                        json=_profile_payload(name="General", background_hex="#111111"),
+                    )
+                ).json()
+                per_character = (
+                    await client.post(
+                        "/activity/dashboard/theme/profiles",
+                        json=_profile_payload(name="For Wren", background_hex="#222222"),
+                    )
+                ).json()
+                await client.post(
+                    f"/activity/dashboard/theme/profiles/{general['id']}/activate",
+                    json={"discord_id": 42},
+                )
+                await client.post(
+                    f"/activity/dashboard/theme/profiles/{per_character['id']}/assign",
+                    json={"discord_id": 42, "character_id": character_id},
+                )
+                unassigned = await client.post(
+                    "/activity/dashboard/theme/unassign",
+                    json={"discord_id": 42, "character_id": character_id},
+                )
+        assert unassigned.status_code == 200
+        assert unassigned.json()["background_hex"] == "#111111"
+        assert unassigned.json()["profile_id"] == general["id"]
+
+    async def test_assign_refuses_a_character_owned_by_someone_else(
+        self, donor_app, db_session_factory
+    ):
+        other_characters_id = await seed_character(db_session_factory, discord_id=999999)
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([888]))
+        ):
+            transport = httpx.ASGITransport(app=donor_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                profile = (
+                    await client.post("/activity/dashboard/theme/profiles", json=_profile_payload())
+                ).json()
+                response = await client.post(
+                    f"/activity/dashboard/theme/profiles/{profile['id']}/assign",
+                    json={"discord_id": 42, "character_id": other_characters_id},
+                )
+        assert response.status_code == 404
+
+    async def test_reset_with_a_character_id_clears_only_that_characters_assignment(
+        self, donor_app, db_session_factory
+    ):
+        character_id = await seed_character(db_session_factory, discord_id=42)
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([888]))
+        ):
+            transport = httpx.ASGITransport(app=donor_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                general = (
+                    await client.post(
+                        "/activity/dashboard/theme/profiles",
+                        json=_profile_payload(name="General", background_hex="#111111"),
+                    )
+                ).json()
+                per_character = (
+                    await client.post(
+                        "/activity/dashboard/theme/profiles",
+                        json=_profile_payload(name="For Wren", background_hex="#222222"),
+                    )
+                ).json()
+                await client.post(
+                    f"/activity/dashboard/theme/profiles/{general['id']}/activate",
+                    json={"discord_id": 42},
+                )
+                await client.post(
+                    f"/activity/dashboard/theme/profiles/{per_character['id']}/assign",
+                    json={"discord_id": 42, "character_id": character_id},
+                )
+                reset_response = await client.post(
+                    "/activity/dashboard/theme/reset",
+                    json={"discord_id": 42, "character_id": character_id},
+                )
+        # Falls back to the still-active general profile, not the plain default.
+        assert reset_response.json()["background_hex"] == "#111111"
+        assert reset_response.json()["profile_id"] == general["id"]
+
+    async def test_reset_without_a_character_id_clears_the_general_default(self, donor_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([888]))
+        ):
+            transport = httpx.ASGITransport(app=donor_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                created = (
+                    await client.post("/activity/dashboard/theme/profiles", json=_profile_payload())
+                ).json()
+                await client.post(
+                    f"/activity/dashboard/theme/profiles/{created['id']}/activate",
+                    json={"discord_id": 42},
                 )
                 reset_response = await client.post(
                     "/activity/dashboard/theme/reset", json={"discord_id": 42}
                 )
-                identify_response = await client.post(
-                    "/activity/dashboard/identify", json={"discord_id": 42}
-                )
-        default_theme = {"background_hex": "#14161c", "accent_hex": "#e0a72e"}
-        assert reset_response.json() == default_theme
-        assert identify_response.json()["theme"] == default_theme
+        assert reset_response.json() == DEFAULT_THEME_JSON
 
     async def test_reset_refuses_a_non_donor(self, donor_app):
         with patch.object(
@@ -1508,34 +1880,6 @@ class TestDashboardTheme:
                     "/activity/dashboard/theme/reset", json={"discord_id": 42}
                 )
         assert response.status_code == 403
-
-    async def test_a_lapsed_donor_stops_seeing_their_saved_theme(self, donor_app):
-        """A saved custom theme is only ever *surfaced* while the account
-        currently holds the donor role -- `_theme_for_user`'s own docstring.
-        The row itself isn't cleared (in case the role comes back), but
-        `/identify` renders the plain default the moment `is_donor` reads
-        false, honoring "only donors get custom backgrounds" even for
-        someone who customized once and later lost the role."""
-        transport = httpx.ASGITransport(app=donor_app)
-        with patch.object(
-            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([888]))
-        ):
-            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-                await client.post(
-                    "/activity/dashboard/theme",
-                    json={"discord_id": 42, "background_hex": "#112233", "accent_hex": "#445566"},
-                )
-        with patch.object(
-            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([1, 2]))
-        ):
-            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-                identify_response = await client.post(
-                    "/activity/dashboard/identify", json={"discord_id": 42}
-                )
-        assert identify_response.json()["theme"] == {
-            "background_hex": "#14161c",
-            "accent_hex": "#e0a72e",
-        }
 
 
 class TestDashboardCharacters:

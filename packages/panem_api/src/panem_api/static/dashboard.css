@@ -485,7 +485,9 @@ table.data-table .btn {
   top: calc(100% + 6px);
   right: 0;
   z-index: 20;
-  width: 200px;
+  width: 240px;
+  max-height: calc(100vh - 60px);
+  overflow-y: auto;
   padding: 10px;
   background: var(--panel);
   border: 1px solid var(--border);
@@ -493,14 +495,16 @@ table.data-table .btn {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
+/* Four targets (Background/Accent/Panel/Text) -- a 2x2 grid reads better
+   at this width than a single cramped row of four. */
 .theme-picker-targets {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 6px;
   margin-bottom: 10px;
 }
 
 .theme-target-btn {
-  flex: 1;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -603,16 +607,24 @@ table.data-table .btn {
 .theme-picker-actions {
   display: flex;
   gap: 6px;
+  margin-bottom: 6px;
+}
+
+.theme-picker-actions:last-of-type {
+  margin-bottom: 0;
 }
 
 .theme-save-btn,
-.theme-reset-btn {
+.theme-reset-btn,
+.theme-btn {
   flex: 1;
   border-radius: 4px;
   border: 1px solid var(--border);
   padding: 5px 0;
   font-size: 12px;
   cursor: pointer;
+  background: var(--bg);
+  color: var(--muted);
 }
 
 .theme-save-btn {
@@ -621,15 +633,57 @@ table.data-table .btn {
   border-color: var(--accent);
 }
 
-.theme-reset-btn {
-  background: var(--bg);
-  color: var(--muted);
-}
-
 .theme-save-btn:disabled,
-.theme-reset-btn:disabled {
+.theme-reset-btn:disabled,
+.theme-btn:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+/* --------------------------- Header: theme picker's profile manager */
+/* Named, savable presets (`theme_picker.js`'s Save as New/Update/Delete/
+   Set as Default/Use for <character> controls) -- a donor can keep many,
+   set one as their account-wide default, and assign different ones to
+   different characters. */
+
+.theme-picker-profiles {
+  margin: 10px 0;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.theme-picker-profile-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.theme-profile-select {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+.theme-profile-name-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+  margin-bottom: 6px;
 }
 
 .theme-picker-status {
