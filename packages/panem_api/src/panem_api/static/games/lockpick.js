@@ -131,6 +131,7 @@ export function mount(boardEl, { onFinish, setStatus, difficulty = 0.5 }) {
   let zoneDir = Math.random() < 0.5 ? 1 : -1;
 
   let done = false;
+  let started = false; // physics/timer stay frozen until the player's first input
   let timeLeft = timeLimitS;
   let progress = 0.5;
   let pickPos = 0.5;
@@ -256,6 +257,16 @@ export function mount(boardEl, { onFinish, setStatus, difficulty = 0.5 }) {
     ctx.fillStyle = progress > 0.5 ? "#2ed573" : progress > 0.2 ? "#e0a72e" : "#e0736b";
     ctx.fillRect(METER_X, TRACK_Y + TRACK_H - filledH, METER_W, filledH);
     ctx.fillText("meter", METER_X + METER_W / 2, TRACK_Y + TRACK_H + 16);
+
+    if (!started) {
+      ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 13px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("Hold W or click", WIDTH / 2, HEIGHT / 2 - 8);
+      ctx.fillText("to begin", WIDTH / 2, HEIGHT / 2 + 10);
+    }
   }
 
   function loop(ts) {
@@ -269,10 +280,23 @@ export function mount(boardEl, { onFinish, setStatus, difficulty = 0.5 }) {
     }
   }
 
+  // The pick keeps sinking and the clock keeps running the instant `loop`
+  // starts -- gated behind the player's first input (not started at mount)
+  // so a player who takes a moment to read the instructions first doesn't
+  // lose real time/meter progress to a lock that was already ticking
+  // before they'd even looked at the board.
+  function beginIfNeeded() {
+    if (started || done) return;
+    started = true;
+    if (setStatus) setStatus("");
+    rafId = requestAnimationFrame(loop);
+  }
+
   function onKeyDown(event) {
     if (done) return;
     if (event.code === "KeyW" || event.code === "ArrowUp") {
       holdingUp = true;
+      beginIfNeeded();
       event.preventDefault();
     }
   }
@@ -298,6 +322,7 @@ export function mount(boardEl, { onFinish, setStatus, difficulty = 0.5 }) {
     // clicking works" from the outside.
     canvas.focus();
     holdingUp = true;
+    beginIfNeeded();
     event.preventDefault();
   }
 
@@ -311,8 +336,8 @@ export function mount(boardEl, { onFinish, setStatus, difficulty = 0.5 }) {
   window.addEventListener("pointerup", onPointerUp);
   window.addEventListener("pointercancel", onPointerUp);
 
+  if (setStatus) setStatus("Ready when you are -- hold W or click to start.");
   render();
-  rafId = requestAnimationFrame(loop);
   // Best-effort: some contexts (a direct, non-iframed load) allow this to
   // actually grab focus immediately, letting W work with no click first.
   // Where it doesn't (an iframe with no prior user gesture in it), this is

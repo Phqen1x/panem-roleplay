@@ -11,10 +11,11 @@ export function instructions() {
   return "Strike (click, or press space) when the needle sits over the pocket.";
 }
 
-export function mount(boardEl, { onFinish, difficulty = 0.5 }) {
+export function mount(boardEl, { onFinish, setStatus, difficulty = 0.5 }) {
   const width = 360;
   const height = 50;
   let done = false;
+  let started = false; // the needle stays frozen until the player's first input
   boardEl.className = "board-pickpocket";
   boardEl.innerHTML = `
     <canvas id="pickpocket-canvas" width="${width}" height="${height}"></canvas>
@@ -44,6 +45,15 @@ export function mount(boardEl, { onFinish, difficulty = 0.5 }) {
     ctx.fillRect(targetX, height / 2 - 15, targetWidth, 30);
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(needleX, height / 2 - 25, 4, 50);
+
+    if (!started) {
+      ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+      ctx.fillRect(0, 0, width, height);
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 12px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("Click or press Space to begin", width / 2, height / 2 + 4);
+    }
   }
 
   function tick() {
@@ -64,16 +74,42 @@ export function mount(boardEl, { onFinish, difficulty = 0.5 }) {
     onFinish(won);
   }
 
+  // The needle keeps moving the instant `tick` starts, so starting it
+  // right at mount would run the clock while the player is still reading
+  // the instructions. Gated behind the first input instead: that input
+  // only wakes the needle up (`beginIfNeeded`) rather than also acting as
+  // an (almost certainly wasted, since the needle hasn't moved from its
+  // resting position yet) strike -- the player's *next* input is their
+  // real first strike attempt.
+  function beginIfNeeded() {
+    if (started || done) return;
+    started = true;
+    if (setStatus) setStatus("");
+    tick();
+  }
+
+  function onStrikeClick() {
+    if (!started) {
+      beginIfNeeded();
+      return;
+    }
+    strike();
+  }
+
   function onKey(event) {
     if (event.code === "Space") {
       event.preventDefault();
+      if (!started) {
+        beginIfNeeded();
+        return;
+      }
       strike();
     }
   }
 
-  strikeBtn.addEventListener("click", strike);
+  strikeBtn.addEventListener("click", onStrikeClick);
   window.addEventListener("keydown", onKey);
 
+  if (setStatus) setStatus("Ready when you are -- click or press Space to start.");
   render();
-  tick();
 }

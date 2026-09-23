@@ -22,7 +22,7 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-export function mount(boardEl, { onFinish, difficulty = 0.5 }) {
+export function mount(boardEl, { onFinish, setStatus, difficulty = 0.5 }) {
   const clamped = clamp(difficulty, 0, 0.95);
   // A harder attempt reads as a smaller, faster-moving target -- the same
   // shape `games/pickpocket.js`'s zone width/needle speed scale with its
@@ -31,6 +31,7 @@ export function mount(boardEl, { onFinish, difficulty = 0.5 }) {
   const speed = 60 + clamped * 90; // px/sec
 
   let done = false;
+  let started = false; // the target/timer stay frozen until the player's first input
   boardEl.className = "board-archery";
   boardEl.innerHTML = `
     <canvas id="archery-canvas" width="${WIDTH}" height="${HEIGHT}"></canvas>
@@ -55,11 +56,12 @@ export function mount(boardEl, { onFinish, difficulty = 0.5 }) {
   let arrowsLeft = TOTAL_ARROWS;
   let hits = 0;
   const shots = [];
-  const startedAt = performance.now();
-  let lastTs = startedAt;
+  let startedAt = null;
+  let lastTs = null;
   let rafId = null;
 
   function timeLeftMs() {
+    if (startedAt === null) return TIME_LIMIT_MS;
     return Math.max(0, TIME_LIMIT_MS - (performance.now() - startedAt));
   }
 
@@ -100,6 +102,16 @@ export function mount(boardEl, { onFinish, difficulty = 0.5 }) {
     ctx.moveTo(mouseX, mouseY - 14);
     ctx.lineTo(mouseX, mouseY + 14);
     ctx.stroke();
+
+    if (!started) {
+      ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 13px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("Move your mouse or click", WIDTH / 2, HEIGHT / 2 - 8);
+      ctx.fillText("to begin", WIDTH / 2, HEIGHT / 2 + 10);
+    }
   }
 
   function finish() {
@@ -143,14 +155,38 @@ export function mount(boardEl, { onFinish, difficulty = 0.5 }) {
     };
   }
 
+  // The target keeps drifting and the clock keeps running the instant
+  // `tick` starts, so starting it right at mount would burn real time
+  // (and, with only 5 arrows and 30 seconds, real arrows) while the
+  // player is still reading the instructions. Gated behind the first
+  // input instead -- mouse movement alone is enough to begin (no arrow
+  // spent), and if the very first input is a click, that click itself
+  // only wakes the game up rather than firing a shot at a target that
+  // was still sitting dead-center and hadn't moved yet.
+  function beginIfNeeded() {
+    if (started || done) return;
+    started = true;
+    startedAt = performance.now();
+    lastTs = startedAt;
+    if (setStatus) setStatus("");
+    rafId = requestAnimationFrame(tick);
+  }
+
   function onMouseMove(event) {
     const point = canvasPoint(event);
     mouseX = point.x;
     mouseY = point.y;
+    beginIfNeeded();
   }
 
   function onClick(event) {
     if (done || arrowsLeft <= 0) return;
+    const wasStarted = started;
+    beginIfNeeded();
+    if (!wasStarted) {
+      render();
+      return;
+    }
     const { x, y } = canvasPoint(event);
     const hit = Math.hypot(x - targetX, y - targetY) <= targetRadius;
     if (hit) hits += 1;
@@ -169,6 +205,6 @@ export function mount(boardEl, { onFinish, difficulty = 0.5 }) {
   canvas.addEventListener("mousemove", onMouseMove);
   canvas.addEventListener("click", onClick);
 
+  if (setStatus) setStatus("Ready when you are -- move your mouse or click to start.");
   render();
-  rafId = requestAnimationFrame(tick);
 }

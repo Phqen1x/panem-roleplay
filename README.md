@@ -3391,3 +3391,63 @@ service.py` (log rows for steal and burgle, including the owner-name lookup with
 and an NPC-owned house) and `test_poaching_service.py` (log rows for a clean success and a caught
 attempt), and `test_api_app.py` (the dashboard log endpoint: ordering, empty history, non-owner
 refusal). Full suite passes at 1023 (up from 1010).
+
+### Minigames wait for the player's first move, and gained an on-demand "how to play" button
+
+User asks: "don't start the lockpick, poaching, or pickpocket minigames until the user interacts the
+first time so they have time to prepare. Additionally, add a little circle with an 'i' in it to the
+top right corner of every minigame that can be played through work or crime or anything that when
+clicked provides detailed instructions on how to play the minigame."
+
+**Pause until first interaction.** All three contraband minigames -- `games/lockpick.js` (shared by
+`/lockpick` and `/burgle`), `games/pickpocket.js` (`/steal`), and `games/archery.js` (`/poach`) -- used
+to start their `requestAnimationFrame` loop the moment `mount()` ran, so a player who paused to read
+the always-visible instructions line first was already losing meter/time/arrows before they'd touched
+anything. Each module now gates its loop behind a `started` flag and a `beginIfNeeded()` function, with
+a frozen-board overlay ("Hold W or click to begin" / "Click or press Space to begin" / "Move your mouse
+or click to begin") shown until the player's first qualifying input:
+
+- **Lockpick**: single hold-to-rise control, so the first `keydown`/`pointerdown` naturally doubles as
+  both "start" and "the real first move" -- no special-casing needed.
+- **Pickpocket**: single strike-only control (click or Space), so the naive version would burn the
+  player's first strike attempt against a needle that hadn't started moving yet, an almost-guaranteed
+  miss. `onStrikeClick`/`onKey` now check `if (!started) { beginIfNeeded(); return; }` before reaching
+  the real `strike()` logic, so the first input only wakes the needle; the player's *next* input is
+  their actual first strike.
+- **Archery**: mouse movement wakes the game for free (no arrow spent, since aiming isn't firing), but
+  a first input that's a *click* (rather than a preceding mouse move) would otherwise fire at a target
+  still sitting dead-center. `onClick` captures whether the game was already started before calling
+  `beginIfNeeded()`, and if it wasn't, treats that click as "wake only" and returns without spending an
+  arrow or resolving a shot -- `timeLeftMs()` also reports the full time limit while `startedAt` is
+  still `null`, so the on-screen clock doesn't appear to tick down before the game has actually begun.
+
+Verified live with Playwright against each game module directly (mounted via small same-origin test
+harnesses, deleted before commit): progress/timer/arrow-count all stay frozen through several hundred
+milliseconds of idling after mount, the first qualifying input starts the clock/loop without being
+treated as a wasted real action, and normal play proceeds correctly afterward (including the
+archery case of a synthetic click with no preceding mousemove, to isolate "click is the literal first
+event" from a real mouse's usual move-then-click path).
+
+**The "i" button.** Rather than duplicate an info button/popup across all nine minigame modules (work's
+six plus crime's three), every module already exports an `instructions()` function, so the button lives
+once per coordinator page instead: `work.js` and `crime.js` each gained an identical `mountInfoButton
+(text)` helper, called once right after `game.mount(...)` (mounting is what sets `#board`'s contents,
+so the button has to be appended after, not before, or it gets wiped out). It renders a small circular
+"i" button pinned to `#board`'s top-right corner (`position: absolute`, `#board` itself set to
+`position: relative`) that toggles a popup of the same instructions text already shown in the
+always-visible `#instructions` line above the board -- available on demand without permanently taking
+up screen space, and handy again after a loss scrolls that top line out of view. New `.info-btn`/
+`.info-popup` rules added to `style.css` (the one shared stylesheet in this codebase with no `?v=`
+cache-busting convention -- left that way here, consistent with its existing state rather than
+introducing one unprompted).
+
+Verified live with Playwright loading the real `work.html`/`crime.html` pages (fetches mocked via route
+interception): exactly one `.info-btn` renders inside `#board` after mount, the popup starts hidden,
+toggles open/closed on repeated clicks, and shows each game's actual `instructions()` text.
+
+`work.js`'s `ASSET_VERSION` bumped 9 -> 10 (covering all six `games/*.js` it imports plus its own
+`mountInfoButton` addition) and `crime.js`'s likewise 9 -> 10 (covering `lockpick.js`/`pickpocket.js`/
+`archery.js` plus its own addition), with `work.html`'s and `crime.html`'s `<script>` tags' `?v=` bumped
+to match. No backend changes -- pure frontend JS/CSS, so the Python test suite (1023 passing) and mypy's
+pre-existing 148-error baseline are both unaffected; verification for this change was `node --check` on
+every touched file plus the two live Playwright passes above.

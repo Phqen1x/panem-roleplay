@@ -25,7 +25,7 @@
 // in an `<iframe>` for the lockpick/steal/burgle/poach minigames (see
 // static/tabs/jail.js, static/tabs/crime.js) and use it to refresh their
 // own status without a reload. A no-op outside an iframe.
-const ASSET_VERSION = "9";
+const ASSET_VERSION = "10";
 
 const [lockpick, pickpocket, archery] = await Promise.all([
   import(`./games/lockpick.js?v=${ASSET_VERSION}`),
@@ -51,6 +51,31 @@ let kind = null;
 
 function setStatus(text) {
   statusEl.textContent = text;
+}
+
+// A small "i" button pinned to the board's top-right corner (in addition
+// to `instructionsEl`'s always-visible line above the board) so how-to-
+// play text is available on demand without permanently taking up space
+// on screen -- toggles a popup of the same `game.instructions()` text
+// every game module already exports. Called once, right after `game.
+// mount(...)` sets `boardEl`'s contents, so it isn't wiped out by it.
+function mountInfoButton(text) {
+  boardEl.style.position = "relative";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "info-btn";
+  btn.textContent = "i";
+  btn.setAttribute("aria-label", "How to play");
+  btn.setAttribute("aria-expanded", "false");
+  const popup = document.createElement("div");
+  popup.className = "info-popup";
+  popup.textContent = text;
+  popup.hidden = true;
+  btn.addEventListener("click", () => {
+    popup.hidden = !popup.hidden;
+    btn.setAttribute("aria-expanded", String(!popup.hidden));
+  });
+  boardEl.append(btn, popup);
 }
 
 async function fetchJson(path, options) {
@@ -149,6 +174,7 @@ async function main() {
   instructionsEl.hidden = false;
   boardEl.hidden = false;
   game.mount(boardEl, { onFinish: finish, setStatus, difficulty: info.difficulty });
+  mountInfoButton(game.instructions());
 }
 
 main();
