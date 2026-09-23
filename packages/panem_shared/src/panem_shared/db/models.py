@@ -39,9 +39,11 @@ from panem_shared.db.base import Base, TimestampMixin
 from panem_shared.enums import (
     CharacterStatus,
     OwnerKind,
+    RpMode,
     SceneKind,
     SceneStatus,
     Stance,
+    TradeStatus,
 )
 
 
@@ -130,6 +132,37 @@ class Character(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default=CharacterStatus.PENDING.value, index=True
     )
+    death_cause: Mapped[str | None] = mapped_column(String(400), nullable=True)
+    """Set alongside `status = DEAD` -- either by `/character die` (Life
+    mode, player-entered) or by `panem_shared.afflictions.apply_auto_death`
+    (Simulation mode, a fixed message). Story characters are excluded from
+    the affliction/death system entirely, so this is always `None` for
+    them; Life characters can never reach `DEAD` any other way."""
+
+    rp_mode: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=RpMode.SIMULATION.value
+    )
+    """`RpMode` -- chosen at creation, changed via `/character mode` (or the
+    dashboard's mode-switch panel) subject to `rp_modes.check_can_switch_
+    mode`'s real-day cooldown. Existing rows backfill to Simulation
+    (the migration's `server_default`), preserving pre-feature behavior for
+    every character that already existed."""
+    rp_mode_changed_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    """`None` means "never manually switched" -- a freshly approved
+    character can pick a different mode immediately; the cooldown only
+    starts counting from the first real switch."""
+    crime_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    """Life-mode-only opt-out (`/character crime`), real-day-cooldown gated
+    the same way as `rp_mode_changed_at`. Always `True` for Simulation
+    (which can never disable it) and irrelevant for Story (already
+    unreachable by crime regardless of this flag) -- `panem_shared.
+    stealing`/`poaching` check both the actor's and, where a `Character`
+    victim is involved, the victim's flag."""
+    crime_toggle_changed_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     job_title: Mapped[str | None] = mapped_column(String(80), nullable=True)
     """Free-typed by the player at character creation (Spec rework: no more
@@ -209,6 +242,29 @@ class Character(TimestampMixin, Base):
     docks health on a night it ends too low, mirroring the existing
     hunger->health pattern."""
     hospitalized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    thirst: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    """Simulation-mode only (see `panem_sim.systems.needs`); same 0=fine/
+    100=parched direction as `hunger`. Relieved by `/drink`, docked nightly
+    if `last_drank_tick` isn't today's sim-day; erodes `health` past
+    `HEALTH_DECAY_THIRST_THRESHOLD`, same additive shape as the existing
+    hunger/fatigue health penalties. Sits inert (never read/written) while
+    the character isn't in Simulation mode -- switching back into it simply
+    resumes decay from wherever it was left, no reset."""
+    sanity: Mapped[float] = mapped_column(Float, nullable=False, default=100.0)
+    """Simulation-mode only; same 100=best/0=worst direction as `fatigue`.
+    Relieved by `/entertain`, docked nightly if `last_entertained_tick`
+    isn't today's sim-day; erodes `health` past
+    `HEALTH_DECAY_SANITY_THRESHOLD`."""
+    last_ate_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_drank_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_entertained_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """Once-per-sim-day stamps for `/eat`/`/drink`/`/entertain`, same
+    `tick // simtime.TICKS_PER_DAY` cooldown idiom as `last_steal_tick`'s
+    `TICKS_PER_PHASE` division. `last_ate_tick` doesn't gate anything in
+    `panem_sim.systems.needs` (hunger's own nightly resolution stays
+    money-gated, unchanged) -- it only rate-limits `/eat` itself, added for
+    symmetry with `/drink`/`/entertain` so a player has an explicit action
+    for all three meters the feature asks for."""
 
     jailed_until_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
     jail_sentence_ticks: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -841,3 +897,84 @@ class LayerOption(TimestampMixin, Base):
     image_path: Mapped[str] = mapped_column(String(255), nullable=False)
 
     category: Mapped[LayerCategory] = relationship(back_populates="options")
+
+
+class AfflictionType(TimestampMixin, Base):
+    """A staff-authored injury/affliction the self-inflict command
+    (`/character afflict`, Life mode) or the nightly sim-needs system
+    (`panem_sim.systems.needs`, Simulation mode auto-apply) can put on a
+    character (`CharacterAffliction`). Mirrors `LayerCategory`'s "staff
+    manages a small catalog through the dashboard, players/the sim consume
+    it" shape -- starts out empty, not seeded.
+
+    `cure_stat`/`cure_threshold`: cured once that stat *rises above* the
+    threshold (`None`/`None` alongside `is_permanent=True` means
+    incurable). `auto_apply_stat`/`auto_apply_threshold`: for Simulation
+    characters only, applied once that stat *falls beneath* the threshold
+    (`None`/`None` means "manual-only, the sim never applies this on its
+    own"). Both pairs reference one of `AfflictionStat`'s five values."""
+
+    __tablename__ = "affliction_types"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    description: Mapped[str] = mapped_column(String(400), nullable=False, default="")
+    is_permanent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    cure_stat: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    cure_threshold: Mapped[float | None] = mapped_column(Float, nullable=True)
+    auto_apply_stat: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    auto_apply_threshold: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class CharacterAffliction(TimestampMixin, Base):
+    """One applied instance of an `AfflictionType` on a character.
+    `character_id` is a plain (non-FK) column, same choice `CrimeLog.
+    character_id` already made and for the same reason -- see that model's
+    docstring. `cured_at IS NULL` means still active; `cause` is the
+    player-entered explanation for a manual (Life-mode, `/character
+    afflict`) application and `None` for an automatic (Simulation-mode)
+    one."""
+
+    __tablename__ = "character_afflictions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    character_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    affliction_type_id: Mapped[int] = mapped_column(
+        ForeignKey("affliction_types.id"), nullable=False, index=True
+    )
+    cause: Mapped[str | None] = mapped_column(String(400), nullable=True)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    applied_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    cured_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    affliction_type: Mapped[AfflictionType] = relationship()
+
+
+class Trade(TimestampMixin, Base):
+    """A two-party `/trade offer` (`panem_shared.trades`) -- one item-or-
+    money offer per side, not a multi-item cart (see the feature's plan for
+    why). `character_id` columns are plain (non-FK), same choice as
+    `CrimeLog.character_id`. `give_*` is what `initiator_character_id`
+    hands over on accept; `want_*` is what they receive from
+    `recipient_character_id`. A `None` `give_good_id`/`want_good_id` with
+    its `_qty` also `None` means that side offered money only (`give_money`/
+    `want_money`, which default to 0 rather than being nullable so a
+    money-only or item-only offer never needs a null-vs-zero distinction)."""
+
+    __tablename__ = "trades"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    initiator_character_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    recipient_character_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    give_good_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    give_qty: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    give_money: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    want_good_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    want_qty: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    want_money: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=TradeStatus.PENDING.value, index=True
+    )
+    resolved_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

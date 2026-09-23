@@ -109,6 +109,43 @@ class PropertyKind(enum.StrEnum):
     INN = "inn"
 
 
+class RpMode(enum.StrEnum):
+    """A character's chosen roleplay mode, set at creation and changeable
+    afterward (subject to `rp_modes.check_can_switch_mode`'s real-day
+    cooldown). Story characters are freeform-RP-only (no economy, crime,
+    housing, work, or NPC interaction); Life characters get the full
+    economy/crime/market/work/travel loop but not housing or the needs
+    system; Simulation is today's full experience plus thirst/sanity."""
+
+    STORY = "story"
+    LIFE = "life"
+    SIMULATION = "simulation"
+
+
+class AfflictionStat(enum.StrEnum):
+    """The five `Character` meters an `AfflictionType`'s cure/auto-apply
+    condition can reference."""
+
+    HEALTH = "health"
+    HUNGER = "hunger"
+    THIRST = "thirst"
+    FATIGUE = "fatigue"
+    SANITY = "sanity"
+
+
+class TradeStatus(enum.StrEnum):
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    DECLINED = "declined"
+    CANCELLED = "cancelled"
+    EXPIRED = "expired"
+
+
+class AfflictionSource(enum.StrEnum):
+    MANUAL = "manual"
+    AUTO = "auto"
+
+
 class JobLevel(enum.StrEnum):
     """A player character's skill level at their free-typed job
     (`Character.job_title`), driven purely by `Character.shifts_completed`
