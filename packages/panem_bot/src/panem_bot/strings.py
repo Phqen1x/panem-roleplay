@@ -75,6 +75,7 @@ STRINGS: dict[str, str] = {
     "travel_district_ok": (
         "**{name}** boards a train for **{district}** -- arriving in {ticks} ticks."
     ),
+    "travel_district_instant_ok": "**{name}** arrives in **{district}**.",
     # Jobs and shifts (FR-JOB, reworked: free-typed job_title + shift_phase,
     # set at character creation and changed only by staff -- no more
     # catalog to apply for/quit/list, or a JobOption-driven ladder to check).

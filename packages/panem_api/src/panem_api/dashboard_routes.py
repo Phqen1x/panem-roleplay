@@ -1776,19 +1776,25 @@ def build_travel_router(
                     destination_id=body.destination_id,
                     current_tick=current_tick,
                 )
-                if not travel_svc.is_free_route(character, origin_district.id, body.destination_id):
+                if travel_svc.should_charge_transport(
+                    character, origin_district.id, body.destination_id
+                ):
                     await travel_svc.spend_transport(session, character)
             except (NotFound, NotAllowed) as exc:
                 raise _http_from_service_error(exc) from exc
             destination_district = content.district(body.destination_id)
-            character.in_transit_until_tick = current_tick + constants.TRANSIT_TICKS
-            character.transit_destination_id = body.destination_id
-            if character.current_district_id == character.district_id:
-                character.away_since_tick = current_tick
+            transit_ticks = travel_svc.transit_ticks_for(character)
+            if transit_ticks == 0:
+                travel_svc.apply_instant_arrival(character, destination_district)
+            else:
+                character.in_transit_until_tick = current_tick + transit_ticks
+                character.transit_destination_id = body.destination_id
+                if character.current_district_id == character.district_id:
+                    character.away_since_tick = current_tick
             return TravelToDistrictResponse(
                 character_name=character.name,
                 destination_district_name=destination_district.name,
-                transit_ticks=constants.TRANSIT_TICKS,
+                transit_ticks=transit_ticks,
             )
 
     return router

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from panem_shared.constants import PROXY_MESSAGE_MAX_LEN
 from panem_shared.content.schemas import District, Location
 from panem_shared.db.models import Character, Npc, Scene
-from panem_shared.enums import CharacterStatus, Position, SceneKind
+from panem_shared.enums import CharacterStatus, Position, RpMode, SceneKind
 from panem_shared.jail import find_jail_location
 from panem_shared.location_access import has_location_access as has_location_access
 
@@ -65,7 +65,12 @@ def can_rp_in_district(character: Character, district_id: int) -> bool:
     them (`current_district_id`), never a third district they've never
     been near. A Gamemaker's characters (Capitol staff overseeing every
     Games, wherever it's held) may be played in any district without
-    traveling there at all."""
+    traveling there at all. Story-mode characters get the same free pass,
+    for a different reason: "do not need to travel to different locations
+    in their district to RP in them," extended here to district-level RP
+    too since nothing about the mode ties them to any one place."""
+    if character.rp_mode == RpMode.STORY.value:
+        return True
     if district_id in (character.district_id, character.current_district_id):
         return True
     return _is_gamemaker(character)
@@ -77,7 +82,10 @@ def can_rp_at_location(character: Character, location_id: str) -> bool:
     (`Character.location_id`, set by `/travel location:<id>`) -- posting
     in a scene doesn't teleport them there for free. A Gamemaker's
     any-district access (`can_rp_in_district`) extends to skipping this
-    too, since they were never going to have traveled there either."""
+    too, since they were never going to have traveled there either --
+    same for a Story-mode character."""
+    if character.rp_mode == RpMode.STORY.value:
+        return True
     if character.location_id == location_id:
         return True
     return _is_gamemaker(character)
@@ -162,10 +170,14 @@ def check_can_proxy(
         if not can_rp_at_location(character, location_id):
             return ProxyRefusal("proxy_not_traveled")
         location = next((loc for loc in district.locations if loc.id == location_id), None)
-        if location is not None and not has_location_access(
-            job_title=character.job_title,
-            has_position=bool(character.positions),
-            location=location,
+        if (
+            location is not None
+            and character.rp_mode != RpMode.STORY.value
+            and not has_location_access(
+                job_title=character.job_title,
+                has_position=bool(character.positions),
+                location=location,
+            )
         ):
             return ProxyRefusal("proxy_location_restricted")
 
