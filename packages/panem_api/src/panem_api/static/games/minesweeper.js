@@ -21,6 +21,15 @@ function mineCountForLevel(levelIndex) {
   return Math.round(size * size * BASE_MINE_DENSITY);
 }
 
+// Grid tracks are sized in JS (below), so `.cell`'s own CSS width alone
+// can't shrink them -- a grid track wins over its content's intrinsic
+// size. Mirrors work.css's `.cell` mobile media query breakpoint/size
+// exactly; a higher job level's larger grid (up to 16x16 at Expert)
+// would otherwise force the whole page wider than a phone screen.
+function cellSizePx() {
+  return window.matchMedia("(max-width: 700px)").matches ? 18 : 34;
+}
+
 export const label = "Minesweeper";
 export function instructions(levelIndex = 0) {
   const size = gridSizeForLevel(levelIndex);
@@ -89,7 +98,7 @@ export function mount(boardEl, { onFinish, levelIndex = 0 }) {
   }
 
   function render() {
-    boardEl.style.gridTemplateColumns = `repeat(${GRID_SIZE}, 34px)`;
+    boardEl.style.gridTemplateColumns = `repeat(${GRID_SIZE}, ${cellSizePx()}px)`;
     boardEl.innerHTML = "";
     cells.forEach((cell, index) => {
       const button = document.createElement("button");

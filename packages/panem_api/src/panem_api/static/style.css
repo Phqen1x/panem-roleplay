@@ -23,16 +23,50 @@
   --status-busy-bg: rgba(239, 68, 68, 0.12);
   --status-busy-border: rgba(239, 68, 68, 0.35);
   --status-busy-text: #f87171;
+
+  /* Real device safe areas (notch/home-indicator/gesture-bar cutouts) --
+     resolve to 0px on anything without a cutout, so applying these
+     unconditionally is always safe. Requires `viewport-fit=cover` on the
+     page's own <meta name="viewport">, which every entry page here sets. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+
+  /* Distinct from the above: Discord's own mobile Activity chrome (a
+     drag-handle/title strip drawn by the Discord app itself, not the OS)
+     overlays roughly the top ~1cm of this iframe on Android/iOS --
+     nothing under it is visible or clickable. `env(safe-area-inset-top)`
+     reports 0 here since it's Discord's UI sitting on top of our content,
+     not a real hardware cutout, so it needs its own reserved clearance.
+     Only applied on phone-width viewports (see the mobile media query
+     below) -- there's no such banner on desktop. */
+  --discord-banner-clearance: 44px;
 }
 
 * {
   box-sizing: border-box;
 }
 
+html {
+  /* Prevents the whole page rubber-banding/zooming as one block when a
+     two-finger gesture lands on a non-scrollable area inside Discord's
+     mobile webview -- a common source of the activity appearing to
+     "jump" or momentarily blank out on Android/iOS. Inputs/textareas
+     still get normal pinch-zoom disabled by the viewport meta tag's
+     `initial-scale=1`, this only stops the *page* itself from panning. */
+  overscroll-behavior-y: none;
+  /* Paired with `body`'s own `overflow-x: hidden` (see that rule's
+     comment) -- which of the two actually governs the viewport's root
+     scroller for `scrollWidth`/horizontal-scroll purposes is a genuine
+     browser-by-browser inconsistency, so both get it. */
+  overflow-x: hidden;
+}
+
 body {
   margin: 0;
   background-color: var(--bg);
-  background-image: 
+  background-image:
     radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--accent) 12%, transparent) 0%, transparent 65%),
     linear-gradient(180deg, var(--bg) 0%, color-mix(in srgb, var(--bg) 75%, #000) 100%);
   color: var(--text);
@@ -40,6 +74,17 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
+  /* Belt-and-suspenders against page-wide horizontal scroll on mobile: an
+     oversized child several levels down (a wide minigame board, a data
+     table) is meant to scroll within its own nearer `overflow-x: auto`
+     container, but `body` being a flex container makes exactly how much
+     an in-between block is allowed to shrink a genuinely subtle flexbox
+     sizing question across engines. Clipping it here is the actually-
+     reliable fix regardless of that -- nothing here is ever meant to be
+     reachable by scrolling the whole page sideways in the first place. */
+  overflow-x: hidden;
 }
 
 header {
@@ -47,6 +92,7 @@ header {
   align-items: center;
   gap: 16px;
   padding: 10px 24px;
+  padding-top: calc(10px + var(--safe-top));
   background: color-mix(in srgb, var(--panel) 88%, var(--bg));
   backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--border);
@@ -203,6 +249,7 @@ footer {
   background: color-mix(in srgb, var(--bg) 95%, #000);
   border-top: 1px solid var(--border);
   padding: 10px 24px;
+  padding-bottom: calc(10px + var(--safe-bottom));
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -223,4 +270,18 @@ svg.ui-icon,
   display: inline-block;
   vertical-align: middle;
   flex-shrink: 0;
+}
+
+/* Mobile (Android/iOS): generic footer tightening. Only index.html's page
+   actually has a <footer> (work.html/crime.html/vitals.html don't), and
+   `header`'s own Discord-mobile-banner clearance is deliberately NOT here
+   -- see dashboard.css's matching mobile block for why: that banner only
+   ever covers index.html, the page Discord's Activity webview loads
+   directly, never these standalone/iframed minigame pages. */
+@media (max-width: 700px) {
+  footer {
+    padding-left: 16px;
+    padding-right: 16px;
+    font-size: 9.5px;
+  }
 }

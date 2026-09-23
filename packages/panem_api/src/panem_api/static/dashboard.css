@@ -21,6 +21,34 @@ header {
   flex-wrap: wrap;
 }
 
+/* Mobile (Android/iOS), index.html only: Discord's mobile Activity app
+   draws its own drag-handle/title chrome over roughly the top ~1cm of
+   this page when it's the Activity's root iframe -- nothing under it is
+   visible or clickable, so the header's identity/nav controls need to
+   sit below that line instead of right at the true top. This is
+   deliberately scoped to dashboard.css, not style.css's own shared
+   `header` rule, since work.html/crime.html/vitals.html's `<header>` --
+   loaded standalone or nested inside *this* page's own iframe.minigame-
+   frame -- never sits at the screen's true top edge and never has that
+   banner drawn over it, so it must not get this same clearance. Only
+   applies below the breakpoint -- there's no such banner on desktop. */
+@media (max-width: 700px) {
+  header {
+    padding-top: calc(var(--discord-banner-clearance) + var(--safe-top));
+    padding-left: 16px;
+    padding-right: 16px;
+    gap: 10px;
+  }
+
+  /* Secondary identity text -- useful context on a wide desktop header,
+     redundant clutter once the header's already been pushed down and
+     wrapped onto multiple lines on a phone-width screen. */
+  .brand-subtitle,
+  #discord-status-text {
+    display: none;
+  }
+}
+
 #discord-id-input {
   background: var(--panel);
   color: var(--text);
@@ -219,6 +247,15 @@ header {
   max-width: 1460px;
   width: 100%;
   margin: 0 auto;
+  /* `body` is a flex container (style.css), making this a flex item --
+     flex items default to `min-width: auto`, which refuses to shrink
+     below their content's intrinsic size regardless of `width: 100%`
+     above (the classic flexbox "overflow:auto child doesn't actually
+     scroll, it blows out its ancestor instead" trap). Without this, an
+     oversized child (e.g. a wide table.data-table on a narrow phone)
+     would widen this box -- and the whole page -- past the viewport
+     instead of scrolling within its own `overflow-x: auto`. */
+  min-width: 0;
 }
 
 .tab-status {
@@ -1368,4 +1405,68 @@ svg.ui-icon {
 .affliction-list li,
 .mode-switch-bullets li {
   margin-bottom: 4px;
+}
+
+/* Mobile (Android/iOS, inside Discord's Activity webview): touch targets
+   and spacing tuned for a phone-width viewport. The header's own top
+   clearance for Discord's mobile banner chrome lives in style.css (right
+   alongside `header`'s base rules) -- this block is everything below the
+   header. Buttons/inputs are bumped toward Apple's 44pt / Material's 48dp
+   minimum touch target guidance; style.css's own equivalent breakpoint
+   handles the header itself, so both stay in sync at `max-width: 700px`. */
+@media (max-width: 700px) {
+  #tab-root {
+    padding: 16px 14px;
+  }
+
+  .panel {
+    padding: 16px 16px;
+  }
+
+  #tab-nav {
+    gap: 4px;
+    padding: 3px;
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  #tab-nav button {
+    padding: 12px 12px;
+    font-size: 12px;
+  }
+
+  .custom-select-toggle {
+    padding: 12px 30px 12px 14px;
+    font-size: 14px;
+  }
+
+  .btn {
+    padding: 12px 18px;
+    font-size: 14px;
+  }
+
+  .field-row input,
+  .field-row select,
+  .field-row textarea,
+  .search-input,
+  .filter-select {
+    padding: 11px 12px;
+    font-size: 15px; /* >=16px avoids iOS Safari/WKWebView auto-zoom on focus; 15px is the largest that still fits these fields' existing widths */
+  }
+
+  /* A table.data-table wider than the viewport (Good/Price/Qty/Buy, or
+     similar) scrolls horizontally within its own box on a phone rather
+     than forcing the whole page wider or clipping columns -- no template
+     changes needed in any tab module, this alone makes every existing
+     `<table class="data-table">` horizontally scrollable. */
+  table.data-table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .minigame-frame {
+    height: 340px;
+  }
 }

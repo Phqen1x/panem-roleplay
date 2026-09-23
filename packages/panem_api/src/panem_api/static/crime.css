@@ -3,6 +3,13 @@ main {
   margin: 0 auto;
   padding: 16px;
   text-align: center;
+  /* Good general hygiene for a flex item (`body` is a flex container) --
+     `html`/`body`'s own `overflow-x: hidden` in style.css is what
+     actually guarantees no page-wide horizontal scroll regardless of
+     this, but this still helps an engine that honors it size `main`
+     itself correctly rather than growing to fit an oversized descendant
+     board. */
+  min-width: 0;
 }
 
 #status {
@@ -34,6 +41,28 @@ main {
 
 #board {
   margin: 16px auto;
+  max-width: 100%;
+}
+
+/* Mobile (Android/iOS): a safety net for these canvas-based boards
+   (lockpick/pickpocket/archery). Lockpick's canvas (220px) already fits
+   any phone; archery's (360px) already maps pointer coordinates through
+   `getBoundingClientRect()` (see archery.js), so it's safe to let it
+   scale down visually here -- pointer accuracy holds regardless of its
+   rendered size. Pickpocket's canvas (also 360px) assumes a 1:1 CSS-to-
+   canvas-pixel mapping, so it's deliberately left unscaled rather than
+   risking broken click targeting on the smallest phones -- `#board`'s
+   own `overflow-x: auto` is its fallback instead. */
+@media (max-width: 700px) {
+  #board {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .board-archery canvas {
+    max-width: 100%;
+    height: auto;
+  }
 }
 
 /* --------------------------------------------------- Lockpick/Pickpocket */

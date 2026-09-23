@@ -3,6 +3,15 @@ main {
   margin: 0 auto;
   padding: 16px;
   text-align: center;
+  /* `body` is a flex container (style.css), making this `<main>` a flex
+     item -- flex items default to `min-width: auto`, which refuses to
+     shrink below their content's intrinsic size (the classic flexbox
+     "overflow:auto child doesn't actually scroll, it blows out its
+     ancestor instead" trap). Without this, an oversized child board
+     (e.g. Minesweeper's 16-column grid at max job level) widens `main`
+     itself past the viewport instead of scrolling within `#board`'s own
+     `overflow-x: auto`. */
+  min-width: 0;
 }
 
 #status {
@@ -34,6 +43,7 @@ main {
 
 #board {
   margin: 12px auto;
+  max-width: 100%;
 }
 
 /* -------------------------------------------------------------- Minesweeper */
@@ -330,6 +340,63 @@ main {
 
 .card.selected {
   outline: 2px solid var(--accent);
+}
+
+/* Mobile (Android/iOS): several of these boards were sized for a desktop
+   pointer and don't fit a phone-width viewport at their base pixel sizes
+   -- Minesweeper's grid grows with job mastery level (up to 16 columns *
+   34px = well past any phone's width) and Solitaire's tableau is 7 columns
+   wide at 52px each. Shrunk to fit even the worst case (Expert-level
+   Minesweeper's 16-column grid) outright, rather than leaning on `#board`'s
+   own `overflow-x: auto` -- `main` sits inside `body`'s flex column and, in
+   at least one tested engine, an oversized descendant several levels down
+   still grows `main` itself past the viewport rather than staying
+   contained and internally scrollable, so a board that doesn't fit
+   outright ends up with its excess silently clipped (by `html`/`body`'s
+   own `overflow-x: hidden` safety net in style.css) with no way to reach
+   it, not scrollable. `#board`'s own `overflow-x: auto` stays in place as
+   a second-line fallback regardless -- if a board turns out to need more
+   room than expected, it becomes usable in whichever engines *do* honor
+   the nested scroll rather than being invisibly cut off. `.cell`'s size
+   here must stay in sync with `games/minesweeper.js`'s own `cellSizePx()`
+   -- the grid's column width is set inline by that JS (a CSS grid track's
+   size isn't driven by its content's own `width`), this only sizes the
+   cell's content within the track that JS already sized to match. */
+@media (max-width: 700px) {
+  main {
+    padding: 12px;
+  }
+
+  #board {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .cell {
+    width: 18px;
+    height: 18px;
+    font-size: 11px;
+  }
+
+  .pile,
+  .tableau-column {
+    width: 38px;
+  }
+
+  .pile {
+    height: 54px;
+    font-size: 16px;
+  }
+
+  .card {
+    width: 36px;
+    height: 52px;
+    font-size: 12px;
+  }
+
+  .solitaire-row {
+    gap: 5px;
+  }
 }
 
 .give-up-btn {
