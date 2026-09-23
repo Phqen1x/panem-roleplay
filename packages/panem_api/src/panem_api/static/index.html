@@ -4,12 +4,22 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Panem: The Long Year</title>
-<link rel="stylesheet" href="/style.css" />
-<link rel="stylesheet" href="/dashboard.css?v=13" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700;800;900&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css?v=3" />
+<link rel="stylesheet" href="/dashboard.css?v=15" />
 </head>
 <body>
 <header>
-  <h1>Panem: The Long Year</h1>
+  <a href="#" class="brand">
+    <img src="/panem_crest.png" alt="Panem Crest" class="brand-crest" />
+    <div class="brand-text">
+      <span class="brand-title">Panem</span>
+      <span class="brand-subtitle">The Long Year</span>
+    </div>
+  </a>
+  <nav id="tab-nav"></nav>
   <input id="discord-id-input" type="text" placeholder="Discord ID (preview mode)" hidden />
   <div id="character-select" class="custom-select">
     <button type="button" id="character-select-toggle" class="custom-select-toggle" disabled>
@@ -17,11 +27,17 @@
     </button>
     <ul id="character-select-menu" class="custom-select-menu" hidden></ul>
   </div>
+  <div id="discord-status-badge" class="discord-status">
+    <span class="live-dot"></span> <span id="discord-status-text">Connected via Discord</span>
+  </div>
   <div id="theme-picker" class="theme-picker" hidden></div>
 </header>
-<nav id="tab-nav"></nav>
-<p id="status">Connecting&hellip;</p>
+<p id="status" hidden></p>
 <div id="tab-root"></div>
-<script type="module" src="/app.js?v=26"></script>
+<footer id="global-footer">
+  <div class="footer-left">Panem: The Long Year</div>
+  <div class="footer-right" id="footer-telemetry">District One <span class="accent">&#9671;</span> Excellence Endures</div>
+</footer>
+<script type="module" src="/app.js?v=29"></script>
 </body>
 </html>

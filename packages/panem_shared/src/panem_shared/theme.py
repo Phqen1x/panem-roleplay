@@ -24,10 +24,10 @@ from panem_shared.errors import ValidationFailed
 # reset (or an account that's never customized, or a donor role that's
 # lapsed since customizing) actually renders. Keep in sync with that file
 # if its defaults ever change.
-DEFAULT_BACKGROUND_HEX = "#14161c"
-DEFAULT_ACCENT_HEX = "#e0a72e"
-DEFAULT_PANEL_HEX = "#1b1f27"
-DEFAULT_TEXT_HEX = "#d7dbe4"
+DEFAULT_BACKGROUND_HEX = "#0a0c10"
+DEFAULT_ACCENT_HEX = "#c5a059"
+DEFAULT_PANEL_HEX = "#12161f"
+DEFAULT_TEXT_HEX = "#f1f3f7"
 
 PROFILE_NAME_MAX_LEN = 40
 

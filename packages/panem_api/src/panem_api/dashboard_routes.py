@@ -94,6 +94,8 @@ class DashboardCharacterSummary(BaseModel):
     appearance_layers: dict[str, int]
     district_id: int
     current_district_id: int
+    district_name: str = ""
+    current_district_name: str = ""
     money: int
     jailed_until_tick: int | None = None
     jailed: bool = False
@@ -241,6 +243,7 @@ async def _resolve_theme(
 def build_identify_router(
     *,
     session_factory: async_sessionmaker[AsyncSession] | None,
+    content: ContentBundle | None = None,
     discord_token: str = "",
     discord_guild_id: int = 0,
     staff_role_id: int = 0,
@@ -315,6 +318,16 @@ def build_identify_router(
                         ),
                         district_id=c.district_id,
                         current_district_id=c.current_district_id,
+                        district_name=(
+                            content.districts[c.district_id].name
+                            if content is not None and c.district_id in content.districts
+                            else f"District {c.district_id}"
+                        ),
+                        current_district_name=(
+                            content.districts[c.current_district_id].name
+                            if content is not None and c.current_district_id in content.districts
+                            else f"District {c.current_district_id}"
+                        ),
                         money=c.money,
                         jailed_until_tick=c.jailed_until_tick,
                         jailed=c.jailed_until_tick is not None
@@ -2651,6 +2664,17 @@ class DeleteLayerOptionRequest(BaseModel):
     discord_id: int
 
 
+class UpdateDistrictMottoRequest(BaseModel):
+    discord_id: int
+    district_id: int
+    motto: str
+
+
+class DistrictMottoResponse(BaseModel):
+    district_id: int
+    motto: str
+
+
 def build_staff_router(
     *,
     session_factory: async_sessionmaker[AsyncSession] | None,
@@ -2824,5 +2848,44 @@ def build_staff_router(
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
         return {"deleted": True}
+
+    @router.get("/districts/mottos")
+    async def get_district_mottos() -> dict[str, str]:
+        mottos_file = static_dir / "district_mottos.json"
+        if mottos_file.is_file():
+            try:
+                return json.loads(mottos_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        return {}
+
+    @router.post("/districts/motto", response_model=DistrictMottoResponse)
+    async def update_district_motto(body: UpdateDistrictMottoRequest) -> DistrictMottoResponse:
+        await _require_staff(body.discord_id)
+        if body.district_id < 0 or body.district_id > 12:
+            raise HTTPException(status_code=400, detail="invalid_district_id")
+        motto = body.motto.strip()
+        if not motto or len(motto) > 120:
+            raise HTTPException(status_code=400, detail="invalid_motto_length")
+
+        mottos_file = static_dir / "district_mottos.json"
+        data: dict[str, str] = {}
+        if mottos_file.is_file():
+            try:
+                data = json.loads(mottos_file.read_text(encoding="utf-8"))
+            except Exception:
+                data = {}
+        data[str(body.district_id)] = motto
+        mottos_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+        await discord_staff.post_staff_log(
+            channel_id=log_channel_id,
+            bot_token=discord_token,
+            content=(
+                f"**Staff action:** <@{body.discord_id}> updated District {body.district_id} motto "
+                f"to {motto!r}"
+            ),
+        )
+        return DistrictMottoResponse(district_id=body.district_id, motto=motto)
 
     return router

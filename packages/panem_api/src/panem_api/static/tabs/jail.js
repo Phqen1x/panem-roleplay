@@ -6,7 +6,7 @@
 // `/lockpick` mints) and embedding crime.html in an <iframe>, reusing that
 // page's minigame unmodified; a postMessage from crime.js on completion
 // (see that file's docstring) tells this tab to refresh.
-import { fetchJson, el } from "./_shared.js?v=3";
+import { fetchJson, el } from "./_shared.js?v=5";
 
 // Matches tabs/crime.js's/work.js's identical fix: crime.html's own
 // result screen used to disappear the instant it appeared, since the

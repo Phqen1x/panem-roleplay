@@ -7,11 +7,11 @@ main {
 
 #status {
   color: var(--muted);
-  font-size: 14px;
+  font-size: 16px;
 }
 
 #result {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 600;
 }
 
@@ -25,7 +25,7 @@ main {
 
 .instructions {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 15px;
   font-style: italic;
   line-height: 1.4;
   margin: 4px auto 12px;
@@ -52,8 +52,8 @@ main {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 15px;
-  font-weight: 700;
+  font-size: 17px;
+  font-weight: 800;
   background: var(--panel);
   color: var(--text);
   border: none;
@@ -112,7 +112,7 @@ main {
 .snake-score {
   margin: 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 15px;
 }
 
 /* ---------------------------------------------------------------- Connect 4 */
@@ -166,7 +166,7 @@ main {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 32px;
+  font-size: 34px;
   font-weight: 700;
   border: 3px solid var(--border);
 }
@@ -203,11 +203,11 @@ main {
 .choice-btn {
   padding: 8px 20px;
   border-radius: 4px;
-  border: 1px solid var(--border);
+  border: 2px solid var(--border);
   background: var(--panel);
   color: var(--text);
   cursor: pointer;
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .choice-btn:disabled {
@@ -230,7 +230,7 @@ main {
   border: 1px solid var(--border);
   background: var(--panel);
   cursor: pointer;
-  font-size: 32px;
+  font-size: 34px;
 }
 
 .bottle-btn:disabled {
@@ -280,7 +280,7 @@ main {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 20px;
+  font-size: 22px;
   color: var(--muted);
   cursor: pointer;
   flex-shrink: 0;
@@ -312,7 +312,7 @@ main {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 700;
 }
 
@@ -340,5 +340,5 @@ main {
   background: var(--panel);
   color: var(--text);
   cursor: pointer;
-  font-size: 13px;
+  font-size: 15px;
 }

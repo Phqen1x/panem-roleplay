@@ -23,9 +23,42 @@
 const TARGETS = ["background", "accent", "panel", "text"];
 const TARGET_LABELS = { background: "Background", accent: "Accent", panel: "Panel", text: "Text" };
 // Mirrors `panem_shared.theme`'s `DEFAULT_*_HEX` constants, which
-// themselves mirror `style.css`'s `:root` values -- only used to seed the
-// picker before the first real theme (`getTheme()`) is available.
-const DEFAULTS = { background: "#14161c", accent: "#e0a72e", panel: "#1b1f27", text: "#d7dbe4" };
+// themselves mirror `style.css`'s `:root` values.
+const DEFAULTS = { background: "#0a0c10", accent: "#c5a059", panel: "#12161f", text: "#f1f3f7" };
+
+// Curated Capitol and District presets designed to harmonize with the neoclassical layout
+const PRESETS = [
+  {
+    name: "Capitol Gold",
+    desc: "Neoclassical baseline",
+    colors: { background: "#0a0c10", accent: "#c5a059", panel: "#12161f", text: "#f1f3f7" },
+  },
+  {
+    name: "Capitol Crimson",
+    desc: "Presidential Luxury",
+    colors: { background: "#0c0709", accent: "#e11d48", panel: "#190e13", text: "#fff1f2" },
+  },
+  {
+    name: "District 1 Azure",
+    desc: "Luxury Gemstones",
+    colors: { background: "#080d14", accent: "#38bdf8", panel: "#101824", text: "#f0f9ff" },
+  },
+  {
+    name: "Victors' Jade",
+    desc: "District 11 Harvest",
+    colors: { background: "#070e0a", accent: "#10b981", panel: "#0f1c15", text: "#ecfdf5" },
+  },
+  {
+    name: "Obsidian Violet",
+    desc: "Capitol High Society",
+    colors: { background: "#0a0712", accent: "#a855f7", panel: "#161022", text: "#faf5ff" },
+  },
+  {
+    name: "Peacekeeper Amber",
+    desc: "Industrial Forge",
+    colors: { background: "#0d0a07", accent: "#f59e0b", panel: "#1a140d", text: "#fffbeb" },
+  },
+];
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -168,6 +201,18 @@ export function mountThemePicker(
     <button type="button" class="theme-picker-toggle" aria-label="Customize dashboard colors"
       title="Customize dashboard colors" aria-expanded="false"></button>
     <div class="theme-picker-popup" hidden>
+      <div class="theme-presets-section">
+        <div class="theme-presets-title">Capitol Palettes</div>
+        <div class="theme-presets-chips">
+          ${PRESETS.map(
+            (p, i) =>
+              `<button type="button" class="theme-preset-chip" data-preset-idx="${i}" title="${escapeHtml(p.name)} (${escapeHtml(p.desc)})">
+                <span class="preset-chip-dot" style="background: ${p.colors.accent}; color: ${p.colors.accent};"></span>
+                <span class="preset-chip-name">${escapeHtml(p.name)}</span>
+              </button>`
+          ).join("")}
+        </div>
+      </div>
       <div class="theme-picker-targets">
         ${TARGETS.map(
           (t, i) =>
@@ -342,8 +387,38 @@ export function mountThemePicker(
     emitPreview();
   });
 
+  const presetChips = [...container.querySelectorAll(".theme-preset-chip")];
+  for (const chip of presetChips) {
+    chip.addEventListener("click", () => {
+      const idx = Number(chip.dataset.presetIdx);
+      const preset = PRESETS[idx];
+      if (!preset) return;
+      hsv = {
+        background: hexToHsv(preset.colors.background),
+        accent: hexToHsv(preset.colors.accent),
+        panel: hexToHsv(preset.colors.panel),
+        text: hexToHsv(preset.colors.text),
+      };
+      nameInput.value = preset.name;
+      emitPreview();
+    });
+  }
+
+  function applyHexInput() {
+    let raw = hexInput.value.trim();
+    if (raw.startsWith("#")) raw = raw.slice(1);
+    const value = `#${raw}`;
+    if (isValidHex(value)) {
+      hsv[activeTarget] = hexToHsv(value);
+      emitPreview();
+    }
+  }
+
+  hexInput.addEventListener("input", applyHexInput);
   hexInput.addEventListener("change", () => {
-    const value = `#${hexInput.value.trim()}`;
+    let raw = hexInput.value.trim();
+    if (raw.startsWith("#")) raw = raw.slice(1);
+    const value = `#${raw}`;
     if (!isValidHex(value)) {
       render(); // revert the field to the last-good value
       return;

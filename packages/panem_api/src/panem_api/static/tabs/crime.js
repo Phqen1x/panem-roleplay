@@ -2,7 +2,7 @@
 // crime attempt (same shape /activity/crime/{id} already reads) and play
 // via an embedded crime.html <iframe>, reusing the pickpocket/lockpick/
 // archery minigames unmodified -- same pattern as static/tabs/jail.js.
-import { fetchJson, el, dropdown } from "./_shared.js?v=3";
+import { fetchJson, el, dropdown } from "./_shared.js?v=5";
 
 // How long crime.html's own result screen (posted via postMessage, see
 // static/crime.js's `finish()`) stays visible before this tab clears the
