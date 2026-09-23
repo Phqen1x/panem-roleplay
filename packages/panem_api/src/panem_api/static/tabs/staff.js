@@ -15,7 +15,7 @@
 // use this panel, which is built to render sensibly on zero categories
 // (just the "New category" form, nothing else) rather than assuming
 // something is already there.
-import { fetchJson, el, dropdown } from "./_shared.js?v=3";
+import { fetchJson, el, dropdown } from "./_shared.js?v=5";
 
 // `panem_shared.enums.AfflictionStat`'s five values -- the only stats a
 // staff-authored affliction type's cure/auto-apply condition can name.
@@ -298,6 +298,81 @@ function layersPanel(ctx) {
   return root;
 }
 
+function mottosPanel(ctx) {
+  const resultLine = el("p", { class: "result-line" });
+
+  const districtOptions = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((id) => {
+    const name = ctx.districtName ? ctx.districtName(id) : (id === 0 ? "The Capitol" : `District ${id}`);
+    return el("option", { value: String(id) }, `${id}: ${name}`);
+  });
+
+  const districtSelect = el("select", { class: "field-input" }, ...districtOptions);
+  districtSelect.value = "1";
+
+  const mottoInput = el("input", {
+    type: "text",
+    maxlength: "120",
+    placeholder: "District motto / declaration",
+    value: ctx.districtMotto ? ctx.districtMotto(1) : "Excellence Endures",
+  });
+
+  districtSelect.addEventListener("change", () => {
+    resultLine.textContent = "";
+    resultLine.className = "result-line";
+    const did = Number(districtSelect.value);
+    mottoInput.value = ctx.districtMotto ? ctx.districtMotto(did) : "";
+  });
+
+  const saveBtn = el("button", { class: "btn primary", type: "button" }, "Save Motto");
+  saveBtn.addEventListener("click", async () => {
+    resultLine.textContent = "";
+    const districtId = Number(districtSelect.value);
+    const motto = mottoInput.value.trim();
+    if (!motto) {
+      resultLine.className = "result-line lose";
+      resultLine.textContent = "Please enter a motto (up to 120 characters).";
+      return;
+    }
+    try {
+      const body = await fetchJson("/activity/dashboard/staff/districts/motto", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          discord_id: ctx.discordId(),
+          district_id: districtId,
+          motto,
+        }),
+      });
+      resultLine.className = "result-line win";
+      const dName = ctx.districtName ? ctx.districtName(districtId) : `District ${districtId}`;
+      resultLine.textContent = `Saved motto for ${dName}: "${body.motto}".`;
+      window.dispatchEvent(
+        new CustomEvent("panem:motto-updated", {
+          detail: { district_id: districtId, motto: body.motto },
+        })
+      );
+    } catch (err) {
+      resultLine.className = "result-line lose";
+      resultLine.textContent = err.message;
+    }
+  });
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "District Mottos & Declarations" }),
+    el(
+      "p",
+      { class: "tab-status" },
+      "Staff editable mottos displayed on footer telemetry and district plaques across Panem."
+    ),
+    el("div", { class: "field-row" }, el("label", { text: "District" }), districtSelect),
+    el("div", { class: "field-row" }, el("label", { text: "Motto" }), mottoInput),
+    el("div", { class: "field-row" }, saveBtn),
+    resultLine
+  );
+}
+
 function afflictionTypeRow(ctx, afflictionType, { onChanged }) {
   const resultLine = el("p", { class: "result-line" });
 
@@ -568,5 +643,5 @@ function afflictionTypesPanel(ctx) {
 }
 
 export function mount(root, ctx) {
-  root.append(jailPanel(ctx), layersPanel(ctx), afflictionTypesPanel(ctx));
+  root.append(jailPanel(ctx), mottosPanel(ctx), layersPanel(ctx), afflictionTypesPanel(ctx));
 }

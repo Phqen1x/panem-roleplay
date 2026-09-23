@@ -24,7 +24,7 @@
 // still returns its own `dispose()` (removes those DOM nodes) and every
 // function below that creates one calls it at the right lifecycle point,
 // mostly so a stale preview never lingers in a detached card.
-import { fetchJson, el, dropdown } from "./_shared.js?v=3";
+import { fetchJson, el, dropdown } from "./_shared.js?v=5";
 import { mountAvatar } from "./avatar_creator.js?v=11";
 
 const SHIFT_PHASES = ["morning", "afternoon", "evening", "night"];

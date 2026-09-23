@@ -1,19 +1,28 @@
+@import url("https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700;800;900&family=Inter:wght@300;400;500;600;700&display=swap");
+
 :root {
   color-scheme: dark;
-  --bg: #14161c;
-  --panel: #1b1f27;
-  --text: #d7dbe4;
-  --accent: #e0a72e;
-  /* Derived from --text (not stored/settable on their own) so every box
-     border, row divider, and secondary/label text tracks whatever text
-     color a donor picks -- `applyTheme()`/the localStorage restore in
-     work.js/crime.js only ever set --bg/--accent/--panel/--text, and
-     because custom properties resolve against the cascade at used-value
-     time, overriding --text on the root element is all it takes for
-     these to follow along everywhere style.css/dashboard.css/work.css/
-     crime.css reference them. */
-  --border: color-mix(in srgb, var(--text) 45%, transparent);
-  --muted: color-mix(in srgb, var(--text) 70%, transparent);
+  --bg: #0a0c10;
+  --panel: #12161f;
+  --text: #f1f3f7;
+  --accent: #c5a059;
+  /* Derived dynamically from --text and --accent so custom donor colors cascade perfectly */
+  --border: color-mix(in srgb, var(--accent) 32%, color-mix(in srgb, var(--text) 22%, transparent));
+  --muted: color-mix(in srgb, var(--text) 65%, transparent);
+  --font-serif: "Cinzel", "Times New Roman", Georgia, serif;
+  --font-sans: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-normal: var(--font-sans);
+  --font-bold: var(--font-serif);
+
+  --status-avail-bg: rgba(34, 197, 94, 0.12);
+  --status-avail-border: rgba(34, 197, 94, 0.35);
+  --status-avail-text: #4ade80;
+  --status-work-bg: rgba(234, 179, 8, 0.12);
+  --status-work-border: rgba(234, 179, 8, 0.35);
+  --status-work-text: #facc15;
+  --status-busy-bg: rgba(239, 68, 68, 0.12);
+  --status-busy-border: rgba(239, 68, 68, 0.35);
+  --status-busy-text: #f87171;
 }
 
 * {
@@ -22,22 +31,83 @@
 
 body {
   margin: 0;
-  background: var(--bg);
+  background-color: var(--bg);
+  background-image: 
+    radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--accent) 12%, transparent) 0%, transparent 65%),
+    linear-gradient(180deg, var(--bg) 0%, color-mix(in srgb, var(--bg) 75%, #000) 100%);
   color: var(--text);
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: var(--font-normal);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
+  gap: 16px;
+  padding: 10px 24px;
+  background: color-mix(in srgb, var(--panel) 88%, var(--bg));
+  backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.brand-crest {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent) 50%, transparent));
+  flex-shrink: 0;
+}
+
+.brand-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.brand-title {
+  font-family: var(--font-serif);
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 2.2px;
+  color: var(--accent);
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.brand-subtitle {
+  font-family: var(--font-serif);
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 1.8px;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+h1, h2, h3, h4, h5, h6, b, strong {
+  font-family: var(--font-bold);
+  letter-spacing: 0.5px;
+}
+
+button {
+  font-family: var(--font-sans);
+  font-weight: 600;
 }
 
 h1 {
-  font-size: 16px;
+  font-size: 18px;
   margin: 0;
   font-weight: 600;
   white-space: nowrap;
@@ -58,7 +128,7 @@ h1 {
   border: 1px solid var(--border);
   background: var(--panel);
   color: var(--muted);
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 700;
   font-style: italic;
   font-family: Georgia, "Times New Roman", serif;
@@ -87,7 +157,7 @@ h1 {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 10px 12px;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.4;
   color: var(--text);
   text-align: left;
@@ -104,14 +174,19 @@ select {
 
 #counts {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 15px;
   margin-left: auto;
 }
 
 #status {
   margin: 8px 16px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
+}
+
+#status:empty,
+#status[hidden] {
+  display: none !important;
 }
 
 canvas {
@@ -121,4 +196,31 @@ canvas {
   height: auto;
   margin: 0 auto;
   border: 1px solid var(--border);
+}
+
+footer {
+  margin-top: auto;
+  background: color-mix(in srgb, var(--bg) 95%, #000);
+  border-top: 1px solid var(--border);
+  padding: 10px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--font-serif);
+  font-size: 10.5px;
+  letter-spacing: 1.8px;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+footer .accent {
+  color: var(--accent);
+}
+
+/* Base icon behavior -- prevents unstyled SVG expansion */
+svg.ui-icon,
+.tab-icon {
+  display: inline-block;
+  vertical-align: middle;
+  flex-shrink: 0;
 }

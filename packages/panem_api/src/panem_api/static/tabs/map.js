@@ -3,7 +3,7 @@
 // unchanged from that original version: a schematic layout drawn from each
 // location's map coordinates (no real district map art yet -- see the
 // README), NPCs/characters pushed over a polling WebSocket.
-import { fetchJson, el, dropdown } from "./_shared.js?v=3";
+import { fetchJson, el, dropdown } from "./_shared.js?v=5";
 
 function wsUrlFor(districtId) {
   const scheme = location.protocol === "https:" ? "wss:" : "ws:";
@@ -16,11 +16,14 @@ export function mount(root, _ctx) {
   districtSelect.disabled = true;
   const countsEl = el("span", { class: "tab-counts" });
   const canvas = el("canvas", { width: "960", height: "600" });
-  root.append(
-    el("div", { class: "map-toolbar" }, districtSelect, countsEl),
+  const panel = el(
+    "div",
+    { class: "panel map-panel" },
+    el("div", { class: "map-toolbar", style: "margin-bottom: 14px;" }, districtSelect, countsEl),
     statusEl,
     canvas
   );
+  root.append(panel);
 
   const canvasCtx = canvas.getContext("2d");
   let districts = [];
@@ -37,11 +40,11 @@ export function mount(root, _ctx) {
   function render(positions) {
     const d = currentDistrict;
     if (!d) return;
-    canvasCtx.fillStyle = "#1b1f27";
+    canvasCtx.fillStyle = "#0a0c10";
     canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
-    canvasCtx.strokeStyle = "#3a4150";
-    canvasCtx.fillStyle = "#8b93a3";
-    canvasCtx.font = "12px sans-serif";
+    canvasCtx.strokeStyle = "rgba(197, 160, 89, 0.4)";
+    canvasCtx.fillStyle = "#e5c07b";
+    canvasCtx.font = "12px 'Cinzel', serif";
     canvasCtx.textAlign = "center";
     for (const loc of d.locations) {
       const x = toCanvasX(loc.x);
@@ -51,7 +54,7 @@ export function mount(root, _ctx) {
       canvasCtx.stroke();
       canvasCtx.fillText(loc.name, x, y - 34);
     }
-    canvasCtx.fillStyle = "#7d8597";
+    canvasCtx.fillStyle = "#8b93a4";
     for (const npc of positions.npcs) {
       if (npc.x == null || npc.y == null) continue;
       canvasCtx.beginPath();
@@ -62,7 +65,7 @@ export function mount(root, _ctx) {
       if (character.x == null || character.y == null) continue;
       const x = toCanvasX(character.x);
       const y = toCanvasY(character.y);
-      canvasCtx.fillStyle = "#e0a72e";
+      canvasCtx.fillStyle = "#c5a059";
       canvasCtx.beginPath();
       canvasCtx.arc(x, y, 5, 0, Math.PI * 2);
       canvasCtx.fill();

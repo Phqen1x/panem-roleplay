@@ -15,7 +15,7 @@
 // a browser profile would share it -- an acceptable tradeoff for a
 // convenience log, not a source of truth (the DB's `money`/`shifts_completed`
 // columns are that).
-import { fetchJson, el } from "./_shared.js?v=3";
+import { fetchJson, el } from "./_shared.js?v=5";
 
 const WORK_LOG_LIMIT = 20;
 // How long the minigame's own result screen (posted via postMessage, see

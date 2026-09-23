@@ -23,8 +23,8 @@
 // every other dashboard endpoint re-validating discord_id+character_id
 // together) -- there's still no cryptographic auth here, same documented
 // gap as the rest of this process.
-import { fetchJson, el } from "./tabs/_shared.js?v=3";
-import { mountThemePicker } from "./theme_picker.js?v=2";
+import { fetchJson, el, renderTabIcon } from "./tabs/_shared.js?v=5";
+import { mountThemePicker } from "./theme_picker.js?v=3";
 
 const DISCORD_SDK_URL = "/vendor/discord-embedded-app-sdk.js";
 const STEP_TIMEOUT_MS = 8000;
@@ -33,6 +33,40 @@ const STEP_TIMEOUT_MS = 8000;
 // crime.js's own single-constant-for-a-whole-module-group convention.
 const ASSET_VERSION = "30";
 
+// District names mapping for Capitol and Districts 1-12
+const DISTRICT_NAMES = {
+  0: "The Capitol",
+  1: "District One",
+  2: "District Two",
+  3: "District Three",
+  4: "District Four",
+  5: "District Five",
+  6: "District Six",
+  7: "District Seven",
+  8: "District Eight",
+  9: "District Nine",
+  10: "District Ten",
+  11: "District Eleven",
+  12: "District Twelve",
+};
+
+// District mottos fallback defaults
+const DEFAULT_DISTRICT_MOTTOS = {
+  "0": "Panem Today, Panem Tomorrow, Panem Forever",
+  "1": "Excellence Endures",
+  "2": "Strength in Stone and Iron",
+  "3": "Knowledge Lights the Dark",
+  "4": "From the Deep, We Rise",
+  "5": "Powering Panem's Light",
+  "6": "Moving Panem Forward",
+  "7": "From Strong Roots, Resilient Wood",
+  "8": "Woven with Precision and Pride",
+  "9": "Grain of the Republic",
+  "10": "Guarding the Heartland Herds",
+  "11": "Through Hardship, Strength Blooms",
+  "12": "From the Dark, Pure Fire",
+};
+
 // Mirrors `panem_shared.theme`'s `DEFAULT_BACKGROUND_HEX`/`DEFAULT_ACCENT_
 // HEX`/`DEFAULT_PANEL_HEX`/`DEFAULT_TEXT_HEX`, which themselves mirror
 // `style.css`'s `:root` values -- what a non-donor, a never-customized
@@ -40,10 +74,10 @@ const ASSET_VERSION = "30";
 // dashboard never has to round-trip to the server just to know its own
 // default colors.
 const DEFAULT_THEME = {
-  background_hex: "#14161c",
-  accent_hex: "#e0a72e",
-  panel_hex: "#1b1f27",
-  text_hex: "#d7dbe4",
+  background_hex: "#0a0c10",
+  accent_hex: "#c5a059",
+  panel_hex: "#12161f",
+  text_hex: "#f1f3f7",
   profile_id: null,
 };
 
@@ -91,6 +125,7 @@ const state = {
   // order). Tracked separately so the picker can always show "Default"
   // correctly even while a character-specific profile is what's applied.
   activeThemeProfileId: null,
+  districtMottos: { ...DEFAULT_DISTRICT_MOTTOS },
 };
 
 let currentTabHandle = null;
@@ -103,7 +138,13 @@ let currentTabHandle = null;
 let navBuiltForStaff = null;
 
 function setStatus(text) {
+  if (!text || text.toLowerCase().startsWith("connected")) {
+    statusEl.textContent = "";
+    statusEl.hidden = true;
+    return;
+  }
   statusEl.textContent = text;
+  statusEl.hidden = false;
 }
 
 function getDiscordId() {
@@ -178,10 +219,15 @@ async function refreshResolvedTheme() {
   const discordId = getDiscordId();
   if (!discordId) return;
   try {
-    state.theme = await themeApiPost("/activity/dashboard/theme/resolve", {
+    const resolved = await themeApiPost("/activity/dashboard/theme/resolve", {
       discord_id: discordId,
       character_id: state.characterId,
     });
+    if (resolved && resolved.profile_id === null && resolved.accent_hex === "#e0a72e") {
+      state.theme = DEFAULT_THEME;
+    } else {
+      state.theme = resolved || DEFAULT_THEME;
+    }
   } catch (err) {
     console.warn("Could not resolve dashboard theme:", err);
     state.theme = DEFAULT_THEME;
@@ -391,7 +437,7 @@ async function authenticateWithDiscord() {
           discordSdk.commands.authenticate({ access_token: cachedToken }),
           STEP.current
         );
-        setStatus("Connected via Discord.");
+        setStatus("");
         return cachedResult?.user ?? null;
       } catch (err) {
         console.warn("Cached Discord token no longer works, re-authorizing:", err);
@@ -423,7 +469,7 @@ async function authenticateWithDiscord() {
       STEP.current
     );
 
-    setStatus("Connected via Discord.");
+    setStatus("");
     return authResult?.user ?? null;
   } catch (err) {
     // Expected whenever this page isn't actually running inside a Discord
@@ -449,13 +495,33 @@ function closeCharacterMenu() {
   characterMenuEl.hidden = true;
 }
 
+function updateTelemetry(character) {
+  const telemetryEl = document.getElementById("footer-telemetry");
+  if (!telemetryEl) return;
+  const districtId = character
+    ? (character.current_district_id ?? character.district_id ?? 1)
+    : 1;
+  const districtName =
+    (character && (character.current_district_name || character.district_name)) ||
+    DISTRICT_NAMES[districtId] ||
+    `District ${districtId}`;
+  const motto =
+    state.districtMottos[String(districtId)] ||
+    DEFAULT_DISTRICT_MOTTOS[String(districtId)] ||
+    "Excellence Endures";
+  telemetryEl.innerHTML = `${districtName} <span class="accent">&#9671;</span> ${motto}`;
+}
+
 async function selectCharacter(id) {
   closeCharacterMenu();
   if (id === state.characterId) return;
   state.characterId = id;
   writeStorage("panem_character_id", String(id));
   const chosen = state.characters.find((c) => c.id === id);
-  if (chosen) characterToggleEl.textContent = characterLabel(chosen);
+  if (chosen) {
+    characterToggleEl.textContent = characterLabel(chosen);
+  }
+  updateTelemetry(chosen);
   // A donor's theme can be assigned per-character -- switching characters
   // may mean switching the applied colors too.
   await refreshResolvedTheme();
@@ -469,6 +535,7 @@ function renderCharacterOptions() {
     characterToggleEl.disabled = true;
     characterToggleEl.textContent = "No characters";
     state.characterId = null;
+    updateTelemetry(null);
     return;
   }
   characterToggleEl.disabled = false;
@@ -491,9 +558,14 @@ function renderCharacterOptions() {
   }
   const selected = state.characters.find((c) => c.id === state.characterId);
   characterToggleEl.textContent = selected ? characterLabel(selected) : "No characters";
+  updateTelemetry(selected);
 }
 
 async function refreshIdentity() {
+  const statusBadge = document.getElementById("discord-status-text");
+  if (statusBadge) {
+    statusBadge.textContent = state.discordUser ? "Connected via Discord" : "Preview Mode";
+  }
   const discordId = getDiscordId();
   if (!discordId) {
     state.characters = [];
@@ -520,7 +592,11 @@ async function refreshIdentity() {
     // `body.theme` here has no character context (`/identify` doesn't
     // know which one's selected) -- it's the account's general theme, so
     // its `profile_id` is exactly the account's general default.
-    state.theme = body.theme || DEFAULT_THEME;
+    if (!state.isDonor || (body.theme && body.theme.profile_id === null && body.theme.accent_hex === "#e0a72e")) {
+      state.theme = DEFAULT_THEME;
+    } else {
+      state.theme = body.theme || DEFAULT_THEME;
+    }
     state.themeProfiles = body.theme_profiles || [];
     state.activeThemeProfileId = state.theme.profile_id ?? null;
   } catch (err) {
@@ -549,6 +625,10 @@ function buildCtx() {
     discordId: getDiscordId,
     characterId: () => state.characterId,
     characters: () => state.characters,
+    districtNames: DISTRICT_NAMES,
+    districtMotto: (id) =>
+      state.districtMottos[String(id)] || DEFAULT_DISTRICT_MOTTOS[String(id)] || "Excellence Endures",
+    districtName: (id) => DISTRICT_NAMES[id] || `District ${id}`,
     apiFetch: fetchJson,
     refreshIdentity,
   };
@@ -595,6 +675,8 @@ function setupNav() {
   navEl.innerHTML = "";
   const active = currentTabName();
   for (const name of visibleTabs()) {
+    const icon = renderTabIcon(name);
+    const label = el("span", {}, name === STAFF_TAB ? STAFF_TAB_LABEL : TAB_LABELS[name]);
     navEl.append(
       el(
         "button",
@@ -605,7 +687,8 @@ function setupNav() {
             location.hash = `#${name}`;
           },
         },
-        name === STAFF_TAB ? STAFF_TAB_LABEL : TAB_LABELS[name]
+        icon,
+        label
       )
     );
   }
@@ -653,9 +736,29 @@ function setupIdentityControls() {
   });
 }
 
+async function loadDistrictMottos() {
+  try {
+    const data = await fetchJson("/district_mottos.json");
+    if (data && typeof data === "object") {
+      state.districtMottos = { ...DEFAULT_DISTRICT_MOTTOS, ...data };
+      updateTelemetry(currentCharacter());
+    }
+  } catch (err) {
+    console.warn("Could not load district mottos:", err);
+  }
+}
+
 async function main() {
   setupIdentityControls();
   window.addEventListener("hashchange", () => showTab(currentTabName()));
+  window.addEventListener("panem:motto-updated", (event) => {
+    if (event.detail && event.detail.district_id !== undefined && event.detail.motto) {
+      state.districtMottos[String(event.detail.district_id)] = event.detail.motto;
+      updateTelemetry(currentCharacter());
+    }
+  });
+
+  loadDistrictMottos();
 
   state.discordUser = await authenticateWithDiscord();
   if (!state.discordUser) {

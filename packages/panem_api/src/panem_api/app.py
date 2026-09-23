@@ -742,6 +742,7 @@ def create_app(
     app.include_router(
         build_identify_router(
             session_factory=session_factory,
+            content=content,
             discord_token=discord_token,
             discord_guild_id=discord_guild_id,
             staff_role_id=staff_role_id,

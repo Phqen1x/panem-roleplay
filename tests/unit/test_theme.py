@@ -46,10 +46,10 @@ class TestValidateHexColor:
         """These constants are meant to mirror `static/style.css`'s `:root`
         values exactly -- a reset (or a never-customized account) renders
         these. Regression guard against the two drifting apart silently."""
-        assert DEFAULT_BACKGROUND_HEX == "#14161c"
-        assert DEFAULT_ACCENT_HEX == "#e0a72e"
-        assert DEFAULT_PANEL_HEX == "#1b1f27"
-        assert DEFAULT_TEXT_HEX == "#d7dbe4"
+        assert DEFAULT_BACKGROUND_HEX == "#0a0c10"
+        assert DEFAULT_ACCENT_HEX == "#c5a059"
+        assert DEFAULT_PANEL_HEX == "#12161f"
+        assert DEFAULT_TEXT_HEX == "#f1f3f7"
 
 
 class TestValidateProfileName:
