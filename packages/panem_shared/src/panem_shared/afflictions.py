@@ -90,14 +90,16 @@ def mark_dead(character: Character, cause: str | None) -> None:
     character.death_cause = cause.strip() if cause and cause.strip() else None
 
 
-async def check_and_cure(session: AsyncSession, character: Character) -> list[CharacterAffliction]:
-    """Cures (stamps `cured_at`) every active, non-permanent affliction on
-    `character` whose `cure_stat` has risen above its `cure_threshold`.
-    Returns the newly-cured rows. Mode-agnostic -- see the module
-    docstring."""
-    now = dt.datetime.now(dt.UTC)
+def check_and_cure_sync(
+    character: Character, active: list[CharacterAffliction], now: dt.datetime
+) -> list[CharacterAffliction]:
+    """The DB-free core of `check_and_cure` -- takes `character`'s already-
+    loaded active afflictions (each with `affliction_type` populated)
+    instead of querying for them, so `panem_sim.systems.needs` (which
+    preloads everything into `WorldState` up front, same as every other
+    system) can call this directly without a session of its own."""
     cured: list[CharacterAffliction] = []
-    for row in await _active_afflictions(session, character.id):
+    for row in active:
         affliction_type = row.affliction_type
         if affliction_type.is_permanent or affliction_type.cure_stat is None:
             continue
@@ -108,6 +110,44 @@ async def check_and_cure(session: AsyncSession, character: Character) -> list[Ch
     return cured
 
 
+async def check_and_cure(session: AsyncSession, character: Character) -> list[CharacterAffliction]:
+    """Cures (stamps `cured_at`) every active, non-permanent affliction on
+    `character` whose `cure_stat` has risen above its `cure_threshold`.
+    Returns the newly-cured rows. Mode-agnostic -- see the module
+    docstring."""
+    active = await _active_afflictions(session, character.id)
+    return check_and_cure_sync(character, active, dt.datetime.now(dt.UTC))
+
+
+def apply_auto_afflictions_sync(
+    character: Character, catalog: list[AfflictionType], active: list[CharacterAffliction]
+) -> list[CharacterAffliction]:
+    """The DB-free core of `apply_auto_afflictions` -- see
+    `check_and_cure_sync`'s docstring for why this split exists. Returns
+    new (not yet session-tracked) `CharacterAffliction` rows; the caller
+    is responsible for persisting them (`session.add()` for the async
+    wrapper below, `WorldState.new_character_afflictions` for the sim
+    tick)."""
+    if character.rp_mode != RpMode.SIMULATION.value:
+        return []
+    already_active_type_ids = {row.affliction_type_id for row in active}
+    applied: list[CharacterAffliction] = []
+    for affliction_type in catalog:
+        if affliction_type.auto_apply_stat is None or affliction_type.id in already_active_type_ids:
+            continue
+        stat_value = getattr(character, affliction_type.auto_apply_stat)
+        if stat_value <= affliction_type.auto_apply_threshold:
+            applied.append(
+                CharacterAffliction(
+                    character_id=character.id,
+                    affliction_type_id=affliction_type.id,
+                    cause=None,
+                    source=AfflictionSource.AUTO.value,
+                )
+            )
+    return applied
+
+
 async def apply_auto_afflictions(
     session: AsyncSession, *, character: Character, catalog: list[AfflictionType]
 ) -> list[CharacterAffliction]:
@@ -116,24 +156,10 @@ async def apply_auto_afflictions(
     and isn't already active on `character`. Returns the newly-applied
     rows. Never applied to Life/Story characters -- "automatically added
     ... ONLY [to] sim characters"."""
-    if character.rp_mode != RpMode.SIMULATION.value:
-        return []
     active = await _active_afflictions(session, character.id)
-    already_active_type_ids = {row.affliction_type_id for row in active}
-    applied: list[CharacterAffliction] = []
-    for affliction_type in catalog:
-        if affliction_type.auto_apply_stat is None or affliction_type.id in already_active_type_ids:
-            continue
-        stat_value = getattr(character, affliction_type.auto_apply_stat)
-        if stat_value <= affliction_type.auto_apply_threshold:
-            row = CharacterAffliction(
-                character_id=character.id,
-                affliction_type_id=affliction_type.id,
-                cause=None,
-                source=AfflictionSource.AUTO.value,
-            )
-            session.add(row)
-            applied.append(row)
+    applied = apply_auto_afflictions_sync(character, catalog, active)
+    for row in applied:
+        session.add(row)
     return applied
 
 

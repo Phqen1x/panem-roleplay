@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import datetime as dt
+
 import pytest
 
 from panem_shared import afflictions
 from panem_shared.db.models import AfflictionType, Character, CharacterAffliction
 from panem_shared.enums import AfflictionSource, CharacterStatus, RpMode
 from panem_shared.errors import NotAllowed, ValidationFailed
+
+NOW = dt.datetime(2026, 1, 10, tzinfo=dt.UTC)
 
 
 def make_character(**overrides: object) -> Character:
@@ -35,6 +39,19 @@ async def make_affliction_type(db_session, **overrides: object) -> AfflictionTyp
     row = AfflictionType(**defaults)  # type: ignore[arg-type]
     db_session.add(row)
     await db_session.flush()
+    return row
+
+
+def make_active_row(affliction_type: AfflictionType, **overrides: object) -> CharacterAffliction:
+    """A DB-free `CharacterAffliction`/`AfflictionType` pair for the
+    `*_sync` helpers `panem_sim.systems.needs` calls directly -- no
+    `db_session` needed since these never touch a session."""
+    defaults: dict[str, object] = dict(
+        character_id=1, affliction_type_id=1, source=AfflictionSource.MANUAL.value
+    )
+    defaults.update(overrides)
+    row = CharacterAffliction(**defaults)  # type: ignore[arg-type]
+    row.affliction_type = affliction_type
     return row
 
 
@@ -213,3 +230,100 @@ class TestApplyAutoDeath:
             rp_mode=RpMode.SIMULATION.value, health=0.0, status=CharacterStatus.DEAD.value
         )
         assert afflictions.apply_auto_death(character) is False
+
+
+class TestCheckAndCureSync:
+    """The DB-free core `panem_sim.systems.needs` calls directly against
+    `WorldState`'s preloaded data -- same behavior as `check_and_cure`,
+    just fed an already-loaded `active` list instead of querying for one."""
+
+    def test_cures_once_the_stat_crosses_the_threshold(self):
+        character = make_character(sanity=80.0)
+        affliction_type = AfflictionType(
+            name="Nightmares",
+            description="",
+            is_permanent=False,
+            cure_stat="sanity",
+            cure_threshold=60.0,
+        )
+        row = make_active_row(affliction_type)
+
+        cured = afflictions.check_and_cure_sync(character, [row], NOW)
+
+        assert cured == [row]
+        assert row.cured_at == NOW
+
+    def test_leaves_it_active_below_threshold(self):
+        character = make_character(sanity=10.0)
+        affliction_type = AfflictionType(
+            name="Nightmares",
+            description="",
+            is_permanent=False,
+            cure_stat="sanity",
+            cure_threshold=60.0,
+        )
+        row = make_active_row(affliction_type)
+
+        cured = afflictions.check_and_cure_sync(character, [row], NOW)
+
+        assert cured == []
+        assert row.cured_at is None
+
+    def test_never_cures_a_permanent_affliction(self):
+        character = make_character(sanity=100.0)
+        affliction_type = AfflictionType(name="Scar", description="", is_permanent=True)
+        row = make_active_row(affliction_type)
+
+        cured = afflictions.check_and_cure_sync(character, [row], NOW)
+
+        assert cured == []
+
+
+class TestApplyAutoAfflictionsSync:
+    def test_skips_non_simulation_characters(self):
+        character = make_character(rp_mode=RpMode.LIFE.value, hunger=100.0)
+        affliction_type = AfflictionType(
+            name="Starving",
+            description="",
+            is_permanent=False,
+            auto_apply_stat="hunger",
+            auto_apply_threshold=1000.0,
+        )
+
+        applied = afflictions.apply_auto_afflictions_sync(character, [affliction_type], [])
+
+        assert applied == []
+
+    def test_applies_once_the_stat_falls_beneath_the_threshold(self):
+        character = make_character(rp_mode=RpMode.SIMULATION.value, thirst=90.0)
+        affliction_type = AfflictionType(
+            name="Dehydrated",
+            description="",
+            is_permanent=False,
+            auto_apply_stat="thirst",
+            auto_apply_threshold=1000.0,
+        )
+
+        applied = afflictions.apply_auto_afflictions_sync(character, [affliction_type], [])
+
+        assert len(applied) == 1
+        assert applied[0].source == AfflictionSource.AUTO.value
+        assert applied[0].cause is None
+
+    def test_does_not_duplicate_an_already_active_instance(self):
+        character = make_character(rp_mode=RpMode.SIMULATION.value, thirst=90.0)
+        affliction_type = AfflictionType(
+            name="Dehydrated",
+            description="",
+            is_permanent=False,
+            auto_apply_stat="thirst",
+            auto_apply_threshold=1000.0,
+        )
+        affliction_type.id = 7
+        active_row = make_active_row(affliction_type, affliction_type_id=7)
+
+        applied = afflictions.apply_auto_afflictions_sync(
+            character, [affliction_type], [active_row]
+        )
+
+        assert applied == []

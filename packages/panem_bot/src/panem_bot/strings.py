@@ -258,6 +258,16 @@ STRINGS: dict[str, str] = {
     "the start of the morning one.",
     "sleep_ok": "**{name}** sleeps {ticks} tick(s) and restores {restored} fatigue "
     "(now {fatigue}/100).",
+    # Sustenance (Simulation mode: /eat, /drink, /entertain)
+    "sustenance_mode_forbidden": "**{name}** doesn't need to eat, drink, or entertain "
+    "themselves in their current RP mode.",
+    "sustenance_insufficient_funds": "**{name}** can't afford that ({cost} money).",
+    "already_ate_today": "**{name}** has already eaten today.",
+    "already_drank_today": "**{name}** has already had something to drink today.",
+    "already_entertained_today": "**{name}** has already entertained themselves today.",
+    "eat_ok": "**{name}** eats and feels better (hunger now {hunger}/100).",
+    "drink_ok": "**{name}** has something to drink (thirst now {thirst}/100).",
+    "entertain_ok": "**{name}** takes some time to unwind (sanity now {sanity}/100).",
     # NPC engagements (group RP threads with one or more NPCs, plus other players'
     # characters by invitation)
     "engagement_no_location": "**{name}** hasn't traveled anywhere yet -- use `/travel`, "
