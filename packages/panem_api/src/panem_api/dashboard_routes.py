@@ -39,6 +39,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from panem_api import discord_staff
+from panem_shared import affliction_types as affliction_types_svc
 from panem_shared import blackmarket as blackmarket_svc
 from panem_shared import characters as characters_svc
 from panem_shared import constants, job_levels, simtime
@@ -916,6 +917,56 @@ def build_layers_router(
             categories = await layers_svc.list_categories(session)
             return LayerCatalogResponse(
                 categories=[_layer_category_response(c) for c in categories]
+            )
+
+    return router
+
+
+class AfflictionTypeResponse(BaseModel):
+    id: int
+    name: str
+    description: str
+    is_permanent: bool
+    cure_stat: str | None = None
+    cure_threshold: float | None = None
+    auto_apply_stat: str | None = None
+    auto_apply_threshold: float | None = None
+
+
+class AfflictionTypeCatalogResponse(BaseModel):
+    types: list[AfflictionTypeResponse]
+
+
+def _affliction_type_response(row: AfflictionType) -> AfflictionTypeResponse:
+    return AfflictionTypeResponse(
+        id=row.id,
+        name=row.name,
+        description=row.description,
+        is_permanent=row.is_permanent,
+        cure_stat=row.cure_stat,
+        cure_threshold=row.cure_threshold,
+        auto_apply_stat=row.auto_apply_stat,
+        auto_apply_threshold=row.auto_apply_threshold,
+    )
+
+
+def build_affliction_types_router(
+    *, session_factory: async_sessionmaker[AsyncSession] | None
+) -> APIRouter:
+    """The catalog players need when self-inflicting (`/character
+    afflict`, a later milestone) -- same public, unauthenticated posture
+    as `build_layers_router`'s read side: non-sensitive staff-authored
+    catalog data, starts out empty until staff add something through
+    `build_staff_router`'s affliction-type endpoints below."""
+    router = APIRouter(prefix="/activity/dashboard/affliction-types", tags=["dashboard"])
+
+    @router.get("", response_model=AfflictionTypeCatalogResponse)
+    async def affliction_type_catalog() -> AfflictionTypeCatalogResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            types = await affliction_types_svc.list_types(session)
+            return AfflictionTypeCatalogResponse(
+                types=[_affliction_type_response(t) for t in types]
             )
 
     return router
@@ -2678,6 +2729,32 @@ class DeleteLayerOptionRequest(BaseModel):
     discord_id: int
 
 
+class CreateAfflictionTypeRequest(BaseModel):
+    discord_id: int
+    name: str
+    description: str = ""
+    is_permanent: bool = False
+    cure_stat: str | None = None
+    cure_threshold: float | None = None
+    auto_apply_stat: str | None = None
+    auto_apply_threshold: float | None = None
+
+
+class UpdateAfflictionTypeRequest(BaseModel):
+    discord_id: int
+    name: str | None = None
+    description: str | None = None
+    is_permanent: bool = False
+    cure_stat: str | None = None
+    cure_threshold: float | None = None
+    auto_apply_stat: str | None = None
+    auto_apply_threshold: float | None = None
+
+
+class DeleteAfflictionTypeRequest(BaseModel):
+    discord_id: int
+
+
 class ActiveAfflictionSummary(BaseModel):
     id: int
     name: str
@@ -2980,6 +3057,71 @@ def build_staff_router(
         async with session_scope(factory) as session:
             try:
                 await layers_svc.delete_option(session, option_id, static_dir=static_dir)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"deleted": True}
+
+    # ---- Affliction-type catalog admin (RP modes feature) --------------
+    # Mirrors the layer-category CRUD immediately above exactly -- a flat
+    # staff-authored catalog, no upload/sub-catalog needed. No staff-log
+    # posting here, same as layer categories/options: this is catalog
+    # management, not a punitive action worth a moderation-log entry the
+    # way `/staff jail` is.
+
+    @router.post("/affliction-types", response_model=AfflictionTypeResponse)
+    async def create_affliction_type(
+        body: CreateAfflictionTypeRequest,
+    ) -> AfflictionTypeResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                row = await affliction_types_svc.create_type(
+                    session,
+                    name=body.name,
+                    description=body.description,
+                    is_permanent=body.is_permanent,
+                    cure_stat=body.cure_stat,
+                    cure_threshold=body.cure_threshold,
+                    auto_apply_stat=body.auto_apply_stat,
+                    auto_apply_threshold=body.auto_apply_threshold,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            return _affliction_type_response(row)
+
+    @router.patch("/affliction-types/{affliction_type_id}", response_model=AfflictionTypeResponse)
+    async def update_affliction_type(
+        affliction_type_id: int, body: UpdateAfflictionTypeRequest
+    ) -> AfflictionTypeResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                row = await affliction_types_svc.update_type(
+                    session,
+                    affliction_type_id,
+                    name=body.name,
+                    description=body.description,
+                    is_permanent=body.is_permanent,
+                    cure_stat=body.cure_stat,
+                    cure_threshold=body.cure_threshold,
+                    auto_apply_stat=body.auto_apply_stat,
+                    auto_apply_threshold=body.auto_apply_threshold,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            return _affliction_type_response(row)
+
+    @router.post("/affliction-types/{affliction_type_id}/delete")
+    async def delete_affliction_type(
+        affliction_type_id: int, body: DeleteAfflictionTypeRequest
+    ) -> dict[str, bool]:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                await affliction_types_svc.delete_type(session, affliction_type_id)
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
         return {"deleted": True}

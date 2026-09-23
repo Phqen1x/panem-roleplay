@@ -24,6 +24,7 @@ from panem_shared.content.schemas import (
     NpcContent,
 )
 from panem_shared.db.models import (
+    AfflictionType,
     ApartmentLease,
     Character,
     Inventory,
@@ -3929,3 +3930,207 @@ class TestDashboardStaffLayers:
         assert not image_path.exists()
         async with db_session_factory() as session:
             assert await session.get(LayerOption, option_id) is None
+
+
+async def seed_affliction_type(session_factory, **overrides: object) -> int:
+    async with session_factory() as session, session.begin():
+        defaults: dict[str, object] = dict(
+            name="Broken Leg", description="Ouch", is_permanent=False
+        )
+        defaults.update(overrides)
+        row = AfflictionType(**defaults)  # type: ignore[arg-type]
+        session.add(row)
+        await session.flush()
+        return row.id
+
+
+class TestDashboardAfflictionTypes:
+    async def test_catalog_is_empty_with_no_seed_data(self, work_app):
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/activity/dashboard/affliction-types")
+        assert response.status_code == 200
+        assert response.json()["types"] == []
+
+    async def test_catalog_lists_staff_authored_types(self, work_app, db_session_factory):
+        await seed_affliction_type(
+            db_session_factory,
+            name="Dehydrated",
+            description="Needs water",
+            cure_stat="thirst",
+            cure_threshold=30.0,
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/activity/dashboard/affliction-types")
+        assert response.status_code == 200
+        types = response.json()["types"]
+        assert len(types) == 1
+        assert types[0]["name"] == "Dehydrated"
+        assert types[0]["cure_stat"] == "thirst"
+        assert types[0]["cure_threshold"] == 30.0
+
+
+class TestDashboardStaffAfflictionTypes:
+    async def test_create_refuses_without_the_staff_role(self, staff_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([1, 2]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/affliction-types",
+                    json={"discord_id": 42, "name": "Broken Leg"},
+                )
+        assert response.status_code == 403
+
+    async def test_create_happy_path(self, staff_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/affliction-types",
+                    json={
+                        "discord_id": 42,
+                        "name": "Broken Leg",
+                        "description": "Took a bad fall",
+                        "is_permanent": False,
+                        "cure_stat": "health",
+                        "cure_threshold": 80.0,
+                    },
+                )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["name"] == "Broken Leg"
+        assert body["cure_stat"] == "health"
+        assert body["cure_threshold"] == 80.0
+        assert body["is_permanent"] is False
+
+    async def test_create_rejects_an_invalid_cure_stat(self, staff_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/affliction-types",
+                    json={
+                        "discord_id": 42,
+                        "name": "Broken Leg",
+                        "cure_stat": "luck",
+                        "cure_threshold": 80.0,
+                    },
+                )
+        assert response.status_code == 400
+
+    async def test_create_rejects_a_permanent_type_with_cure_fields(self, staff_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/affliction-types",
+                    json={
+                        "discord_id": 42,
+                        "name": "Missing Finger",
+                        "is_permanent": True,
+                        "cure_stat": "health",
+                        "cure_threshold": 80.0,
+                    },
+                )
+        assert response.status_code == 400
+
+    async def test_create_rejects_an_incomplete_cure_pair(self, staff_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/affliction-types",
+                    json={"discord_id": 42, "name": "Broken Leg", "cure_stat": "health"},
+                )
+        assert response.status_code == 400
+
+    async def test_create_rejects_a_duplicate_name(self, staff_app, db_session_factory):
+        await seed_affliction_type(db_session_factory, name="Broken Leg")
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/affliction-types",
+                    json={"discord_id": 42, "name": "Broken Leg"},
+                )
+        assert response.status_code == 400
+
+    async def test_update_edits_fields_and_replaces_the_cure_pair(
+        self, staff_app, db_session_factory
+    ):
+        affliction_type_id = await seed_affliction_type(
+            db_session_factory, name="Broken Leg", cure_stat="health", cure_threshold=80.0
+        )
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.patch(
+                    f"/activity/dashboard/staff/affliction-types/{affliction_type_id}",
+                    json={
+                        "discord_id": 42,
+                        "description": "Updated",
+                        "cure_stat": "fatigue",
+                        "cure_threshold": 50.0,
+                    },
+                )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["name"] == "Broken Leg"
+        assert body["description"] == "Updated"
+        assert body["cure_stat"] == "fatigue"
+        assert body["cure_threshold"] == 50.0
+
+    async def test_update_refuses_an_unknown_id(self, staff_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.patch(
+                    "/activity/dashboard/staff/affliction-types/999",
+                    json={"discord_id": 42},
+                )
+        assert response.status_code == 404
+
+    async def test_delete_removes_the_row(self, staff_app, db_session_factory):
+        affliction_type_id = await seed_affliction_type(db_session_factory)
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    f"/activity/dashboard/staff/affliction-types/{affliction_type_id}/delete",
+                    json={"discord_id": 42},
+                )
+        assert response.status_code == 200
+        async with db_session_factory() as session:
+            assert await session.get(AfflictionType, affliction_type_id) is None
+
+    async def test_delete_refuses_without_the_staff_role(self, staff_app, db_session_factory):
+        affliction_type_id = await seed_affliction_type(db_session_factory)
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([1, 2]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    f"/activity/dashboard/staff/affliction-types/{affliction_type_id}/delete",
+                    json={"discord_id": 42},
+                )
+        assert response.status_code == 403

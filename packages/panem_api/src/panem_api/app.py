@@ -52,6 +52,7 @@ from starlette.responses import Response
 from starlette.types import Scope
 
 from panem_api.dashboard_routes import (
+    build_affliction_types_router,
     build_blackmarket_router,
     build_characters_router,
     build_crime_router,
@@ -770,6 +771,7 @@ def create_app(
     )
     app.include_router(build_work_router(session_factory=session_factory))
     app.include_router(build_layers_router(session_factory=session_factory))
+    app.include_router(build_affliction_types_router(session_factory=session_factory))
     app.include_router(build_market_router(content=content, session_factory=session_factory))
     app.include_router(build_blackmarket_router(content=content, session_factory=session_factory))
     app.include_router(build_travel_router(content=content, session_factory=session_factory))
