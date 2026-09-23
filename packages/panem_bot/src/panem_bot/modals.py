@@ -47,10 +47,19 @@ class CharacterDetailsModal(discord.ui.Modal, title="New Character"):
         on_submit: Callable[[discord.Interaction, str, str, str, str, str], Awaitable[None]],
         age_placeholder: str = "12-80",
         prefill: dict[str, str] | None = None,
+        is_story: bool = False,
     ) -> None:
         super().__init__()
         self._on_submit = on_submit
         self.age.placeholder = age_placeholder
+        if is_story:
+            # Story-mode characters never work ("no ... work") -- the field
+            # stays visible (removing a class-level `discord.ui.TextInput`
+            # dynamically per-instance isn't worth the complexity for this),
+            # just optional; anything typed here is discarded by
+            # `characters_svc.create_character`'s own Story-mode branch.
+            self.job_title.required = False
+            self.job_title.placeholder = "Not used in Story mode"
         if prefill:
             self.name.default = prefill.get("name")
             self.age.default = prefill.get("age")

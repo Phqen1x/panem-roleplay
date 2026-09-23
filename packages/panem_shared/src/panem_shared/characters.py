@@ -17,7 +17,7 @@ from panem_shared import constants
 from panem_shared import layers as layers_svc
 from panem_shared.content.schemas import District
 from panem_shared.db.models import Character, Shift, User
-from panem_shared.enums import CharacterStatus, ShiftResult
+from panem_shared.enums import CharacterStatus, RpMode, ShiftResult
 from panem_shared.errors import LimitReached, NotAllowed, NotFound, ValidationFailed
 from panem_shared.settings import Settings
 
@@ -138,20 +138,39 @@ async def create_character(
     age: int,
     appearance: str,
     backstory: str,
-    job_title: str,
-    shift_phase: str,
+    job_title: str | None,
+    shift_phase: str | None,
     max_characters: int,
     avatar_url: str | None = None,
     job_is_illicit: bool = False,
     appearance_layers: dict[str, int] | None = None,
+    rp_mode: str = RpMode.SIMULATION.value,
 ) -> Character:
+    """`job_title`/`shift_phase` are only required for Life/Simulation mode
+    -- a Story-mode character never works ("no ... work"), so whatever's
+    passed for them is discarded and the row is created with both `None`
+    and `job_is_illicit=False`, same as it would be for a character that
+    never picked a job. `rp_mode` must be a real `RpMode` value; both
+    existing callers (the bot's creation wizard, the dashboard's create
+    form) already constrain their own mode-select input to the three real
+    options, so this is a defensive check, not the primary validation."""
     if user.banned_at is not None:
         raise NotAllowed("banned")
+    if rp_mode not in {mode.value for mode in RpMode}:
+        raise ValidationFailed("invalid_rp_mode")
 
     validate_character_fields(
         district_id=district_id, name=name, age=age, appearance=appearance, backstory=backstory
     )
-    validate_job_title(job_title)
+    is_story = rp_mode == RpMode.STORY.value
+    if is_story:
+        job_title = None
+        shift_phase = None
+        job_is_illicit = False
+    else:
+        if not job_title or not shift_phase:
+            raise ValidationFailed("job_required")
+        validate_job_title(job_title)
     if avatar_url:
         validate_avatar_url(avatar_url)
     layers = (
@@ -178,6 +197,7 @@ async def create_character(
         job_title=job_title,
         shift_phase=shift_phase,
         job_is_illicit=job_is_illicit,
+        rp_mode=rp_mode,
     )
     session.add(character)
     await session.flush()

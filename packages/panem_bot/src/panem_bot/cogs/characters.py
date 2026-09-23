@@ -16,14 +16,16 @@ from panem_bot.services import characters as characters_svc
 from panem_bot.strings import t
 from panem_bot.views import (
     CHAR_ID_FOOTER_PREFIX,
+    RP_MODE_DESCRIPTIONS,
     SHIFT_PHASE_LABELS,
     ApprovalView,
     IllicitDeclareView,
+    RpModeSelectView,
     ShiftPhaseSelectView,
 )
 from panem_shared import constants, job_levels
 from panem_shared.db.models import Character, Shift, User, WorldClock
-from panem_shared.enums import CharacterStatus, DayPhase
+from panem_shared.enums import CharacterStatus, DayPhase, RpMode
 from panem_shared.simtime import clock_string, phase_time_range
 
 EMBED_FIELD_VALUE_LIMIT = 1024
@@ -100,9 +102,25 @@ class CharacterCog(commands.Cog):
                 )
                 return
 
-        await self._prompt_details(interaction, district_id)
+        await self._prompt_mode(interaction, district_id)
 
-    async def _prompt_details(self, interaction: discord.Interaction, district_id: int) -> None:
+    async def _prompt_mode(self, interaction: discord.Interaction, district_id: int) -> None:
+        async def on_mode_chosen(mode_interaction: discord.Interaction, rp_mode: str) -> None:
+            await self._prompt_details(mode_interaction, district_id, rp_mode)
+
+        mode_lines = "\n".join(
+            f"**{mode.title()}** -- {desc}" for mode, desc in RP_MODE_DESCRIPTIONS.items()
+        )
+        await interaction.response.send_message(
+            "**Choose your character's roleplay mode** (changeable later, with a "
+            f"{constants.MODE_SWITCH_COOLDOWN_DAYS}-real-day cooldown):\n{mode_lines}",
+            view=RpModeSelectView(on_mode_chosen),
+            ephemeral=True,
+        )
+
+    async def _prompt_details(
+        self, interaction: discord.Interaction, district_id: int, rp_mode: str
+    ) -> None:
         from panem_bot.modals import CharacterDetailsModal
 
         async def on_submit(
@@ -114,19 +132,30 @@ class CharacterCog(commands.Cog):
             job_title: str,
         ) -> None:
             await self._validate_details_and_prompt_shift_phase(
-                modal_interaction, district_id, name, age_str, appearance, backstory, job_title
+                modal_interaction,
+                district_id,
+                rp_mode,
+                name,
+                age_str,
+                appearance,
+                backstory,
+                job_title,
             )
 
         max_age = characters_svc.max_age_for_district(district_id)
         placeholder = f"{constants.CHARACTER_AGE_MIN}-{max_age}"
+        is_story = rp_mode == RpMode.STORY.value
         await interaction.response.send_modal(
-            CharacterDetailsModal(on_submit=on_submit, age_placeholder=placeholder)
+            CharacterDetailsModal(
+                on_submit=on_submit, age_placeholder=placeholder, is_story=is_story
+            )
         )
 
     async def _validate_details_and_prompt_shift_phase(
         self,
         interaction: discord.Interaction,
         district_id: int,
+        rp_mode: str,
         name: str,
         age_str: str,
         appearance: str,
@@ -141,6 +170,7 @@ class CharacterCog(commands.Cog):
                 t("invalid_age", min=constants.CHARACTER_AGE_MIN, max=max_age), ephemeral=True
             )
             return
+        is_story = rp_mode == RpMode.STORY.value
         try:
             characters_svc.validate_character_fields(
                 district_id=district_id,
@@ -149,7 +179,8 @@ class CharacterCog(commands.Cog):
                 appearance=appearance,
                 backstory=backstory,
             )
-            characters_svc.validate_job_title(job_title)
+            if not is_story:
+                characters_svc.validate_job_title(job_title)
         except ValidationFailed as exc:
             await interaction.response.send_message(t(exc.reason_key, **exc.fmt), ephemeral=True)
             return
@@ -163,9 +194,34 @@ class CharacterCog(commands.Cog):
                 )
                 return
 
+        if is_story:
+            # Story-mode characters never work -- skip both the shift-phase
+            # and illicit-declaration steps entirely.
+            await self._finish_create(
+                interaction,
+                district_id,
+                rp_mode,
+                name,
+                age,
+                appearance,
+                backstory,
+                None,
+                None,
+                False,
+            )
+            return
+
         async def on_phase_chosen(phase_interaction: discord.Interaction, shift_phase: str) -> None:
             await self._prompt_illicit(
-                phase_interaction, district_id, name, age, appearance, backstory, job_title, shift_phase
+                phase_interaction,
+                district_id,
+                rp_mode,
+                name,
+                age,
+                appearance,
+                backstory,
+                job_title,
+                shift_phase,
             )
 
         await interaction.response.send_message(
@@ -178,6 +234,7 @@ class CharacterCog(commands.Cog):
         self,
         interaction: discord.Interaction,
         district_id: int,
+        rp_mode: str,
         name: str,
         age: int,
         appearance: str,
@@ -191,6 +248,7 @@ class CharacterCog(commands.Cog):
             await self._finish_create(
                 illicit_interaction,
                 district_id,
+                rp_mode,
                 name,
                 age,
                 appearance,
@@ -211,12 +269,13 @@ class CharacterCog(commands.Cog):
         self,
         interaction: discord.Interaction,
         district_id: int,
+        rp_mode: str,
         name: str,
         age: int,
         appearance: str,
         backstory: str,
-        job_title: str,
-        shift_phase: str,
+        job_title: str | None,
+        shift_phase: str | None,
         job_is_illicit: bool,
     ) -> None:
         async with self.bot.db() as session:
@@ -234,6 +293,7 @@ class CharacterCog(commands.Cog):
                     shift_phase=shift_phase,
                     job_is_illicit=job_is_illicit,
                     max_characters=characters_svc.effective_max_characters(user, self.bot.settings),
+                    rp_mode=rp_mode,
                 )
             except ServiceError as exc:
                 await interaction.response.send_message(
@@ -263,13 +323,16 @@ class CharacterCog(commands.Cog):
             embed.add_field(name="Applicant", value=f"<@{applicant_discord_id}>", inline=True)
             embed.add_field(name="District", value=district.name, inline=True)
             embed.add_field(name="Age", value=str(character.age), inline=True)
-            shift_label = SHIFT_PHASE_LABELS.get(character.shift_phase or "", character.shift_phase)
-            illicit_suffix = " [illicit]" if character.job_is_illicit else ""
-            embed.add_field(
-                name="Desired Job",
-                value=f"{character.job_title} ({shift_label} shift){illicit_suffix}",
-                inline=True,
-            )
+            embed.add_field(name="RP Mode", value=character.rp_mode.title(), inline=True)
+            if character.job_title is not None:
+                shift_label = SHIFT_PHASE_LABELS.get(
+                    character.shift_phase or "", character.shift_phase
+                )
+                illicit_suffix = " [illicit]" if character.job_is_illicit else ""
+                job_value = f"{character.job_title} ({shift_label} shift){illicit_suffix}"
+            else:
+                job_value = "-- (Story mode)"
+            embed.add_field(name="Desired Job", value=job_value, inline=True)
             embed.add_field(name="Appearance", value=character.appearance or "-", inline=False)
             embed.add_field(
                 name="Backstory", value=_field_value(character.backstory or "-"), inline=False

@@ -1932,6 +1932,42 @@ class TestDashboardCharacters:
             )
         assert response.status_code == 400
 
+    async def test_create_rejects_an_unknown_rp_mode(self, work_app):
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/activity/dashboard/characters",
+                json={
+                    "discord_id": 1,
+                    "district_id": 1,
+                    "name": "Wren",
+                    "age": 15,
+                    "job_title": "Miner",
+                    "shift_phase": "morning",
+                    "rp_mode": "not-a-real-mode",
+                },
+            )
+        assert response.status_code == 400
+
+    async def test_create_a_story_mode_character_needs_no_job_fields(self, work_app):
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/activity/dashboard/characters",
+                json={
+                    "discord_id": 1,
+                    "district_id": 1,
+                    "name": "Wren",
+                    "age": 15,
+                    "rp_mode": "story",
+                },
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["rp_mode"] == "story"
+        assert body["job_title"] is None
+        assert body["shift_phase"] is None
+
     async def test_create_happy_path_is_pending_with_no_approval_notified_yet(
         self, work_app, db_session_factory
     ):

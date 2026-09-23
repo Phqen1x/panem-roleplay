@@ -74,6 +74,7 @@ from panem_shared.enums import (
     OwnerKind,
     Position,
     PropertyKind,
+    RpMode,
     SceneStatus,
 )
 from panem_shared.errors import NotAllowed, NotFound, ServiceError
@@ -656,6 +657,8 @@ class CharacterDetail(BaseModel):
     money: int
     jailed_until_tick: int | None = None
     jailed: bool = False
+    rp_mode: str = RpMode.SIMULATION.value
+    death_cause: str | None = None
 
 
 def _character_detail(
@@ -683,6 +686,8 @@ def _character_detail(
         jailed=(
             character.jailed_until_tick is not None and character.jailed_until_tick > current_tick
         ),
+        rp_mode=character.rp_mode,
+        death_cause=character.death_cause,
     )
 
 
@@ -699,9 +704,10 @@ class CreateCharacterRequest(BaseModel):
     backstory: str = ""
     avatar_url: str | None = None
     appearance_layers: dict[str, int] | None = None
-    job_title: str
-    shift_phase: str
+    job_title: str | None = None
+    shift_phase: str | None = None
     job_is_illicit: bool = False
+    rp_mode: str = RpMode.SIMULATION.value
 
 
 class RetireCharacterRequest(BaseModel):
@@ -776,7 +782,10 @@ def build_characters_router(
         factory = _require_session_factory(session_factory)
         if body.district_id not in content.districts:
             raise HTTPException(status_code=400, detail="No such district")
-        if body.shift_phase not in {phase.value for phase in DayPhase}:
+        if body.rp_mode not in {mode.value for mode in RpMode}:
+            raise HTTPException(status_code=400, detail="Invalid RP mode")
+        is_story = body.rp_mode == RpMode.STORY.value
+        if not is_story and body.shift_phase not in {phase.value for phase in DayPhase}:
             raise HTTPException(status_code=400, detail="Invalid shift phase")
         async with session_scope(factory) as session:
             user = await characters_svc.get_or_create_user(session, body.discord_id)
@@ -803,6 +812,7 @@ def build_characters_router(
                     shift_phase=body.shift_phase,
                     job_is_illicit=body.job_is_illicit,
                     max_characters=max_characters,
+                    rp_mode=body.rp_mode,
                 )
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc

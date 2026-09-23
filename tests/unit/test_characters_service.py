@@ -14,7 +14,7 @@ from panem_shared.content.schemas import (
     Location,
 )
 from panem_shared.db.models import Character, User
-from panem_shared.enums import CharacterStatus
+from panem_shared.enums import CharacterStatus, RpMode
 from panem_shared.settings import Settings
 
 
@@ -307,6 +307,97 @@ class TestCreateCharacter:
                 max_characters=3,
                 avatar_url="not-a-url",
             )
+
+    async def test_defaults_to_simulation_mode(self, db_session):
+        user = await make_user(db_session)
+        character = await characters_svc.create_character(
+            db_session,
+            user=user,
+            district_id=12,
+            name="Katniss",
+            age=16,
+            appearance="",
+            backstory="",
+            job_title="Baker",
+            shift_phase="morning",
+            max_characters=3,
+        )
+        assert character.rp_mode == RpMode.SIMULATION.value
+
+    async def test_story_mode_discards_job_fields_regardless_of_input(self, db_session):
+        user = await make_user(db_session)
+        character = await characters_svc.create_character(
+            db_session,
+            user=user,
+            district_id=12,
+            name="Peeta",
+            age=16,
+            appearance="",
+            backstory="",
+            job_title="Baker",
+            shift_phase="morning",
+            job_is_illicit=True,
+            max_characters=3,
+            rp_mode=RpMode.STORY.value,
+        )
+        assert character.rp_mode == RpMode.STORY.value
+        assert character.job_title is None
+        assert character.shift_phase is None
+        assert character.job_is_illicit is False
+
+    async def test_story_mode_accepts_no_job_fields_at_all(self, db_session):
+        user = await make_user(db_session)
+        character = await characters_svc.create_character(
+            db_session,
+            user=user,
+            district_id=12,
+            name="Rue",
+            age=13,
+            appearance="",
+            backstory="",
+            job_title=None,
+            shift_phase=None,
+            max_characters=3,
+            rp_mode=RpMode.STORY.value,
+        )
+        assert character.job_title is None
+        assert character.shift_phase is None
+
+    async def test_life_mode_still_requires_a_job(self, db_session):
+        user = await make_user(db_session)
+        with pytest.raises(ValidationFailed) as exc_info:
+            await characters_svc.create_character(
+                db_session,
+                user=user,
+                district_id=12,
+                name="Gale",
+                age=18,
+                appearance="",
+                backstory="",
+                job_title=None,
+                shift_phase=None,
+                max_characters=3,
+                rp_mode=RpMode.LIFE.value,
+            )
+        assert exc_info.value.reason_key == "job_required"
+
+    async def test_refuses_an_unknown_rp_mode(self, db_session):
+        user = await make_user(db_session)
+        with pytest.raises(ValidationFailed) as exc_info:
+            await characters_svc.create_character(
+                db_session,
+                user=user,
+                district_id=12,
+                name="Katniss",
+                age=16,
+                appearance="",
+                backstory="",
+                job_title="Baker",
+                shift_phase="morning",
+                max_characters=3,
+                rp_mode="not-a-real-mode",
+            )
+        assert exc_info.value.reason_key == "invalid_rp_mode"
 
 
 class TestNameUniqueness:
