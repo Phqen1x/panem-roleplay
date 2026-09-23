@@ -2,10 +2,18 @@
   color-scheme: dark;
   --bg: #14161c;
   --panel: #1b1f27;
-  --border: #3a4150;
   --text: #d7dbe4;
-  --muted: #8b93a3;
   --accent: #e0a72e;
+  /* Derived from --text (not stored/settable on their own) so every box
+     border, row divider, and secondary/label text tracks whatever text
+     color a donor picks -- `applyTheme()`/the localStorage restore in
+     work.js/crime.js only ever set --bg/--accent/--panel/--text, and
+     because custom properties resolve against the cascade at used-value
+     time, overriding --text on the root element is all it takes for
+     these to follow along everywhere style.css/dashboard.css/work.css/
+     crime.css reference them. */
+  --border: color-mix(in srgb, var(--text) 45%, transparent);
+  --muted: color-mix(in srgb, var(--text) 70%, transparent);
 }
 
 * {
