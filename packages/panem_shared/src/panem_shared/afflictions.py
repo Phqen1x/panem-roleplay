@@ -85,7 +85,7 @@ def mark_dead(character: Character, cause: str | None) -> None:
     if character.rp_mode != RpMode.LIFE.value:
         raise NotAllowed("death_wrong_mode")
     if character.status == CharacterStatus.DEAD.value:
-        raise NotAllowed("character_already_dead")
+        raise NotAllowed("character_already_dead", name=character.name)
     character.status = CharacterStatus.DEAD.value
     character.death_cause = cause.strip() if cause and cause.strip() else None
 

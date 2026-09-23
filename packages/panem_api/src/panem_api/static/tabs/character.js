@@ -133,6 +133,10 @@ function characterCard(ctx, character, catalog, { onChanged }) {
     { class: "tab-status" },
     `${character.status}${character.jailed ? " -- jailed" : ""}`
   );
+  const deathCauseLine =
+    character.status === "dead" && character.death_cause
+      ? el("p", { class: "tab-status" }, `Cause of death: ${character.death_cause}`)
+      : null;
   const avatarInput = el("input", { type: "text", value: character.avatar_url || "", placeholder: "https://..." });
   const tagInput = el("input", { type: "text", value: character.proxy_tag || "", placeholder: "tag::" });
   const resultLine = el("p", { class: "result-line" });
@@ -214,6 +218,7 @@ function characterCard(ctx, character, catalog, { onChanged }) {
     el("h2", { text: `${character.name} (${character.district_name})` }),
     previewContainer,
     statusLine,
+    deathCauseLine,
     el("p", { class: "tab-status" }, `${character.job_title || "no job"} -- ${character.money} money`),
     el("div", { class: "field-row" }, el("label", { text: "Avatar URL" }), avatarInput),
     el("div", { class: "field-row" }, el("label", { text: "Proxy tag" }), tagInput),

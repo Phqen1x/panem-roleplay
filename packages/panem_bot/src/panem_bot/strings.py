@@ -179,6 +179,20 @@ STRINGS: dict[str, str] = {
         "This character already changed their crime setting today -- "
         "{hours} hour(s) left before they can change it again."
     ),
+    # Self-inflicted afflictions/death (/character afflict, /character die)
+    "affliction_wrong_mode": (
+        "Only Life-mode characters can self-inflict an affliction -- Simulation mode handles "
+        "this automatically, and Story mode is excluded from the system entirely."
+    ),
+    "affliction_cause_required": "Say how it happened.",
+    "affliction_type_not_found": "No affliction type by that name -- pick one from the list.",
+    "affliction_ok": "**{name}** is now afflicted with **{affliction}**: {cause}",
+    "death_wrong_mode": (
+        "Only Life-mode characters can end their own character this way -- Simulation mode "
+        "handles death automatically, and Story mode is excluded from the system entirely."
+    ),
+    "character_already_dead": "**{name}** is already dead.",
+    "death_ok": "**{name}** has died.",
     # Stealing (contraband system: /steal)
     "steal_target_not_found": "No one by that name is here to steal from.",
     "steal_not_here": "**{name}** needs to be at the same location as the mark to try this.",

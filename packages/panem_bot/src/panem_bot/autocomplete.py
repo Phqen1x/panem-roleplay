@@ -15,7 +15,7 @@ from discord import app_commands
 from sqlalchemy import select
 
 from panem_bot.services import characters as characters_svc
-from panem_shared.db.models import Character, Npc
+from panem_shared.db.models import AfflictionType, Character, Npc
 from panem_shared.enums import CharacterStatus
 
 MAX_CHOICES = 25
@@ -103,6 +103,26 @@ async def any_npc(interaction: discord.Interaction, current: str) -> list[app_co
             value=npc_id,
         )
         for npc_id, name, district_id in rows
+    ]
+
+
+async def affliction_types(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    """The staff-authored catalog (`panem_shared.affliction_types`, built
+    through the dashboard's Staff tab) -- `/character afflict`'s `type`
+    field. Choice `value` is the type's name (unique, same as a good/job
+    id elsewhere in this module), which the cog re-looks-up by name at
+    submit time rather than carrying a numeric id through the option."""
+    bot = interaction.client
+    async with bot.db() as session:  # type: ignore[attr-defined]
+        stmt = select(AfflictionType.name, AfflictionType.is_permanent)
+        if current:
+            stmt = stmt.where(AfflictionType.name.ilike(f"%{current}%"))
+        rows = (await session.execute(stmt.order_by(AfflictionType.name).limit(MAX_CHOICES))).all()
+    return [
+        app_commands.Choice(name=f"{name} (permanent)" if is_permanent else name, value=name)
+        for name, is_permanent in rows
     ]
 
 
