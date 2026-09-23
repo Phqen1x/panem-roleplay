@@ -3683,13 +3683,10 @@ dashboard's Crime tab) filter Story-mode characters out before they're ever offe
 ### Needs (Simulation only)
 
 Simulation characters track five meters: health, hunger, fatigue (existing), plus **thirst** and
-**sanity** (new). Thirst rises and sanity falls passively each night the same way hunger already did;
-crossing `HEALTH_DECAY_THIRST_THRESHOLD`/`HEALTH_DECAY_SANITY_THRESHOLD` costs health. Three commands
-relieve them once per sim-day each: `/eat` (hunger), `/drink` (thirst), `/entertain` (sanity) -- each a
-small money cost, immediate relief, and an immediate `afflictions.check_and_cure` pass so a
-curable-by-this-stat affliction resolves right away rather than waiting for the next tick. Life and Story
-characters are refused outright (`sustenance_mode_forbidden`) -- their meters never move and these
-commands are a no-op for them by design, not an oversight.
+**sanity** (new). `/eat`/`/drink`/`/entertain` relieve them -- see the **Vitals tab** section below for how
+this mechanic works today (it was substantially reworked from this feature's original once-per-day/flat-
+cost shape). Life and Story characters are refused outright (`sustenance_mode_forbidden`) -- their meters
+never move and these commands are a no-op for them by design, not an oversight.
 
 ### Afflictions and death
 
@@ -3761,3 +3758,96 @@ call firing, meters/crime panel reacting correctly post-switch), the crime toggl
 switch, each showing a countdown), and a full trade cycle on the Social tab (an incoming offer's summary
 line, Accept removing it from the list, sending a new offer with goods+money on both sides, and
 cancelling it).
+
+## Vitals tab: eat/drink/sleep/entertain as a real, played activity
+
+Simulation mode's proactive meter relief (`/eat`/`/drink`/`/entertain`, and the dashboard's new **Vitals**
+tab) was reworked from a flat, once-per-sim-day, pay-a-fee-get-a-fixed-relief mechanic into something a
+character actually lives through: eating and drinking now consume specific goods you own, cooking/baking
+is a real multi-stage minigame with a timing-dependent bonus, sleep gets a live fatigue-restored preview,
+and entertainment is a menu of the same minigames `/work` already uses, each with its own sanity value --
+on top of a small passive sanity trickle from just roleplaying.
+
+### Per-good hunger/thirst values, and how to add more
+
+`Good` (`panem_shared.content.schemas`) carries three new optional fields: `hunger_value`, `thirst_value`
+(both default `0.0`), and `cook_method` (`"stove"`, `"oven"`, or `None`). A good with `hunger_value > 0` is
+edible, one with `thirst_value > 0` is drinkable, and a good with `cook_method` set can be cooked/baked for
+a bonus (see below). Today's assignment (`data/goods.yaml`): `fish`/`livestock` (Seafood/Meats, cookable on
+the stove), `grain` (bakeable in the oven), and `produce` (Fruits/Drinks, the one drinkable good). Adding a
+new consumable -- a vegetable, a new drink -- is pure content: add the fields to its `Good` entry in
+`goods.yaml`, no code change anywhere.
+
+### Eating and drinking: inventory-gated, no more flat daily credit
+
+`/eat`/`/drink` (and the Vitals tab's Eat/Drink panels) require the character to actually own the good --
+`sustenance.eat`/`drink` (`panem_shared/sustenance.py`) consume one unit via `market.adjust_inventory` and
+relieve `hunger`/`thirst` by that good's own value. No cooldown: do it as often as inventory allows, since
+what keeps this balanced now is the *decay* rate, not a daily cap (see below). A straight `/eat` never gets
+the cooking bonus (`bonus=False`) -- that's Activity-only, via the cook/bake minigame.
+
+### The cook/bake minigame
+
+A multi-stage, Papa's-Burgeria-style sequence (`static/games/cook.js`/`bake.js`, launched from the Vitals
+tab's Eat panel into `static/vitals.html` the same iframe-embedding way `/work`'s minigames already launch
+from the Work tab):
+
+1. **Prep** -- a short click-the-ingredients-in-order QTE (cosmetic, not scored).
+2. **Cook/Bake** -- a doneness gauge sweeps through five zones (Raw → Undercooked → **Perfect** →
+   Overcooked → Burnt) over a few seconds; the player clicks "Take it off"/"Pull it out" once. Landing
+   inside the Perfect zone is the *only* bonus condition -- too early or too late both miss it, same as
+   "if they take it off too early, they don't get the bonus... if too late, they also don't get the
+   bonus."
+3. **Plate** -- a one-click "Serve it" finish (cosmetic).
+
+The result posts straight to `POST /activity/dashboard/vitals/{id}/eat` with `bonus` set to whether Perfect
+landed -- the same client-reported-outcome trust model every other Activity minigame here already uses
+(`resolve_shift_game`'s `won`). Landing the bonus applies `constants.COOK_BONUS_MULTIPLIER` (2.0, i.e. a
+100% bonus) to that good's `hunger_value`.
+
+### Passive hunger/thirst decay: once per phase, not once a night
+
+Hunger and thirst now climb four times a day (`simtime.TICKS_PER_PHASE`, one per day-phase) instead of
+once a night, each by a random amount in `[HUNGER_PHASE_DECAY_MIN, HUNGER_PHASE_DECAY_MAX]` /
+`[THIRST_PHASE_DECAY_MIN, THIRST_PHASE_DECAY_MAX]` (10-20 by default) drawn from the tick's own seeded
+`ctx.rng` (`panem_sim.systems.needs._apply_character_phase_needs`) -- never Python's global `random`, to
+keep tick determinism intact. This is fully decoupled from `NIGHTLY_LIVING_COST`, which stays a pure
+money/health mechanic with no hunger side effect anymore. Sanity's own decay is unchanged (still once a
+night).
+
+### Entertainment: the six `/work` leisure games, plus a passive RP trickle
+
+The Vitals tab's Entertainment panel offers the same six leisure minigames `/work` already uses
+(Minesweeper, Snake, Connect Four, Coin Flip, Pick Your Poison, Solitaire -- not the crime skill-check
+games, which stay tied to their own crime outcomes), each with a flat sanity value
+(`constants.ENTERTAINMENT_SANITY_VALUES`) credited on completion, win or lose. `/entertain` from Discord
+credits a flat `SANITY_RELIEF_PER_ENTERTAIN` instead, since there's no minigame to play from Discord.
+Separately, every qualifying proxied RP message (the same length gate that already docks fatigue for a
+work-shift interaction, `shifts_svc.meets_rp_credit`) now also trickles `sanity` up by
+`SANITY_GAIN_PER_INTERACTION`, Simulation mode only -- "sending role play messages... should replenish a
+little sanity each time."
+
+### Sleep: unchanged mechanically, now with a live preview
+
+Sleep's own logic (`housing.check_can_sleep`/`apply_fatigue_restoration`/`fatigue_restored`) didn't change
+-- the Vitals tab's Sleep panel just adds a client-side "you'll restore ~X fatigue" preview, recomputed on
+every keystroke from the Vitals status endpoint's `has_bed`/`max_sleep_ticks`/`fatigue_restore_per_tick`
+(no round trip per keystroke), then POSTs to the same existing `/activity/dashboard/housing/{id}/sleep`
+endpoint the Housing tab's own simpler sleep control already uses.
+
+### Verification
+
+Each of this feature's eight milestones (content schema; shared services; `panem_sim` per-phase decay;
+`panem_bot` `/eat`/`/drink` rework + passive RP sanity; the `panem_api` Vitals router; the cook/bake
+minigame page; the dashboard tab; this final pass) landed as its own commit with its own ruff/mypy/pytest
+check. Full suite: **1230 passed**. `ruff check .`: clean. `mypy` across all four packages: unchanged
+pre-existing baseline (157 errors in 8 files, all pre-existing `self.bot.db()`/`self.bot.content`
+attribute-defined findings and one pre-existing `Any`-return finding, none related to this feature).
+`alembic heads`: single head, unchanged (this feature needed no migration -- every new value is
+content/constants-driven, and the existing `Character`/`Inventory` columns already covered every new piece
+of state). `node --check` on every new/changed static JS file. Live Playwright passes (local `http.server`
++ stateful `page.route()` mocks) covering: the Vitals tab's five panels rendering, Eat/Drink/Sleep/
+Entertain all round-tripping correctly against a mocked backend, the sleep preview updating live on input,
+and -- driving `vitals.html`'s cook minigame directly against its actual real-time sweep, no clock
+mocking needed -- confirming all three outcomes: taking the food off mid-sweep lands the bonus, while too
+early and too late both miss it.
