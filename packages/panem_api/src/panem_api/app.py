@@ -61,6 +61,7 @@ from panem_api.dashboard_routes import (
     build_layers_router,
     build_market_router,
     build_residents_router,
+    build_rp_mode_router,
     build_social_router,
     build_staff_router,
     build_theme_router,
@@ -774,6 +775,7 @@ def create_app(
     app.include_router(build_travel_router(content=content, session_factory=session_factory))
     app.include_router(build_residents_router(content=content, session_factory=session_factory))
     app.include_router(build_housing_router(content=content, session_factory=session_factory))
+    app.include_router(build_rp_mode_router(session_factory=session_factory))
     app.include_router(
         build_social_router(
             content=content,

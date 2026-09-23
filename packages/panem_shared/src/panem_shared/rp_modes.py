@@ -65,7 +65,9 @@ def check_can_toggle_crime(character: Character, enabled: bool, now: dt.datetime
     if character.rp_mode != RpMode.LIFE.value:
         raise NotAllowed("crime_toggle_wrong_mode")
     if enabled == character.crime_enabled:
-        raise ValidationFailed("crime_toggle_already_set", enabled=enabled)
+        raise ValidationFailed(
+            "crime_toggle_already_set", enabled="enabled" if enabled else "disabled"
+        )
     eligible_at = next_eligible_crime_toggle_at(character)
     if eligible_at is not None and now < eligible_at:
         remaining_hours = max(1, int((eligible_at - now).total_seconds() // 3600) + 1)

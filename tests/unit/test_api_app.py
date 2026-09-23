@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import json
 from unittest.mock import AsyncMock, patch
 
@@ -3223,6 +3224,104 @@ class TestDashboardSocial:
             )
         assert response.status_code == 200
         assert response.json()["discord_thread_url"] is None
+
+
+class TestDashboardRpMode:
+    async def test_status_reports_mode_meters_and_no_afflictions(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/mode/{char_id}/status", params={"discord_id": 5}
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["mode"] == "simulation"
+        assert body["dead"] is False
+        assert body["crime_enabled"] is True
+        assert body["next_mode_switch_eligible_at"] is None
+        assert body["next_crime_toggle_eligible_at"] is None
+        assert body["afflictions"] == []
+
+    async def test_switch_moves_to_the_new_mode(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/mode/{char_id}/switch",
+                json={"discord_id": 5, "new_mode": "life"},
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["mode"] == "life"
+        assert body["next_mode_switch_eligible_at"] is not None
+
+    async def test_switch_refuses_within_the_cooldown_window(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={
+                "rp_mode_changed_at": dt.datetime.now(dt.UTC) - dt.timedelta(days=1)
+            },
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/mode/{char_id}/switch",
+                json={"discord_id": 5, "new_mode": "life"},
+            )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "mode_switch_on_cooldown"
+
+    async def test_crime_toggle_flips_and_stamps(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"rp_mode": "life"}
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/mode/{char_id}/crime-toggle",
+                json={"discord_id": 5, "enabled": False},
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["crime_enabled"] is False
+        assert body["next_crime_toggle_eligible_at"] is not None
+
+    async def test_crime_toggle_refuses_for_a_non_life_mode_character(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/mode/{char_id}/crime-toggle",
+                json={"discord_id": 5, "enabled": False},
+            )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "crime_toggle_wrong_mode"
+
+    async def test_crime_toggle_refuses_within_the_cooldown_window(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={
+                "rp_mode": "life",
+                "crime_toggle_changed_at": dt.datetime.now(dt.UTC) - dt.timedelta(hours=1),
+            },
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/mode/{char_id}/crime-toggle",
+                json={"discord_id": 5, "enabled": False},
+            )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "crime_toggle_on_cooldown"
 
 
 class TestDashboardHousing:

@@ -167,6 +167,18 @@ STRINGS: dict[str, str] = {
         "**{name}** doesn't have access to the housing system in their current RP mode."
     ),
     "npc_interaction_mode_forbidden": "**{name}** is in Story mode and can't interact with NPCs.",
+    # RP-mode switching & crime toggle (/character mode, /character crime)
+    "mode_already_active": "This character is already in {mode} mode.",
+    "mode_switch_on_cooldown": (
+        "This character switched modes too recently -- {hours} hour(s) left before they can "
+        "switch again."
+    ),
+    "crime_toggle_wrong_mode": "Only Life-mode characters can toggle crime on/off for themselves.",
+    "crime_toggle_already_set": "This character's crime setting is already {enabled}.",
+    "crime_toggle_on_cooldown": (
+        "This character already changed their crime setting today -- "
+        "{hours} hour(s) left before they can change it again."
+    ),
     # Stealing (contraband system: /steal)
     "steal_target_not_found": "No one by that name is here to steal from.",
     "steal_not_here": "**{name}** needs to be at the same location as the mark to try this.",

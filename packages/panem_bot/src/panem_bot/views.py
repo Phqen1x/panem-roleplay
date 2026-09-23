@@ -124,6 +124,51 @@ class RpModeSelectView(discord.ui.View):
         await self._on_choose(interaction, "simulation")
 
 
+class ConfirmView(discord.ui.View):
+    """A generic "are you sure" gate for actions with real, hard-to-undo
+    consequences (switching RP mode, the crime-enabled toggle, self-
+    inflicting an affliction/death) -- restricted to the one player it's
+    for, same shape as `_InviteResponseButton`. The caller supplies the
+    message text (what's about to happen, spelled out) separately; this
+    view is just the two buttons."""
+
+    def __init__(
+        self,
+        *,
+        target_discord_id: int,
+        on_confirm: Callable[[discord.Interaction], Awaitable[None]],
+        confirm_label: str = "Confirm",
+        cancel_label: str = "Cancel",
+    ) -> None:
+        super().__init__(timeout=120)
+        self._target_discord_id = target_discord_id
+        self._on_confirm = on_confirm
+        self.confirm.label = confirm_label
+        self.cancel.label = cancel_label
+
+    async def _guard(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self._target_discord_id:
+            await interaction.response.send_message("That's not yours to confirm.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(style=discord.ButtonStyle.danger)
+    async def confirm(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[ConfirmView]
+    ) -> None:
+        if not await self._guard(interaction):
+            return
+        await self._on_confirm(interaction)
+
+    @discord.ui.button(style=discord.ButtonStyle.secondary)
+    async def cancel(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[ConfirmView]
+    ) -> None:
+        if not await self._guard(interaction):
+            return
+        await interaction.response.edit_message(content="Cancelled -- nothing changed.", view=None)
+
+
 class ChangesNoteModal(discord.ui.Modal, title="Request Changes"):
     note = discord.ui.TextInput(
         label="Note to applicant", style=discord.TextStyle.paragraph, max_length=1000

@@ -13,12 +13,14 @@ from sqlalchemy import func, select
 from panem_bot import autocomplete
 from panem_bot.errors import ServiceError, ValidationFailed
 from panem_bot.services import characters as characters_svc
+from panem_bot.services import rp_modes as rp_modes_svc
 from panem_bot.strings import t
 from panem_bot.views import (
     CHAR_ID_FOOTER_PREFIX,
     RP_MODE_DESCRIPTIONS,
     SHIFT_PHASE_LABELS,
     ApprovalView,
+    ConfirmView,
     IllicitDeclareView,
     RpModeSelectView,
     ShiftPhaseSelectView,
@@ -664,6 +666,130 @@ class CharacterCog(commands.Cog):
             name = row.name
 
         await interaction.response.send_message(t("character_retired", name=name), ephemeral=True)
+
+    @group.command(name="mode", description="Switch a character's RP mode (real-day cooldown)")
+    @app_commands.describe(character="Character name", new_mode="The mode to switch to")
+    @app_commands.autocomplete(character=autocomplete.own_approved)
+    async def mode(
+        self, interaction: discord.Interaction, character: str, new_mode: RpMode
+    ) -> None:
+        async with self.bot.db() as session:
+            user = await characters_svc.get_or_create_user(session, interaction.user.id)
+            row = (
+                await session.execute(
+                    select(Character).where(
+                        Character.user_id == user.id, Character.name == character
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            try:
+                rp_modes_svc.check_can_switch_mode(row, new_mode, dt.datetime.now(dt.UTC))
+            except ServiceError as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+            character_id, current_mode, name = row.id, row.rp_mode, row.name
+
+        async def on_confirm(confirm_interaction: discord.Interaction) -> None:
+            async with self.bot.db() as confirm_session:
+                char = await confirm_session.get(Character, character_id)
+                if char is None:
+                    await confirm_interaction.response.edit_message(
+                        content=t("character_not_found"), view=None
+                    )
+                    return
+                try:
+                    rp_modes_svc.switch_mode(char, new_mode, dt.datetime.now(dt.UTC))
+                except ServiceError as exc:
+                    await confirm_interaction.response.edit_message(
+                        content=t(exc.reason_key, **exc.fmt), view=None
+                    )
+                    return
+            await confirm_interaction.response.edit_message(
+                content=(
+                    f"**{name}** is now in **{new_mode.value.title()}** mode. "
+                    f"Next switch available in {constants.MODE_SWITCH_COOLDOWN_DAYS} real days."
+                ),
+                view=None,
+            )
+
+        description = RP_MODE_DESCRIPTIONS[new_mode.value]
+        await interaction.response.send_message(
+            f"**{name}** is currently in **{current_mode.title()}** mode.\n"
+            f"Switching to **{new_mode.value.title()}** mode: {description}\n\n"
+            f"This locks in for {constants.MODE_SWITCH_COOLDOWN_DAYS} real days before you can "
+            "switch again. Are you sure?",
+            view=ConfirmView(target_discord_id=interaction.user.id, on_confirm=on_confirm),
+            ephemeral=True,
+        )
+
+    @group.command(name="crime", description="Enable or disable committing/being targeted by crime")
+    @app_commands.describe(character="Character name", enabled="Whether crime should be enabled")
+    @app_commands.autocomplete(character=autocomplete.own_approved)
+    async def crime(self, interaction: discord.Interaction, character: str, enabled: bool) -> None:
+        async with self.bot.db() as session:
+            user = await characters_svc.get_or_create_user(session, interaction.user.id)
+            row = (
+                await session.execute(
+                    select(Character).where(
+                        Character.user_id == user.id, Character.name == character
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            try:
+                rp_modes_svc.check_can_toggle_crime(row, enabled, dt.datetime.now(dt.UTC))
+            except ServiceError as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+            character_id, name = row.id, row.name
+
+        async def on_confirm(confirm_interaction: discord.Interaction) -> None:
+            async with self.bot.db() as confirm_session:
+                char = await confirm_session.get(Character, character_id)
+                if char is None:
+                    await confirm_interaction.response.edit_message(
+                        content=t("character_not_found"), view=None
+                    )
+                    return
+                try:
+                    rp_modes_svc.toggle_crime(char, enabled, dt.datetime.now(dt.UTC))
+                except ServiceError as exc:
+                    await confirm_interaction.response.edit_message(
+                        content=t(exc.reason_key, **exc.fmt), view=None
+                    )
+                    return
+            verb = "enabled" if enabled else "disabled"
+            await confirm_interaction.response.edit_message(
+                content=(
+                    f"**{name}** has crime {verb}. Next toggle available in "
+                    f"{constants.CRIME_TOGGLE_COOLDOWN_DAYS} real day."
+                ),
+                view=None,
+            )
+
+        verb = "enable" if enabled else "disable"
+        consequence = (
+            "You won't be able to commit crime, and no one will be able to commit crime "
+            "against you."
+            if not enabled
+            else "You'll be able to commit crime again, and others will be able to target you."
+        )
+        await interaction.response.send_message(
+            f"{verb.title()} crime for **{name}**? {consequence}\n\n"
+            f"This locks in for {constants.CRIME_TOGGLE_COOLDOWN_DAYS} real day before you can "
+            "toggle again. Are you sure?",
+            view=ConfirmView(target_discord_id=interaction.user.id, on_confirm=on_confirm),
+            ephemeral=True,
+        )
 
     @group.command(name="status", description="Show a character's status")
     @app_commands.describe(character="Character name")

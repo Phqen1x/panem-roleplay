@@ -26,6 +26,7 @@ crime, work, market, travel, residents, housing, characters) adds its own
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import random
 import secrets
@@ -48,13 +49,16 @@ from panem_shared import jobs as jobs_svc
 from panem_shared import layers as layers_svc
 from panem_shared import market as market_svc
 from panem_shared import poaching as poaching_svc
+from panem_shared import rp_modes as rp_modes_svc
 from panem_shared import stealing as stealing_svc
 from panem_shared import theme as theme_svc
 from panem_shared import travel as travel_svc
 from panem_shared.content.loader import ContentBundle
 from panem_shared.db.models import (
+    AfflictionType,
     ApartmentLease,
     Character,
+    CharacterAffliction,
     LayerCategory,
     Npc,
     Property,
@@ -2672,6 +2676,138 @@ class DeleteLayerCategoryRequest(BaseModel):
 
 class DeleteLayerOptionRequest(BaseModel):
     discord_id: int
+
+
+class ActiveAfflictionSummary(BaseModel):
+    id: int
+    name: str
+    description: str
+    is_permanent: bool
+    cause: str | None = None
+    applied_at: str
+
+
+class RpModeStatusResponse(BaseModel):
+    """The Milestone 11 home page's data source -- everything about a
+    character's current RP mode in one call (mode, meters, crime toggle,
+    both cooldowns, active afflictions, death). Meters/afflictions are
+    always included regardless of mode -- Life/Story characters just never
+    have anything write to them, so they come back at their column
+    defaults, and the frontend decides whether to show the bars per mode
+    (see `RP_MODE_DESCRIPTIONS`'s shape)."""
+
+    mode: str
+    dead: bool
+    death_cause: str | None = None
+    crime_enabled: bool
+    next_mode_switch_eligible_at: str | None = None
+    next_crime_toggle_eligible_at: str | None = None
+    health: float
+    hunger: float
+    thirst: float
+    fatigue: float
+    sanity: float
+    afflictions: list[ActiveAfflictionSummary]
+
+
+class RpModeSwitchRequest(BaseModel):
+    discord_id: int
+    new_mode: RpMode
+
+
+class RpModeCrimeToggleRequest(BaseModel):
+    discord_id: int
+    enabled: bool
+
+
+def build_rp_mode_router(
+    *,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+) -> APIRouter:
+    """The home page's mode-switch panel (Milestone 11) -- `/character
+    mode`/`/character crime`'s dashboard equivalent, mirroring the bot
+    cog's confirm-then-commit shape (the frontend shows its own
+    confirmation panel first, per the feature's "abundantly clear what the
+    repercussions of switching are" requirement, then calls straight
+    through to `/switch`/`/crime-toggle` once the player confirms)."""
+    router = APIRouter(prefix="/activity/dashboard/mode", tags=["dashboard"])
+
+    async def _status_response(session: AsyncSession, character: Character) -> RpModeStatusResponse:
+        rows = await session.execute(
+            select(CharacterAffliction, AfflictionType)
+            .join(AfflictionType, CharacterAffliction.affliction_type_id == AfflictionType.id)
+            .where(
+                CharacterAffliction.character_id == character.id,
+                CharacterAffliction.cured_at.is_(None),
+            )
+            .order_by(CharacterAffliction.applied_at)
+        )
+        afflictions = [
+            ActiveAfflictionSummary(
+                id=affliction.id,
+                name=affliction_type.name,
+                description=affliction_type.description,
+                is_permanent=affliction_type.is_permanent,
+                cause=affliction.cause,
+                applied_at=affliction.applied_at.isoformat(),
+            )
+            for affliction, affliction_type in rows.all()
+        ]
+        next_switch = rp_modes_svc.next_eligible_switch_at(character)
+        next_toggle = rp_modes_svc.next_eligible_crime_toggle_at(character)
+        return RpModeStatusResponse(
+            mode=character.rp_mode,
+            dead=character.status == CharacterStatus.DEAD.value,
+            death_cause=character.death_cause,
+            crime_enabled=character.crime_enabled is not False,
+            next_mode_switch_eligible_at=next_switch.isoformat() if next_switch else None,
+            next_crime_toggle_eligible_at=next_toggle.isoformat() if next_toggle else None,
+            health=character.health,
+            hunger=character.hunger,
+            thirst=character.thirst,
+            fatigue=character.fatigue,
+            sanity=character.sanity,
+            afflictions=afflictions,
+        )
+
+    @router.get("/{character_id}/status", response_model=RpModeStatusResponse)
+    async def status(character_id: int, discord_id: int) -> RpModeStatusResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            return await _status_response(session, character)
+
+    @router.post("/{character_id}/switch", response_model=RpModeStatusResponse)
+    async def switch(character_id: int, body: RpModeSwitchRequest) -> RpModeStatusResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            try:
+                rp_modes_svc.switch_mode(character, body.new_mode, dt.datetime.now(dt.UTC))
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            return await _status_response(session, character)
+
+    @router.post("/{character_id}/crime-toggle", response_model=RpModeStatusResponse)
+    async def crime_toggle(
+        character_id: int, body: RpModeCrimeToggleRequest
+    ) -> RpModeStatusResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            try:
+                rp_modes_svc.toggle_crime(character, body.enabled, dt.datetime.now(dt.UTC))
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            return await _status_response(session, character)
+
+    return router
 
 
 def build_staff_router(
