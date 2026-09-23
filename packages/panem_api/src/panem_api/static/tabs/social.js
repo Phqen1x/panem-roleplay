@@ -72,16 +72,13 @@ function engagementPanel(ctx) {
 
       const titleEl = el("div", { class: "engagement-title", text: title });
 
-      // District Scene Frame
+      // District Scene Frame -- no location art yet, so this is a plain
+      // placeholder reserved for future per-district illustrations.
       const sceneFrame = el(
         "div",
-        { class: "scene-frame" },
-        el("img", {
-          src: "/d1_square.png",
-          alt: location,
-          class: "scene-img",
-          onerror: (e) => { e.target.style.display = "none"; },
-        })
+        { class: "scene-frame scene-placeholder" },
+        renderIcon("crest", 28),
+        el("span", { class: "scene-placeholder-text", text: "Location art coming soon" })
       );
 
       // Meta list

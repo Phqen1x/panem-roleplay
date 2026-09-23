@@ -330,6 +330,21 @@
       transform: scale(1.02);
     }
 
+    .scene-placeholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      color: #f1f3f7;
+      opacity: 0.5;
+    }
+
+    .scene-placeholder-text {
+      font-size: 13px;
+      letter-spacing: 0.3px;
+    }
+
     .meta-list {
       display: flex;
       flex-direction: column;
@@ -838,9 +853,10 @@
 
         <div class="engagement-title">The Square — ambient</div>
 
-        <!-- Plaza Illustration -->
-        <div class="scene-frame">
-          <img src="/d1_square.png" alt="The Square, District One" class="scene-img" />
+        <!-- Plaza Illustration -- no location art yet; reserved for future per-district illustrations -->
+        <div class="scene-frame scene-placeholder">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+          <span class="scene-placeholder-text">Location art coming soon</span>
         </div>
 
         <!-- Metadata -->

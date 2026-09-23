@@ -671,6 +671,21 @@ table.data-table .qty-input {
   transform: scale(1.02);
 }
 
+.scene-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: color-mix(in srgb, var(--text) 55%, transparent);
+  opacity: 0.6;
+}
+
+.scene-placeholder-text {
+  font-size: 13px;
+  letter-spacing: 0.3px;
+}
+
 .meta-list {
   display: flex;
   flex-direction: column;
