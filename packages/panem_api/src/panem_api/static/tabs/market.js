@@ -22,11 +22,30 @@ function priceTable(prices, onBuy) {
     const qtyInput = el("input", { type: "number", value: "1", min: "1", class: "qty-input" });
     const buyBtn = el("button", { class: "btn", type: "button" }, "Buy");
     buyBtn.addEventListener("click", () => onBuy(p, Number(qtyInput.value)));
+    // Vitals tab feature: replenishment values, when this good has any,
+    // shown right alongside its price -- see panem_shared.content.
+    // schemas.Good's hunger_value/thirst_value/cook_method fields.
+    const badges = [];
+    if (p.hunger_value > 0) {
+      badges.push(`+${p.hunger_value} hunger${p.cook_method ? " (cookable)" : ""}`);
+    }
+    if (p.thirst_value > 0) {
+      badges.push(`+${p.thirst_value} thirst`);
+    }
+    const goodCell =
+      badges.length > 0
+        ? el(
+            "td",
+            {},
+            el("div", {}, p.name),
+            el("div", { class: "tab-status" }, badges.join(", "))
+          )
+        : el("td", { text: p.name });
     tbody.append(
       el(
         "tr",
         {},
-        el("td", { text: p.name }),
+        goodCell,
         el("td", { text: p.price.toFixed(2) }),
         el("td", {}, qtyInput),
         el("td", {}, buyBtn)

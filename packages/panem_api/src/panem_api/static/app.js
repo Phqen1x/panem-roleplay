@@ -31,7 +31,7 @@ const STEP_TIMEOUT_MS = 8000;
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "30";
+const ASSET_VERSION = "31";
 
 // District names mapping for Capitol and Districts 1-12
 const DISTRICT_NAMES = {
@@ -81,11 +81,24 @@ const DEFAULT_THEME = {
   profile_id: null,
 };
 
-const TABS = ["home", "map", "character", "work", "market", "travel", "social", "jail", "crime", "housing"];
+const TABS = [
+  "home",
+  "map",
+  "character",
+  "vitals",
+  "work",
+  "market",
+  "travel",
+  "social",
+  "jail",
+  "crime",
+  "housing",
+];
 const TAB_LABELS = {
   home: "Home",
   map: "Map",
   character: "Character",
+  vitals: "Vitals",
   work: "Work",
   market: "Market",
   travel: "Travel",
