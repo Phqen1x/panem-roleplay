@@ -70,6 +70,14 @@ class Settings(BaseSettings):
     approval_channel_id: DiscordId = 0
     log_channel_id: DiscordId = 0
 
+    # Comma-separated Discord role snowflake ids (e.g. "111,222") -- a
+    # donor perk unlike `staff_role_id` above is commonly granted by more
+    # than one role tier (multiple donation levels), so this is a list
+    # rather than a single `DiscordId` field. Whoever holds at least one
+    # of these can customize the Activity dashboard's background/accent
+    # colors (`POST /activity/dashboard/theme`); see `donor_role_id_set()`.
+    donor_role_ids: str = ""
+
     # Optional pre-existing role per district (+ the Capitol) that
     # scripts/setup_guild.py should use instead of creating/finding a role
     # by name. Unset (0) means "auto-manage by name", the default behavior.
@@ -120,6 +128,16 @@ class Settings(BaseSettings):
         if district_id == 0:
             return self.capitol_role_id
         return int(getattr(self, f"district_{district_id}_role_id", 0))
+
+    def donor_role_id_set(self) -> frozenset[int]:
+        """Parses `donor_role_ids` ("111,222" -> {111, 222}); blank entries
+        (an empty string, a trailing comma) are dropped rather than raising,
+        since `.env` shipping this unset should mean "no donor roles
+        configured" -- the same "empty means disabled" posture `_empty_str_
+        to_zero` gives every single-role `*_role_id` field above."""
+        return frozenset(
+            int(part.strip()) for part in self.donor_role_ids.split(",") if part.strip()
+        )
 
 
 def get_settings() -> Settings:

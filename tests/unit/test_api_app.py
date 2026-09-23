@@ -475,6 +475,26 @@ def _fake_member_response(role_ids: list[int]) -> httpx.Response:
 
 
 @pytest.fixture
+def donor_app(db_session_factory):
+    """Same shape as `staff_app`, but configured with `donor_role_ids`
+    instead of `staff_role_id` -- for the dashboard theme (color-wheel)
+    tests. `888` is this fixture's donor role id, mirroring `staff_app`'s
+    `777` for the staff role."""
+    content = make_content()
+    redis_client = FakeRedis()
+    app = create_app(
+        content=content,
+        redis_client=redis_client,
+        session_factory=db_session_factory,
+        discord_guild_id=999,
+        discord_token="test-bot-token",
+        donor_role_ids=frozenset({888}),
+    )
+    app.state.fake_redis = redis_client  # type: ignore[attr-defined]
+    return app
+
+
+@pytest.fixture
 def staff_app_with_uploads(db_session_factory, tmp_path):
     """Same as `staff_app`, but `static_dir` points at `tmp_path` -- the
     layer-catalog upload tests write real files (`panem_shared.layers`
@@ -1210,7 +1230,12 @@ class TestDashboardIdentify:
                 "/activity/dashboard/identify", json={"discord_id": 999999}
             )
         assert response.status_code == 200
-        assert response.json() == {"characters": [], "is_staff": False}
+        assert response.json() == {
+            "characters": [],
+            "is_staff": False,
+            "is_donor": False,
+            "theme": {"background_hex": "#14161c", "accent_hex": "#e0a72e"},
+        }
 
     async def test_is_staff_true_when_discord_reports_the_staff_role(
         self, staff_app, db_session_factory
@@ -1361,6 +1386,156 @@ class TestDashboardIdentify:
         character = response.json()["characters"][0]
         assert character["jailed_until_tick"] == 500
         assert character["jailed"] is False
+
+    async def test_is_donor_true_when_discord_reports_a_donor_role(self, donor_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([888]))
+        ):
+            transport = httpx.ASGITransport(app=donor_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/identify", json={"discord_id": 42}
+                )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["is_donor"] is True
+        assert body["theme"] == {"background_hex": "#14161c", "accent_hex": "#e0a72e"}
+
+    async def test_is_donor_false_without_a_donor_role(self, donor_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([1, 2]))
+        ):
+            transport = httpx.ASGITransport(app=donor_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/identify", json={"discord_id": 42}
+                )
+        assert response.status_code == 200
+        assert response.json()["is_donor"] is False
+
+
+class TestDashboardTheme:
+    async def test_refuses_a_non_donor(self, donor_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([1, 2]))
+        ):
+            transport = httpx.ASGITransport(app=donor_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/theme",
+                    json={"discord_id": 42, "background_hex": "#112233", "accent_hex": "#445566"},
+                )
+        assert response.status_code == 403
+
+    async def test_rejects_an_invalid_hex_color(self, donor_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([888]))
+        ):
+            transport = httpx.ASGITransport(app=donor_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/theme",
+                    json={
+                        "discord_id": 42,
+                        "background_hex": "not-a-color",
+                        "accent_hex": "#445566",
+                    },
+                )
+        assert response.status_code == 400
+
+    async def test_sets_and_persists_a_custom_theme(self, donor_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([888]))
+        ):
+            transport = httpx.ASGITransport(app=donor_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                set_response = await client.post(
+                    "/activity/dashboard/theme",
+                    json={"discord_id": 42, "background_hex": "#112233", "accent_hex": "#445566"},
+                )
+                assert set_response.status_code == 200
+                assert set_response.json() == {
+                    "background_hex": "#112233",
+                    "accent_hex": "#445566",
+                }
+                identify_response = await client.post(
+                    "/activity/dashboard/identify", json={"discord_id": 42}
+                )
+        assert identify_response.json()["theme"] == {
+            "background_hex": "#112233",
+            "accent_hex": "#445566",
+        }
+
+    async def test_normalizes_uppercase_hex_to_lowercase(self, donor_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([888]))
+        ):
+            transport = httpx.ASGITransport(app=donor_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/theme",
+                    json={"discord_id": 42, "background_hex": "#ABCDEF", "accent_hex": "#123ABC"},
+                )
+        assert response.json() == {"background_hex": "#abcdef", "accent_hex": "#123abc"}
+
+    async def test_reset_clears_a_saved_theme(self, donor_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([888]))
+        ):
+            transport = httpx.ASGITransport(app=donor_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                await client.post(
+                    "/activity/dashboard/theme",
+                    json={"discord_id": 42, "background_hex": "#112233", "accent_hex": "#445566"},
+                )
+                reset_response = await client.post(
+                    "/activity/dashboard/theme/reset", json={"discord_id": 42}
+                )
+                identify_response = await client.post(
+                    "/activity/dashboard/identify", json={"discord_id": 42}
+                )
+        default_theme = {"background_hex": "#14161c", "accent_hex": "#e0a72e"}
+        assert reset_response.json() == default_theme
+        assert identify_response.json()["theme"] == default_theme
+
+    async def test_reset_refuses_a_non_donor(self, donor_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([1, 2]))
+        ):
+            transport = httpx.ASGITransport(app=donor_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/theme/reset", json={"discord_id": 42}
+                )
+        assert response.status_code == 403
+
+    async def test_a_lapsed_donor_stops_seeing_their_saved_theme(self, donor_app):
+        """A saved custom theme is only ever *surfaced* while the account
+        currently holds the donor role -- `_theme_for_user`'s own docstring.
+        The row itself isn't cleared (in case the role comes back), but
+        `/identify` renders the plain default the moment `is_donor` reads
+        false, honoring "only donors get custom backgrounds" even for
+        someone who customized once and later lost the role."""
+        transport = httpx.ASGITransport(app=donor_app)
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([888]))
+        ):
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                await client.post(
+                    "/activity/dashboard/theme",
+                    json={"discord_id": 42, "background_hex": "#112233", "accent_hex": "#445566"},
+                )
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([1, 2]))
+        ):
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                identify_response = await client.post(
+                    "/activity/dashboard/identify", json={"discord_id": 42}
+                )
+        assert identify_response.json()["theme"] == {
+            "background_hex": "#14161c",
+            "accent_hex": "#e0a72e",
+        }
 
 
 class TestDashboardCharacters:

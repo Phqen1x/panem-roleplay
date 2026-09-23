@@ -24,6 +24,7 @@
 // together) -- there's still no cryptographic auth here, same documented
 // gap as the rest of this process.
 import { fetchJson, el } from "./tabs/_shared.js?v=3";
+import { mountThemePicker } from "./theme_picker.js?v=1";
 
 const DISCORD_SDK_URL = "/vendor/discord-embedded-app-sdk.js";
 const STEP_TIMEOUT_MS = 8000;
@@ -31,6 +32,13 @@ const STEP_TIMEOUT_MS = 8000;
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
 const ASSET_VERSION = "25";
+
+// Mirrors `panem_shared.theme`'s `DEFAULT_BACKGROUND_HEX`/`DEFAULT_ACCENT_
+// HEX`, which themselves mirror `style.css`'s `:root` values -- what a
+// non-donor, a never-customized donor, or a reset renders. Duplicated
+// here (rather than fetched) so the dashboard never has to round-trip to
+// the server just to know its own default colors.
+const DEFAULT_THEME = { background_hex: "#14161c", accent_hex: "#e0a72e" };
 
 const TABS = ["map", "character", "work", "market", "travel", "social", "jail", "crime", "housing"];
 const TAB_LABELS = {
@@ -58,6 +66,7 @@ const tabRootEl = document.getElementById("tab-root");
 const discordIdInput = document.getElementById("discord-id-input");
 const characterToggleEl = document.getElementById("character-select-toggle");
 const characterMenuEl = document.getElementById("character-select-menu");
+const themePickerEl = document.getElementById("theme-picker");
 
 const state = {
   discordUser: null,
@@ -65,6 +74,8 @@ const state = {
   characters: [],
   characterId: null,
   isStaff: false,
+  isDonor: false,
+  theme: DEFAULT_THEME,
 };
 
 let currentTabHandle = null;
@@ -99,6 +110,53 @@ function writeStorage(key, value) {
   } catch {
     // Private browsing / blocked storage -- selection just won't persist.
   }
+}
+
+// Sets the two CSS custom properties `style.css`'s `:root` defines
+// (`--bg`, `--accent`) live -- both the donor theme picker's drag preview
+// and the actual saved theme go through this one function. Also mirrors
+// the values to localStorage so `work.html`/`crime.html` (same-origin
+// iframes the dashboard's Work/Jail/Crime tabs embed, with no Discord
+// identity of their own to ask `/identify` themselves) pick up the same
+// colors -- the same "app.js writes, another same-origin page reads"
+// convention `panem_character_id` already established.
+function applyTheme(theme) {
+  document.documentElement.style.setProperty("--bg", theme.background_hex);
+  document.documentElement.style.setProperty("--accent", theme.accent_hex);
+  writeStorage("panem_theme_bg", theme.background_hex);
+  writeStorage("panem_theme_accent", theme.accent_hex);
+}
+
+let themePickerHandle = null;
+
+function setupThemePicker() {
+  if (themePickerHandle) return;
+  themePickerHandle = mountThemePicker(themePickerEl, {
+    getTheme: () => state.theme,
+    onPreview: applyTheme,
+    onSave: async (theme) => {
+      const discordId = getDiscordId();
+      if (!discordId) throw new Error("no Discord id");
+      const saved = await fetchJson("/activity/dashboard/theme", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ discord_id: discordId, ...theme }),
+      });
+      state.theme = saved;
+      return saved;
+    },
+    onReset: async () => {
+      const discordId = getDiscordId();
+      if (!discordId) throw new Error("no Discord id");
+      const saved = await fetchJson("/activity/dashboard/theme/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ discord_id: discordId }),
+      });
+      state.theme = saved;
+      return saved;
+    },
+  });
 }
 
 const STEP = { current: "" };
@@ -299,6 +357,10 @@ async function refreshIdentity() {
   if (!discordId) {
     state.characters = [];
     state.isStaff = false;
+    state.isDonor = false;
+    state.theme = DEFAULT_THEME;
+    applyTheme(state.theme);
+    themePickerEl.hidden = true;
     renderCharacterOptions();
     setupNav();
     return;
@@ -311,10 +373,20 @@ async function refreshIdentity() {
     });
     state.characters = body.characters;
     state.isStaff = Boolean(body.is_staff);
+    state.isDonor = Boolean(body.is_donor);
+    state.theme = body.theme || DEFAULT_THEME;
   } catch (err) {
     console.warn("Could not load characters:", err);
     state.characters = [];
     state.isStaff = false;
+    state.isDonor = false;
+    state.theme = DEFAULT_THEME;
+  }
+  applyTheme(state.theme);
+  themePickerEl.hidden = !state.isDonor;
+  if (state.isDonor) {
+    setupThemePicker();
+    if (themePickerHandle) themePickerHandle.refresh();
   }
   renderCharacterOptions();
   setupNav();

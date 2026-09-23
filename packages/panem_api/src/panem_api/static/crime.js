@@ -25,7 +25,23 @@
 // in an `<iframe>` for the lockpick/steal/burgle/poach minigames (see
 // static/tabs/jail.js, static/tabs/crime.js) and use it to refresh their
 // own status without a reload. A no-op outside an iframe.
-const ASSET_VERSION = "10";
+const ASSET_VERSION = "11";
+
+// Donor dashboard theme (`static/theme_picker.js`'s popup, saved via
+// `POST /activity/dashboard/theme`): `app.js` mirrors the saved `--bg`/
+// `--accent` CSS custom properties to localStorage on every load, so this
+// same-origin page -- opened either directly or in the dashboard's Jail/
+// Crime tabs' iframe, with no Discord identity of its own to ask
+// `/identify` -- picks up the same colors. Best-effort: a missing/blocked
+// value just leaves `style.css`'s plain default in place.
+try {
+  const bg = window.localStorage.getItem("panem_theme_bg");
+  const accent = window.localStorage.getItem("panem_theme_accent");
+  if (bg) document.documentElement.style.setProperty("--bg", bg);
+  if (accent) document.documentElement.style.setProperty("--accent", accent);
+} catch {
+  // Private browsing / blocked storage -- falls back to the default theme.
+}
 
 const [lockpick, pickpocket, archery] = await Promise.all([
   import(`./games/lockpick.js?v=${ASSET_VERSION}`),

@@ -3451,3 +3451,101 @@ toggles open/closed on repeated clicks, and shows each game's actual `instructio
 to match. No backend changes -- pure frontend JS/CSS, so the Python test suite (1023 passing) and mypy's
 pre-existing 148-error baseline are both unaffected; verification for this change was `node --check` on
 every touched file plus the two live Playwright passes above.
+
+### Donor-only dashboard theming: a custom background/accent color, gated by a Discord role
+
+User asks: "Add a way to customize the hex code for the background of the dashboard as well as the hex
+code for the accent color used for buttons etc. Only people with a specific role/roles whose IDs are
+defined in the .env should be able to utilize this function (so only donors can have custom backgrounds
+and accents. The customization should be a little color wheel in the top right corner of the activity
+that when you click it it pops up a discord style color picker where you can move around a color picker
+and choose any color you want and it adjusts the background live so you can see what it will look like
+if you choose it. There also needs to be a reset button that goes back to the default style (the way it
+is now)."
+
+**What gets customized.** `static/style.css`'s `:root` already defined exactly two CSS custom
+properties driving the whole dashboard's look -- `--bg` (page background) and `--accent` (buttons,
+active states, progress fills) -- used throughout `dashboard.css`/`work.css`/`crime.css`/`style.css`
+already. This feature adds a per-account override of those two values, live-set on
+`document.documentElement.style` rather than editing the stylesheet itself.
+
+**Who's allowed.** New `.env` setting `DONOR_ROLE_IDS` (comma-separated Discord role snowflake ids,
+e.g. `111111111111111111,222222222222222222`) -- a donor perk unlike the existing single-role
+`STAFF_ROLE_ID` is commonly granted by more than one donation tier, so this is a list
+(`Settings.donor_role_id_set()` parses it, tolerating whitespace/trailing commas). `discord_staff.py`
+gained `fetch_has_any_role` alongside the existing `fetch_is_staff` -- both now share one `_fetch_
+member_role_ids` REST lookup, with `fetch_has_any_role` generalizing the single-role check to "holds at
+least one of these role ids." Same fail-closed posture as staff: an unconfigured/unreachable lookup
+reads as "not a donor," never the other way around. `/activity/dashboard/identify`'s response gained
+`is_donor`, checked server-side the same way `is_staff` already was for the Staff tab.
+
+**Where it's stored.** Two new nullable `String(7)` columns on `users` (migration `653865b0f6f6`):
+`dashboard_background_hex`/`dashboard_accent_hex`, each `#rrggbb`. Deliberately on `User`, not
+`Character` -- Discord role membership (and therefore the donor gate) is account-wide, not
+per-character, so the customization is too. New `panem_shared/theme.py` holds the two defaults
+(`DEFAULT_BACKGROUND_HEX`/`DEFAULT_ACCENT_HEX`, mirroring `style.css`'s `:root` values exactly -- what a
+reset, a non-donor, or a never-customized account renders) and `validate_hex_color` (strict `#rrggbb`,
+normalized to lowercase).
+
+A subtlety worth calling out: a saved theme is only ever *surfaced* while the account currently holds a
+donor role. `/identify` computes `is_donor` fresh on every call and only includes the saved hex values
+in its `theme` field when that reads true (`dashboard_routes._theme_for_user`); if a donor's role lapses
+later, the row isn't cleared (in case the role comes back), but the dashboard silently falls back to the
+plain default in the meantime -- honoring "only donors get custom backgrounds and accents" even for
+someone who customized once and then lost the role, without the awkwardness of throwing away a
+customization that might return.
+
+**The endpoints.** New `dashboard_routes.build_theme_router`: `POST /activity/dashboard/theme
+{discord_id, background_hex, accent_hex}` (validates + persists, returns the normalized pair) and `POST
+/activity/dashboard/theme/reset {discord_id}` (clears both columns, returns the defaults) -- both
+re-check `discord_staff.fetch_has_any_role` themselves on every call rather than trusting `/identify`'s
+`is_donor` (the same "never trust the client with a privilege decision" posture `build_staff_router`'s
+`_require_staff` already established), so a non-donor gets a 403 regardless of what an earlier
+`/identify` response said.
+
+**The color wheel.** A new `<div id="theme-picker" hidden>` sits as the last element in `index.html`'s
+header (after `#character-select`, whose own `margin-left: auto` already pushes everything before it
+left -- so this lands at the literal top-right corner of the Activity). `app.js` only unhides it when
+`/identify` reports `is_donor`, and mounts a brand-new module, `theme_picker.js`, into it via
+`mountThemePicker(container, {getTheme, onPreview, onSave, onReset})`. The toggle button itself is a
+literal color wheel -- a CSS `conic-gradient`, no image asset -- that opens a Discord-role-color-picker-
+style popup: two target swatches (Background / Accent) to switch which color you're editing, a
+saturation/value square plus a hue strip (the classic two-layered-CSS-gradient SV square trick -- a
+black-to-transparent vertical gradient over a white-to-hue horizontal one, no canvas needed), and a hex
+text field, all kept in sync in both directions. Original, canvas-free, hand-rolled widget -- a generic,
+well-known color-picker shape, not anyone's particular implementation, matching this codebase's no-
+external-library convention for every other minigame/UI widget.
+
+Dragging in the square or hue strip (via pointer-capture, so the drag tracks correctly even past the
+element's own edges) or typing a hex value calls `onPreview` on every change, which `app.js` wires
+straight to setting `--bg`/`--accent` on `document.documentElement.style` -- exactly the "adjusts the
+background live so you can see what it will look like if you choose it" the request asked for, before
+anything is actually saved. The two targets (Background/Accent) keep independent in-progress state, so
+switching which one you're editing never discards an unsaved edit to the other. **Save** posts both
+current values to the theme endpoint and keeps the live preview; **Reset to default** posts to the reset
+endpoint and reapplies the defaults. Closing the popup without saving (clicking the color-wheel button
+again, clicking anywhere outside it, or pressing Escape) reverts the live preview back to the
+last-*saved* theme, discarding whatever was being previewed -- so idly dragging around to see what a
+color would look like never leaves the dashboard in an unsaved-but-visually-applied state.
+
+**Reaching the minigame pages.** `work.html`/`crime.html` are separate same-origin pages (opened
+directly via a Discord launch link, or embedded as an iframe by the dashboard's Work/Jail/Crime tabs)
+with no Discord identity of their own to ask `/identify`. `app.js` mirrors the resolved theme to
+`localStorage` (`panem_theme_bg`/`panem_theme_accent`) on every load -- the same "app.js writes,
+another same-origin page reads" convention `panem_character_id` already established -- and `work.js`/
+`crime.js` each gained a small snippet at module top-level (before their own dynamic game imports) that
+reads those two keys and applies them via the same `setProperty` calls, best-effort (a missing/blocked
+value just leaves the plain default in place).
+
+Verified live with Playwright in three passes: (1) the picker mounted in the real `index.html` context
+with `/identify`/`/activity/dashboard/theme` fetches mocked -- button visibility for donor vs.
+non-donor, live preview while dragging both the SV square and hue bar, independent per-target state,
+hex-field sync, Save persisting and posting the right body, Reset restoring defaults, and closing an
+unsaved edit correctly reverting; (2) confirming a non-donor's identify response leaves the button
+hidden and the default theme applied; (3) confirming `work.html` picks up a theme already saved to
+localStorage by a prior `index.html` visit. New backend tests: `test_theme.py` (`validate_hex_color`
+accept/reject cases, `donor_role_id_set()` parsing) and `test_api_app.py`'s new `TestDashboardTheme` +
+extended `TestDashboardIdentify` (is_donor true/false, set/reset happy paths, invalid-hex 400, non-donor
+403 on both write routes, and the lapsed-donor case -- a saved theme stops being surfaced the moment
+`is_donor` reads false, without the row itself being cleared). Full suite passes at 1046 (up from 1023);
+mypy's pre-existing 148-error baseline unaffected; migration `653865b0f6f6` verified up/down/up.

@@ -57,6 +57,15 @@ class User(TimestampMixin, Base):
     max_characters_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
     """`/staff character_limit`; NULL means the guild default applies."""
 
+    dashboard_background_hex: Mapped[str | None] = mapped_column(String(7), nullable=True)
+    dashboard_accent_hex: Mapped[str | None] = mapped_column(String(7), nullable=True)
+    """Donor-only dashboard theme override (`POST /activity/dashboard/
+    theme`, `panem_shared.theme`), each `#rrggbb`. NULL means the default
+    style applies -- also true for a lapsed donor's saved value, which
+    `dashboard_routes.build_identify_router` only surfaces while `is_donor`
+    still holds, so these two columns stay set (not cleared) if a donor
+    role is later revoked, in case it comes back."""
+
     characters: Mapped[list[Character]] = relationship(back_populates="user")
 
 

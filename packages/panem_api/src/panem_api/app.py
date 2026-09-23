@@ -63,6 +63,7 @@ from panem_api.dashboard_routes import (
     build_residents_router,
     build_social_router,
     build_staff_router,
+    build_theme_router,
     build_travel_router,
     build_work_router,
 )
@@ -336,6 +337,7 @@ def create_app(
     discord_guild_id: int = 0,
     discord_token: str = "",
     staff_role_id: int = 0,
+    donor_role_ids: frozenset[int] = frozenset(),
     log_channel_id: int = 0,
     # Where staff-uploaded layer images get written/read (build_staff_
     # router's layer-catalog endpoints); defaults to the real bundled
@@ -739,6 +741,15 @@ def create_app(
             discord_token=discord_token,
             discord_guild_id=discord_guild_id,
             staff_role_id=staff_role_id,
+            donor_role_ids=donor_role_ids,
+        )
+    )
+    app.include_router(
+        build_theme_router(
+            session_factory=session_factory,
+            discord_token=discord_token,
+            discord_guild_id=discord_guild_id,
+            donor_role_ids=donor_role_ids,
         )
     )
     app.include_router(

@@ -33,7 +33,7 @@ from pathlib import Path
 
 import redis.asyncio as redis
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -49,6 +49,7 @@ from panem_shared import layers as layers_svc
 from panem_shared import market as market_svc
 from panem_shared import poaching as poaching_svc
 from panem_shared import stealing as stealing_svc
+from panem_shared import theme as theme_svc
 from panem_shared import travel as travel_svc
 from panem_shared.content.loader import ContentBundle
 from panem_shared.db.models import (
@@ -101,9 +102,34 @@ class IdentifyRequest(BaseModel):
     discord_id: int
 
 
+class DashboardTheme(BaseModel):
+    """The two CSS custom properties `static/style.css`'s `:root` defines
+    (`--bg`, `--accent`), as a per-user override -- see `panem_shared.
+    theme`'s module docstring for the donor gate this sits behind."""
+
+    background_hex: str = theme_svc.DEFAULT_BACKGROUND_HEX
+    accent_hex: str = theme_svc.DEFAULT_ACCENT_HEX
+
+
 class IdentifyResponse(BaseModel):
     characters: list[DashboardCharacterSummary]
     is_staff: bool = False
+    is_donor: bool = False
+    # Always present, even for a non-donor -- `app.js` applies this
+    # unconditionally on load so the dashboard renders a saved theme (a
+    # currently-donor account's) or the plain default (everyone else's)
+    # the same way, with no special-casing at the call site.
+    theme: DashboardTheme = Field(default_factory=DashboardTheme)
+
+
+class SetThemeRequest(BaseModel):
+    discord_id: int
+    background_hex: str
+    accent_hex: str
+
+
+class ResetThemeRequest(BaseModel):
+    discord_id: int
 
 
 def _require_session_factory(
@@ -148,12 +174,28 @@ def _http_from_service_error(exc: ServiceError) -> HTTPException:
     return HTTPException(status_code=status, detail=exc.reason_key)
 
 
+def _theme_for_user(user: User, *, is_donor: bool) -> DashboardTheme:
+    """Only a *currently* donor-role-holding account ever sees its custom
+    colors -- a lapsed donor's saved hex values stay in the row (`User.
+    dashboard_background_hex`/`dashboard_accent_hex`, in case the role
+    comes back) but this returns the plain default for them meanwhile,
+    honoring "only donors get custom backgrounds" even for someone who
+    customized once and later lost the role."""
+    if not is_donor:
+        return DashboardTheme()
+    return DashboardTheme(
+        background_hex=user.dashboard_background_hex or theme_svc.DEFAULT_BACKGROUND_HEX,
+        accent_hex=user.dashboard_accent_hex or theme_svc.DEFAULT_ACCENT_HEX,
+    )
+
+
 def build_identify_router(
     *,
     session_factory: async_sessionmaker[AsyncSession] | None,
     discord_token: str = "",
     discord_guild_id: int = 0,
     staff_role_id: int = 0,
+    donor_role_ids: frozenset[int] = frozenset(),
 ) -> APIRouter:
     router = APIRouter(prefix="/activity/dashboard", tags=["dashboard"])
 
@@ -165,26 +207,35 @@ def build_identify_router(
         offer a character picker the same way each slash command's
         `character:` autocomplete does today. An unknown discord_id (no
         `User` row yet -- this player has never run a command that created
-        one) isn't an error: it just means no characters yet.
+        one) isn't an error: it just means no characters yet (and no saved
+        theme -- there's no row to have one).
 
-        `is_staff` is only used to decide whether `app.js` shows the Staff
-        tab's nav button -- cosmetic, not a security boundary. The actual
-        enforcement is `build_staff_router` re-checking `discord_staff.
-        fetch_is_staff` itself on every staff route, the same "never trust
-        the client with a privilege decision" posture `_resolve_owned_
-        character` already applies to character ownership."""
+        `is_staff`/`is_donor` are only used to decide whether `app.js` shows
+        the Staff tab's nav button / the color-wheel theme button --
+        cosmetic, not a security boundary. The actual enforcement is
+        `build_staff_router`/`build_theme_router` re-checking `discord_
+        staff.fetch_is_staff`/`fetch_has_any_role` themselves on every
+        write, the same "never trust the client with a privilege decision"
+        posture `_resolve_owned_character` already applies to character
+        ownership."""
         is_staff = await discord_staff.fetch_is_staff(
             body.discord_id,
             bot_token=discord_token,
             guild_id=discord_guild_id,
             staff_role_id=staff_role_id,
         )
+        is_donor = await discord_staff.fetch_has_any_role(
+            body.discord_id,
+            bot_token=discord_token,
+            guild_id=discord_guild_id,
+            role_ids=donor_role_ids,
+        )
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             user_row = await session.execute(select(User).where(User.discord_id == body.discord_id))
             user = user_row.scalar_one_or_none()
             if user is None:
-                return IdentifyResponse(characters=[], is_staff=is_staff)
+                return IdentifyResponse(characters=[], is_staff=is_staff, is_donor=is_donor)
             rows = await session.execute(
                 select(Character)
                 .where(
@@ -213,7 +264,62 @@ def build_identify_router(
                     for c in characters
                 ],
                 is_staff=is_staff,
+                is_donor=is_donor,
+                theme=_theme_for_user(user, is_donor=is_donor),
             )
+
+    return router
+
+
+def build_theme_router(
+    *,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    discord_token: str = "",
+    discord_guild_id: int = 0,
+    donor_role_ids: frozenset[int] = frozenset(),
+) -> APIRouter:
+    """The color-wheel popup's REST surface -- donor-only (`panem_shared.
+    theme`'s module docstring). Every route here re-checks `discord_staff.
+    fetch_has_any_role` itself rather than trusting a client-supplied flag
+    (`/identify`'s `is_donor` is cosmetic, only used to decide whether
+    `app.js` shows the button at all) -- the same posture `build_staff_
+    router`'s `_require_staff` already uses for the Staff tab."""
+    router = APIRouter(prefix="/activity/dashboard/theme", tags=["dashboard"])
+
+    async def _require_donor(discord_id: int) -> None:
+        ok = await discord_staff.fetch_has_any_role(
+            discord_id,
+            bot_token=discord_token,
+            guild_id=discord_guild_id,
+            role_ids=donor_role_ids,
+        )
+        if not ok:
+            raise HTTPException(status_code=403, detail="donor_only")
+
+    @router.post("", response_model=DashboardTheme)
+    async def set_theme(body: SetThemeRequest) -> DashboardTheme:
+        await _require_donor(body.discord_id)
+        try:
+            background_hex = theme_svc.validate_hex_color(body.background_hex)
+            accent_hex = theme_svc.validate_hex_color(body.accent_hex)
+        except ServiceError as exc:
+            raise _http_from_service_error(exc) from exc
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            user = await characters_svc.get_or_create_user(session, body.discord_id)
+            user.dashboard_background_hex = background_hex
+            user.dashboard_accent_hex = accent_hex
+        return DashboardTheme(background_hex=background_hex, accent_hex=accent_hex)
+
+    @router.post("/reset", response_model=DashboardTheme)
+    async def reset_theme(body: ResetThemeRequest) -> DashboardTheme:
+        await _require_donor(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            user = await characters_svc.get_or_create_user(session, body.discord_id)
+            user.dashboard_background_hex = None
+            user.dashboard_accent_hex = None
+        return DashboardTheme()
 
     return router
 

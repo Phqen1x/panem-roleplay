@@ -34,6 +34,7 @@ def main() -> None:
         discord_guild_id=settings.discord_guild_id,
         discord_token=settings.discord_token,
         staff_role_id=settings.staff_role_id,
+        donor_role_ids=settings.donor_role_id_set(),
         log_channel_id=settings.log_channel_id,
     )
     uvicorn.run(app, host=settings.api_host, port=settings.api_port)
