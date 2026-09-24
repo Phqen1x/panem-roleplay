@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from panem_shared.enums import DayPhase, LocationKind
+from panem_shared.enums import DayPhase, Gender, LocationKind
 
 # Forum tags = one per location + `Open` + `Closed`, capped at 20 tags
 # per Discord forum (Plan §1.3), so at most 18 locations per district.
@@ -220,6 +220,11 @@ class NpcContent(BaseModel):
     district: int = Field(ge=0, le=12)
     name: str
     age: int = Field(ge=12, le=90)
+    gender: Gender | None = None
+    """Unset means `panem_sim.world._seed_authored_npcs` assigns one at
+    random (same rng as the fully-synthetic population), so pre-existing
+    authored files with no `gender` line still get a real value rather
+    than silently reading as "they/their" forever."""
     job_id: str | None = None
     home_location_id: str
     traits: list[str] = Field(default_factory=list)

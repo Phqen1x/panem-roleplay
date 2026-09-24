@@ -81,10 +81,23 @@ class NpcChatter(_EventBase):
     npc_ids: tuple[str, str]
 
 
+class CharacterDied(_EventBase):
+    """A Simulation-mode character's health bottomed out and
+    `panem_shared.afflictions.apply_auto_death` marked them dead
+    (`panem_sim.systems.needs`). Consumed by the bot to DM the owner
+    explaining what happened -- `character.death_cause` already carries
+    the human-readable cause, so this just carries the ids needed to look
+    the row back up."""
+
+    kind: Literal["CharacterDied"] = "CharacterDied"
+    character_id: int
+
+
 WorldEvent = Annotated[
-    NarrationLine | Bulletin | CharacterArrived | NpcChatter, Field(discriminator="kind")
+    NarrationLine | Bulletin | CharacterArrived | NpcChatter | CharacterDied,
+    Field(discriminator="kind"),
 ]
-AnyWorldEvent = NarrationLine | Bulletin | CharacterArrived | NpcChatter
+AnyWorldEvent = NarrationLine | Bulletin | CharacterArrived | NpcChatter | CharacterDied
 
 _event_adapter: TypeAdapter[AnyWorldEvent] = TypeAdapter(WorldEvent)
 

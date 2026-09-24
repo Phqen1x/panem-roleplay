@@ -29,9 +29,33 @@ import { mountThemePicker } from "./theme_picker.js?v=3";
 const DISCORD_SDK_URL = "/vendor/discord-embedded-app-sdk.js";
 const STEP_TIMEOUT_MS = 8000;
 
+// Set once `authenticateWithDiscord()` gets past `discordSdk.ready()` --
+// null outside a real Discord Activity (plain browser preview mode),
+// which `openExternalLink()` below falls back around.
+let discordSdk = null;
+
+// Deep links (e.g. "Continue in Discord" -> a specific channel/thread)
+// can't just be a plain `<a target="_blank">`: the Activity iframe is
+// sandboxed and silently swallows that navigation instead of opening
+// anything (Discord's own embedded-app-sdk exists specifically to route
+// this kind of thing back out to the real client). Falls back to a plain
+// new-tab open outside a real Activity, where there's no sandbox to route
+// around and no `discordSdk` to route through.
+async function openExternalLink(url) {
+  if (discordSdk && discordSdk.commands && discordSdk.commands.openExternalLink) {
+    try {
+      await discordSdk.commands.openExternalLink({ url });
+      return;
+    } catch (err) {
+      console.warn("discordSdk.commands.openExternalLink failed, falling back:", err);
+    }
+  }
+  window.open(url, "_blank", "noopener");
+}
+
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "36";
+const ASSET_VERSION = "37";
 
 // District names mapping for Capitol and Districts 1-12
 const DISTRICT_NAMES = {
@@ -438,7 +462,7 @@ async function authenticateWithDiscord() {
   STEP.current = "loading embedded-app-sdk";
   try {
     const { DiscordSDK } = await import(DISCORD_SDK_URL);
-    const discordSdk = new DiscordSDK(clientId);
+    discordSdk = new DiscordSDK(clientId);
 
     STEP.current = "discordSdk.ready()";
     await withTimeout(discordSdk.ready(), STEP.current);
@@ -511,6 +535,7 @@ async function authenticateWithDiscord() {
         `(${describeError(err)}). Enter a Discord ID below to try the ` +
         "dashboard anyway; check the panem_api server log for details."
     );
+    discordSdk = null; // handshake didn't complete -- openExternalLink() falls back to window.open
     return null;
   }
 }
@@ -659,6 +684,7 @@ function buildCtx() {
     districtName: (id) => DISTRICT_NAMES[id] || `District ${id}`,
     apiFetch: fetchJson,
     refreshIdentity,
+    openExternalLink,
   };
 }
 

@@ -37,6 +37,7 @@ def main() -> None:
         donor_role_ids=settings.donor_role_id_set(),
         log_channel_id=settings.log_channel_id,
         static_dir=Path(settings.static_uploads_dir) if settings.static_uploads_dir else None,
+        activity_public_url=settings.activity_public_url,
     )
     uvicorn.run(app, host=settings.api_host, port=settings.api_port)
 

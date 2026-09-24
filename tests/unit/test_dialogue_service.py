@@ -278,6 +278,40 @@ class TestBuildRequestContext:
         assert "job" not in ctx.npc
         assert "background" not in ctx.npc
 
+    def test_npc_pronouns_are_included_when_gender_is_set(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(gender="female"),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[],
+        )
+        assert ctx.npc["pronouns"] == "she/her"
+
+    def test_speaker_pronouns_are_included_when_character_gender_is_set(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(gender="nonbinary"),
+            stance="likes",
+            memories=[],
+        )
+        assert ctx.speaker["pronouns"] == "they/them"
+
+    def test_pronouns_omitted_when_gender_is_unset(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[],
+        )
+        assert "pronouns" not in ctx.npc
+        assert "pronouns" not in ctx.speaker
+
     def test_district_state_folds_crisis_and_mood_into_scene(self):
         ctx = dialogue.build_request_context(
             npc=make_npc(),
@@ -693,6 +727,18 @@ class TestNpcToNpcReply:
         )
         assert ctx.world_notes == "Alternate Universe: peace came a decade early."
         assert ctx.history == ("District Thirteen was destroyed in the rebellion.",)
+
+    def test_pronouns_are_included_for_both_npcs_when_gender_is_set(self):
+        ferro = make_npc(id="npc1", name="Old Ferro", gender="male")
+        sae = make_npc(id="npc2", name="Greasy Sae", gender="female")
+        ctx = dialogue.build_npc_to_npc_context(
+            npc=ferro,
+            other_npc=sae,
+            district=make_district(),
+            location=make_district().locations[-1],
+        )
+        assert ctx.npc["pronouns"] == "he/him"
+        assert ctx.speaker["pronouns"] == "she/her"
 
     async def test_template_provider_never_calls_the_llm(self):
         ferro = make_npc()

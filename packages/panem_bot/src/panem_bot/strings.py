@@ -37,6 +37,7 @@ STRINGS: dict[str, str] = {
     "character_rejected_dm": "Your character **{name}** was rejected: {note}",
     "character_changes_dm": "Staff requested changes to **{name}**: {note}\nUse `/character edit` to resubmit.",
     "character_retired": "**{name}** has been retired.",
+    "character_death_dm": "Your character **{name}** has died.\n\nCause of death: {cause}",
     # Sessions / proxying (FR-PRX)
     "rp_needs_thread": "Use this inside a scene.",
     "rp_session_set": "You're now playing **{name}** in this scene.",

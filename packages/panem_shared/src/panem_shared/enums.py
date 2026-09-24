@@ -13,6 +13,16 @@ class CharacterStatus(enum.StrEnum):
     DEAD = "dead"
 
 
+class Gender(enum.StrEnum):
+    """`Character.gender`/`Npc.gender` -- both nullable (an unset/older row
+    reads as `None`, "their"/"they" pronouns everywhere gender feeds into
+    NPC dialogue, `panem_bot.services.dialogue`)."""
+
+    MALE = "male"
+    FEMALE = "female"
+    NONBINARY = "nonbinary"
+
+
 class SceneKind(enum.StrEnum):
     AMBIENT = "ambient"
     PLAYER = "player"

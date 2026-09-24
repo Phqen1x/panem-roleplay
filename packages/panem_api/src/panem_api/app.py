@@ -358,6 +358,14 @@ def create_app(
     # `static/` dir. Overridable so tests can point it at a tmp_path
     # instead of writing real files into the checked-out static/ tree.
     static_dir: Path | None = None,
+    # Turns an uploaded avatar's relative `save_avatar_image` path into
+    # the absolute URL `Character.avatar_url` needs (Discord's webhook
+    # `avatar_url` field fetches it directly, unlike a layer image's path
+    # which only ever needs to resolve against the frontend's own origin)
+    # -- same setting `panem_bot`'s `/work` reads for its minigame link.
+    # Left blank, upload-avatar endpoints refuse rather than store a
+    # relative path that would break the moment Discord tries to fetch it.
+    activity_public_url: str = "",
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -798,6 +806,8 @@ def create_app(
             session_factory=session_factory,
             max_characters_per_user=max_characters_per_user,
             redis_client=redis_client,
+            static_dir=static_dir or STATIC_DIR,
+            activity_public_url=activity_public_url,
         )
     )
     app.include_router(

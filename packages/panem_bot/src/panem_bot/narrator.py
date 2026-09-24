@@ -30,6 +30,7 @@ started from `PanemBot.setup_hook`, not a cog -- it owns no commands or
 
 from __future__ import annotations
 
+import contextlib
 import random
 from typing import TYPE_CHECKING, Any
 
@@ -38,6 +39,7 @@ from sqlalchemy import select
 
 from panem_bot.outbound import OutboundMessage, SendPriority
 from panem_bot.services import dialogue as dialogue_svc
+from panem_bot.strings import t
 from panem_shared import constants
 from panem_shared.db.models import (
     Character,
@@ -53,6 +55,7 @@ from panem_shared.events import (
     WORLD_EVENTS_CHANNEL,
     Bulletin,
     CharacterArrived,
+    CharacterDied,
     NarrationLine,
     NpcChatter,
     parse_message,
@@ -343,6 +346,42 @@ async def _handle_character_arrived(bot: PanemBot, event: CharacterArrived) -> N
         logger.warning("character_arrived_role_swap_failed", character_id=event.character_id)
 
 
+async def _handle_character_died(bot: PanemBot, event: CharacterDied) -> None:
+    """A Simulation-mode character's `health` bottomed out
+    (`panem_sim.systems.needs`/`apply_auto_death`) -- DM the owner so a
+    death that happened with nobody watching the tick doesn't go
+    unnoticed, matching `CharacterArrived`'s guild/member lookup."""
+    guild = bot.get_guild(bot.settings.discord_guild_id)
+    if guild is None:
+        logger.warning("character_died_no_guild", character_id=event.character_id)
+        return
+
+    async with bot.db() as session:
+        character = await session.get(Character, event.character_id)
+        user = await session.get(User, character.user_id) if character is not None else None
+
+    if character is None or user is None:
+        logger.warning("character_died_no_character", character_id=event.character_id)
+        return
+
+    member = guild.get_member(user.discord_id)
+    if member is None:
+        try:
+            member = await guild.fetch_member(user.discord_id)
+        except discord.HTTPException:
+            logger.warning("character_died_no_member", character_id=event.character_id)
+            return
+
+    with contextlib.suppress(discord.Forbidden):
+        await member.send(
+            t(
+                "character_death_dm",
+                name=character.name,
+                cause=character.death_cause or "Unknown.",
+            )
+        )
+
+
 async def _dispatch(bot: PanemBot, raw: Any) -> None:
     event = parse_message(raw)
     if isinstance(event, NarrationLine):
@@ -353,6 +392,8 @@ async def _dispatch(bot: PanemBot, raw: Any) -> None:
         await _handle_character_arrived(bot, event)
     elif isinstance(event, NpcChatter):
         await _handle_npc_chatter(bot, event)
+    elif isinstance(event, CharacterDied):
+        await _handle_character_died(bot, event)
 
 
 async def _handle_sim_alert(bot: PanemBot, raw: str) -> None:

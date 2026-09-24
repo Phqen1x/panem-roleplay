@@ -127,6 +127,11 @@ class Character(TimestampMixin, Base):
 
     name: Mapped[str] = mapped_column(String(32), nullable=False)
     age: Mapped[int] = mapped_column(Integer, nullable=False)
+    gender: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    """`Gender` -- chosen at creation (`GenderSelectView`), changeable any
+    time via `/character gender`. `None` for a character that never set one
+    (an older row, or the player skipped it) -- NPC dialogue
+    (`panem_bot.services.dialogue`) falls back to "they/their" pronouns."""
     appearance: Mapped[str] = mapped_column(String(400), nullable=False, default="")
     backstory: Mapped[str] = mapped_column(String(1500), nullable=False, default="")
     status: Mapped[str] = mapped_column(
@@ -366,6 +371,12 @@ class Npc(TimestampMixin, Base):
     district_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     age: Mapped[int] = mapped_column(Integer, nullable=False)
+    gender: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    """`Gender` -- every NPC `panem_sim.world.seed_npcs` creates gets one
+    assigned (from `NpcContent.gender` if authored, otherwise randomly);
+    nullable only so a pre-existing row or a manually-inserted one doesn't
+    need a backfill. `None` falls back to "they/their" the same as an
+    unset `Character.gender` does."""
     job_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     traits: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)

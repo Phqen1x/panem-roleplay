@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
+import random
 import re
 import uuid
 
@@ -20,6 +21,7 @@ from panem_bot.services import jail as jail_svc
 from panem_bot.services import jobs as jobs_svc
 from panem_bot.services.staff import log_staff_action
 from panem_bot.strings import t
+from panem_bot.views import GENDER_LABELS
 from panem_shared import constants, job_levels
 from panem_shared.content.traits import speech_tone
 from panem_shared.db.models import (
@@ -35,7 +37,15 @@ from panem_shared.db.models import (
     WorldClock,
     WorldLoreSettings,
 )
-from panem_shared.enums import CharacterStatus, DayPhase, JobLevel, OwnerKind, Position, SceneStatus
+from panem_shared.enums import (
+    CharacterStatus,
+    DayPhase,
+    Gender,
+    JobLevel,
+    OwnerKind,
+    Position,
+    SceneStatus,
+)
 
 MESSAGE_LINK_RE = re.compile(r"/channels/(\d+)/(\d+)/(\d+)$")
 
@@ -240,10 +250,12 @@ class StaffCog(commands.Cog):
             )
 
     @group.command(name="kill", description="Kill a character")
-    @app_commands.describe(character="Character name")
+    @app_commands.describe(character="Character name", reason="Cause of death, sent to the owner")
     @app_commands.autocomplete(character=autocomplete.any_approved)
     @app_commands.check(_is_staff)
-    async def kill(self, interaction: discord.Interaction, character: str) -> None:
+    async def kill(
+        self, interaction: discord.Interaction, character: str, reason: str | None = None
+    ) -> None:
         async with self.bot.db() as session:
             row = (
                 await session.execute(select(Character).where(Character.name == character))
@@ -252,14 +264,28 @@ class StaffCog(commands.Cog):
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
             row.status = CharacterStatus.DEAD.value
+            row.death_cause = reason.strip() if reason and reason.strip() else None
+            discord_id = (await session.get(User, row.user_id)).discord_id
             await log_staff_action(
                 session,
                 bot=self.bot,
                 staff_discord_id=interaction.user.id,
                 action="kill",
                 target=str(row.id),
+                payload={"reason": reason},
             )
         await interaction.response.send_message(f"**{character}** has died.", ephemeral=True)
+
+        member = interaction.guild.get_member(discord_id) if interaction.guild else None
+        if member:
+            with contextlib.suppress(discord.Forbidden):
+                await member.send(
+                    t(
+                        "character_death_dm",
+                        name=character,
+                        cause=reason or "Killed by order of the Capitol.",
+                    )
+                )
 
     @group.command(name="jail", description="Forcibly jail a character for a set number of ticks")
     @app_commands.describe(
@@ -928,11 +954,17 @@ class StaffCog(commands.Cog):
         age="Age in years",
         home_location="Where they live (also where they start)",
         traits="Comma-separated personality traits",
+        gender="Feeds pronouns into their dialogue (random if omitted)",
         job="Catalog job id (optional -- /staff job list to see options)",
         backstory="Backstory text (optional)",
         appearance="Appearance text (optional)",
     )
     @app_commands.autocomplete(district=autocomplete.districts)
+    @app_commands.choices(
+        gender=[
+            app_commands.Choice(name=label, value=value) for value, label in GENDER_LABELS.items()
+        ]
+    )
     @app_commands.check(_is_staff)
     async def npc_add(
         self,
@@ -942,6 +974,7 @@ class StaffCog(commands.Cog):
         age: app_commands.Range[int, 1, 120],
         home_location: str,
         traits: str,
+        gender: app_commands.Choice[str] | None = None,
         job: str | None = None,
         backstory: app_commands.Range[str, 0, 1500] | None = None,
         appearance: app_commands.Range[str, 0, 400] | None = None,
@@ -973,12 +1006,14 @@ class StaffCog(commands.Cog):
             return
 
         npc_id = f"staff_{district}_{uuid.uuid4().hex[:8]}"
+        npc_gender = gender.value if gender is not None else random.choice(list(Gender)).value
         async with self.bot.db() as session:
             row = Npc(
                 id=npc_id,
                 district_id=district,
                 name=name,
                 age=age,
+                gender=npc_gender,
                 job_id=job_row.id if job_row is not None else None,
                 home_location_id=home_location,
                 location_id=home_location,

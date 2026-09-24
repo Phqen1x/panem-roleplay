@@ -141,6 +141,44 @@ function characterCard(ctx, character, catalog, { onChanged }) {
   const tagInput = el("input", { type: "text", value: character.proxy_tag || "", placeholder: "tag::" });
   const resultLine = el("p", { class: "result-line" });
 
+  // A file upload alongside the URL field -- typing or finding a hosted
+  // image URL is real friction, and this stores the actual bytes
+  // (`panem_shared.avatars`) rather than only a URL, unlike `/character
+  // avatar`'s Discord-attachment option which just took Discord's own
+  // ~24h-expiring CDN URL. A stopgap until the Picrew-style customizer
+  // below covers every character's primary portrait, not just layered
+  // appearance art.
+  const avatarFileInput = el("input", { type: "file", accept: "image/png,image/jpeg,image/webp,image/gif" });
+  const avatarUploadResult = el("span", { class: "result-line" });
+  const avatarUploadBtn = el("button", { class: "btn secondary", type: "button" }, "Upload image");
+  avatarUploadBtn.addEventListener("click", async () => {
+    const file = avatarFileInput.files && avatarFileInput.files[0];
+    if (!file) {
+      avatarUploadResult.className = "result-line lose";
+      avatarUploadResult.textContent = "Choose a file first.";
+      return;
+    }
+    avatarUploadResult.textContent = "Uploading…";
+    avatarUploadResult.className = "result-line";
+    const formData = new FormData();
+    formData.append("discord_id", String(ctx.discordId()));
+    formData.append("file", file);
+    try {
+      const updated = await ctx.apiFetch(
+        `/activity/dashboard/characters/${character.id}/avatar-upload`,
+        { method: "POST", body: formData }
+      );
+      avatarInput.value = updated.avatar_url || "";
+      avatarFileInput.value = "";
+      avatarUploadResult.className = "result-line win";
+      avatarUploadResult.textContent = "Uploaded.";
+      onChanged();
+    } catch (err) {
+      avatarUploadResult.className = "result-line lose";
+      avatarUploadResult.textContent = err.message;
+    }
+  });
+
   const previewContainer = el("div", { class: "avatar-preview small" });
   const previewAvatar = mountAvatar(previewContainer, catalog, character.appearance_layers || {});
 
@@ -221,6 +259,14 @@ function characterCard(ctx, character, catalog, { onChanged }) {
     deathCauseLine,
     el("p", { class: "tab-status" }, `${character.job_title || "no job"} -- ${character.money} money`),
     el("div", { class: "field-row" }, el("label", { text: "Avatar URL" }), avatarInput),
+    el(
+      "div",
+      { class: "field-row" },
+      el("label", { text: "Or upload an image" }),
+      avatarFileInput,
+      avatarUploadBtn
+    ),
+    avatarUploadResult,
     el("div", { class: "field-row" }, el("label", { text: "Proxy tag" }), tagInput),
     el("div", { class: "field-row" }, saveBtn, retireBtn, customizeBtn),
     resultLine,

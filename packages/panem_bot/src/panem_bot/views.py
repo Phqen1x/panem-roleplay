@@ -85,6 +85,54 @@ class IllicitDeclareView(discord.ui.View):
         await self._on_choose(interaction, True)
 
 
+GENDER_LABELS: dict[str, str] = {
+    "male": "Male",
+    "female": "Female",
+    "nonbinary": "Non-binary",
+}
+"""Keys are `Gender` values -- shown on both the creation prompt
+(`GenderSelectView`) and `/character gender`'s own choice list."""
+
+
+class GenderSelectView(discord.ui.View):
+    """A step in character creation (mirrors `IllicitDeclareView`'s plain-
+    button shape -- three fixed options, not a `Select`) that sets
+    `Character.gender`, which feeds pronouns into NPC dialogue
+    (`panem_bot.services.dialogue`). Includes a skip option since this is
+    new and no existing character should be forced to retroactively pick
+    one just to keep using the bot."""
+
+    def __init__(
+        self, on_choose: Callable[[discord.Interaction, str | None], Awaitable[None]]
+    ) -> None:
+        super().__init__(timeout=300)
+        self._on_choose = on_choose
+
+    @discord.ui.button(label="Male", style=discord.ButtonStyle.secondary)
+    async def male(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[GenderSelectView]
+    ) -> None:
+        await self._on_choose(interaction, "male")
+
+    @discord.ui.button(label="Female", style=discord.ButtonStyle.secondary)
+    async def female(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[GenderSelectView]
+    ) -> None:
+        await self._on_choose(interaction, "female")
+
+    @discord.ui.button(label="Non-binary", style=discord.ButtonStyle.secondary)
+    async def nonbinary(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[GenderSelectView]
+    ) -> None:
+        await self._on_choose(interaction, "nonbinary")
+
+    @discord.ui.button(label="Skip", style=discord.ButtonStyle.secondary)
+    async def skip(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[GenderSelectView]
+    ) -> None:
+        await self._on_choose(interaction, None)
+
+
 RP_MODE_DESCRIPTIONS: dict[str, str] = {
     "story": "Freeform RP only -- no economy, crime, housing, work, or NPC interaction.",
     "life": "The full economy/crime/market/work/travel loop, minus housing and daily needs.",
@@ -167,6 +215,41 @@ class ConfirmView(discord.ui.View):
         if not await self._guard(interaction):
             return
         await interaction.response.edit_message(content="Cancelled -- nothing changed.", view=None)
+
+
+class CharacterListView(discord.ui.View):
+    """`/character list`'s "hide dead/retired" toggle -- dead/retired
+    characters are never deleted (they stay in the list, sorted to the
+    bottom by `panem_bot.cogs.characters._render_character_list`) so this
+    just re-renders the same ephemeral message with them filtered out or
+    back in, same self-target restriction as `ConfirmView`."""
+
+    def __init__(
+        self,
+        *,
+        target_discord_id: int,
+        on_toggle: Callable[[discord.Interaction, bool], Awaitable[None]],
+        hide_dead: bool,
+    ) -> None:
+        super().__init__(timeout=300)
+        self._target_discord_id = target_discord_id
+        self._on_toggle = on_toggle
+        self._hide_dead = hide_dead
+        self._sync_label()
+
+    def _sync_label(self) -> None:
+        self.toggle.label = "Show all" if self._hide_dead else "Hide dead/retired"
+
+    @discord.ui.button(style=discord.ButtonStyle.secondary)
+    async def toggle(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[CharacterListView]
+    ) -> None:
+        if interaction.user.id != self._target_discord_id:
+            await interaction.response.send_message("That's not yours to filter.", ephemeral=True)
+            return
+        self._hide_dead = not self._hide_dead
+        self._sync_label()
+        await self._on_toggle(interaction, self._hide_dead)
 
 
 class ChangesNoteModal(discord.ui.Modal, title="Request Changes"):

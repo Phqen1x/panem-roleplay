@@ -147,6 +147,19 @@ class Settings(BaseSettings):
     # no dependency on panem_api being reachable from Discord clients).
     activity_public_url: str = ""
 
+    # Where `panem_bot` reaches `panem_api` server-to-server (persisting an
+    # uploaded `/character avatar` attachment's bytes, `panem_shared.
+    # avatars`) -- deliberately separate from `activity_public_url`, which
+    # is what a Discord *client* needs and may be a tunnel/CDN domain this
+    # container can't necessarily reach itself. `deploy/docker-compose.yml`
+    # sets this to "http://api:8000" (the compose service name); left
+    # unset, `resolved_api_internal_url()` assumes every process is on the
+    # same host and falls back to `api_port` on localhost.
+    api_internal_url: str = ""
+
+    def resolved_api_internal_url(self) -> str:
+        return self.api_internal_url or f"http://localhost:{self.api_port}"
+
     def role_id_override_for_district(self, district_id: int) -> int:
         """0 means unset (auto-manage by name); see `*_role_id` fields above."""
         if district_id == 0:

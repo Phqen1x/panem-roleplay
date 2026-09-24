@@ -302,3 +302,19 @@ class TestAutoAfflictionsAndDeath:
 
         assert character.status == CharacterStatus.DEAD.value
         assert character.death_cause is not None
+
+    def test_run_emits_a_character_died_event_on_the_death_tick(self):
+        # hunger already at its own health-decay threshold so the phase
+        # step (which also fires on this same tick) decays health instead
+        # of recovering it -- health lands back on HEALTH_MIN rather than
+        # ticking up past it before the nightly death check runs.
+        character = make_character(health=constants.HEALTH_MIN, hunger=constants.HUNGER_MAX)
+        state = WorldState(
+            districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
+        )
+
+        events = needs.run(state, make_ctx(tick=constants.TICKS_PER_DAY, rng=FixedRng(0.0)))
+
+        assert len(events) == 1
+        assert events[0].kind == "CharacterDied"
+        assert events[0].character_id == 1

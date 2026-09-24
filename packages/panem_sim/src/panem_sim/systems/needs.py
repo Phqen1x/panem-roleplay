@@ -49,7 +49,7 @@ from panem_shared.afflictions import (
 )
 from panem_shared.db.models import Character, Npc
 from panem_shared.enums import RpMode
-from panem_shared.events import AnyWorldEvent
+from panem_shared.events import AnyWorldEvent, CharacterDied
 from panem_sim.state import TickContext, WorldState
 
 
@@ -82,9 +82,9 @@ def _apply_character_phase_needs(character: Character, rng: random.Random) -> No
         )
 
 
-def _apply_character_nightly_needs(character: Character, state: WorldState, day_index: int) -> None:
+def _apply_character_nightly_needs(character: Character, state: WorldState, day_index: int) -> bool:
     if character.rp_mode != RpMode.SIMULATION.value:
-        return
+        return False
 
     if character.money >= constants.NIGHTLY_LIVING_COST:
         character.money -= constants.NIGHTLY_LIVING_COST
@@ -114,7 +114,7 @@ def _apply_character_nightly_needs(character: Character, state: WorldState, day_
     state.new_character_afflictions.extend(
         apply_auto_afflictions_sync(character, state.affliction_types, active)
     )
-    apply_auto_death(character)
+    return apply_auto_death(character)
 
 
 def _apply_npc_needs(npc: Npc) -> None:
@@ -131,6 +131,8 @@ def _apply_npc_needs(npc: Npc) -> None:
 
 
 def run(state: WorldState, ctx: TickContext) -> list[AnyWorldEvent]:
+    events: list[AnyWorldEvent] = []
+
     if ctx.tick % simtime.TICKS_PER_PHASE == 0:
         for character in state.characters.values():
             _apply_character_phase_needs(character, ctx.rng)
@@ -138,8 +140,9 @@ def run(state: WorldState, ctx: TickContext) -> list[AnyWorldEvent]:
     if ctx.tick % constants.TICKS_PER_DAY == 0:
         day_index = (ctx.tick - 1) // constants.TICKS_PER_DAY
         for character in state.characters.values():
-            _apply_character_nightly_needs(character, state, day_index)
+            if _apply_character_nightly_needs(character, state, day_index):
+                events.append(CharacterDied(tick=ctx.tick, character_id=character.id))
         for npc in state.npcs.values():
             _apply_npc_needs(npc)
 
-    return []
+    return events

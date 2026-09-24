@@ -121,19 +121,23 @@ function engagementPanel(ctx) {
         )
       );
 
-      // CTA Button
-      const threadUrl = status.discord_thread_url || "https://discord.com";
+      // CTA Button -- a plain `<a target="_blank">` doesn't work here: the
+      // Activity runs inside Discord's sandboxed iframe, which swallows
+      // that kind of navigation rather than opening anything, so this
+      // routes through `ctx.openExternalLink` (the embedded-app-sdk's
+      // `openExternalLink` command outside the sandbox, `window.open` as
+      // a plain-browser preview-mode fallback) instead.
+      const threadUrl = status.discord_thread_url;
       const ctaBtn = el(
-        "a",
+        "button",
         {
           class: "btn primary btn-discord-cta",
-          href: threadUrl,
-          target: "_blank",
-          rel: "noopener",
-          style: "text-decoration: none;",
+          type: "button",
+          disabled: threadUrl ? undefined : "disabled",
+          onclick: () => threadUrl && ctx.openExternalLink(threadUrl),
         },
         renderIcon("discord", 16),
-        "Continue in Discord →"
+        threadUrl ? "Continue in Discord →" : "No active thread"
       );
 
       // District Motto Plaque

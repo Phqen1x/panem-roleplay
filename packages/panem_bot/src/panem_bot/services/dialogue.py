@@ -36,7 +36,7 @@ from panem_shared.db.models import (
     Npc,
     PanemHistoryEntry,
 )
-from panem_shared.enums import CharacterStatus, Position, RpMode
+from panem_shared.enums import CharacterStatus, Gender, Position, RpMode
 from panem_shared.lemonade import omni
 from panem_shared.lore import match_history_entries
 from panem_shared.memory import retrieve as retrieve_memories
@@ -92,6 +92,20 @@ async def check_and_spend_stamina(
 
 def resolve_provider(npc: Npc, settings: Settings) -> str:
     return npc.provider_override or settings.dialogue_provider
+
+
+_PRONOUNS: dict[str, str] = {
+    Gender.MALE.value: "he/him",
+    Gender.FEMALE.value: "she/her",
+    Gender.NONBINARY.value: "they/them",
+}
+
+
+def _pronouns(gender: str | None) -> str | None:
+    """`None` (an unset `Character.gender`/`Npc.gender`) means "they/them"
+    -- the system prompt's default absent a `pronouns` line at all, so
+    this just omits the line rather than spelling it out."""
+    return _PRONOUNS.get(gender) if gender else None
 
 
 def build_request_context(
@@ -180,6 +194,9 @@ def build_request_context(
         "stance": stance,
         "tone": tone,
     }
+    npc_pronouns = _pronouns(npc.gender)
+    if npc_pronouns:
+        npc_block["pronouns"] = npc_pronouns
     if npc_job_title:
         npc_block["job"] = npc_job_title
     if npc.traits:
@@ -207,6 +224,9 @@ def build_request_context(
         scene["lore"] = lore_summary
 
     speaker: dict[str, str] = {"name": character.name}
+    speaker_pronouns = _pronouns(character.gender)
+    if speaker_pronouns:
+        speaker["pronouns"] = speaker_pronouns
     if character_job_title:
         speaker["job"] = character_job_title
     if character_home_district is not None:
@@ -333,11 +353,19 @@ def build_npc_to_npc_context(
     conversation would draw on."""
     tone = (npc.speech_style or {}).get("tone", "plain")
     constraints = {"max_words": str(_length_matched_max_words(message))} if message else {}
+    npc_block = {"name": npc.name, "stance": "neutral", "tone": tone}
+    npc_pronouns = _pronouns(npc.gender)
+    if npc_pronouns:
+        npc_block["pronouns"] = npc_pronouns
+    speaker = {"name": other_npc.name}
+    speaker_pronouns = _pronouns(other_npc.gender)
+    if speaker_pronouns:
+        speaker["pronouns"] = speaker_pronouns
     return omni.RequestContext(
         mode=omni.RequestMode.DIALOGUE,
-        npc={"name": npc.name, "stance": "neutral", "tone": tone},
+        npc=npc_block,
         scene={"location": location.name, "district": district.name},
-        speaker={"name": other_npc.name},
+        speaker=speaker,
         world_notes=world_notes,
         history=tuple(match_history_entries(history_entries, message)),
         constraints=constraints,

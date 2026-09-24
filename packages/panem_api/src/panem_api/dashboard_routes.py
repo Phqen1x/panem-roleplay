@@ -40,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from panem_api import discord_staff
 from panem_shared import affliction_types as affliction_types_svc
+from panem_shared import avatars as avatars_svc
 from panem_shared import blackmarket as blackmarket_svc
 from panem_shared import characters as characters_svc
 from panem_shared import constants, job_levels, simtime
@@ -84,6 +85,7 @@ from panem_shared.db.session import session_scope
 from panem_shared.enums import (
     CharacterStatus,
     DayPhase,
+    Gender,
     LocationKind,
     OwnerKind,
     Position,
@@ -674,6 +676,7 @@ class CharacterDetail(BaseModel):
     name: str
     status: str
     age: int
+    gender: str | None = None
     appearance: str
     appearance_layers: dict[str, int]
     backstory: str
@@ -701,6 +704,7 @@ def _character_detail(
         name=character.name,
         status=character.status,
         age=character.age,
+        gender=character.gender,
         appearance=character.appearance,
         appearance_layers=layers_svc.sanitize_stored_selection(character.appearance_layers),
         backstory=character.backstory,
@@ -732,6 +736,7 @@ class CreateCharacterRequest(BaseModel):
     district_id: int
     name: str
     age: int
+    gender: str | None = None
     appearance: str = ""
     backstory: str = ""
     avatar_url: str | None = None
@@ -751,6 +756,7 @@ class UpdateCharacterRequest(BaseModel):
     avatar_url: str | None = None
     proxy_tag: str | None = None
     appearance_layers: dict[str, int] | None = None
+    gender: str | None = None
 
 
 def build_characters_router(
@@ -759,6 +765,8 @@ def build_characters_router(
     session_factory: async_sessionmaker[AsyncSession] | None,
     max_characters_per_user: int,
     redis_client: redis.Redis,
+    static_dir: Path,
+    activity_public_url: str,
 ) -> APIRouter:
     """The Character tab's REST surface: list/create/edit/retire, mirroring
     `/character list|create|avatar|tag|retire`. Unlike Discord's `/character
@@ -821,6 +829,8 @@ def build_characters_router(
             raise HTTPException(status_code=400, detail="No such district")
         if body.rp_mode not in {mode.value for mode in RpMode}:
             raise HTTPException(status_code=400, detail="Invalid RP mode")
+        if body.gender is not None and body.gender not in {g.value for g in Gender}:
+            raise HTTPException(status_code=400, detail="Invalid gender")
         is_story = body.rp_mode == RpMode.STORY.value
         if not is_story and body.shift_phase not in {phase.value for phase in DayPhase}:
             raise HTTPException(status_code=400, detail="Invalid shift phase")
@@ -841,6 +851,7 @@ def build_characters_router(
                     district_id=body.district_id,
                     name=body.name,
                     age=body.age,
+                    gender=body.gender,
                     appearance=body.appearance,
                     backstory=body.backstory,
                     avatar_url=body.avatar_url,
@@ -878,8 +889,48 @@ def build_characters_router(
                     character.appearance_layers = await layers_svc.validate_layer_selection(
                         session, body.appearance_layers
                     )
+                if body.gender is not None:
+                    if body.gender not in {g.value for g in Gender}:
+                        raise HTTPException(status_code=400, detail="Invalid gender")
+                    character.gender = body.gender
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
+            current_tick = await _current_tick(session)
+            return _character_detail(character, content=content, current_tick=current_tick)
+
+    @router.post("/{character_id}/avatar-upload", response_model=CharacterDetail)
+    async def upload_my_character_avatar(
+        character_id: int,
+        discord_id: int = Form(...),
+        file: UploadFile = File(...),  # noqa: B008 -- FastAPI's own sentinel-default idiom
+    ) -> CharacterDetail:
+        """The file-upload alternative to `PATCH .../avatar_url`'s plain
+        text field -- typing/finding a hosted image URL is the whole
+        friction this exists to remove. Persists the bytes under
+        `static_dir` (`avatars_svc.save_avatar_image`, same validation and
+        on-disk layout `panem_shared.layers` uses for staff-uploaded
+        artwork) rather than only storing a URL, so it survives independent
+        of wherever the image originally came from -- unlike `/character
+        avatar`'s Discord-attachment option, which just took the CDN's own
+        ~24h-expiring URL."""
+        if not activity_public_url:
+            raise HTTPException(
+                status_code=400,
+                detail="Avatar uploads aren't configured on this server (no public URL set).",
+            )
+        data = await file.read()
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            try:
+                relative_path = avatars_svc.save_avatar_image(
+                    content_type=file.content_type or "", data=data, static_dir=static_dir
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            character.avatar_url = f"{activity_public_url.rstrip('/')}/{relative_path}"
             current_tick = await _current_tick(session)
             return _character_detail(character, content=content, current_tick=current_tick)
 

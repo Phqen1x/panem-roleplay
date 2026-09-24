@@ -9,7 +9,7 @@ import pytest
 from panem_bot import narrator
 from panem_shared.db.models import Character, DiscordChannel, Scene, User
 from panem_shared.enums import ChannelKind, CharacterStatus, SceneKind, SceneStatus
-from panem_shared.events import Bulletin, CharacterArrived, NarrationLine
+from panem_shared.events import Bulletin, CharacterArrived, CharacterDied, NarrationLine
 
 
 class FakeSettings:
@@ -281,6 +281,61 @@ class TestHandleCharacterArrived:
         await narrator._handle_character_arrived(bot, event)  # no raise
 
 
+class TestHandleCharacterDied:
+    async def _seed_character(
+        self, db_session, *, death_cause: str | None = "Died of dehydration."
+    ) -> None:
+        user = User(discord_id=42)
+        db_session.add(user)
+        await db_session.flush()
+        db_session.add(
+            Character(
+                id=1,
+                user_id=user.id,
+                district_id=1,
+                current_district_id=1,
+                name="Traveler",
+                age=20,
+                status=CharacterStatus.DEAD.value,
+                death_cause=death_cause,
+            )
+        )
+        await db_session.flush()
+
+    async def test_no_op_when_guild_not_found(self, bot: FakeBot):
+        bot.get_guild = MagicMock(return_value=None)
+        event = CharacterDied(tick=1, character_id=1)
+        await narrator._handle_character_died(bot, event)  # no raise
+
+    async def test_no_op_when_character_not_found(self, bot: FakeBot):
+        bot.get_guild = MagicMock(return_value=_make_guild([], None))
+        event = CharacterDied(tick=1, character_id=999)
+        await narrator._handle_character_died(bot, event)  # no raise
+
+    async def test_dms_the_owner_with_the_death_cause(self, db_session, bot: FakeBot):
+        await self._seed_character(db_session, death_cause="Died of dehydration.")
+        member = MagicMock()
+        member.send = AsyncMock()
+        bot.get_guild = MagicMock(return_value=_make_guild([], member))
+
+        event = CharacterDied(tick=1, character_id=1)
+        await narrator._handle_character_died(bot, event)
+
+        member.send.assert_awaited_once()
+        message = member.send.await_args.args[0]
+        assert "Traveler" in message
+        assert "Died of dehydration." in message
+
+    async def test_forbidden_dm_is_swallowed(self, db_session, bot: FakeBot):
+        await self._seed_character(db_session)
+        member = MagicMock()
+        member.send = AsyncMock(side_effect=discord.Forbidden(MagicMock(), "nope"))
+        bot.get_guild = MagicMock(return_value=_make_guild([], member))
+
+        event = CharacterDied(tick=1, character_id=1)
+        await narrator._handle_character_died(bot, event)  # no raise
+
+
 class TestHandleSimAlert:
     async def test_posts_to_the_log_channel(self, bot: FakeBot):
         log_channel = AsyncMock(spec=discord.TextChannel)
@@ -324,6 +379,15 @@ class TestDispatch:
         await narrator._dispatch(bot, event.model_dump_json())
 
         handle_arrived.assert_awaited_once()
+
+    async def test_routes_character_died_to_its_handler(self, bot: FakeBot, monkeypatch):
+        handle_died = AsyncMock()
+        monkeypatch.setattr(narrator, "_handle_character_died", handle_died)
+
+        event = CharacterDied(tick=1, character_id=1)
+        await narrator._dispatch(bot, event.model_dump_json())
+
+        handle_died.assert_awaited_once()
 
     async def test_routes_bulletin_to_its_handler(self, bot: FakeBot, monkeypatch):
         handle_narration = AsyncMock()

@@ -17,7 +17,7 @@ from panem_shared import constants
 from panem_shared import layers as layers_svc
 from panem_shared.content.schemas import District
 from panem_shared.db.models import Character, Shift, User
-from panem_shared.enums import CharacterStatus, RpMode, ShiftResult
+from panem_shared.enums import CharacterStatus, Gender, RpMode, ShiftResult
 from panem_shared.errors import LimitReached, NotAllowed, NotFound, ValidationFailed
 from panem_shared.settings import Settings
 
@@ -143,6 +143,7 @@ async def create_character(
     job_title: str | None,
     shift_phase: str | None,
     max_characters: int,
+    gender: str | None = None,
     avatar_url: str | None = None,
     job_is_illicit: bool = False,
     appearance_layers: dict[str, int] | None = None,
@@ -160,6 +161,8 @@ async def create_character(
         raise NotAllowed("banned")
     if rp_mode not in {mode.value for mode in RpMode}:
         raise ValidationFailed("invalid_rp_mode")
+    if gender is not None and gender not in {g.value for g in Gender}:
+        raise ValidationFailed("invalid_gender")
 
     validate_character_fields(
         district_id=district_id, name=name, age=age, appearance=appearance, backstory=backstory
@@ -191,6 +194,7 @@ async def create_character(
         current_district_id=district_id,
         name=name,
         age=age,
+        gender=gender,
         appearance=appearance,
         backstory=backstory,
         avatar_url=avatar_url or None,

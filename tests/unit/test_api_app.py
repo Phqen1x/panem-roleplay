@@ -365,6 +365,25 @@ def work_app(db_session_factory):
 
 
 @pytest.fixture
+def work_app_with_avatar_uploads(db_session_factory, tmp_path):
+    """Same as `work_app`, but with `static_dir`/`activity_public_url` set
+    up the same way `staff_app_with_uploads` is for the layer-catalog
+    uploads -- the avatar-upload endpoint writes a real file to disk and
+    needs a public base URL to build the stored `avatar_url` from."""
+    content = make_content_with_job()
+    redis_client = FakeRedis()
+    app = create_app(
+        content=content,
+        redis_client=redis_client,
+        session_factory=db_session_factory,
+        static_dir=tmp_path,
+        activity_public_url="https://example.com",
+    )
+    app.state.fake_redis = redis_client  # type: ignore[attr-defined]
+    return app
+
+
+@pytest.fixture
 def poach_app(db_session_factory):
     content = make_content_with_outskirts()
     redis_client = FakeRedis()
@@ -2231,6 +2250,63 @@ class TestDashboardCharacters:
             response = await client.patch(
                 f"/activity/dashboard/characters/{char_id}",
                 json={"discord_id": 5, "avatar_url": "not-a-url"},
+            )
+        assert response.status_code == 400
+
+    async def test_avatar_upload_saves_the_file_and_sets_an_absolute_url(
+        self, work_app_with_avatar_uploads, db_session_factory, tmp_path
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=work_app_with_avatar_uploads)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/characters/{char_id}/avatar-upload",
+                data={"discord_id": "5"},
+                files={"file": ("portrait.png", b"fake-png-bytes", "image/png")},
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["avatar_url"].startswith("https://example.com/uploads/avatars/")
+        saved_path = tmp_path / body["avatar_url"].removeprefix("https://example.com/")
+        assert saved_path.exists()
+        assert saved_path.read_bytes() == b"fake-png-bytes"
+
+    async def test_avatar_upload_rejects_a_non_owner(
+        self, work_app_with_avatar_uploads, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=work_app_with_avatar_uploads)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/characters/{char_id}/avatar-upload",
+                data={"discord_id": "6"},
+                files={"file": ("portrait.png", b"fake-png-bytes", "image/png")},
+            )
+        assert response.status_code == 404
+
+    async def test_avatar_upload_rejects_a_disallowed_content_type(
+        self, work_app_with_avatar_uploads, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=work_app_with_avatar_uploads)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/characters/{char_id}/avatar-upload",
+                data={"discord_id": "5"},
+                files={"file": ("portrait.svg", b"<svg></svg>", "image/svg+xml")},
+            )
+        assert response.status_code == 400
+
+    async def test_avatar_upload_refused_when_no_public_url_is_configured(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/characters/{char_id}/avatar-upload",
+                data={"discord_id": "5"},
+                files={"file": ("portrait.png", b"fake-png-bytes", "image/png")},
             )
         assert response.status_code == 400
 
