@@ -89,6 +89,23 @@ fi
 snap wait system seed.loaded
 "
 
+echo "==> Installing system libraries the embeddable Lemonade runtime needs"
+lxc exec "$CONTAINER" -- bash -c "
+set -e
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+# lemond (lemonade/README.md's 'Nothing installed' path, run here by
+# panem.lemonade -- deploy/snap/README.md) dynamically links against the
+# AMD GPU DRM library unconditionally, even in --profile lite/CPU-only
+# use with no GPU passthrough into this container at all -- without it,
+# lemond fails to start at all with 'error while loading shared
+# libraries: libdrm_amdgpu.so.1: cannot open shared object file', which a
+# minimal ubuntu:24.04 LXD container doesn't ship by default. Installed
+# before the snap below so panem.lemonade's first start already has it,
+# instead of crash-looping until someone notices and installs it by hand.
+apt-get install -y -qq libdrm-amdgpu1 >/dev/null
+"
+
 echo "==> Pushing and (re)installing the panem snap from $SNAP_FILE"
 lxc file push "$SNAP_FILE" "$CONTAINER/root/panem.snap"
 lxc exec "$CONTAINER" -- bash -c '
