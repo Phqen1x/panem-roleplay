@@ -278,6 +278,36 @@ header {
   font-size: 15px;
 }
 
+/* A genuine failure sharing a `.tab-status` element with that same
+   element's ordinary loading/empty-state text (`tabs/_shared.js`'s
+   `setStatusText(el, text, { error: true })`) -- recolored to the same
+   `--danger` ink `.result-line.lose` uses and marked with a small glyph,
+   so "couldn't load the market" reads as a problem at a glance instead of
+   sitting in the same muted gray as "Loading…". Lighter-weight than
+   `.result-line`'s bordered banner on purpose: this text often lives
+   inline in a tab's header row, not as its own block. */
+.tab-status.error {
+  color: color-mix(in srgb, var(--danger) 88%, var(--text));
+}
+
+.tab-status.error::before {
+  content: "⚠ ";
+}
+
+/* The whole-tab failure `app.js`'s `showTab()` renders when a tab module
+   itself fails to import/mount -- rare (a real bug, a bad network
+   response for the module file), but when it happens it's the entire
+   tab's content, so it gets a full `.panel` treatment rather than a bare
+   line of text, with the same crimson top edge `.panel::before` normally
+   draws in gold. */
+.tab-load-error::before {
+  background: linear-gradient(90deg, transparent 0%, var(--danger) 50%, transparent 100%);
+}
+
+.tab-load-error h2 {
+  color: color-mix(in srgb, var(--danger) 85%, var(--text));
+}
+
 .tab-placeholder {
   text-align: center;
   color: var(--muted);
@@ -559,17 +589,71 @@ table.data-table td.lose {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
+/* An action's outcome (a bail paid, a trade rejected, a validation
+   complaint) -- read through `err.message`/`humanize()`
+   (`tabs/_shared.js`), so the text itself is already a full sentence;
+   this is the neoclassical chrome around it: a small serif verdict chip
+   ("Confirmed"/"Denied", read like an official notice) plus a tinted,
+   bordered strip instead of the old bare colored text, so a result reads
+   as clearly as a `.panel` heading does rather than blending into
+   whatever's above it. Elements exist in the DOM from the moment their
+   tab mounts (built once, then `.textContent`/`.className` toggled per
+   attempt) -- `:empty` keeps an untouched or just-cleared one collapsed
+   instead of showing a label-less, message-less bar. */
 .result-line {
-  font-size: 14px;
-  margin-top: 8px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 9px 14px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.result-line:empty {
+  display: none;
+  margin-top: 0;
+  padding: 0;
+  border: none;
+}
+
+.result-line::before {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  font-family: var(--font-serif);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 4px;
+  line-height: 1.4;
 }
 
 .result-line.win {
-  color: #7cd992;
+  color: color-mix(in srgb, var(--success) 82%, var(--text));
+  background: color-mix(in srgb, var(--success) 12%, var(--panel));
+  border-color: color-mix(in srgb, var(--success) 42%, var(--border));
+}
+
+.result-line.win::before {
+  content: "Confirmed";
+  color: #08150c;
+  background: var(--success);
 }
 
 .result-line.lose {
-  color: #e0736b;
+  color: color-mix(in srgb, var(--danger) 88%, var(--text));
+  background: color-mix(in srgb, var(--danger) 12%, var(--panel));
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+
+.result-line.lose::before {
+  content: "Denied";
+  color: #1c0908;
+  background: var(--danger);
 }
 
 table.data-table {

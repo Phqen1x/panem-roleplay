@@ -17,7 +17,7 @@
 // Accept/Decline view does -- a recipient discovers a pending offer by
 // reopening this tab (or switching characters, which remounts it), same
 // "poll, don't push" posture the Engagement panel already has.
-import { fetchJson, el, renderIcon } from "./_shared.js?v=5";
+import { fetchJson, el, renderIcon, setStatusText } from "./_shared.js?v=6";
 
 function determineStatus(r) {
   if (r.status) return r.status;
@@ -53,7 +53,7 @@ function engagementPanel(ctx) {
     const discordId = ctx.discordId();
     contentHost.innerHTML = "";
     if (!characterId || !discordId) {
-      statusEl.textContent = "Pick a character above first.";
+      setStatusText(statusEl, "Pick a character above first.");
       return;
     }
     try {
@@ -68,7 +68,7 @@ function engagementPanel(ctx) {
         ? status.participant_character_names.join(", ")
         : "You";
 
-      statusEl.textContent = "";
+      setStatusText(statusEl, "");
 
       const titleEl = el("div", { class: "engagement-title", text: title });
 
@@ -139,7 +139,7 @@ function engagementPanel(ctx) {
 
       contentHost.append(titleEl, sceneFrame, metaList, ctaBtn, mottoBox);
     } catch (err) {
-      statusEl.textContent = `Could not load engagement status: ${err.message}`;
+      setStatusText(statusEl, `Could not load engagement status: ${err.message}`, { error: true });
     }
   }
 
@@ -356,7 +356,7 @@ function residentsPanel(ctx, openDossierFn) {
     const discordId = ctx.discordId();
     listHost.innerHTML = "";
     if (!characterId || !discordId) {
-      statusEl.textContent = "Pick a character above first.";
+      setStatusText(statusEl, "Pick a character above first.");
       return;
     }
     const charList = typeof ctx.characters === "function" ? ctx.characters() : [];
@@ -373,10 +373,10 @@ function residentsPanel(ctx, openDossierFn) {
         `/activity/dashboard/residents/${characterId}?discord_id=${encodeURIComponent(discordId)}`
       );
       allResidents = data.residents || [];
-      statusEl.textContent = "";
+      setStatusText(statusEl, "");
       renderTable();
     } catch (err) {
-      statusEl.textContent = `Could not load residents: ${err.message}`;
+      setStatusText(statusEl, `Could not load residents: ${err.message}`, { error: true });
     }
   }
 
@@ -629,14 +629,14 @@ function tradePanel(ctx) {
     const characterId = ctx.characterId();
     const discordId = ctx.discordId();
     if (!characterId || !discordId) {
-      statusEl.textContent = "Pick a character above first.";
+      setStatusText(statusEl, "Pick a character above first.");
       return;
     }
     try {
       const body = await ctx.apiFetch(
         `/activity/dashboard/trade/${characterId}/list?discord_id=${encodeURIComponent(discordId)}`
       );
-      statusEl.textContent = "";
+      setStatusText(statusEl, "");
       if (body.trades.length === 0) {
         listEl.append(el("p", { class: "tab-status" }, "No pending trade offers."));
         return;
@@ -645,7 +645,7 @@ function tradePanel(ctx) {
         listEl.append(tradeOfferRow(ctx, trade, { onChanged: refresh }));
       }
     } catch (err) {
-      statusEl.textContent = `Could not load trades: ${err.message}`;
+      setStatusText(statusEl, `Could not load trades: ${err.message}`, { error: true });
     }
   }
 

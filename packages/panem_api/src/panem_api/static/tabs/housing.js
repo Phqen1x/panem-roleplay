@@ -2,7 +2,7 @@
 // Three panels: your own status (home, fatigue, sleep controls), what
 // you own (per-property sell/refinance/rent-out/auction actions), and
 // what's for sale/rent in your current district (buy/rent/inn-stay).
-import { fetchJson, el } from "./_shared.js?v=5";
+import { fetchJson, el, setStatusText } from "./_shared.js?v=6";
 
 function priceLabelSuffix(label) {
   if (label === "night") return "/night";
@@ -236,21 +236,21 @@ export function mount(root, ctx) {
     const discordId = ctx.discordId();
     host.innerHTML = "";
     if (!characterId || !discordId) {
-      statusLine.textContent = "Pick a character above first.";
+      setStatusText(statusLine, "Pick a character above first.");
       return;
     }
     try {
       const status = await ctx.apiFetch(
         `/activity/dashboard/housing/${characterId}?discord_id=${encodeURIComponent(discordId)}`
       );
-      statusLine.textContent = "";
+      setStatusText(statusLine, "");
       host.append(
         sleepPanel(ctx, status, resultLine, refresh),
         ownedPanel(ctx, status, resultLine, refresh),
         listingsPanel(ctx, status, resultLine, refresh)
       );
     } catch (err) {
-      statusLine.textContent = `Could not load housing status: ${err.message}`;
+      setStatusText(statusLine, `Could not load housing status: ${err.message}`, { error: true });
     }
   }
 

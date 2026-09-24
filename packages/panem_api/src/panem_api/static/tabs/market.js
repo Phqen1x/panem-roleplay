@@ -2,7 +2,7 @@
 // /blackmarket prices|buy|sell in one place (a legal/illicit toggle
 // instead of two separate tabs) -- both are instant-resolve, no
 // minigame/iframe involved, same as their bot commands.
-import { fetchJson, el, dropdown } from "./_shared.js?v=5";
+import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=6";
 
 // Each row carries its own qty input + action button, so buying/selling a
 // good never requires typing its id -- the id only ever travels in the
@@ -153,14 +153,14 @@ export function mount(root, ctx) {
     inventoryHost.innerHTML = "";
     trustEl.textContent = "";
     if (!characterId || !discordId) {
-      statusEl.textContent = "Pick a character above first.";
+      setStatusText(statusEl, "Pick a character above first.");
       return;
     }
     const mode = modeSelect.value;
     const basePath = `/activity/dashboard/${mode}/${characterId}`;
     try {
       const status = await ctx.apiFetch(`${basePath}?discord_id=${encodeURIComponent(discordId)}`);
-      statusEl.textContent = "";
+      setStatusText(statusEl, "");
       if (mode === "blackmarket") {
         trustEl.textContent = status.trusted
           ? "The fence trusts you."
@@ -175,7 +175,7 @@ export function mount(root, ctx) {
         inventoryTable(status.inventory, (item, qty) => trade(basePath, "sell", item, qty))
       );
     } catch (err) {
-      statusEl.textContent = `Could not load market: ${err.message}`;
+      setStatusText(statusEl, `Could not load market: ${err.message}`, { error: true });
     }
   }
 

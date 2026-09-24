@@ -23,7 +23,7 @@
 // every other dashboard endpoint re-validating discord_id+character_id
 // together) -- there's still no cryptographic auth here, same documented
 // gap as the rest of this process.
-import { fetchJson, el, renderTabIcon } from "./tabs/_shared.js?v=5";
+import { fetchJson, el, renderTabIcon } from "./tabs/_shared.js?v=6";
 import { mountThemePicker } from "./theme_picker.js?v=3";
 
 const DISCORD_SDK_URL = "/vendor/discord-embedded-app-sdk.js";
@@ -31,7 +31,7 @@ const STEP_TIMEOUT_MS = 8000;
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "34";
+const ASSET_VERSION = "35";
 
 // District names mapping for Capitol and Districts 1-12
 const DISTRICT_NAMES = {
@@ -162,10 +162,17 @@ function setStatus(text) {
   if (!text || text.toLowerCase().startsWith("connected")) {
     statusEl.textContent = "";
     statusEl.hidden = true;
+    statusEl.classList.remove("is-notice");
     return;
   }
+  // Every message this ever shows is a connection/auth problem the player
+  // can work around (preview mode, a failed Discord handshake) -- never a
+  // benign "all good" note, since those clear to empty above instead.
+  // `.is-notice` (style.css) marks it as a formal notice instead of
+  // leaving it looking like ordinary muted status text.
   statusEl.textContent = text;
   statusEl.hidden = false;
+  statusEl.classList.add("is-notice");
 }
 
 function getDiscordId() {
@@ -695,7 +702,19 @@ async function showTab(name) {
   } catch (err) {
     if (generation !== tabGeneration) return;
     console.error(`Failed to load tab "${name}":`, err);
-    tabRootEl.append(el("p", { class: "tab-status" }, `Could not load this tab: ${err.message}`));
+    tabRootEl.append(
+      el(
+        "div",
+        { class: "panel tab-load-error" },
+        el("h2", { text: "This tab couldn't load" }),
+        el("p", { class: "tab-status error" }, err.message),
+        el(
+          "p",
+          { class: "tab-status" },
+          "Try switching tabs again, or reload the Activity if it keeps happening."
+        )
+      )
+    );
   }
 }
 

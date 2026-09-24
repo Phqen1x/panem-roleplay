@@ -13,7 +13,7 @@
 // same shape as `affliction_types_svc.update_type`'s cure/auto-apply
 // pair). Victors & mentors are a separate, always-visible list under the
 // same district since they're per-entry CRUD, not a single row to resave.
-import { el, fetchJson } from "./_shared.js?v=5";
+import { el, fetchJson, setStatusText } from "./_shared.js?v=6";
 
 const DISTRICT_IDS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
@@ -113,17 +113,17 @@ function lorePanel(ctx) {
 
   async function loadDistrict() {
     resultLine.textContent = "";
-    statusEl.textContent = "Loading…";
+    setStatusText(statusEl, "Loading…");
     const districtId = Number(districtSelect.value);
     try {
       const lore = await fetchJson(
         `/activity/dashboard/history/districts/${districtId}?discord_id=${ctx.discordId()}`
       );
       applyLore(districtId, lore);
-      statusEl.textContent = "";
+      setStatusText(statusEl, "");
       return lore;
     } catch (err) {
-      statusEl.textContent = `Could not load district history: ${err.message}`;
+      setStatusText(statusEl, `Could not load district history: ${err.message}`, { error: true });
       rebuildOpinionsWrap(districtId);
       return null;
     }

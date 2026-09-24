@@ -34,13 +34,25 @@
 // or an array of them, that's the ever-informative "[object Object]".
 // Always return a string (or a falsy value the caller's own `||` fallback
 // catches) instead.
+// Turns a raw reason key/message into a complete sentence -- capitalized,
+// ending in a period -- rather than the bare lowercase fragment `strings.py`
+// keys are written as. Every error surface in the dashboard (`.result-line`,
+// `.tab-status.error`) reads a message that passed through this, so it's
+// the one place this polish needs to happen.
+function toSentence(text) {
+  const trimmed = text.trim();
+  if (!trimmed) return trimmed;
+  const capitalized = trimmed[0].toUpperCase() + trimmed.slice(1);
+  return /[.!?]$/.test(capitalized) ? capitalized : `${capitalized}.`;
+}
+
 function humanize(text) {
-  if (typeof text === "string") return text.replaceAll("_", " ");
+  if (typeof text === "string") return toSentence(text.replaceAll("_", " "));
   if (Array.isArray(text)) {
     const messages = text
       .map((item) => (item && typeof item.msg === "string" ? item.msg : null))
       .filter((msg) => msg !== null);
-    if (messages.length > 0) return messages.join("; ");
+    if (messages.length > 0) return toSentence(messages.join("; "));
   }
   return undefined;
 }
@@ -49,9 +61,23 @@ export async function fetchJson(path, options) {
   const response = await fetch(path, options);
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(humanize(body.detail) || `${path} -> ${response.status}`);
+    throw new Error(
+      humanize(body.detail) || `The server didn't explain what went wrong (HTTP ${response.status}).`
+    );
   }
   return body;
+}
+
+// Sets a `.tab-status` element's text and toggles its `.error` class to
+// match -- the neoclassical dashboard styles a genuine failure (a red
+// accent, a small mark) differently from the same element's ordinary
+// "Loading…"/empty-state text, so every "Could not load ..." catch block
+// should go through this instead of a bare `el.textContent = ...`
+// assignment that would leave a stale `.error` class in place (or miss
+// applying one) across the element's other, non-error states.
+export function setStatusText(el, text, { error = false } = {}) {
+  el.textContent = text;
+  el.classList.toggle("error", error);
 }
 
 // A hand-rolled dropdown standing in for a native <select> -- Discord

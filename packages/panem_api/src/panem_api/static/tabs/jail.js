@@ -6,7 +6,7 @@
 // `/lockpick` mints) and embedding crime.html in an <iframe>, reusing that
 // page's minigame unmodified; a postMessage from crime.js on completion
 // (see that file's docstring) tells this tab to refresh.
-import { fetchJson, el } from "./_shared.js?v=5";
+import { fetchJson, el, setStatusText } from "./_shared.js?v=6";
 
 // Matches tabs/crime.js's/work.js's identical fix: crime.html's own
 // result screen used to disappear the instant it appeared, since the
@@ -129,7 +129,7 @@ export function mount(root, ctx) {
     iframeHost.innerHTML = "";
     stopListening();
     if (!characterId || !discordId) {
-      statusEl.textContent = "Pick a character above to see their jail status.";
+      setStatusText(statusEl, "Pick a character above to see their jail status.");
       cellWrap.innerHTML = "";
       actionsEl.hidden = true;
       return;
@@ -142,18 +142,18 @@ export function mount(root, ctx) {
       cellWrap.innerHTML = "";
       cellWrap.append(jailCellSvg({ occupied: status.jailed, avatarUrl: status.avatar_url }));
       if (status.jailed) {
-        statusEl.textContent = `${status.character_name} is behind bars.`;
+        setStatusText(statusEl, `${status.character_name} is behind bars.`);
         detailEl.textContent = `Bail: ${status.bail_cost} money -- Lockpick tries left: ${status.tries_left}/${status.tries_used + status.tries_left}`;
         bailBtn.hidden = false;
         lockpickBtn.hidden = status.tries_left <= 0;
       } else {
-        statusEl.textContent = `${status.character_name} is free.`;
+        setStatusText(statusEl, `${status.character_name} is free.`);
         detailEl.textContent = "";
         bailBtn.hidden = true;
         lockpickBtn.hidden = true;
       }
     } catch (err) {
-      statusEl.textContent = `Could not load jail status: ${err.message}`;
+      setStatusText(statusEl, `Could not load jail status: ${err.message}`, { error: true });
     }
   }
 
