@@ -31,7 +31,7 @@ const STEP_TIMEOUT_MS = 8000;
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "32";
+const ASSET_VERSION = "33";
 
 // District names mapping for Capitol and Districts 1-12
 const DISTRICT_NAMES = {
@@ -653,7 +653,16 @@ function visibleTabs() {
 
 function currentTabName() {
   const name = location.hash.replace(/^#/, "");
-  return visibleTabs().includes(name) ? name : TABS[0];
+  if (name) {
+    return visibleTabs().includes(name) ? name : TABS[0];
+  }
+  // No hash yet -- this is the activity's default landing tab, not a
+  // player-chosen navigation. A player with no characters at all has
+  // nothing for Home to show (it's all per-character state), so send
+  // them straight to Character to make one instead. Only applies to this
+  // no-hash landing case -- explicitly opening #home (e.g. the nav
+  // button) is always respected, characters or not.
+  return state.characters.length === 0 ? "character" : TABS[0];
 }
 
 // Guards against two overlapping showTab() calls finishing out of order

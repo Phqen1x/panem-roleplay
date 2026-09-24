@@ -10,7 +10,21 @@ function wsUrlFor(districtId) {
   return `${scheme}//${location.host}/ws/districts/${districtId}/positions`;
 }
 
-export function mount(root, _ctx) {
+// The district a freshly-opened Map tab should default to: the selected
+// character's current location if they're mid-travel/away from home,
+// else their home district -- mirrors `app.js`'s own `updateTelemetry`
+// fallback chain for the same two fields. Falls back to whatever
+// `/districts` happens to list first (previously this tab's only
+// behavior) when no character is selected or its district isn't in the
+// list for some reason.
+function defaultDistrictId(ctx, districts) {
+  const character = ctx.characters().find((c) => c.id === ctx.characterId());
+  const preferred = character ? (character.current_district_id ?? character.district_id) : null;
+  if (preferred != null && districts.some((d) => d.id === preferred)) return preferred;
+  return districts[0].id;
+}
+
+export function mount(root, ctx) {
   const statusEl = el("p", { class: "tab-status" }, "Loading districts…");
   const districtSelect = dropdown();
   districtSelect.disabled = true;
@@ -96,8 +110,9 @@ export function mount(root, _ctx) {
     districtSelect.setOptions(districts.map((d) => ({ value: d.id, label: d.name })));
     districtSelect.addEventListener("change", () => connectToDistrict(Number(districtSelect.value)));
     if (districts.length > 0) {
-      districtSelect.value = String(districts[0].id);
-      connectToDistrict(districts[0].id);
+      const startId = defaultDistrictId(ctx, districts);
+      districtSelect.value = String(startId);
+      connectToDistrict(startId);
     }
   })();
 
