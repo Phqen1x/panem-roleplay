@@ -2,7 +2,7 @@
 // crime attempt (same shape /activity/crime/{id} already reads) and play
 // via an embedded crime.html <iframe>, reusing the pickpocket/lockpick/
 // archery minigames unmodified -- same pattern as static/tabs/jail.js.
-import { fetchJson, el, dropdown } from "./_shared.js?v=5";
+import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=6";
 
 // How long crime.html's own result screen (posted via postMessage, see
 // static/crime.js's `finish()`) stays visible before this tab clears the
@@ -132,7 +132,7 @@ export function mount(root, ctx) {
     const discordId = ctx.discordId();
     if (!characterId || !discordId) {
       logBody.innerHTML = "";
-      logStatus.textContent = "";
+      setStatusText(logStatus, "");
       return;
     }
     try {
@@ -141,10 +141,10 @@ export function mount(root, ctx) {
       );
       logBody.innerHTML = "";
       if (body.entries.length === 0) {
-        logStatus.textContent = "No crimes attempted yet.";
+        setStatusText(logStatus, "No crimes attempted yet.");
         return;
       }
-      logStatus.textContent = "";
+      setStatusText(logStatus, "");
       for (const entry of body.entries) {
         const { verb, result, cls, detail } = describeLogEntry(entry);
         logBody.append(
@@ -159,7 +159,7 @@ export function mount(root, ctx) {
         );
       }
     } catch (err) {
-      logStatus.textContent = `Could not load activity: ${err.message}`;
+      setStatusText(logStatus, `Could not load activity: ${err.message}`, { error: true });
     }
   }
 
@@ -167,12 +167,12 @@ export function mount(root, ctx) {
     const characterId = ctx.characterId();
     const discordId = ctx.discordId();
     if (!characterId || !discordId) {
-      statusEl.textContent = "Pick a character above first.";
+      setStatusText(statusEl, "Pick a character above first.");
       [stealPanel, burglePanel, poachPanel].forEach((p) => (p.hidden = true));
       return;
     }
     [stealPanel, burglePanel, poachPanel].forEach((p) => (p.hidden = false));
-    statusEl.textContent = "";
+    setStatusText(statusEl, "");
     try {
       const [stealBody, burgleBody] = await Promise.all([
         ctx.apiFetch(
@@ -199,7 +199,7 @@ export function mount(root, ctx) {
         burgleSelect.setOptions(burgleBody.owners.map((owner) => ({ value: owner, label: owner })));
       }
     } catch (err) {
-      statusEl.textContent = `Could not load targets: ${err.message}`;
+      setStatusText(statusEl, `Could not load targets: ${err.message}`, { error: true });
     }
   }
 

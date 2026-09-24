@@ -2,7 +2,7 @@
 // Three panels: your own status (home, fatigue, sleep controls), what
 // you own (per-property sell/refinance/rent-out/auction actions), and
 // what's for sale/rent in your current district (buy/rent/inn-stay).
-import { fetchJson, el } from "./_shared.js?v=5";
+import { fetchJson, el, setStatusText } from "./_shared.js?v=6";
 
 function priceLabelSuffix(label) {
   if (label === "night") return "/night";
@@ -45,6 +45,57 @@ function sleepPanel(ctx, status, resultLine, onChanged) {
         : "No fixed home."
     ),
     el("div", { class: "field-row" }, el("label", { text: "Sleep" }), ticksInput, sleepBtn)
+  );
+}
+
+function formatPct(fraction) {
+  return `${Math.round(fraction * 1000) / 10}%`;
+}
+
+function financedEstimate(terms, price) {
+  const downPayment = price * terms.down_payment_pct;
+  const principal = (price - downPayment) * (1 + terms.interest_rate);
+  const payment = principal / terms.term_days;
+  return { downPayment, principal, payment };
+}
+
+function mortgageInfoPanel(status) {
+  const terms = status.mortgage_terms;
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "How mortgages work" }),
+    el(
+      "ul",
+      {},
+      el(
+        "li",
+        {},
+        `Buying "financed" puts down ${formatPct(terms.down_payment_pct)} of the price now; ` +
+          `the rest is financed with a flat, one-time ${formatPct(terms.interest_rate)} surcharge ` +
+          `added to the principal (not compounding -- it never grows after that).`
+      ),
+      el(
+        "li",
+        {},
+        `The principal is split evenly across ${terms.term_days} daily installments -- one payment ` +
+          `is due per sim day until it's paid off.`
+      ),
+      el(
+        "li",
+        {},
+        `Miss ${terms.misses_to_foreclose} payments in a row (can't afford the installment when it's ` +
+          `due) and the bank forecloses: you lose the property and it goes to auction with a minimum ` +
+          `bid equal to what you still owed.`
+      ),
+      el(
+        "li",
+        {},
+        `"Refinance" borrows more against a property you already own -- the new total can't exceed ` +
+          `${formatPct(terms.max_ltv)} of its current listed value, and doing it re-spreads the whole ` +
+          `balance over a fresh ${terms.term_days}-day term (your missed-payment count resets too).`
+      )
+    )
   );
 }
 
@@ -107,6 +158,14 @@ function ownedRow(ctx, property_, resultLine, onChanged) {
     controls.push(amountInput, refinanceBtn, auctionBtn);
   }
 
+  let mortgageNote = "";
+  if (property_.mortgage_principal > 0) {
+    mortgageNote = ` -- mortgage ${property_.mortgage_principal} owed (${property_.mortgage_payment}/day)`;
+    if (property_.mortgage_missed_payments > 0) {
+      mortgageNote += ` -- ${property_.mortgage_missed_payments} missed payment(s), foreclosure risk`;
+    }
+  }
+
   return el(
     "div",
     { class: "field-row" },
@@ -114,9 +173,7 @@ function ownedRow(ctx, property_, resultLine, onChanged) {
       "span",
       {},
       `#${property_.id} ${property_.kind} (${property_.tier}) -- ${property_.district_name}` +
-        (property_.mortgage_principal > 0
-          ? ` -- mortgage ${property_.mortgage_principal} (${property_.mortgage_payment}/installment)`
-          : "") +
+        mortgageNote +
         (property_.has_open_auction ? " -- auction open" : "")
     ),
     ...controls
@@ -140,11 +197,24 @@ function ownedPanel(ctx, status, resultLine, onChanged) {
   );
 }
 
-function listingRow(ctx, listing, resultLine, onChanged) {
+function listingRow(ctx, listing, terms, resultLine, onChanged) {
   const buyBtn = el("button", { class: "btn", type: "button" }, "Buy");
   const financedCheckbox = el("input", { type: "checkbox" });
+  const financedNote = el("span", { class: "tab-status" });
   const rentBtn = el("button", { class: "btn", type: "button" }, "Rent");
   const innBtn = el("button", { class: "btn", type: "button" }, "Stay the night");
+
+  function updateFinancedNote() {
+    if (!financedCheckbox.checked) {
+      financedNote.textContent = "";
+      return;
+    }
+    const est = financedEstimate(terms, listing.price);
+    financedNote.textContent =
+      `${Math.round(est.downPayment)} down now, then ${Math.round(est.payment)}/day ` +
+      `for ${terms.term_days} days (${Math.round(est.principal)} total financed)`;
+  }
+  financedCheckbox.addEventListener("change", updateFinancedNote);
 
   async function post(path, body) {
     resultLine.textContent = "";
@@ -178,7 +248,8 @@ function listingRow(ctx, listing, resultLine, onChanged) {
   } else {
     controls.push(
       buyBtn,
-      el("label", {}, financedCheckbox, " financed")
+      el("label", {}, financedCheckbox, " financed"),
+      financedNote
     );
   }
 
@@ -219,7 +290,7 @@ function listingsPanel(ctx, status, resultLine, onChanged) {
   );
   const tbody = el("tbody", {});
   for (const listing of status.listings) {
-    tbody.append(listingRow(ctx, listing, resultLine, onChanged));
+    tbody.append(listingRow(ctx, listing, status.mortgage_terms, resultLine, onChanged));
   }
   table.append(tbody);
   return el("div", { class: "panel" }, el("h2", { text: "For Sale / Rent Here" }), table);
@@ -236,21 +307,22 @@ export function mount(root, ctx) {
     const discordId = ctx.discordId();
     host.innerHTML = "";
     if (!characterId || !discordId) {
-      statusLine.textContent = "Pick a character above first.";
+      setStatusText(statusLine, "Pick a character above first.");
       return;
     }
     try {
       const status = await ctx.apiFetch(
         `/activity/dashboard/housing/${characterId}?discord_id=${encodeURIComponent(discordId)}`
       );
-      statusLine.textContent = "";
+      setStatusText(statusLine, "");
       host.append(
         sleepPanel(ctx, status, resultLine, refresh),
         ownedPanel(ctx, status, resultLine, refresh),
-        listingsPanel(ctx, status, resultLine, refresh)
+        listingsPanel(ctx, status, resultLine, refresh),
+        mortgageInfoPanel(status)
       );
     } catch (err) {
-      statusLine.textContent = `Could not load housing status: ${err.message}`;
+      setStatusText(statusLine, `Could not load housing status: ${err.message}`, { error: true });
     }
   }
 

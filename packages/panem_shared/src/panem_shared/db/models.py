@@ -1021,3 +1021,74 @@ class Trade(TimestampMixin, Base):
         String(16), nullable=False, default=TradeStatus.PENDING.value, index=True
     )
     resolved_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DistrictLore(TimestampMixin, Base):
+    """Staff-authored district context/history (the Activity's staff-only
+    History tab) that NPC dialogue draws on -- see `panem_shared.
+    district_lore` for the CRUD/validation layer and `dialogue.
+    build_request_context`'s `district_lore` field for how it reaches the
+    model. One row per district, created lazily on first edit (there's no
+    seed data, same posture as `LayerCategory`/`AfflictionType`).
+
+    Free-text fields are staff prose, not structured data -- `games_history`
+    in particular is meant to be a natural-language summary of the
+    district's tributes/Games performance over time rather than a
+    game-by-game ledger, per the feature's own ask. Only a short, capped
+    excerpt of any of this (`panem_shared.district_lore.prompt_summary`)
+    ever reaches an NPC's prompt at once, by design -- this is reference
+    material staff can richly maintain, not something every reply should
+    lean on."""
+
+    __tablename__ = "district_lore"
+
+    district_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    classification: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    """`DistrictClassification.INNER`/`OUTLIER`, or `None` if unset."""
+    adjectives: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    accent_notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    urban_rural_notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    academy_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    """A staff-chosen name for the district's career academy (Career
+    districts train tributes through one; other districts can leave this
+    blank)."""
+    academy_notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    games_history: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    regime_notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    """Free-text notes on gamemakers/the current regime as this district
+    experiences them. Identifying a *specific* character as a gamemaker,
+    president, vice president, etc. is instead done with `Character.
+    positions` (`Position.GAMEMAKER`/`PRESIDENT`/`VICE_PRESIDENT`) via
+    `/staff give position` -- this field is scene-setting prose, not an
+    identity registry."""
+    opinions: Mapped[dict[str, str]] = mapped_column(JSONB, nullable=False, default=dict)
+    """Keyed by the *other* district's id as a string (e.g. `"4"`) --
+    JSONB object keys are always strings, so this matches rather than
+    fighting that."""
+    misc_notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    updated_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    """The Discord id of whichever staff member last saved this row, for
+    an audit trail -- same idea as `StaffAction.staff_discord_id`."""
+
+
+class DistrictLorePerson(TimestampMixin, Base):
+    """One victor or mentor entry for a district, part of the History tab's
+    lore (`DistrictLore`). `character_id` links to an actual `Character`
+    when one exists in the roster; `name` alone covers a historical
+    victor/mentor staff want on record with no character behind them
+    (retired, deceased, or simply never played)."""
+
+    __tablename__ = "district_lore_people"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    district_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    """`"victor"` or `"mentor"`."""
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    character_id: Mapped[int | None] = mapped_column(
+        ForeignKey("characters.id"), nullable=True
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    character: Mapped[Character | None] = relationship()

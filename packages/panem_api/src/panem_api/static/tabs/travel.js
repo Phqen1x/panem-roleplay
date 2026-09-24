@@ -1,7 +1,7 @@
 // The "Travel" tab: mirrors `/travel` (both its location and
 // cross-district sub-flows) and `/where` (folded into the status panel
 // below rather than a separate action).
-import { fetchJson, el, dropdown } from "./_shared.js?v=5";
+import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=6";
 
 export function mount(root, ctx) {
   const statusEl = el("p", { class: "tab-status" });
@@ -41,7 +41,7 @@ export function mount(root, ctx) {
     const characterId = ctx.characterId();
     const discordId = ctx.discordId();
     if (!characterId || !discordId) {
-      statusEl.textContent = "Pick a character above first.";
+      setStatusText(statusEl, "Pick a character above first.");
       whereEl.textContent = "";
       return;
     }
@@ -49,7 +49,7 @@ export function mount(root, ctx) {
       const status = await ctx.apiFetch(
         `/activity/dashboard/travel/${characterId}?discord_id=${encodeURIComponent(discordId)}`
       );
-      statusEl.textContent = `${status.character_name} is in ${status.current_district_name}.`;
+      setStatusText(statusEl, `${status.character_name} is in ${status.current_district_name}.`);
       whereEl.textContent = status.in_transit
         ? "Currently in transit -- can't travel again until arrival."
         : status.location_name
@@ -62,7 +62,7 @@ export function mount(root, ctx) {
       goLocationBtn.disabled = disabled;
       goDistrictBtn.disabled = disabled;
     } catch (err) {
-      statusEl.textContent = `Could not load travel status: ${err.message}`;
+      setStatusText(statusEl, `Could not load travel status: ${err.message}`, { error: true });
     }
   }
 

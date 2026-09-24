@@ -15,7 +15,7 @@
 // a browser profile would share it -- an acceptable tradeoff for a
 // convenience log, not a source of truth (the DB's `money`/`shifts_completed`
 // columns are that).
-import { fetchJson, el } from "./_shared.js?v=5";
+import { fetchJson, el, setStatusText } from "./_shared.js?v=6";
 
 const WORK_LOG_LIMIT = 20;
 // How long the minigame's own result screen (posted via postMessage, see
@@ -129,7 +129,7 @@ export function mount(root, ctx) {
     actionsEl.hidden = true;
     renderWorkLog(logListEl, characterId);
     if (!characterId || !discordId) {
-      statusEl.textContent = "Pick a character above first.";
+      setStatusText(statusEl, "Pick a character above first.");
       return;
     }
     try {
@@ -137,14 +137,14 @@ export function mount(root, ctx) {
         `/activity/dashboard/work/${characterId}?discord_id=${encodeURIComponent(discordId)}`
       );
       if (!status.has_job) {
-        statusEl.textContent = "This character has no job set.";
+        setStatusText(statusEl, "This character has no job set.");
         return;
       }
-      statusEl.textContent = `${status.job_title} -- ${status.shift_phase} shift (${status.level})`;
+      setStatusText(statusEl, `${status.job_title} -- ${status.shift_phase} shift (${status.level})`);
       detailEl.textContent = "";
       actionsEl.hidden = false;
     } catch (err) {
-      statusEl.textContent = `Could not load work status: ${err.message}`;
+      setStatusText(statusEl, `Could not load work status: ${err.message}`, { error: true });
     }
   }
 

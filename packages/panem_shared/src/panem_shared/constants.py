@@ -192,6 +192,13 @@ block, even when more of them match the line being replied to -- keeps a
 busy history table from crowding out `[MEMORIES]`/`[SPEAKER]` the way
 `RETRIEVAL_K` already caps memories for the same reason."""
 
+DISTRICT_LORE_PROMPT_MAX_LEN = 280
+"""Same truncate-with-ellipsis budget as `NPC_BACKGROUND_PROMPT_MAX_LEN`,
+for `district_lore.prompt_summary`'s `[SCENE] ... lore` line -- staff can
+write as much district history/context as they like in the History tab,
+but only this many characters of a condensed summary ever ride in a single
+dialogue request, so it colors a reply without becoming the reply."""
+
 MIN_WORDS_REPLY = 6
 """The floor `dialogue.generate_reply`'s length-matching clamps to -- a
 one-word message ("Hey") shouldn't force the NPC down to a one-word reply,

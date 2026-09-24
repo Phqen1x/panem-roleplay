@@ -366,6 +366,56 @@ class TestBuildRequestContext:
         )
         assert "known" not in ctx.speaker
 
+    def test_standing_reflects_a_power_position(self):
+        character = make_character(positions=["gamemaker"])
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=character,
+            stance="stranger",
+            memories=[],
+        )
+        assert ctx.speaker["standing"] == "a Gamemaker"
+
+    def test_standing_omitted_for_an_ordinary_character(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="stranger",
+            memories=[],
+        )
+        assert "standing" not in ctx.speaker
+
+    def test_district_lore_folds_a_summary_into_scene(self):
+        from panem_shared.db.models import DistrictLore
+
+        lore = DistrictLore(district_id=1, classification="outlier", adjectives=["Dreary"])
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="stranger",
+            memories=[],
+            district_lore=lore,
+        )
+        assert "outlier district" in ctx.scene["lore"]
+        assert "Dreary" in ctx.scene["lore"]
+
+    def test_district_lore_omitted_when_not_given(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="stranger",
+            memories=[],
+        )
+        assert "lore" not in ctx.scene
+
     def test_constraints_default_to_empty(self):
         ctx = dialogue.build_request_context(
             npc=make_npc(),

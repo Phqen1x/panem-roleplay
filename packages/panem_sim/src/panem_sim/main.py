@@ -14,7 +14,6 @@ from panem_sim.tick import run_forever
 from panem_sim.world import load_world, seed_world
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-DATA_DIR = REPO_ROOT / "data"
 
 
 async def _run() -> None:
@@ -22,7 +21,8 @@ async def _run() -> None:
     logger = get_logger()
     settings = get_settings()
 
-    content = load_world(DATA_DIR)
+    data_dir = Path(settings.data_dir) if settings.data_dir else REPO_ROOT / "data"
+    content = load_world(data_dir)
     engine = make_engine(settings)
     session_factory = make_session_factory(engine)
     redis_client: redis.Redis = redis.from_url(settings.redis_url)

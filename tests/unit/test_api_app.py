@@ -168,6 +168,38 @@ def make_content_with_outskirts() -> ContentBundle:
     )
 
 
+def make_content_with_residence() -> ContentBundle:
+    """Same shape as `make_content_with_outskirts`, plus a district-1
+    `home` location of kind `residential` -- for the Residents directory's
+    "sleeping" status inference (`dashboard_routes._character_status`),
+    which reads a character's current location's `kind` rather than any
+    dedicated "is asleep" flag (`/sleep` has none; see that function's own
+    docstring)."""
+    locations = [
+        Location(id="square", name="The Square", kind="public"),
+        Location(id="station", name="Rail Station", kind="station"),
+        Location(id="home", name="Victors' Village", kind="residential"),
+    ]
+    coords = {loc.id: (0, 0) for loc in locations}
+    district_1 = District(
+        id=1,
+        name="District 1",
+        industry="x",
+        produces=[],
+        imports=[],
+        population_base=1000,
+        culture=DistrictCulture(),
+        locations=locations,
+        map=DistrictMap(image="x.png", width=100, height=100, location_coords=coords),
+    )
+    return ContentBundle(
+        districts={0: make_district(0, "The Capitol"), 1: district_1},
+        goods={},
+        jobs={},
+        routes=[],
+    )
+
+
 async def seed_shift(
     session_factory,
     *,
@@ -3219,8 +3251,90 @@ class TestDashboardResidents:
                 "job_title": "Miner",
                 "location_id": "square",
                 "location_name": "The Square",
+                "kind": "npc",
+                "status": None,
             }
         ]
+
+    async def test_list_includes_other_characters_labeled_user_and_idle(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_character(
+            db_session_factory,
+            discord_id=43,
+            character_overrides={"name": "Other", "location_id": "station"},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}", params={"discord_id": 42}
+            )
+        assert response.status_code == 200
+        residents = response.json()["residents"]
+        other = next(r for r in residents if r["name"] == "Other")
+        assert other["kind"] == "user"
+        assert other["status"] == "idle"
+        assert other["location_name"] == "Rail Station"
+        # The viewer's own character never lists itself.
+        assert all(r["name"] != "Wren" for r in residents)
+
+    async def test_list_excludes_other_characters_not_approved(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_character(
+            db_session_factory,
+            discord_id=43,
+            character_overrides={"name": "Pending", "status": CharacterStatus.PENDING.value},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}", params={"discord_id": 42}
+            )
+        residents = response.json()["residents"]
+        assert all(r["name"] != "Pending" for r in residents)
+
+    async def test_list_reports_engaged_over_location_for_a_character_in_a_scene(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        other_id = await seed_character(
+            db_session_factory,
+            discord_id=43,
+            character_overrides={"name": "Other"},
+        )
+        await seed_scene(db_session_factory, participants={"characters": [other_id], "npcs": []})
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}", params={"discord_id": 42}
+            )
+        residents = response.json()["residents"]
+        other = next(r for r in residents if r["name"] == "Other")
+        assert other["status"] == "engaged"
+
+    async def test_list_reports_sleeping_for_a_character_in_a_residential_location(
+        self, db_session_factory
+    ):
+        content = make_content_with_residence()
+        redis_client = FakeRedis()
+        app = create_app(
+            content=content, redis_client=redis_client, session_factory=db_session_factory
+        )
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_character(
+            db_session_factory,
+            discord_id=43,
+            character_overrides={"name": "Other", "location_id": "home"},
+        )
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}", params={"discord_id": 42}
+            )
+        residents = response.json()["residents"]
+        other = next(r for r in residents if r["name"] == "Other")
+        assert other["status"] == "sleeping"
 
     async def test_profile_returns_details_for_a_stranger(self, work_app, db_session_factory):
         char_id = await seed_character(db_session_factory, discord_id=42)

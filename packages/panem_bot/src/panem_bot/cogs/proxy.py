@@ -27,6 +27,7 @@ from panem_shared.db.models import (
     Character,
     DialogueLog,
     DiscordChannel,
+    DistrictLore,
     DistrictState,
     Memory,
     Npc,
@@ -480,6 +481,7 @@ class ProxyCog(commands.Cog):
             # message rather than per NPC, since none of it changes
             # between the NPCs replying to the same line.
             district_state = await session.get(DistrictState, scene.district_id)
+            district_lore = await session.get(DistrictLore, scene.district_id)
             character_job_title = speaker.job_title
             character_home_district = content_bundle.district(speaker.district_id)
 
@@ -571,6 +573,7 @@ class ProxyCog(commands.Cog):
                     character_home_district=character_home_district,
                     known=known,
                     district_on_edge=jail_svc.is_crackdown_active(district_state, current_tick),
+                    district_lore=district_lore,
                 )
 
                 sent = await webhook.send(

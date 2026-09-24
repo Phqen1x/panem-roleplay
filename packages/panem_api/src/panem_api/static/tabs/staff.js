@@ -15,7 +15,7 @@
 // use this panel, which is built to render sensibly on zero categories
 // (just the "New category" form, nothing else) rather than assuming
 // something is already there.
-import { fetchJson, el, dropdown } from "./_shared.js?v=5";
+import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=6";
 
 // `panem_shared.enums.AfflictionStat`'s five values -- the only stats a
 // staff-authored affliction type's cure/auto-apply condition can name.
@@ -250,10 +250,10 @@ function layersPanel(ctx) {
 
   async function refresh() {
     listEl.innerHTML = "";
-    statusEl.textContent = "Loading…";
+    setStatusText(statusEl, "Loading…");
     try {
       const body = await fetchJson("/activity/dashboard/layers");
-      statusEl.textContent = "";
+      setStatusText(statusEl, "");
       if (body.categories.length === 0) {
         listEl.append(
           el("p", { class: "tab-status" }, "No categories yet -- add one below to get started.")
@@ -270,7 +270,7 @@ function layersPanel(ctx) {
         );
       }
     } catch (err) {
-      statusEl.textContent = `Could not load layer categories: ${err.message}`;
+      setStatusText(statusEl, `Could not load layer categories: ${err.message}`, { error: true });
     }
   }
 
@@ -563,10 +563,10 @@ function afflictionTypesPanel(ctx) {
 
   async function refresh() {
     listEl.innerHTML = "";
-    statusEl.textContent = "Loading…";
+    setStatusText(statusEl, "Loading…");
     try {
       const body = await fetchJson("/activity/dashboard/affliction-types");
-      statusEl.textContent = "";
+      setStatusText(statusEl, "");
       if (body.types.length === 0) {
         listEl.append(
           el(
@@ -589,7 +589,7 @@ function afflictionTypesPanel(ctx) {
         );
       }
     } catch (err) {
-      statusEl.textContent = `Could not load affliction types: ${err.message}`;
+      setStatusText(statusEl, `Could not load affliction types: ${err.message}`, { error: true });
     }
   }
 

@@ -1,7 +1,7 @@
 """add panem history entries and world lore settings
 
 Revision ID: a1c9e4f7b2d8
-Revises: 4826400ed79f
+Revises: 9a1c4f0e2b7d
 Create Date: 2026-09-24 00:00:00.000000
 
 """
@@ -16,7 +16,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "a1c9e4f7b2d8"
-down_revision: str | None = "4826400ed79f"
+down_revision: str | None = "9a1c4f0e2b7d"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

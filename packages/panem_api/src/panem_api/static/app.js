@@ -23,7 +23,7 @@
 // every other dashboard endpoint re-validating discord_id+character_id
 // together) -- there's still no cryptographic auth here, same documented
 // gap as the rest of this process.
-import { fetchJson, el, renderTabIcon } from "./tabs/_shared.js?v=5";
+import { fetchJson, el, renderTabIcon } from "./tabs/_shared.js?v=6";
 import { mountThemePicker } from "./theme_picker.js?v=3";
 
 const DISCORD_SDK_URL = "/vendor/discord-embedded-app-sdk.js";
@@ -31,7 +31,7 @@ const STEP_TIMEOUT_MS = 8000;
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "33";
+const ASSET_VERSION = "36";
 
 // District names mapping for Capitol and Districts 1-12
 const DISTRICT_NAMES = {
@@ -114,6 +114,12 @@ const TAB_LABELS = {
 // (currently just `currentTabName()`'s fallback below).
 const STAFF_TAB = "staff";
 const STAFF_TAB_LABEL = "Staff";
+// The District History tab -- staff-only district lore/context NPC
+// dialogue draws a short summary from (`panem_shared.district_lore`).
+// Kept separate from STAFF_TAB rather than folded into it: it's its own
+// large, district-scoped editor, not another admin-panel panel.
+const HISTORY_TAB = "history";
+const HISTORY_TAB_LABEL = "History";
 
 const statusEl = document.getElementById("status");
 const navEl = document.getElementById("tab-nav");
@@ -156,10 +162,17 @@ function setStatus(text) {
   if (!text || text.toLowerCase().startsWith("connected")) {
     statusEl.textContent = "";
     statusEl.hidden = true;
+    statusEl.classList.remove("is-notice");
     return;
   }
+  // Every message this ever shows is a connection/auth problem the player
+  // can work around (preview mode, a failed Discord handshake) -- never a
+  // benign "all good" note, since those clear to empty above instead.
+  // `.is-notice` (style.css) marks it as a formal notice instead of
+  // leaving it looking like ordinary muted status text.
   statusEl.textContent = text;
   statusEl.hidden = false;
+  statusEl.classList.add("is-notice");
 }
 
 function getDiscordId() {
@@ -650,7 +663,7 @@ function buildCtx() {
 }
 
 function visibleTabs() {
-  return state.isStaff ? [...TABS, STAFF_TAB] : TABS;
+  return state.isStaff ? [...TABS, STAFF_TAB, HISTORY_TAB] : TABS;
 }
 
 function currentTabName() {
@@ -689,7 +702,19 @@ async function showTab(name) {
   } catch (err) {
     if (generation !== tabGeneration) return;
     console.error(`Failed to load tab "${name}":`, err);
-    tabRootEl.append(el("p", { class: "tab-status" }, `Could not load this tab: ${err.message}`));
+    tabRootEl.append(
+      el(
+        "div",
+        { class: "panel tab-load-error" },
+        el("h2", { text: "This tab couldn't load" }),
+        el("p", { class: "tab-status error" }, err.message),
+        el(
+          "p",
+          { class: "tab-status" },
+          "Try switching tabs again, or reload the Activity if it keeps happening."
+        )
+      )
+    );
   }
 }
 
@@ -700,7 +725,15 @@ function setupNav() {
   const active = currentTabName();
   for (const name of visibleTabs()) {
     const icon = renderTabIcon(name);
-    const label = el("span", {}, name === STAFF_TAB ? STAFF_TAB_LABEL : TAB_LABELS[name]);
+    const label = el(
+      "span",
+      {},
+      name === STAFF_TAB
+        ? STAFF_TAB_LABEL
+        : name === HISTORY_TAB
+          ? HISTORY_TAB_LABEL
+          : TAB_LABELS[name]
+    );
     navEl.append(
       el(
         "button",

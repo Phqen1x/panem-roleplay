@@ -74,7 +74,7 @@ packages/
 data/             districts, goods, jobs, routes (content YAML, validated at boot)
 migrations/       Alembic migrations
 scripts/          setup_guild.py (Phase 0), calibrate.py (Phase 2), plus stubs for later-phase scripts
-deploy/           docker-compose, Dockerfile, systemd unit
+deploy/           docker-compose, Dockerfile, systemd unit, snap packaging + LXD provisioning (deploy/snap/README.md)
 tests/            pytest (service-layer unit tests; no live Discord needed)
 ```
 
@@ -3907,3 +3907,53 @@ table changed. `uv run python scripts/lemonade_omni.py build --check` passes -- 
 matching, the `MAX_HISTORY_ENTRIES_PER_REPLY` cap, match order), extended `test_dialogue_service.py` and
 `test_lemonade_omni.py` for the new `RequestContext` fields and header rendering. Full suite:
 **1257 passed**.
+
+## Notes on snap packaging (strict confinement) + LXD deploy
+
+A third deploy path alongside `deploy/docker-compose.yml`/`deploy/systemd/`: `snap/snapcraft.yaml`
+packages `panem_bot`/`panem_sim`/`panem_api` as one strictly confined snap (`panem`, three daemons plus a
+`migrate` command), and `deploy/lxd/provision.sh` stands up an LXD container on an external server running
+that snap alongside Postgres/Redis (apt-installed in the same container, bound to `127.0.0.1` -- nothing
+outside the container needs to reach either). Full walkthrough: `deploy/snap/README.md`.
+
+The one real wrinkle: `snap/snapcraft.yaml`'s build does **not** use `uv sync`'s normal `.venv` the way
+`deploy/Dockerfile` does. A uv-managed venv's `bin/python` is a symlink back to a shared, absolute-path
+standalone Python install, and its `pyvenv.cfg` records that same absolute build-time path as where to
+find the standard library at runtime -- neither survives being copied from the snapcraft build environment
+into `/snap/panem/<rev>`, whether the copy dereferences symlinks or not (dereferencing only fixes the
+interpreter binary itself, not the venv's separate, still-external stdlib lookup). Instead the build
+installs every dependency (including this workspace's own four packages, non-editable) straight into the
+standalone interpreter's own site-packages via `uv pip install --python`, then ships that whole interpreter
+tree -- genuinely relocatable by design, which is what `python-build-standalone` (what `uv python install`
+fetches) is *for* -- as `$SNAP/python`.
+
+Because that install is non-editable, `packages/*/src/*/main.py` can no longer assume it's running from
+inside a full checkout to find `data/` the way it always has (`REPO_ROOT = Path(__file__).resolve().
+parents[4]`, which only lines up with a real `data/` dir under an editable/dev-mode install -- true for
+both `uv run` and `deploy/Dockerfile`'s `uv sync`, coincidentally, since both install this workspace
+editable). Added `Settings.data_dir`/`Settings.static_uploads_dir`
+(`packages/panem_shared/src/panem_shared/settings.py`) so a packaged install can override both explicitly;
+every `main.py` falls back to the old parents[4] trick when they're unset, so `uv run`/Docker/systemd
+behavior is completely unchanged. `static_uploads_dir` exists because `panem_api`'s staff layer-image
+uploads and `district_mottos.json` need a real writable directory, and a strict-confinement snap's `$SNAP`
+is a read-only squashfs -- `panem_api.app.create_app` already took a `static_dir` override for tests
+(writing into the checked-out `static/` tree there too), but the app's actual static-file *mount* always
+served the real bundled `STATIC_DIR` regardless, meaning uploads written elsewhere were saved but 404'd
+when fetched back; fixed by mounting a second, more specific `/uploads` route ahead of the catch-all `/`
+mount whenever the override differs from `STATIC_DIR` (harmless no-op when it doesn't). The snap's wrapper
+scripts (`snap/local/bin/panem-*`) point both settings at `$SNAP/data`/`$SNAP_DATA/uploads`.
+
+Running snapd itself inside an LXD container needs `security.nesting=true` on the container (for snapd's
+own mount namespace) -- `deploy/lxd/provision.sh` sets it on launch and fixes it up (with a restart) on an
+existing container missing it, since `snap install` either fails outright or installs but never actually
+starts the daemons without it.
+
+Not independently verified end-to-end (no snapcraft/LXD build environment available in this session --
+building a real `.snap` needs network access to fetch `uv`+Python 3.14+PyPI packages during
+`snapcraft`'s build step, and installing/running it needs a real LXD host); reviewed line-by-line against
+documented `uv`/`snapcraft`/LXD behavior instead. Sanity-checked here: every edited/new Python file
+(`ast.parse`), every new shell script (`bash -n`/`sh -n`), and `tests/unit/test_api_app.py`'s existing
+`staff_app_with_uploads` fixture (which passes `static_dir=tmp_path`, i.e. already exercises the "override
+differs from STATIC_DIR" branch) confirmed by inspection to still pass -- it only asserted the uploaded
+file landed on disk before, never that `image_url` was actually fetchable, which is exactly the gap the new
+`/uploads` mount closes rather than a behavior it could have broken.
