@@ -27,9 +27,10 @@ from redis.asyncio import Redis
 from panem_bot.errors import NotAllowed
 from panem_shared import constants
 from panem_shared.content.schemas import District, Location
-from panem_shared.db.models import Character, DistrictState, Memory, Npc
+from panem_shared.db.models import Character, DistrictState, Memory, Npc, PanemHistoryEntry
 from panem_shared.enums import CharacterStatus, RpMode
 from panem_shared.lemonade import omni
+from panem_shared.lore import match_history_entries
 from panem_shared.memory import retrieve as retrieve_memories
 from panem_shared.settings import Settings
 
@@ -77,6 +78,9 @@ def build_request_context(
     character: Character,
     stance: str,
     memories: list[Memory],
+    message: str = "",
+    history_entries: Sequence[PanemHistoryEntry] = (),
+    world_notes: str | None = None,
     present: Sequence[str] = (),
     npc_job_title: str | None = None,
     npc_background: str | None = None,
@@ -119,8 +123,20 @@ def build_request_context(
     the `[SPEAKER] ... what the NPC knows of them` line the system prompt
     has always documented but nothing populated before this. `constraints`
     lets a caller override `render_request_header`'s default `max_words`
-    (see `_length_matched_max_words`) without touching anything else."""
+    (see `_length_matched_max_words`) without touching anything else.
+
+    `history_entries` is every staff-authored `PanemHistoryEntry` the
+    caller fetched (the whole table, not pre-filtered) -- mirrors
+    `memories` above, which is likewise the NPC's full memory set filtered
+    here rather than by the caller; `panem_shared.lore.
+    match_history_entries` does the keyword match against `message` and
+    the result rides the `[HISTORY]` block. `world_notes` is
+    `WorldLoreSettings.alternate_universe_notes`, included unconditionally
+    (see `omni.RequestContext.world_notes`) rather than matched -- a
+    caller with nothing to give either one simply omits it, same as every
+    other optional field here."""
     relevant = retrieve_memories(memories, "npc", npc.id)
+    history = tuple(match_history_entries(history_entries, message))
     tone = (npc.speech_style or {}).get("tone", "plain")
 
     npc_block: dict[str, str] = {
@@ -167,6 +183,8 @@ def build_request_context(
         scene=scene,
         speaker=speaker,
         memories=tuple(m.text for m in relevant),
+        world_notes=world_notes,
+        history=history,
         constraints=constraints or {},
     )
 
@@ -254,14 +272,24 @@ def _length_matched_max_words(message: str) -> int:
 
 
 def build_npc_to_npc_context(
-    *, npc: Npc, other_npc: Npc, district: District, location: Location, message: str = ""
+    *,
+    npc: Npc,
+    other_npc: Npc,
+    district: District,
+    location: Location,
+    message: str = "",
+    history_entries: Sequence[PanemHistoryEntry] = (),
+    world_notes: str | None = None,
 ) -> omni.RequestContext:
     """The NPC-to-NPC counterpart of `build_request_context`: `speaker`
     is another NPC rather than a player `Character` (no reputation/job
     block one of those would carry), and there's no stance/memories
     lookup -- unprompted ambient chatter (`panem_sim.systems.
     npc_chatter`) is pure world flavor, not a tracked relationship the
-    way `/talk`'s stance and memories are."""
+    way `/talk`'s stance and memories are. `history_entries`/`world_notes`
+    are the same Panem-wide lore inputs `build_request_context` takes --
+    two NPCs gossiping still share the same national canon a player
+    conversation would draw on."""
     tone = (npc.speech_style or {}).get("tone", "plain")
     constraints = {"max_words": str(_length_matched_max_words(message))} if message else {}
     return omni.RequestContext(
@@ -269,6 +297,8 @@ def build_npc_to_npc_context(
         npc={"name": npc.name, "stance": "neutral", "tone": tone},
         scene={"location": location.name, "district": district.name},
         speaker={"name": other_npc.name},
+        world_notes=world_notes,
+        history=tuple(match_history_entries(history_entries, message)),
         constraints=constraints,
     )
 
@@ -282,6 +312,8 @@ async def generate_npc_to_npc_reply(
     message: str,
     settings: Settings,
     history: Sequence[dict[str, str]] = (),
+    history_entries: Sequence[PanemHistoryEntry] = (),
+    world_notes: str | None = None,
 ) -> str:
     """`npc` is who's about to speak next; `other_npc` is who they're
     replying to. `message` is the other NPC's last line -- or, for the
@@ -294,7 +326,13 @@ async def generate_npc_to_npc_reply(
         return template_reply(npc, "neutral", message)
 
     ctx = build_npc_to_npc_context(
-        npc=npc, other_npc=other_npc, district=district, location=location, message=message
+        npc=npc,
+        other_npc=other_npc,
+        district=district,
+        location=location,
+        message=message,
+        history_entries=history_entries,
+        world_notes=world_notes,
     )
     try:
         return await generate_llm_reply(ctx, message, settings, history=history)
@@ -314,6 +352,8 @@ async def generate_reply(
     message: str,
     settings: Settings,
     history: Sequence[dict[str, str]] = (),
+    history_entries: Sequence[PanemHistoryEntry] = (),
+    world_notes: str | None = None,
     present: Sequence[str] = (),
     npc_job_title: str | None = None,
     npc_background: str | None = None,
@@ -334,6 +374,9 @@ async def generate_reply(
         character=character,
         stance=stance,
         memories=memories,
+        message=message,
+        history_entries=history_entries,
+        world_notes=world_notes,
         present=present,
         npc_job_title=npc_job_title,
         district_on_edge=district_on_edge,

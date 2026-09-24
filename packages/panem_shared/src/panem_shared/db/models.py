@@ -564,6 +564,49 @@ class EngagementSettings(Base):
     idle_timeout_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+class PanemHistoryEntry(TimestampMixin, Base):
+    """One staff-authored fact of Panem-wide history/canon, tagged with
+    comma-separated keywords a staff member typed in (`/staff lore
+    history-add`) -- mirrors `Memory.tags`' `ARRAY(String)` shape, not a
+    single delimited string, so matching (`panem_shared.lore.
+    match_history_entries`) is a plain membership check per keyword.
+    Multi-row, growing over time via add/remove, the same shape
+    `WorldEvent` already uses for a table of discrete global facts --
+    unlike that table this one is staff-written, not sim-written (closer
+    in spirit to `StaffAction`'s staff-authored-content role).
+
+    Read fresh on every dialogue request (`panem_bot.services.dialogue.
+    build_request_context`/`build_npc_to_npc_context`), keyword-filtered
+    against the line being replied to, so every NPC can draw on the same
+    shared canon without needing a Lemonade collection rebuild -- unlike
+    `lemonade/system_prompt.md`'s own hand-written `## Panem` section,
+    which *is* baked into the registered collection and only changes on
+    a redeploy."""
+
+    __tablename__ = "panem_history_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    keywords: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, default=list)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by_staff_discord_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+
+class WorldLoreSettings(Base):
+    """Single-row staff-tunable "Alternate Universe" notes, mirroring
+    `EngagementSettings`'/`WorldClock`'s singleton shape -- free-form prose
+    every NPC in the nation should know and keep in mind (how this
+    version of Panem's canon diverges from anyone's expectations, ongoing
+    world-shaping facts, etc.), unlike `PanemHistoryEntry`'s keyword-gated
+    rows this is always included in a dialogue request rather than
+    matched against what's being said, since "anyone in the nation" means
+    unconditional background, not a fact recalled on cue."""
+
+    __tablename__ = "world_lore_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    alternate_universe_notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+
 class Shift(Base):
     __tablename__ = "shifts"
 

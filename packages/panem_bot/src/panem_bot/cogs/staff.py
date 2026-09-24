@@ -28,10 +28,12 @@ from panem_shared.db.models import (
     EngagementSettings,
     Inventory,
     Npc,
+    PanemHistoryEntry,
     Property,
     Scene,
     User,
     WorldClock,
+    WorldLoreSettings,
 )
 from panem_shared.enums import CharacterStatus, DayPhase, JobLevel, OwnerKind, Position, SceneStatus
 
@@ -70,6 +72,11 @@ class StaffCog(commands.Cog):
     )
     npc_group = app_commands.Group(
         name="npc", description="Add NPCs and edit their identity retroactively", parent=group
+    )
+    lore_group = app_commands.Group(
+        name="lore",
+        description="Panem-wide history and Alternate Universe notes NPCs draw on",
+        parent=group,
     )
 
     @group.command(name="whois", description="Look up who a proxied message belongs to")
@@ -1031,6 +1038,127 @@ class StaffCog(commands.Cog):
             j for j in jobs if current_lower in j.id.lower() or current_lower in j.title.lower()
         ]
         return [app_commands.Choice(name=f"{j.title} ({j.id})", value=j.id) for j in matches[:25]]
+
+    # ------------------------------------------------------------- lore
+
+    @lore_group.command(
+        name="history-add",
+        description="Add a Panem-wide history fact NPCs can draw on when it's relevant",
+    )
+    @app_commands.describe(
+        keywords="Comma-separated keywords that bring this fact up (e.g. 'dark days, district 13')",
+        text="The history fact itself, as an NPC should understand it",
+    )
+    @app_commands.check(_is_staff)
+    async def lore_history_add(
+        self, interaction: discord.Interaction, keywords: str, text: str
+    ) -> None:
+        parsed_keywords = [k.strip() for k in keywords.split(",") if k.strip()]
+        if not parsed_keywords:
+            await interaction.response.send_message(
+                "Give at least one keyword, comma-separated.", ephemeral=True
+            )
+            return
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            entry = PanemHistoryEntry(
+                keywords=parsed_keywords,
+                text=text,
+                created_by_staff_discord_id=interaction.user.id,
+            )
+            session.add(entry)
+            await session.flush()
+            entry_id = entry.id
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="lore_history_add",
+                target=str(entry_id),
+                payload={"keywords": parsed_keywords, "text": text},
+            )
+        await interaction.response.send_message(
+            f"Added history entry **#{entry_id}** (keywords: {', '.join(parsed_keywords)}).",
+            ephemeral=True,
+        )
+
+    @lore_group.command(name="history-remove", description="Remove a Panem-wide history entry")
+    @app_commands.describe(entry_id="The entry's id, shown by /staff lore history-list")
+    @app_commands.check(_is_staff)
+    async def lore_history_remove(self, interaction: discord.Interaction, entry_id: int) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            entry = await session.get(PanemHistoryEntry, entry_id)
+            if entry is None:
+                await interaction.response.send_message(
+                    f"No history entry `#{entry_id}`.", ephemeral=True
+                )
+                return
+            keywords, text = entry.keywords, entry.text
+            await session.delete(entry)
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="lore_history_remove",
+                target=str(entry_id),
+                payload={"keywords": keywords, "text": text},
+            )
+        await interaction.response.send_message(
+            f"Removed history entry **#{entry_id}**.", ephemeral=True
+        )
+
+    @lore_group.command(name="history-list", description="List Panem-wide history entries")
+    @app_commands.check(_is_staff)
+    async def lore_history_list(self, interaction: discord.Interaction) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            entries = (
+                (await session.execute(select(PanemHistoryEntry).order_by(PanemHistoryEntry.id)))
+                .scalars()
+                .all()
+            )
+        if not entries:
+            await interaction.response.send_message("No history entries yet.", ephemeral=True)
+            return
+        lines = []
+        for entry in entries[:25]:
+            text = entry.text if len(entry.text) <= 200 else entry.text[:200] + "…"
+            lines.append(f"**#{entry.id}** [{', '.join(entry.keywords)}] {text}")
+        body = "\n".join(lines)
+        if len(entries) > 25:
+            body += f"\n… and {len(entries) - 25} more."
+        await interaction.response.send_message(body[:1900], ephemeral=True)
+
+    @lore_group.command(
+        name="au-set", description="Set the Alternate Universe notes every NPC keeps in mind"
+    )
+    @app_commands.describe(text="Free-form notes; replaces whatever was set before")
+    @app_commands.check(_is_staff)
+    async def lore_au_set(self, interaction: discord.Interaction, text: str) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            settings_row = await session.get(WorldLoreSettings, 1)
+            if settings_row is None:
+                settings_row = WorldLoreSettings(id=1, alternate_universe_notes=text)
+                session.add(settings_row)
+            else:
+                settings_row.alternate_universe_notes = text
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="lore_au_set",
+                target="world_lore_settings",
+                payload={"text": text},
+            )
+        await interaction.response.send_message("Alternate Universe notes updated.", ephemeral=True)
+
+    @lore_group.command(name="au-show", description="Show the current Alternate Universe notes")
+    @app_commands.check(_is_staff)
+    async def lore_au_show(self, interaction: discord.Interaction) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            settings_row = await session.get(WorldLoreSettings, 1)
+        notes = settings_row.alternate_universe_notes if settings_row is not None else ""
+        await interaction.response.send_message(
+            notes[:1900] or "No Alternate Universe notes set.", ephemeral=True
+        )
 
 
 async def setup(bot: commands.Bot) -> None:

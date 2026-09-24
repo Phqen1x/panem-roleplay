@@ -39,7 +39,15 @@ from sqlalchemy import select
 from panem_bot.outbound import OutboundMessage, SendPriority
 from panem_bot.services import dialogue as dialogue_svc
 from panem_shared import constants
-from panem_shared.db.models import Character, DiscordChannel, Npc, Scene, User
+from panem_shared.db.models import (
+    Character,
+    DiscordChannel,
+    Npc,
+    PanemHistoryEntry,
+    Scene,
+    User,
+    WorldLoreSettings,
+)
 from panem_shared.enums import ChannelKind, SceneKind
 from panem_shared.events import (
     WORLD_EVENTS_CHANNEL,
@@ -206,6 +214,10 @@ async def _handle_npc_chatter(bot: PanemBot, event: NpcChatter) -> None:
         first = await session.get(Npc, first_id)
         second = await session.get(Npc, second_id)
 
+        history_entries = (await session.execute(select(PanemHistoryEntry))).scalars().all()
+        world_lore = await session.get(WorldLoreSettings, 1)
+        world_notes = world_lore.alternate_universe_notes if world_lore is not None else None
+
     if forum_row is None or forum_row.webhook_id is None or forum_row.webhook_token is None:
         logger.warning(
             "npc_chatter_no_webhook", district_id=event.district_id, location_id=event.location_id
@@ -240,6 +252,8 @@ async def _handle_npc_chatter(bot: PanemBot, event: NpcChatter) -> None:
             message=trigger,
             settings=bot.settings,
             history=history,
+            history_entries=history_entries,
+            world_notes=world_notes,
         )
         transcript.append((speaker.id, reply))
         lines.append((speaker, reply))

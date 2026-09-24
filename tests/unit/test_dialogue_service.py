@@ -14,7 +14,7 @@ from panem_shared.content.schemas import (
     DistrictMap,
     Location,
 )
-from panem_shared.db.models import Character, DistrictState, Memory, Npc
+from panem_shared.db.models import Character, DistrictState, Memory, Npc, PanemHistoryEntry
 from panem_shared.enums import CharacterStatus, RpMode
 from panem_shared.lemonade import omni
 from panem_shared.settings import Settings
@@ -96,6 +96,16 @@ def make_memory(**overrides: object) -> Memory:
     )
     defaults.update(overrides)
     return Memory(**defaults)  # type: ignore[arg-type]
+
+
+def make_history_entry(**overrides: object) -> PanemHistoryEntry:
+    defaults: dict[str, object] = dict(
+        keywords=["dark days", "district thirteen"],
+        text="District Thirteen was destroyed in the rebellion.",
+        created_by_staff_discord_id=1,
+    )
+    defaults.update(overrides)
+    return PanemHistoryEntry(**defaults)  # type: ignore[arg-type]
 
 
 def make_settings(**overrides: object) -> Settings:
@@ -379,6 +389,59 @@ class TestBuildRequestContext:
         )
         assert ctx.constraints == {"max_words": "12"}
 
+    def test_world_notes_passed_through_when_given(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[],
+            world_notes="The Games were abolished a decade early in this Panem.",
+        )
+        assert ctx.world_notes == "The Games were abolished a decade early in this Panem."
+
+    def test_world_notes_none_by_default(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[],
+        )
+        assert ctx.world_notes is None
+
+    def test_history_entries_matching_the_message_are_included(self):
+        matching = make_history_entry(text="District Thirteen fell in the Dark Days.")
+        non_matching = make_history_entry(
+            keywords=["victors village"], text="Victors live in the Village."
+        )
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[],
+            message="What really happened to district thirteen?",
+            history_entries=[matching, non_matching],
+        )
+        assert ctx.history == ("District Thirteen fell in the Dark Days.",)
+
+    def test_history_entries_empty_when_nothing_matches(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[],
+            message="Nice weather today.",
+            history_entries=[make_history_entry()],
+        )
+        assert ctx.history == ()
+
 
 class TestTemplateReply:
     def test_mentions_the_npc_and_is_non_empty(self):
@@ -567,6 +630,19 @@ class TestNpcToNpcReply:
             message="hi",
         )
         assert ctx.constraints == {"max_words": str(constants.MIN_WORDS_REPLY)}
+
+    def test_world_notes_and_matching_history_are_included(self):
+        ctx = dialogue.build_npc_to_npc_context(
+            npc=make_npc(),
+            other_npc=make_npc(id="npc2", name="Greasy Sae"),
+            district=make_district(),
+            location=make_district().locations[-1],
+            message="Did you hear about district thirteen?",
+            history_entries=[make_history_entry()],
+            world_notes="Alternate Universe: peace came a decade early.",
+        )
+        assert ctx.world_notes == "Alternate Universe: peace came a decade early."
+        assert ctx.history == ("District Thirteen was destroyed in the rebellion.",)
 
     async def test_template_provider_never_calls_the_llm(self):
         ferro = make_npc()

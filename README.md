@@ -3851,3 +3851,59 @@ Entertain all round-tripping correctly against a mocked backend, the sleep previ
 and -- driving `vitals.html`'s cook minigame directly against its actual real-time sweep, no clock
 mocking needed -- confirming all three outcomes: taking the food off mid-sweep lands the bonus, while too
 early and too late both miss it.
+
+## Panem-wide staff lore: keyword-tagged history facts, and Alternate Universe notes NPCs always keep in mind
+
+NPC dialogue (`/talk`, `/engage` replies, and ambient NPC-to-NPC chatter -- everywhere
+`panem_bot.services.dialogue` calls the LLM) can now draw on two kinds of staff-authored, Panem-wide
+canon, on top of an NPC's own personal memories and relationship history:
+
+- **History facts** -- short, staff-written statements of Panem canon, each tagged with one or more
+  comma-separated keywords (e.g. `dark days, district thirteen`). A fact only rides into a given dialogue
+  request when one of its keywords actually appears in the line being replied to
+  (`panem_shared.lore.match_history_entries`, a plain case-insensitive substring check, capped at
+  `constants.MAX_HISTORY_ENTRIES_PER_REPLY` so a busy table can't crowd out the rest of the prompt) --
+  the request header's new `[HISTORY]` block.
+- **Alternate Universe notes** -- one free-form block of prose every NPC in the nation is assumed to
+  know, unconditionally included whenever set (no keyword matching), for describing how this particular
+  Panem's canon diverges from anyone's default expectations, or any other standing fact staff want every
+  resident to act on. Rendered as the request header's `[WORLD]` block, right after `[MODE]`.
+
+### Why this is a database, not a content-YAML edit
+
+Every other "world knowledge" an NPC draws on already lives in one of two places, and this feature
+deliberately sits in the one that changes fast: `lemonade/system_prompt.md`'s own hand-written `## Panem`
+section is *static* canon, baked into the registered Lemonade collection at build time
+(`scripts/lemonade_omni.py build`) -- editing it needs a rebuild-and-reregister step, appropriate for
+slow-changing world design, not for "staff wants to add a fact mid-session." History entries and AU notes
+instead live in two new tables (`PanemHistoryEntry`, multi-row and keyword-tagged; `WorldLoreSettings`, a
+single-row staff-tunable settings row mirroring `EngagementSettings`'/`WorldClock`'s own singleton shape),
+fetched fresh on every dialogue request (`dialogue.build_request_context`/`build_npc_to_npc_context`) the
+same way `EngagementCog`'s idle-close task already reads `EngagementSettings` fresh every pass -- a staff
+edit takes effect on the very next line an NPC speaks, no redeploy.
+
+### `/staff lore` commands
+
+- `/staff lore history-add keywords:<comma-separated> text:<fact>` -- add a new history entry.
+- `/staff lore history-remove entry_id:<id>` -- remove one, by the id shown in `history-list`.
+- `/staff lore history-list` -- list every entry with its id and keywords.
+- `/staff lore au-set text:<notes>` -- replace the Alternate Universe notes.
+- `/staff lore au-show` -- show the current Alternate Universe notes.
+
+All five follow the existing `/staff` group's conventions: staff-only (`_is_staff`), every write logged
+via `log_staff_action` (audit row + a one-line post to the staff log channel), direct DB writes with no
+intermediate cache to invalidate.
+
+### Verification
+
+`ruff check .`: clean. `mypy` across all four packages: unchanged pre-existing baseline (159 -> 162
+errors, the +3 all the same pre-existing `self.bot.db()`/`self.bot.redis`-style `"Bot" has no attribute`
+category every other cog already carries, none a new category). `alembic upgrade head` /
+`alembic downgrade -1` / `alembic upgrade head` round-trips cleanly to a single new head; no existing
+table changed. `uv run python scripts/lemonade_omni.py build --check` passes -- the committed
+`lemonade/Panem-Omni-*.json` collection files were rebuilt after `system_prompt.md`'s new `[WORLD]`/
+`[HISTORY]` header-block documentation, so CI's own staleness check stays green. New unit coverage:
+`tests/unit/test_lore.py` (keyword matching: case-insensitivity, no-match, an entry with no keywords never
+matching, the `MAX_HISTORY_ENTRIES_PER_REPLY` cap, match order), extended `test_dialogue_service.py` and
+`test_lemonade_omni.py` for the new `RequestContext` fields and header rendering. Full suite:
+**1257 passed**.

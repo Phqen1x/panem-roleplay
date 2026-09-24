@@ -185,6 +185,13 @@ dialogue reply resends the whole request header -- so the LLM's `[NPC]
 ... background` line gets only this many characters of it (truncated with
 an ellipsis), enough to color a reply without dominating the prompt."""
 
+MAX_HISTORY_ENTRIES_PER_REPLY = 3
+"""`panem_shared.lore.match_history_entries` caps how many staff-authored
+`PanemHistoryEntry` rows ride in a single dialogue request's `[HISTORY]`
+block, even when more of them match the line being replied to -- keeps a
+busy history table from crowding out `[MEMORIES]`/`[SPEAKER]` the way
+`RETRIEVAL_K` already caps memories for the same reason."""
+
 MIN_WORDS_REPLY = 6
 """The floor `dialogue.generate_reply`'s length-matching clamps to -- a
 one-word message ("Hey") shouldn't force the NPC down to a one-word reply,

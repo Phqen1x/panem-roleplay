@@ -30,12 +30,14 @@ from panem_shared.db.models import (
     DistrictState,
     Memory,
     Npc,
+    PanemHistoryEntry,
     RelationshipRow,
     Scene,
     SceneMessage,
     Shift,
     User,
     WorldClock,
+    WorldLoreSettings,
 )
 from panem_shared.enums import ChannelKind, CharacterStatus, OwnerKind, RpMode
 from panem_shared.relationships import relationship_key
@@ -481,6 +483,16 @@ class ProxyCog(commands.Cog):
             character_job_title = speaker.job_title
             character_home_district = content_bundle.district(speaker.district_id)
 
+            # Panem-wide staff lore (`/staff lore ...`) -- fetched once per
+            # message, same as `district_state` above, since it doesn't
+            # vary between the NPCs replying to the same line. Keyword
+            # matching against `message_content` happens per-NPC inside
+            # `dialogue_svc.build_request_context` (mirrors how `memories`
+            # is likewise fetched once and filtered per-NPC there).
+            history_entries = (await session.execute(select(PanemHistoryEntry))).scalars().all()
+            world_lore = await session.get(WorldLoreSettings, 1)
+            world_notes = world_lore.alternate_universe_notes if world_lore is not None else None
+
             for npc in speaking:
                 try:
                     await dialogue_svc.check_and_spend_stamina(
@@ -549,6 +561,8 @@ class ProxyCog(commands.Cog):
                     message=message_content,
                     settings=self.bot.settings,  # type: ignore[attr-defined]
                     history=history,
+                    history_entries=history_entries,
+                    world_notes=world_notes,
                     present=present,
                     npc_job_title=npc_job.title if npc_job is not None else None,
                     npc_background=npc_background,
