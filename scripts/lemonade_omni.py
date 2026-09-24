@@ -400,6 +400,20 @@ def embeddable_asset(version: str) -> str:
     raise SystemExit(f"no Embeddable Lemonade build for {system}/{machine}")
 
 
+def _ensure_executable(directory: Path) -> None:
+    """The release tarball doesn't reliably mark lemond/lemonade as
+    executable in its own metadata (observed extracting as plain 0o644),
+    and extraction faithfully reproduces whatever bits the archive
+    recorded -- so this can't be left to the tarball to get right, on a
+    fresh extraction or a previously-unpacked directory alike."""
+    if platform.system() == "Windows":
+        return
+    for name in ("lemond", "lemonade"):
+        binary = directory / name
+        if binary.exists():
+            binary.chmod(binary.stat().st_mode | 0o111)
+
+
 def ensure_embeddable(home: Path, version: str) -> Path:
     """Returns the directory holding `lemond` (+ `lemonade`, `resources/`)."""
     exe = "lemond.exe" if platform.system() == "Windows" else "lemond"
@@ -409,6 +423,7 @@ def ensure_embeddable(home: Path, version: str) -> Path:
         *sorted(home.glob("embeddable/lemonade-embeddable-*")),
     ):
         if (candidate / exe).exists():
+            _ensure_executable(candidate)
             return candidate
     asset = embeddable_asset(version)
     url = RELEASE_URL.format(version=version, asset=asset)
@@ -425,6 +440,7 @@ def ensure_embeddable(home: Path, version: str) -> Path:
     archive.unlink()
     for candidate in sorted(home.glob("embeddable/lemonade-embeddable-*")):
         if (candidate / exe).exists():
+            _ensure_executable(candidate)
             print(f"embeddable lemonade {version} unpacked at {candidate}")
             return candidate
     raise SystemExit(f"{asset} did not contain {exe}")
