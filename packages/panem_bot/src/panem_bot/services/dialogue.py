@@ -26,9 +26,10 @@ from redis.asyncio import Redis
 
 from panem_bot.errors import NotAllowed
 from panem_shared import constants
+from panem_shared import district_lore as district_lore_svc
 from panem_shared.content.schemas import District, Location
-from panem_shared.db.models import Character, DistrictState, Memory, Npc
-from panem_shared.enums import CharacterStatus, RpMode
+from panem_shared.db.models import Character, DistrictLore, DistrictState, Memory, Npc
+from panem_shared.enums import CharacterStatus, Position, RpMode
 from panem_shared.lemonade import omni
 from panem_shared.memory import retrieve as retrieve_memories
 from panem_shared.settings import Settings
@@ -36,6 +37,22 @@ from panem_shared.settings import Settings
 logger = structlog.get_logger()
 
 STAMINA_KEY_PREFIX = "talk:stamina"
+
+# Surfaced in `build_request_context`'s `[SPEAKER] ... standing` line when
+# the character an NPC is talking to holds one of these `Position`s
+# (`/staff give position`) -- so the NPC treats them as the entity of
+# power they are rather than an ordinary local, without needing the
+# actual President/Gamemaker/etc. physically present. Doesn't cover every
+# `Position` (e.g. Victor already shapes a reply plenty via `known`/
+# memories/reputation on its own); this is specifically for the "you
+# outrank ordinary district life" positions the History tab's own ask
+# calls out.
+_POWER_STANDING: dict[str, str] = {
+    Position.PRESIDENT.value: "the President of Panem",
+    Position.VICE_PRESIDENT.value: "the Vice President of Panem",
+    Position.GAMEMAKER.value: "a Gamemaker",
+    Position.GOVERNOR.value: "this district's Governor",
+}
 
 
 def check_can_talk(character: Character) -> None:
@@ -86,6 +103,7 @@ def build_request_context(
     known: str | None = None,
     constraints: Mapping[str, str] | None = None,
     district_on_edge: bool = False,
+    district_lore: DistrictLore | None = None,
 ) -> omni.RequestContext:
     """`present` lists everyone else in the scene besides `character`
     (other engaged NPCs, other joined characters) -- the system prompt
@@ -112,6 +130,16 @@ def build_request_context(
     scene block so an NPC's reply can reflect peacekeepers cracking down
     without the model needing to infer it from crisis/unrest numbers
     alone.
+
+    `district_lore` (the Activity's staff-only History tab, `panem_shared.
+    district_lore.DistrictLore`) folds a short, capped summary into the
+    scene block via `district_lore_svc.prompt_summary` -- deliberately
+    just a tone-setting line (classification, adjectives, urban/rural
+    feel, academy name), not a dump of everything staff have written.
+    `character.positions` (`Position.PRESIDENT`/`VICE_PRESIDENT`/
+    `GAMEMAKER`/`GOVERNOR`) adds a `[SPEAKER] ... standing` line so the
+    NPC recognizes them as an entity of power even without any of that
+    coming from `stance`/`known`.
 
     `known` is `RelationshipRow.summary` for this NPC-character pair -- a
     running recap of every past engagement between them, already trimmed
@@ -151,6 +179,9 @@ def build_request_context(
         scene["peacekeeper_crackdown"] = (
             "active -- peacekeepers are cracking down, people are visibly on edge"
         )
+    lore_summary = district_lore_svc.prompt_summary(district_lore)
+    if lore_summary:
+        scene["lore"] = lore_summary
 
     speaker: dict[str, str] = {"name": character.name}
     if character_job_title:
@@ -160,6 +191,9 @@ def build_request_context(
     speaker["reputation"] = f"{character.reputation or 0.0:.1f}"
     if known:
         speaker["known"] = known
+    standings = [_POWER_STANDING[p] for p in character.positions or [] if p in _POWER_STANDING]
+    if standings:
+        speaker["standing"] = ", ".join(standings)
 
     return omni.RequestContext(
         mode=omni.RequestMode.DIALOGUE,
@@ -322,6 +356,7 @@ async def generate_reply(
     character_home_district: District | None = None,
     known: str | None = None,
     district_on_edge: bool = False,
+    district_lore: DistrictLore | None = None,
 ) -> str:
     provider = resolve_provider(npc, settings)
     if provider == "template":
@@ -342,6 +377,7 @@ async def generate_reply(
         character_job_title=character_job_title,
         character_home_district=character_home_district,
         known=known,
+        district_lore=district_lore,
         constraints={"max_words": str(_length_matched_max_words(message))},
     )
     try:

@@ -31,7 +31,7 @@ const STEP_TIMEOUT_MS = 8000;
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "33";
+const ASSET_VERSION = "34";
 
 // District names mapping for Capitol and Districts 1-12
 const DISTRICT_NAMES = {
@@ -114,6 +114,12 @@ const TAB_LABELS = {
 // (currently just `currentTabName()`'s fallback below).
 const STAFF_TAB = "staff";
 const STAFF_TAB_LABEL = "Staff";
+// The District History tab -- staff-only district lore/context NPC
+// dialogue draws a short summary from (`panem_shared.district_lore`).
+// Kept separate from STAFF_TAB rather than folded into it: it's its own
+// large, district-scoped editor, not another admin-panel panel.
+const HISTORY_TAB = "history";
+const HISTORY_TAB_LABEL = "History";
 
 const statusEl = document.getElementById("status");
 const navEl = document.getElementById("tab-nav");
@@ -650,7 +656,7 @@ function buildCtx() {
 }
 
 function visibleTabs() {
-  return state.isStaff ? [...TABS, STAFF_TAB] : TABS;
+  return state.isStaff ? [...TABS, STAFF_TAB, HISTORY_TAB] : TABS;
 }
 
 function currentTabName() {
@@ -700,7 +706,15 @@ function setupNav() {
   const active = currentTabName();
   for (const name of visibleTabs()) {
     const icon = renderTabIcon(name);
-    const label = el("span", {}, name === STAFF_TAB ? STAFF_TAB_LABEL : TAB_LABELS[name]);
+    const label = el(
+      "span",
+      {},
+      name === STAFF_TAB
+        ? STAFF_TAB_LABEL
+        : name === HISTORY_TAB
+          ? HISTORY_TAB_LABEL
+          : TAB_LABELS[name]
+    );
     navEl.append(
       el(
         "button",

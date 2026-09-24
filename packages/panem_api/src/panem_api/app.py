@@ -56,6 +56,7 @@ from panem_api.dashboard_routes import (
     build_blackmarket_router,
     build_characters_router,
     build_crime_router,
+    build_district_lore_router,
     build_housing_router,
     build_identify_router,
     build_jail_router,
@@ -834,6 +835,14 @@ def create_app(
             discord_guild_id=discord_guild_id,
             staff_role_id=staff_role_id,
             log_channel_id=log_channel_id,
+        )
+    )
+    app.include_router(
+        build_district_lore_router(
+            session_factory=session_factory,
+            discord_token=discord_token,
+            discord_guild_id=discord_guild_id,
+            staff_role_id=staff_role_id,
         )
     )
 
