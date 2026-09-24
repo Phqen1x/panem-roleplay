@@ -69,7 +69,13 @@ parts:
       cd "$CRAFT_PART_BUILD"
 
       export UV_INSTALL_DIR="$CRAFT_PART_BUILD/.uv-bin"
-      curl -LsSf https://astral.sh/uv/install.sh | sh
+      # -4: some LXD build instances have no IPv6 route, and astral.sh
+      # resolves an AAAA record -- curl silently stalls on the IPv6 attempt
+      # for minutes before ever falling back to IPv4 without this. Fail
+      # fast (20s connect timeout, a few retries for transient DNS/network
+      # blips) instead of hanging.
+      curl -4 --connect-timeout 20 --retry 3 --retry-connrefused -LsSf \
+        https://astral.sh/uv/install.sh | sh
       export PATH="$UV_INSTALL_DIR:$PATH"
       export UV_PYTHON_INSTALL_DIR="$CRAFT_PART_BUILD/.uv-python"
       export UV_CACHE_DIR="$CRAFT_PART_BUILD/.uv-cache"
