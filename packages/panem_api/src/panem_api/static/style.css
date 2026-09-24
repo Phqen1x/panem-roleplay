@@ -24,6 +24,23 @@
   --status-busy-border: rgba(239, 68, 68, 0.35);
   --status-busy-text: #f87171;
 
+  /* Other players' characters (Social tab's Residents directory) get their
+     own three statuses -- sleeping/talking to residents/idle -- distinct
+     from an NPC resident's available/working/busy above. "Engaged" reuses
+     the gold accent family (a conversation is the Capitol-social event
+     this whole tab is about); "sleeping" gets a calm indigo; "idle" stays
+     a plain muted gray, the same non-color the rest of the dashboard uses
+     for "nothing going on." */
+  --status-sleep-bg: rgba(129, 140, 248, 0.12);
+  --status-sleep-border: rgba(129, 140, 248, 0.35);
+  --status-sleep-text: #a5b4fc;
+  --status-engaged-bg: color-mix(in srgb, var(--accent) 14%, transparent);
+  --status-engaged-border: color-mix(in srgb, var(--accent) 40%, transparent);
+  --status-engaged-text: var(--accent);
+  --status-idle-bg: color-mix(in srgb, var(--muted) 14%, transparent);
+  --status-idle-border: color-mix(in srgb, var(--muted) 32%, transparent);
+  --status-idle-text: var(--muted);
+
   /* Shared success/failure ink -- the same values `.result-line`/`.tab-
      status.error` (dashboard.css) and the standalone minigame pages
      (crime.css/vitals.css/work.css) already used as bare hex codes;

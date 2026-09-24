@@ -59,6 +59,7 @@ from panem_shared import theme as theme_svc
 from panem_shared import trades as trades_svc
 from panem_shared import travel as travel_svc
 from panem_shared.content.loader import ContentBundle
+from panem_shared.content.schemas import Location
 from panem_shared.db.models import (
     AfflictionType,
     ApartmentLease,
@@ -83,6 +84,7 @@ from panem_shared.db.session import session_scope
 from panem_shared.enums import (
     CharacterStatus,
     DayPhase,
+    LocationKind,
     OwnerKind,
     Position,
     PropertyKind,
@@ -1914,6 +1916,16 @@ class ResidentSummary(BaseModel):
     job_title: str
     location_id: str | None = None
     location_name: str | None = None
+    kind: str = "npc"
+    """`"npc"` or `"user"` -- the Residents directory's own citizens versus
+    other players' characters currently in this district. The frontend's
+    `determineStatus()` already prefers an explicit `status` over its own
+    location-name heuristic, so `status` below is populated for `"user"`
+    rows (computed from real state) and left `None` for `"npc"` rows
+    (unchanged: still inferred client-side from location/job)."""
+    status: str | None = None
+    """`"sleeping"`/`"engaged"`/`"idle"` for a `"user"` row -- see
+    `resident_list`'s `_character_status` for how each is decided."""
 
 
 class ResidentsResponse(BaseModel):
@@ -1954,6 +1966,24 @@ def build_residents_router(
             raise HTTPException(status_code=404, detail="resident_not_found")
         return npc
 
+    def _character_status(
+        char: Character, *, engaged_character_ids: set[int], locations_by_id: dict[str, Location]
+    ) -> str:
+        """`"engaged"` wins over location -- a character mid-conversation in
+        their own home still reads as talking, not sleeping. Otherwise,
+        `"sleeping"` is inferred from standing in a `RESIDENTIAL` location
+        (home, an inn) rather than a real "currently asleep" flag: `/sleep`
+        is a one-shot fatigue-restoring action with no lasting state of its
+        own (see `panem_shared.housing`), so this is the closest real signal
+        to "probably resting" the data actually offers. Anyone else is
+        `"idle"` -- present in the district, not doing anything trackable."""
+        if char.id in engaged_character_ids:
+            return "engaged"
+        location = locations_by_id.get(char.location_id) if char.location_id else None
+        if location is not None and location.kind == LocationKind.RESIDENTIAL:
+            return "sleeping"
+        return "idle"
+
     @router.get("/{character_id}", response_model=ResidentsResponse)
     async def resident_list(character_id: int, discord_id: int) -> ResidentsResponse:
         factory = _require_session_factory(session_factory)
@@ -1973,20 +2003,57 @@ def build_residents_router(
                 .scalars()
                 .all()
             )
+            other_characters = (
+                (
+                    await session.execute(
+                        select(Character)
+                        .where(
+                            Character.current_district_id == character.current_district_id,
+                            Character.status == CharacterStatus.APPROVED.value,
+                            Character.id != character.id,
+                        )
+                        .order_by(Character.name)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            open_scenes = (
+                (await session.execute(select(Scene).where(Scene.status == SceneStatus.OPEN.value)))
+                .scalars()
+                .all()
+            )
+            engaged_character_ids = {
+                cid for scene in open_scenes for cid in scene.participants.get("characters", [])
+            }
             all_jobs = await jobs_svc.get_all_jobs(session, content)
-            locations_by_id = {loc.id: loc.name for loc in district.locations}
+            locations_by_id = {loc.id: loc for loc in district.locations}
             residents = []
             for npc in npcs:
                 job = all_jobs.get(npc.job_id) if npc.job_id else None
+                location = locations_by_id.get(npc.location_id) if npc.location_id else None
                 residents.append(
                     ResidentSummary(
                         name=npc.name,
                         job_title=job.title if job else "Unemployed",
                         location_id=npc.location_id,
-                        location_name=(
-                            locations_by_id.get(npc.location_id)
-                            if npc.location_id is not None
-                            else None
+                        location_name=location.name if location is not None else None,
+                        kind="npc",
+                    )
+                )
+            for other in other_characters:
+                location = locations_by_id.get(other.location_id) if other.location_id else None
+                residents.append(
+                    ResidentSummary(
+                        name=other.name,
+                        job_title=other.job_title or "Unemployed",
+                        location_id=other.location_id,
+                        location_name=location.name if location is not None else None,
+                        kind="user",
+                        status=_character_status(
+                            other,
+                            engaged_character_ids=engaged_character_ids,
+                            locations_by_id=locations_by_id,
                         ),
                     )
                 )

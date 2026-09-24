@@ -743,11 +743,58 @@ table.data-table .qty-input {
   color: var(--status-busy-text);
 }
 
+/* Other players' characters (Residents directory, `kind: "user"` rows) --
+   see style.css's `--status-sleep-*`/`--status-engaged-*`/`--status-idle-*`
+   for why each gets its own color family instead of reusing an NPC's. */
+.status-pill.sleeping {
+  background: var(--status-sleep-bg);
+  border: 1px solid var(--status-sleep-border);
+  color: var(--status-sleep-text);
+}
+
+.status-pill.engaged {
+  background: var(--status-engaged-bg);
+  border: 1px solid var(--status-engaged-border);
+  color: var(--status-engaged-text);
+}
+
+.status-pill.idle {
+  background: var(--status-idle-bg);
+  border: 1px solid var(--status-idle-border);
+  color: var(--status-idle-text);
+}
+
 .status-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: currentColor;
+}
+
+/* NPC vs. USER label (Residents directory) -- the same small serif chip
+   language `.result-line`'s Confirmed/Denied verdicts use, so "who's a
+   citizen of this district and who's another player's character" reads
+   at a glance without needing its own color-coded row style. */
+.kind-badge {
+  display: inline-block;
+  font-family: var(--font-serif);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.kind-badge.npc {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+  border: 1px solid var(--border);
+}
+
+.kind-badge.user {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
 }
 
 /* Social Tab Layout & Cards */

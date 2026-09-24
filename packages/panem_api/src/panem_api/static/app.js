@@ -31,7 +31,7 @@ const STEP_TIMEOUT_MS = 8000;
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "35";
+const ASSET_VERSION = "36";
 
 // District names mapping for Capitol and Districts 1-12
 const DISTRICT_NAMES = {
