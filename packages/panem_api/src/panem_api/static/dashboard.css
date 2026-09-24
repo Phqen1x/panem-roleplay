@@ -414,7 +414,7 @@ table.data-table td.lose {
   min-width: 90px;
 }
 
-.field-row input,
+.field-row input:not([type="checkbox"]):not([type="radio"]),
 .field-row select,
 .field-row textarea,
 .search-input,
@@ -431,7 +431,7 @@ table.data-table td.lose {
   transition: border-color 0.2s, box-shadow 0.2s, background-color 0.2s;
 }
 
-.field-row input:focus,
+.field-row input:not([type="checkbox"]):not([type="radio"]):focus,
 .field-row select:focus,
 .field-row textarea:focus,
 .search-input:focus,
@@ -440,6 +440,22 @@ table.data-table td.lose {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--bg) 50%, var(--panel));
   box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* A checkbox (e.g. character creation's "Illicit job?", housing's
+   "Financed?", the staff affliction-type editor's "Permanent?") was
+   falling into the text-input rule above -- `flex: 1; min-width: 120px;`
+   plus the padded/bordered/backgrounded box meant for a text field
+   stretched a native checkbox into a large blank rectangle next to its
+   label, nothing like a checkbox. Left at its native size and un-stretched
+   instead, same as a plain checkbox anywhere else on the web. */
+.field-row input[type="checkbox"],
+.field-row input[type="radio"] {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 
 .btn {
@@ -1453,13 +1469,19 @@ svg.ui-icon {
     font-size: 14px;
   }
 
-  .field-row input,
+  .field-row input:not([type="checkbox"]):not([type="radio"]),
   .field-row select,
   .field-row textarea,
   .search-input,
   .filter-select {
     padding: 11px 12px;
     font-size: 15px; /* >=16px avoids iOS Safari/WKWebView auto-zoom on focus; 15px is the largest that still fits these fields' existing widths */
+  }
+
+  .field-row input[type="checkbox"],
+  .field-row input[type="radio"] {
+    width: 20px;
+    height: 20px;
   }
 
   /* A table.data-table wider than the viewport (Good/Price/Qty/Buy, or

@@ -50,6 +50,7 @@ from panem_shared.enums import (
     Stance,
 )
 from panem_shared.redis_keys import (
+    CHARACTER_PENDING_CHANNEL,
     crime_attempt_key,
     crime_interaction_key,
     work_interaction_key,
@@ -61,6 +62,7 @@ from panem_shared.relationships import relationship_key
 class FakeRedis:
     def __init__(self, store: dict[str, str] | None = None) -> None:
         self.store: dict[str, str] = store or {}
+        self.published: list[tuple[str, str]] = []
 
     async def get(self, key: str) -> str | None:
         return self.store.get(key)
@@ -71,6 +73,10 @@ class FakeRedis:
 
     async def delete(self, key: str) -> None:
         self.store.pop(key, None)
+
+    async def publish(self, channel: str, message: str) -> int:
+        self.published.append((channel, message))
+        return 0
 
     async def aclose(self) -> None:
         pass
@@ -2039,6 +2045,7 @@ class TestDashboardCharacters:
         async with db_session_factory() as session:
             character = await session.get(Character, body["id"])
             assert character.approval_notified_at is None
+        assert work_app.state.fake_redis.published == [(CHARACTER_PENDING_CHANNEL, str(body["id"]))]
 
     async def test_create_rejects_a_duplicate_name(self, work_app, db_session_factory):
         await seed_character(db_session_factory, character_overrides={"name": "Wren"})

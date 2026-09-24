@@ -763,6 +763,7 @@ def create_app(
             content=content,
             session_factory=session_factory,
             max_characters_per_user=max_characters_per_user,
+            redis_client=redis_client,
         )
     )
     app.include_router(

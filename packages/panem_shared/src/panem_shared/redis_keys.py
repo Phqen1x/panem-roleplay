@@ -90,3 +90,16 @@ a row and the loop pauses -- `panem_bot.narrator.run` forwards whatever's
 published here straight to `Settings.log_channel_id` verbatim, since a
 paused sim is the single most operationally important thing staff can
 be told about."""
+
+
+CHARACTER_PENDING_CHANNEL = "character:pending"
+"""Published to (payload: the new `Character.id`, as a decimal string) by
+`panem_api.dashboard_routes`'s character-creation endpoint right after it
+writes a new PENDING character -- `panem_api` has no bot token of its own
+to post the staff-approval embed with, so this is how it tells `panem_bot`
+"go announce this one now" instead of waiting for `CharacterCog`'s own
+`_announce_pending_characters` poll (`constants.
+CHARACTER_APPROVAL_POLL_INTERVAL_MINUTES`) to notice it on its next pass.
+That poll stays in place as a fallback for the case this publish is lost
+(e.g. the bot process was down at the moment of publish -- Redis pub/sub
+has no replay/durability, unlike a DB row)."""

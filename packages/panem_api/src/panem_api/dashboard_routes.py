@@ -88,7 +88,11 @@ from panem_shared.enums import (
     TradeStatus,
 )
 from panem_shared.errors import NotAllowed, NotFound, ServiceError
-from panem_shared.redis_keys import CRIME_ATTEMPT_TTL_S, crime_attempt_key
+from panem_shared.redis_keys import (
+    CHARACTER_PENDING_CHANNEL,
+    CRIME_ATTEMPT_TTL_S,
+    crime_attempt_key,
+)
 from panem_shared.relationships import relationship_key
 from panem_shared.shifts import (
     already_worked_this_tick,
@@ -749,14 +753,19 @@ def build_characters_router(
     content: ContentBundle,
     session_factory: async_sessionmaker[AsyncSession] | None,
     max_characters_per_user: int,
+    redis_client: redis.Redis,
 ) -> APIRouter:
     """The Character tab's REST surface: list/create/edit/retire, mirroring
     `/character list|create|avatar|tag|retire`. Unlike Discord's `/character
     create` (a multi-step modal wizard ending in a bot-posted staff-approval
     embed), this endpoint can only write the DB row -- `panem_api` has no
-    bot token to post that embed itself, so `CharacterCog._announce_pending_
-    characters` (a background poll task in `panem_bot`) picks up what this
-    creates and announces it the same way, shortly after. District is a
+    bot token to post that embed itself, so it publishes the new character's
+    id on `CHARACTER_PENDING_CHANNEL` right after creating it, which
+    `CharacterCog` (in `panem_bot`) subscribes to and announces from
+    immediately. `CharacterCog._announce_pending_characters` (a background
+    poll) stays as a fallback for the case that publish never reaches a
+    listening bot (e.g. it was down at that moment -- pub/sub has no
+    replay). District is a
     plain field here rather than inferred from a Discord guild role (how
     `/character create` picks it) -- the dashboard has no equivalent
     without a wider OAuth scope than this feature asks for; see the
@@ -840,7 +849,9 @@ def build_characters_router(
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
             current_tick = await _current_tick(session)
-            return _character_detail(character, content=content, current_tick=current_tick)
+            detail = _character_detail(character, content=content, current_tick=current_tick)
+        await redis_client.publish(CHARACTER_PENDING_CHANNEL, str(character.id))
+        return detail
 
     @router.patch("/{character_id}", response_model=CharacterDetail)
     async def update_my_character(

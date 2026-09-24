@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import datetime as dt
 
@@ -36,7 +37,11 @@ from panem_shared.db.models import (
     WorldClock,
 )
 from panem_shared.enums import CharacterStatus, DayPhase, RpMode
+from panem_shared.logging import get_logger
+from panem_shared.redis_keys import CHARACTER_PENDING_CHANNEL
 from panem_shared.simtime import clock_string, phase_time_range
+
+logger = get_logger(component="characters")
 
 EMBED_FIELD_VALUE_LIMIT = 1024
 
@@ -65,9 +70,13 @@ class CharacterCog(commands.Cog):
         )
         self.bot.add_view(self.approval_view)
         self._announce_pending_characters.start()
+        self._pending_listener_task = asyncio.create_task(self._listen_for_pending_characters())
 
     async def cog_unload(self) -> None:
         self._announce_pending_characters.cancel()
+        self._pending_listener_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await self._pending_listener_task
 
     async def _interaction_is_staff(self, interaction: discord.Interaction) -> bool:
         if not isinstance(interaction.user, discord.Member):
@@ -326,6 +335,12 @@ class CharacterCog(commands.Cog):
             return
         async with self.bot.db() as session:
             character = await characters_svc.get_character(session, character_id)
+            if character.approval_notified_at is not None:
+                # Already posted -- both the poll and the instant Redis
+                # listener below can end up calling this for the same
+                # character in a rare near-simultaneous race; this makes
+                # the method idempotent regardless of caller.
+                return
             district = self.bot.content.district(character.district_id)
             embed = discord.Embed(
                 title=f"Character Application: {character.name}", color=discord.Color.blurple()
@@ -378,6 +393,58 @@ class CharacterCog(commands.Cog):
     @_announce_pending_characters.before_loop
     async def _before_announce_pending_characters(self) -> None:
         await self.bot.wait_until_ready()
+
+    async def _try_announce(self, character_id: int) -> None:
+        """`_listen_for_pending_characters`'s per-message handler: looks up
+        the applicant's `discord_id` and confirms the character is still
+        pending and unannounced before calling `_post_approval_embed` --
+        same shape as `_announce_pending_characters`'s own query, just for
+        one character instead of every outstanding one."""
+        async with self.bot.db() as session:
+            row = (
+                await session.execute(
+                    select(Character.id, User.discord_id)
+                    .join(User, User.id == Character.user_id)
+                    .where(
+                        Character.id == character_id,
+                        Character.status == CharacterStatus.PENDING.value,
+                        Character.approval_notified_at.is_(None),
+                    )
+                )
+            ).first()
+        if row is None:
+            return
+        _, discord_id = row
+        await self._post_approval_embed(character_id, applicant_discord_id=discord_id)
+
+    async def _listen_for_pending_characters(self) -> None:
+        """Instant counterpart to `_announce_pending_characters`'s poll:
+        `panem_api.dashboard_routes`'s character-creation endpoint
+        publishes the new character's id on `CHARACTER_PENDING_CHANNEL`
+        the moment it's created, so a dashboard-made character gets
+        announced right away instead of waiting up to `constants.
+        CHARACTER_APPROVAL_POLL_INTERVAL_MINUTES` for the poll's next
+        pass (which stays running as a fallback for a publish that never
+        reaches a listening bot, e.g. it was down at that moment)."""
+        await self.bot.wait_until_ready()
+        pubsub = self.bot.redis.pubsub()
+        await pubsub.subscribe(CHARACTER_PENDING_CHANNEL)
+        try:
+            async for message in pubsub.listen():
+                if message["type"] != "message":
+                    continue
+                try:
+                    character_id = int(message["data"])
+                except (TypeError, ValueError):
+                    logger.warning("pending_character_bad_payload", data=message["data"])
+                    continue
+                try:
+                    await self._try_announce(character_id)
+                except Exception:
+                    logger.exception("pending_character_announce_failed", character_id=character_id)
+        finally:
+            await pubsub.unsubscribe(CHARACTER_PENDING_CHANNEL)
+            await pubsub.aclose()
 
     # --------------------------------------------------------- approval flow
 
