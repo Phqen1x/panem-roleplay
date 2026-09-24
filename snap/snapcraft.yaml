@@ -99,7 +99,13 @@ parts:
       # deps included -- as one unit.
       uv export --frozen --no-dev --all-packages --no-editable --no-hashes \
         -o "$CRAFT_PART_BUILD/requirements.txt"
-      uv pip install --python "$PYBIN" -r "$CRAFT_PART_BUILD/requirements.txt"
+      # --break-system-packages: uv marks its own standalone installs as
+      # PEP-668 externally-managed (protecting the common `pip install`
+      # footgun) -- but installing straight into this interpreter's
+      # site-packages, no venv layer, is exactly the point here (see the
+      # comment above), so the guard needs to be overridden explicitly.
+      uv pip install --python "$PYBIN" --break-system-packages \
+        -r "$CRAFT_PART_BUILD/requirements.txt"
 
       PYROOT="$(dirname "$(dirname "$PYBIN")")"
       mkdir -p "$CRAFT_PART_INSTALL"
