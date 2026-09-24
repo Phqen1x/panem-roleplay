@@ -9,15 +9,20 @@
 # place for this.
 set -eu
 
-: "${LEMONADE_HOME:=$SNAP_COMMON/lemonade}"
-export LEMONADE_HOME
-
 if [ -f "$SNAP_DATA/env" ]; then
   set -a
   # shellcheck disable=SC1090
   . "$SNAP_DATA/env"
   set +a
 fi
+
+# Applied *after* sourcing env, not before: an env file carrying a blank
+# `LEMONADE_HOME=` line (e.g. copied over from the local-dev .env.example,
+# which lists it blank too) would otherwise stomp this default right back
+# to empty -- `:=` re-defaults on empty as well as unset, so this wins
+# either way.
+: "${LEMONADE_HOME:=$SNAP_COMMON/lemonade}"
+export LEMONADE_HOME
 
 mkdir -p "$LEMONADE_HOME"
 cd "$SNAP"
