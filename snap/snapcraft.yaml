@@ -90,21 +90,36 @@ parts:
       # interpreter finds its stdlib at runtime -- neither survives moving
       # a copied .venv into /snap/panem/<rev>, however the copy is made.
       # So: no venv layer here at all. Install straight into the
-      # standalone interpreter's own site-packages (--no-editable: real
-      # files, not a .pth pointing back at this build tree -- see
-      # Settings.data_dir's docstring for why every main.py needed an env
-      # override once this stopped being an editable/dev-mode install),
-      # then stage that whole interpreter tree -- now self-contained,
-      # deps included -- as one unit.
+      # standalone interpreter's own site-packages as real files, not a
+      # .pth pointing back at this build tree -- see Settings.data_dir's
+      # docstring for why every main.py needed an env override once this
+      # stopped being an editable/dev-mode install -- then stage that
+      # whole interpreter tree -- now self-contained, deps included -- as
+      # one unit.
       uv export --frozen --no-dev --all-packages --no-editable --no-hashes \
         -o "$CRAFT_PART_BUILD/requirements.txt"
+      # `uv export --no-editable` does NOT reliably convert every workspace
+      # member's requirements.txt entry to a real install: `uv pip install
+      # -r` has been observed installing one local package (panem-shared,
+      # specifically) as an editable .pth pointing straight back at this
+      # build directory, despite the other three workspace packages on the
+      # same line format installing correctly. That .pth is dead the
+      # moment this directory is gone, so every daemon fails at import
+      # with "No module named 'panem_shared'". Sidestep the ambiguity
+      # entirely: build every workspace member into a real wheel and
+      # install *those* -- a .whl install can never be editable -- keeping
+      # requirements.txt only for pinned third-party versions.
+      grep -v '^\./packages/' "$CRAFT_PART_BUILD/requirements.txt" \
+        > "$CRAFT_PART_BUILD/requirements.thirdparty.txt"
+      uv build --all-packages --out-dir "$CRAFT_PART_BUILD/dist"
       # --break-system-packages: uv marks its own standalone installs as
       # PEP-668 externally-managed (protecting the common `pip install`
       # footgun) -- but installing straight into this interpreter's
       # site-packages, no venv layer, is exactly the point here (see the
       # comment above), so the guard needs to be overridden explicitly.
       uv pip install --python "$PYBIN" --break-system-packages \
-        -r "$CRAFT_PART_BUILD/requirements.txt"
+        -r "$CRAFT_PART_BUILD/requirements.thirdparty.txt" \
+        "$CRAFT_PART_BUILD"/dist/*.whl
 
       PYROOT="$(dirname "$(dirname "$PYBIN")")"
       mkdir -p "$CRAFT_PART_INSTALL"
@@ -122,6 +137,11 @@ parts:
       cp "$CRAFT_PART_BUILD/alembic.ini" "$CRAFT_PART_INSTALL/alembic.ini"
       test -e "$CRAFT_PART_INSTALL/python/bin/python3" || {
         echo "python3 missing from staged interpreter tree" >&2
+        exit 1
+      }
+      "$CRAFT_PART_INSTALL/python/bin/python3" -c \
+        "import panem_shared, panem_bot, panem_sim, panem_api" || {
+        echo "one or more workspace packages failed to import after install" >&2
         exit 1
       }
     stage:
