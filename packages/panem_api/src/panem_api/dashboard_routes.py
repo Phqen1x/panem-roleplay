@@ -2394,7 +2394,20 @@ class HousingOwnedProperty(BaseModel):
     asking_price: float | None = None
     mortgage_principal: float
     mortgage_payment: float
+    mortgage_missed_payments: int
     has_open_auction: bool
+
+
+class HousingMortgageTerms(BaseModel):
+    """The constants behind `panem_shared.housing.financed_purchase_terms`/
+    `apply_refinance`, sent down so the Housing tab can explain the real
+    numbers instead of the client hardcoding a copy that could drift."""
+
+    down_payment_pct: float
+    interest_rate: float
+    term_days: int
+    max_ltv: float
+    misses_to_foreclose: int
 
 
 class HousingStatusResponse(BaseModel):
@@ -2406,6 +2419,7 @@ class HousingStatusResponse(BaseModel):
     home_district_name: str | None = None
     owned: list[HousingOwnedProperty]
     listings: list[HousingListing]
+    mortgage_terms: HousingMortgageTerms
 
 
 class HousingBuyRequest(BaseModel):
@@ -2605,6 +2619,7 @@ def build_housing_router(
                     asking_price=p.asking_price,
                     mortgage_principal=round(p.mortgage_principal, 2),
                     mortgage_payment=round(p.mortgage_payment, 2),
+                    mortgage_missed_payments=p.mortgage_missed_payments,
                     has_open_auction=p.id in open_auction_property_ids,
                 )
                 for p in sorted(owned_rows, key=lambda p: p.id)
@@ -2646,6 +2661,14 @@ def build_housing_router(
                 ),
                 owned=owned,
                 listings=listings,
+                mortgage_terms=HousingMortgageTerms(
+                    down_payment_pct=constants.MORTGAGE_DOWN_PAYMENT_PCT,
+                    interest_rate=constants.MORTGAGE_INTEREST_RATE,
+                    term_days=constants.MORTGAGE_TERM_TICKS_DEFAULT
+                    // constants.TICKS_PER_DAY,
+                    max_ltv=constants.MORTGAGE_MAX_LTV,
+                    misses_to_foreclose=constants.MORTGAGE_MISSES_TO_FORECLOSE,
+                ),
             )
 
     @router.post("/{character_id}/{property_id}/buy", response_model=HousingBuyResponse)
