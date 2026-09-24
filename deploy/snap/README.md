@@ -102,11 +102,23 @@ lxc exec panem -- panem.migrate              # after a snap refresh that
 ```
 
 `panem.api` binds `$API_HOST:$API_PORT` (default `0.0.0.0:8000`) inside
-the container -- reach it from outside by publishing a port on the
-container (`lxc config device add panem api-port proxy
-listen=tcp:0.0.0.0:8000 connect=tcp:127.0.0.1:8000`) or fronting it with a
-reverse proxy on the host. Set `ACTIVITY_PUBLIC_URL` in the env file to
-whatever that externally reachable address turns out to be.
+the container. Reach it from outside with whichever of these fits:
+
+- **Domain already on Cloudflare (recommended)**: run
+  `deploy/lxd/setup_cloudflare_tunnel.sh panem your.domain.example` -- see
+  its header comment for the one manual `cloudflared tunnel login` step it
+  needs first. This runs `cloudflared` *inside* the container as a
+  systemd service making an outbound connection to Cloudflare's edge, so
+  nothing needs to be opened on this host or your router/NAT at all, and
+  you get TLS for free. Then set `ACTIVITY_PUBLIC_URL=https://your.domain.example`
+  in the env file (the script tells you the exact command) and `lxc exec
+  panem -- snap restart panem.api`.
+- **No Cloudflare / want a raw port instead**: publish a port on the
+  container (`lxc config device add panem api-port proxy
+  listen=tcp:0.0.0.0:8000 connect=tcp:127.0.0.1:8000`) or front it with a
+  reverse proxy on the host, then point your own DNS/router at it and set
+  `ACTIVITY_PUBLIC_URL` to whatever that externally reachable address
+  turns out to be. You're on your own for TLS with this path.
 
 ## Interfaces / confinement
 
