@@ -59,7 +59,7 @@ function lorePanel(ctx) {
     "Example lines, phonetic spellings, or a linguistic term (e.g. \"rhotic, clipped consonants\")."
   );
   const urbanRuralNotes = textarea("", "How urban vs. rural life shapes attitudes and speech here.");
-  const academyNameInput = el("input", { type: "text", placeholder: "e.g. \"The Bloodstone Academy\"" });
+  const academyNameInput = el("input", { type: "text", placeholder: "e.g. \"The Salvos Academy\"" });
   const academyNotes = textarea("", "How this district's career academy (if any) works.");
   const gamesHistory = textarea(
     "",
