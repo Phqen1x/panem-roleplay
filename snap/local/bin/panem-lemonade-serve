@@ -34,4 +34,13 @@ cd "$SNAP"
 # /usr/lib, no matter what's apt-installed there.
 export LD_LIBRARY_PATH="$SNAP/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
+# lemond also wants a writable XDG-style runtime directory
+# (XDG_RUNTIME_DIR or systemd's own RUNTIME_DIRECTORY), neither of which
+# snapd sets for a root-owned system daemon -- that only gets populated
+# for session/login-bound services (e.g. /run/user/<uid>), which this
+# isn't. Point it at a subdirectory of $LEMONADE_HOME instead, which is
+# already writable inside confinement.
+export XDG_RUNTIME_DIR="$LEMONADE_HOME/runtime"
+mkdir -p "$XDG_RUNTIME_DIR"
+
 exec "$SNAP/python/bin/python3" "$SNAP/scripts/lemonade_omni.py" serve
