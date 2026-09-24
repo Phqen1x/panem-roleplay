@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from panem_api import discord_staff
 from panem_api.app import create_app
+from panem_shared import simtime
 from panem_shared.constants import TRANSIT_TICKS
 from panem_shared.content.loader import ContentBundle
 from panem_shared.content.schemas import (
@@ -43,6 +44,7 @@ from panem_shared.db.models import (
 )
 from panem_shared.enums import (
     CharacterStatus,
+    DayPhase,
     OwnerKind,
     PropertyKind,
     SceneKind,
@@ -590,6 +592,37 @@ class TestListDistricts:
         assert {loc["id"]: (loc["x"], loc["y"]) for loc in body[0]["locations"]} == {
             "square": (0, 0),
             "station": (10, 10),
+        }
+
+
+class TestWorldTime:
+    def test_defaults_to_tick_zero_when_no_db_configured(self, client: TestClient):
+        response = client.get("/world/time")
+        assert response.status_code == 200
+        assert response.json() == {
+            "day": 1,
+            "month": 1,
+            "year": 1,
+            "time": simtime.clock_string(0),
+            "phase": DayPhase.NIGHT.value,
+        }
+
+    async def test_reflects_the_persisted_world_clock(self, work_app, db_session_factory):
+        from panem_shared.db.models import WorldClock
+
+        async with db_session_factory() as session, session.begin():
+            session.add(WorldClock(id=1, tick=1000))
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/world/time")
+        assert response.status_code == 200
+        _tick, phase, day, month = simtime.current(1000)
+        assert response.json() == {
+            "day": day,
+            "month": month,
+            "year": simtime.year_for(1000),
+            "time": simtime.clock_string(1000),
+            "phase": phase.value,
         }
 
 

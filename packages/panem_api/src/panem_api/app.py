@@ -72,7 +72,7 @@ from panem_api.dashboard_routes import (
     build_vitals_router,
     build_work_router,
 )
-from panem_shared import constants
+from panem_shared import constants, simtime
 from panem_shared.content.loader import ContentBundle
 from panem_shared.db.models import (
     Character,
@@ -174,6 +174,14 @@ class Positions(BaseModel):
 
 
 EMPTY_POSITIONS = Positions(npcs=[], characters=[])
+
+
+class WorldTimeResponse(BaseModel):
+    day: int
+    month: int
+    year: int
+    time: str
+    phase: str
 
 
 class ActivityConfig(BaseModel):
@@ -388,6 +396,31 @@ def create_app(
         if district_id not in content.districts:
             raise HTTPException(status_code=404, detail="No such district")
         return await _read_positions(redis_client, district_id)
+
+    @app.get("/world/time", response_model=WorldTimeResponse)
+    async def world_time() -> WorldTimeResponse:
+        """The Activity dashboard's top bar shows the current in-world
+        date/time alongside everything else -- day/month/phase mirror
+        `/time`'s own Discord command (`panem_bot.cogs.travel.TravelCog.
+        time`) so the two surfaces never disagree, plus `simtime.year_for`
+        for the year that command doesn't show. No discord_id/character
+        needed, and no `session_factory` guard either (unlike the write
+        endpoints below) -- this is global world state a fresh/unconfigured
+        DB just reports as tick 0 (Day 1, Month 1, Year 1) rather than
+        breaking the header entirely."""
+        tick = 0
+        if session_factory is not None:
+            async with session_scope(session_factory) as session:
+                clock = await session.get(WorldClock, 1)
+                tick = clock.tick if clock is not None else 0
+        _tick, phase, day, month = simtime.current(tick)
+        return WorldTimeResponse(
+            day=day,
+            month=month,
+            year=simtime.year_for(tick),
+            time=simtime.clock_string(tick),
+            phase=phase.value,
+        )
 
     @app.websocket("/ws/districts/{district_id}/positions")
     async def district_positions_ws(websocket: WebSocket, district_id: int) -> None:

@@ -122,6 +122,8 @@ const discordIdInput = document.getElementById("discord-id-input");
 const characterToggleEl = document.getElementById("character-select-toggle");
 const characterMenuEl = document.getElementById("character-select-menu");
 const themePickerEl = document.getElementById("theme-picker");
+const worldClockTimeEl = document.getElementById("world-clock-time");
+const worldClockDateEl = document.getElementById("world-clock-date");
 
 const state = {
   discordUser: null,
@@ -770,6 +772,22 @@ async function loadDistrictMottos() {
   }
 }
 
+// The world clock is global sim state, not per-player -- `/world/time`
+// needs no discord_id and is polled on a plain interval rather than
+// re-fetched alongside identity/character refreshes.
+const WORLD_TIME_POLL_INTERVAL_MS = 60_000;
+
+async function refreshWorldTime() {
+  try {
+    const time = await fetchJson("/world/time");
+    worldClockTimeEl.innerHTML = `Simulation Time: <strong>${time.time}</strong>`;
+    worldClockDateEl.innerHTML =
+      `Simulation Date: <strong>Month ${time.month}, Day ${time.day}, Year ${time.year}</strong>`;
+  } catch (err) {
+    console.warn("Could not load world time:", err);
+  }
+}
+
 async function main() {
   setupIdentityControls();
   window.addEventListener("hashchange", () => showTab(currentTabName()));
@@ -781,6 +799,8 @@ async function main() {
   });
 
   loadDistrictMottos();
+  refreshWorldTime();
+  setInterval(refreshWorldTime, WORLD_TIME_POLL_INTERVAL_MS);
 
   state.discordUser = await authenticateWithDiscord();
   if (!state.discordUser) {
