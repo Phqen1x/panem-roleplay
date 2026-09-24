@@ -92,7 +92,7 @@ file are untouched.
 ## Operating it
 
 ```
-lxc exec panem -- snap services panem       # bot/sim/api status
+lxc exec panem -- snap services panem       # bot/sim/api/lemonade status
 lxc exec panem -- snap logs panem.bot -f     # journalctl-backed, per-app
 lxc exec panem -- snap logs panem.sim -f
 lxc exec panem -- snap logs panem.api -f
@@ -100,6 +100,45 @@ lxc exec panem -- snap restart panem.bot     # restart one daemon
 lxc exec panem -- panem.migrate              # after a snap refresh that
                                               # ships a new migration
 ```
+
+## Enabling real NPC dialogue (optional)
+
+NPC dialogue (`/talk`, ambient chatter, lore-informed responses) defaults
+to canned template lines -- `DIALOGUE_PROVIDER` in `deploy/snap/env.example`
+is `template` out of the box, and nothing above needs it. To turn on real
+LLM dialogue:
+
+1. The `panem.lemonade` daemon (declared in `snap/snapcraft.yaml`, alongside
+   `bot`/`sim`/`api`) runs Embeddable Lemonade (`lemonade/README.md`)
+   inside this same snap/container, listening on `127.0.0.1:13305` --
+   reachable by the other daemons over loopback, same assumption as
+   `DATABASE_URL`/`REDIS_URL`. It starts automatically with the rest of
+   the snap; on first start it downloads the `lemond` runtime itself
+   (small) into `$SNAP_COMMON/lemonade` -- `$SNAP_COMMON`, not
+   `$SNAP_DATA`, specifically so a multi-GB model directory doesn't get
+   copied into every new revision's own data dir on each `snap refresh`.
+2. Register the collection and download its model weights (**several GB**,
+   needs Hugging Face access from this container) -- a one-off, same as
+   `panem.migrate`:
+   ```
+   lxc exec panem -- panem.lemonade-omni install
+   lxc exec panem -- panem.lemonade-omni status   # confirm it's ready
+   ```
+3. Set `DIALOGUE_PROVIDER=llm` in `/var/snap/panem/current/env`, then:
+   ```
+   lxc exec panem -- snap restart panem.bot panem.sim panem.api
+   ```
+
+Running Lemonade *outside* this container instead (on the bare host, or
+elsewhere) works too -- point `LLM_BASE_URL` at it and skip the
+`panem.lemonade` daemon/`network-bind` entirely, but remember `127.0.0.1`
+inside this container is the container itself, not the host: reaching a
+host-side Lemonade needs either an LXD proxy device
+(`lxc config device add panem lemonade-proxy proxy
+listen=tcp:127.0.0.1:13305 connect=tcp:127.0.0.1:13305 bind=guest`, which
+keeps `LLM_BASE_URL` unchanged) or pointing `LLM_BASE_URL` at the
+container's default gateway IP (`lxc exec panem -- ip route show default`)
+with Lemonade bound to reach it.
 
 `panem.api` binds `$API_HOST:$API_PORT` (default `0.0.0.0:8000`) inside
 the container. Reach it from outside with whichever of these fits:
@@ -122,9 +161,11 @@ the container. Reach it from outside with whichever of these fits:
 
 ## Interfaces / confinement
 
-`panem.bot`/`panem.sim`/`panem.api` all plug `network` (outbound to
-Postgres/Redis/Discord); `panem.api` additionally plugs `network-bind` to
-listen. No other plugs are declared -- there's nothing under `$SNAP` that
-needs to be written at runtime (`$SNAP_DATA` covers the env file and
-`panem_api`'s writable uploads dir instead, both already outside the
-confined, read-only `$SNAP` squashfs).
+`panem.bot`/`panem.sim`/`panem.api`/`panem.lemonade` all plug `network`
+(outbound to Postgres/Redis/Discord/each other); `panem.api` and
+`panem.lemonade` additionally plug `network-bind` to listen. No other
+plugs are declared -- there's nothing under `$SNAP` that needs to be
+written at runtime (`$SNAP_DATA` covers the env file and `panem_api`'s
+writable uploads dir, `$SNAP_COMMON` covers `panem.lemonade`'s downloaded
+runtime and models, both already outside the confined, read-only `$SNAP`
+squashfs).

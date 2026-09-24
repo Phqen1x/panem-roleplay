@@ -1,0 +1,24 @@
+#!/bin/sh
+# snapd daemon wrapper for Embeddable Lemonade -- see deploy/snap/README.md.
+#
+# $SNAP_COMMON (not $SNAP_DATA): the embeddable download + its models are
+# multi-GB and revision-independent -- $SNAP_DATA gets copied forward into
+# every new revision's own directory on refresh, which would mean
+# re-copying gigabytes of model weights on every snap upgrade for no
+# reason. $SNAP_COMMON is never versioned per-revision, so it's the right
+# place for this.
+set -eu
+
+: "${LEMONADE_HOME:=$SNAP_COMMON/lemonade}"
+export LEMONADE_HOME
+
+if [ -f "$SNAP_DATA/env" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$SNAP_DATA/env"
+  set +a
+fi
+
+mkdir -p "$LEMONADE_HOME"
+cd "$SNAP"
+exec "$SNAP/python/bin/python3" "$SNAP/scripts/lemonade_omni.py" serve

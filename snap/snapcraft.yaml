@@ -43,6 +43,18 @@ apps:
     restart-condition: on-failure
     restart-delay: 5s
     plugs: [network, network-bind]
+  lemonade:
+    # Embeddable Lemonade (lemonade/README.md) -- the local LLM server
+    # `DIALOGUE_PROVIDER=llm` talks to at LLM_BASE_URL (default
+    # http://127.0.0.1:13305/v1, reachable from the other daemons in this
+    # snap over loopback, same as Postgres/Redis). Only starts `lemond`
+    # itself; the actual model weights still need `sudo panem.lemonade-omni
+    # install` run by hand once, same as panem.migrate.
+    command: bin/panem-lemonade-serve
+    daemon: simple
+    restart-condition: on-failure
+    restart-delay: 5s
+    plugs: [network, network-bind]
   migrate:
     # Not a daemon -- run by hand after install/upgrade: `sudo panem.migrate`.
     command: bin/panem-migrate
