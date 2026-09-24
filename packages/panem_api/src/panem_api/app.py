@@ -846,6 +846,21 @@ def create_app(
         )
     )
 
+    uploads_root = static_dir or STATIC_DIR
+    if uploads_root != STATIC_DIR:
+        # `static_dir` was overridden (`Settings.static_uploads_dir`, a
+        # writable directory outside the read-only bundled `static/` tree
+        # -- see its own docstring) -- staff-uploaded layer images
+        # (`layers.UPLOAD_SUBDIR`, "uploads/layers/...") live there instead
+        # of under `STATIC_DIR` now, so they need their own mount at the
+        # same "/uploads" URL prefix `image_path` already assumes. Must be
+        # registered before the catch-all "/" mount below, or that mount's
+        # own (nonexistent, in this override case) "uploads/" subtree would
+        # shadow it.
+        uploads_dir = uploads_root / "uploads"
+        uploads_dir.mkdir(parents=True, exist_ok=True)
+        app.mount("/uploads", NoCacheStaticFiles(directory=uploads_dir), name="uploads")
+
     if STATIC_DIR.exists():
         # Mounted last so it only ever catches paths none of the routes
         # above matched (Starlette tries routes in registration order) --

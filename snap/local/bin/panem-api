@@ -1,0 +1,19 @@
+#!/bin/sh
+# snapd daemon wrapper for panem_api -- see deploy/snap/README.md.
+set -eu
+
+: "${DATA_DIR:=$SNAP/data}"
+: "${STATIC_UPLOADS_DIR:=$SNAP_DATA/uploads}"
+: "${API_HOST:=0.0.0.0}"
+export DATA_DIR STATIC_UPLOADS_DIR API_HOST
+
+if [ -f "$SNAP_DATA/env" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$SNAP_DATA/env"
+  set +a
+fi
+
+mkdir -p "$STATIC_UPLOADS_DIR"
+cd "$SNAP"
+exec "$SNAP/python/bin/python3" -m panem_api.main

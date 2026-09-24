@@ -103,6 +103,30 @@ class Settings(BaseSettings):
 
     games_api_key: str = ""
 
+    # Every `main.py` (bot/sim/api) defaults `DATA_DIR` to `data/` found by
+    # walking up from its own installed location, which only lines up with
+    # the real content dir when the process runs from an editable/dev-mode
+    # checkout (true for `uv run` and the Docker image's `uv sync`, both of
+    # which install this workspace editable). A packaged, non-editable
+    # install (e.g. the snap's `uv sync --no-editable` venv, whose
+    # `panem_*` modules land in `site-packages` with no relation to the
+    # original checkout) has no such directory to walk up to, so it must
+    # set this explicitly instead (the snap wrapper scripts do, to
+    # `$SNAP/data`). Empty keeps every existing deployment's behavior
+    # unchanged.
+    data_dir: str = ""
+
+    # Same story as `data_dir`, for `panem_api`'s `static/` tree specifically
+    # -- but for a different reason: `static/` *is* package data (shipped
+    # inside `panem_api`'s own wheel, so it resolves fine even from
+    # `site-packages`), the problem is that it isn't writable there. Staff
+    # layer-image uploads and `district_mottos.json` need a real writable
+    # directory (`build_staff_router`'s `static_dir` param), which a
+    # read-only install location (a strict-confinement snap's squashfs
+    # `$SNAP`) can never be. Empty keeps writing into the bundled `static/`
+    # tree itself, as every non-snap deployment already does.
+    static_uploads_dir: str = ""
+
     # panem_api (Phase 5, Plan §8): the REST/WebSocket bridge for the
     # Activity's live map, plus a static frontend and the OAuth token
     # exchange it needs (`GET /activity/config`, `POST /activity/token`).
