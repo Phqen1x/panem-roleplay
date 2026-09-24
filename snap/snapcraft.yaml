@@ -75,6 +75,16 @@ parts:
     build-packages:
       - curl
       - ca-certificates
+    stage-packages:
+      # lemond (embeddable Lemonade, downloaded into $SNAP_COMMON at
+      # runtime by panem.lemonade -- it's not part of this build) links
+      # against the AMD GPU DRM library unconditionally, even with no GPU
+      # passthrough and --profile lite/CPU-only use. Strict confinement
+      # means a plain `apt install` on the host the snap runs on has no
+      # effect -- the confined mount namespace never sees the host's
+      # /usr/lib at all -- so this has to be staged inside the snap
+      # itself, same as any other strict-snap binary dependency.
+      - libdrm-amdgpu1
     override-build: |
       set -eux
       cd "$CRAFT_PART_BUILD"
@@ -163,6 +173,7 @@ parts:
       - scripts
       - migrations
       - alembic.ini
+      - usr/lib/x86_64-linux-gnu
     prime:
       - python
       - data
@@ -170,6 +181,7 @@ parts:
       - scripts
       - migrations
       - alembic.ini
+      - usr/lib/x86_64-linux-gnu
 
   wrappers:
     plugin: dump

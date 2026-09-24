@@ -26,4 +26,12 @@ export LEMONADE_HOME
 
 mkdir -p "$LEMONADE_HOME"
 cd "$SNAP"
+
+# lemond (downloaded into $LEMONADE_HOME at runtime, not part of this
+# snap's build) links against libdrm_amdgpu.so.1 unconditionally, staged
+# here specifically for it (snap/snapcraft.yaml's stage-packages) since
+# strict confinement means it can never see this container's own
+# /usr/lib, no matter what's apt-installed there.
+export LD_LIBRARY_PATH="$SNAP/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
 exec "$SNAP/python/bin/python3" "$SNAP/scripts/lemonade_omni.py" serve
