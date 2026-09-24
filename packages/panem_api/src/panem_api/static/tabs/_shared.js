@@ -34,13 +34,25 @@
 // or an array of them, that's the ever-informative "[object Object]".
 // Always return a string (or a falsy value the caller's own `||` fallback
 // catches) instead.
+// Turns a raw reason key/message into a complete sentence -- capitalized,
+// ending in a period -- rather than the bare lowercase fragment `strings.py`
+// keys are written as. Every error surface in the dashboard (`.result-line`,
+// `.tab-status.error`) reads a message that passed through this, so it's
+// the one place this polish needs to happen.
+function toSentence(text) {
+  const trimmed = text.trim();
+  if (!trimmed) return trimmed;
+  const capitalized = trimmed[0].toUpperCase() + trimmed.slice(1);
+  return /[.!?]$/.test(capitalized) ? capitalized : `${capitalized}.`;
+}
+
 function humanize(text) {
-  if (typeof text === "string") return text.replaceAll("_", " ");
+  if (typeof text === "string") return toSentence(text.replaceAll("_", " "));
   if (Array.isArray(text)) {
     const messages = text
       .map((item) => (item && typeof item.msg === "string" ? item.msg : null))
       .filter((msg) => msg !== null);
-    if (messages.length > 0) return messages.join("; ");
+    if (messages.length > 0) return toSentence(messages.join("; "));
   }
   return undefined;
 }
@@ -49,9 +61,23 @@ export async function fetchJson(path, options) {
   const response = await fetch(path, options);
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(humanize(body.detail) || `${path} -> ${response.status}`);
+    throw new Error(
+      humanize(body.detail) || `The server didn't explain what went wrong (HTTP ${response.status}).`
+    );
   }
   return body;
+}
+
+// Sets a `.tab-status` element's text and toggles its `.error` class to
+// match -- the neoclassical dashboard styles a genuine failure (a red
+// accent, a small mark) differently from the same element's ordinary
+// "Loading…"/empty-state text, so every "Could not load ..." catch block
+// should go through this instead of a bare `el.textContent = ...`
+// assignment that would leave a stale `.error` class in place (or miss
+// applying one) across the element's other, non-error states.
+export function setStatusText(el, text, { error = false } = {}) {
+  el.textContent = text;
+  el.classList.toggle("error", error);
 }
 
 // A hand-rolled dropdown standing in for a native <select> -- Discord
@@ -190,6 +216,7 @@ export function renderTabIcon(tabName) {
     crime: '<polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline>',
     housing: '<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline>',
     staff: '<circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>',
+    history: '<path d="M3 3v5h5"></path><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"></path><path d="M12 7v5l4 2"></path>',
   };
 
   svg.innerHTML = icons[tabName] || icons.map;

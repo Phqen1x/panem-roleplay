@@ -3,7 +3,7 @@
 // and a mode-switch control. Reads `/activity/dashboard/mode/{id}/status`
 // (Milestone 6), the same endpoint `/character mode`'s bot-side confirm
 // view is built against, so the two surfaces never drift apart.
-import { fetchJson, el, dropdown } from "./_shared.js?v=3";
+import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=6";
 
 const MODE_LABELS = { story: "Story", life: "Life", simulation: "Simulation" };
 
@@ -246,14 +246,14 @@ export function mount(root, ctx) {
     const discordId = ctx.discordId();
     host.innerHTML = "";
     if (!characterId || !discordId) {
-      statusLine.textContent = "Pick a character above first.";
+      setStatusText(statusLine, "Pick a character above first.");
       return;
     }
     try {
       const status = await ctx.apiFetch(
         `/activity/dashboard/mode/${characterId}/status?discord_id=${encodeURIComponent(discordId)}`
       );
-      statusLine.textContent = "";
+      setStatusText(statusLine, "");
       const panels = [
         modePanel(status),
         metersPanel(status),
@@ -263,7 +263,7 @@ export function mount(root, ctx) {
       ].filter(Boolean);
       host.append(...panels);
     } catch (err) {
-      statusLine.textContent = `Could not load status: ${err.message}`;
+      setStatusText(statusLine, `Could not load status: ${err.message}`, { error: true });
     }
   }
 

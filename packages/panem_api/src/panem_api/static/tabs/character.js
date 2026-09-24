@@ -24,7 +24,7 @@
 // still returns its own `dispose()` (removes those DOM nodes) and every
 // function below that creates one calls it at the right lifecycle point,
 // mostly so a stale preview never lingers in a detached card.
-import { fetchJson, el, dropdown } from "./_shared.js?v=5";
+import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=6";
 import { mountAvatar } from "./avatar_creator.js?v=11";
 
 const SHIFT_PHASES = ["morning", "afternoon", "evening", "night"];
@@ -341,15 +341,15 @@ export function mount(root, ctx) {
     listEl.innerHTML = "";
     const discordId = ctx.discordId();
     if (!discordId) {
-      statusEl.textContent = "Enter a Discord ID above to see your characters.";
+      setStatusText(statusEl, "Enter a Discord ID above to see your characters.");
       return;
     }
-    statusEl.textContent = "Loading…";
+    setStatusText(statusEl, "Loading…");
     try {
       const body = await ctx.apiFetch(
         `/activity/dashboard/characters?discord_id=${encodeURIComponent(discordId)}`
       );
-      statusEl.textContent = "";
+      setStatusText(statusEl, "");
       for (const character of body.characters) {
         const card = characterCard(ctx, character, catalog, { onChanged: refresh });
         cardDisposers.push(card.dispose);
@@ -359,7 +359,7 @@ export function mount(root, ctx) {
         listEl.append(el("p", { class: "tab-status" }, "No characters yet."));
       }
     } catch (err) {
-      statusEl.textContent = `Could not load characters: ${err.message}`;
+      setStatusText(statusEl, `Could not load characters: ${err.message}`, { error: true });
     }
   }
 
@@ -369,7 +369,9 @@ export function mount(root, ctx) {
     try {
       catalog = await loadLayerCatalog(ctx);
     } catch (err) {
-      statusEl.textContent = `Could not load the appearance customizer: ${err.message}`;
+      setStatusText(statusEl, `Could not load the appearance customizer: ${err.message}`, {
+        error: true,
+      });
       return;
     }
     formHandle = createForm(ctx, catalog, { onCreated: refresh });

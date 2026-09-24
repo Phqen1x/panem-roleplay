@@ -44,6 +44,7 @@ from panem_shared import blackmarket as blackmarket_svc
 from panem_shared import characters as characters_svc
 from panem_shared import constants, job_levels, simtime
 from panem_shared import crime_log as crime_log_svc
+from panem_shared import district_lore as district_lore_svc
 from panem_shared import housing as housing_svc
 from panem_shared import jail as jail_svc
 from panem_shared import jobs as jobs_svc
@@ -58,11 +59,14 @@ from panem_shared import theme as theme_svc
 from panem_shared import trades as trades_svc
 from panem_shared import travel as travel_svc
 from panem_shared.content.loader import ContentBundle
+from panem_shared.content.schemas import Location
 from panem_shared.db.models import (
     AfflictionType,
     ApartmentLease,
     Character,
     CharacterAffliction,
+    DistrictLore,
+    DistrictLorePerson,
     LayerCategory,
     Npc,
     Property,
@@ -80,6 +84,7 @@ from panem_shared.db.session import session_scope
 from panem_shared.enums import (
     CharacterStatus,
     DayPhase,
+    LocationKind,
     OwnerKind,
     Position,
     PropertyKind,
@@ -1911,6 +1916,16 @@ class ResidentSummary(BaseModel):
     job_title: str
     location_id: str | None = None
     location_name: str | None = None
+    kind: str = "npc"
+    """`"npc"` or `"user"` -- the Residents directory's own citizens versus
+    other players' characters currently in this district. The frontend's
+    `determineStatus()` already prefers an explicit `status` over its own
+    location-name heuristic, so `status` below is populated for `"user"`
+    rows (computed from real state) and left `None` for `"npc"` rows
+    (unchanged: still inferred client-side from location/job)."""
+    status: str | None = None
+    """`"sleeping"`/`"engaged"`/`"idle"` for a `"user"` row -- see
+    `resident_list`'s `_character_status` for how each is decided."""
 
 
 class ResidentsResponse(BaseModel):
@@ -1951,6 +1966,24 @@ def build_residents_router(
             raise HTTPException(status_code=404, detail="resident_not_found")
         return npc
 
+    def _character_status(
+        char: Character, *, engaged_character_ids: set[int], locations_by_id: dict[str, Location]
+    ) -> str:
+        """`"engaged"` wins over location -- a character mid-conversation in
+        their own home still reads as talking, not sleeping. Otherwise,
+        `"sleeping"` is inferred from standing in a `RESIDENTIAL` location
+        (home, an inn) rather than a real "currently asleep" flag: `/sleep`
+        is a one-shot fatigue-restoring action with no lasting state of its
+        own (see `panem_shared.housing`), so this is the closest real signal
+        to "probably resting" the data actually offers. Anyone else is
+        `"idle"` -- present in the district, not doing anything trackable."""
+        if char.id in engaged_character_ids:
+            return "engaged"
+        location = locations_by_id.get(char.location_id) if char.location_id else None
+        if location is not None and location.kind == LocationKind.RESIDENTIAL:
+            return "sleeping"
+        return "idle"
+
     @router.get("/{character_id}", response_model=ResidentsResponse)
     async def resident_list(character_id: int, discord_id: int) -> ResidentsResponse:
         factory = _require_session_factory(session_factory)
@@ -1970,20 +2003,57 @@ def build_residents_router(
                 .scalars()
                 .all()
             )
+            other_characters = (
+                (
+                    await session.execute(
+                        select(Character)
+                        .where(
+                            Character.current_district_id == character.current_district_id,
+                            Character.status == CharacterStatus.APPROVED.value,
+                            Character.id != character.id,
+                        )
+                        .order_by(Character.name)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            open_scenes = (
+                (await session.execute(select(Scene).where(Scene.status == SceneStatus.OPEN.value)))
+                .scalars()
+                .all()
+            )
+            engaged_character_ids = {
+                cid for scene in open_scenes for cid in scene.participants.get("characters", [])
+            }
             all_jobs = await jobs_svc.get_all_jobs(session, content)
-            locations_by_id = {loc.id: loc.name for loc in district.locations}
+            locations_by_id = {loc.id: loc for loc in district.locations}
             residents = []
             for npc in npcs:
                 job = all_jobs.get(npc.job_id) if npc.job_id else None
+                location = locations_by_id.get(npc.location_id) if npc.location_id else None
                 residents.append(
                     ResidentSummary(
                         name=npc.name,
                         job_title=job.title if job else "Unemployed",
                         location_id=npc.location_id,
-                        location_name=(
-                            locations_by_id.get(npc.location_id)
-                            if npc.location_id is not None
-                            else None
+                        location_name=location.name if location is not None else None,
+                        kind="npc",
+                    )
+                )
+            for other in other_characters:
+                location = locations_by_id.get(other.location_id) if other.location_id else None
+                residents.append(
+                    ResidentSummary(
+                        name=other.name,
+                        job_title=other.job_title or "Unemployed",
+                        location_id=other.location_id,
+                        location_name=location.name if location is not None else None,
+                        kind="user",
+                        status=_character_status(
+                            other,
+                            engaged_character_ids=engaged_character_ids,
+                            locations_by_id=locations_by_id,
                         ),
                     )
                 )
@@ -3703,6 +3773,259 @@ def build_staff_router(
         async with session_scope(factory) as session:
             try:
                 await affliction_types_svc.delete_type(session, affliction_type_id)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"deleted": True}
+
+    return router
+
+
+class DistrictLorePersonResponse(BaseModel):
+    id: int
+    district_id: int
+    role: str
+    name: str
+    character_id: int | None = None
+    character_name: str | None = None
+    is_active: bool
+    notes: str
+
+
+class DistrictLoreResponse(BaseModel):
+    district_id: int
+    classification: str | None = None
+    adjectives: list[str] = Field(default_factory=list)
+    accent_notes: str = ""
+    urban_rural_notes: str = ""
+    academy_name: str | None = None
+    academy_notes: str = ""
+    games_history: str = ""
+    regime_notes: str = ""
+    opinions: dict[str, str] = Field(default_factory=dict)
+    misc_notes: str = ""
+    updated_by: int | None = None
+    people: list[DistrictLorePersonResponse] = Field(default_factory=list)
+
+
+class DistrictLoreCatalogResponse(BaseModel):
+    districts: list[DistrictLoreResponse]
+
+
+class UpsertDistrictLoreRequest(BaseModel):
+    discord_id: int
+    classification: str | None = None
+    adjectives: list[str] = Field(default_factory=list)
+    accent_notes: str = ""
+    urban_rural_notes: str = ""
+    academy_name: str | None = None
+    academy_notes: str = ""
+    games_history: str = ""
+    regime_notes: str = ""
+    opinions: dict[str, str] = Field(default_factory=dict)
+    misc_notes: str = ""
+
+
+class CreateDistrictLorePersonRequest(BaseModel):
+    discord_id: int
+    role: str
+    name: str
+    character_id: int | None = None
+    is_active: bool = True
+    notes: str = ""
+
+
+class UpdateDistrictLorePersonRequest(BaseModel):
+    discord_id: int
+    role: str | None = None
+    name: str | None = None
+    character_id: int | None = None
+    character_id_set: bool = False
+    is_active: bool | None = None
+    notes: str | None = None
+
+
+class DeleteDistrictLorePersonRequest(BaseModel):
+    discord_id: int
+
+
+def _district_lore_person_response(row: DistrictLorePerson) -> DistrictLorePersonResponse:
+    return DistrictLorePersonResponse(
+        id=row.id,
+        district_id=row.district_id,
+        role=row.role,
+        name=row.name,
+        character_id=row.character_id,
+        character_name=row.character.name if row.character is not None else None,
+        is_active=row.is_active,
+        notes=row.notes,
+    )
+
+
+def _district_lore_response(
+    district_id: int, lore: DistrictLore | None, people: list[DistrictLorePerson]
+) -> DistrictLoreResponse:
+    base = DistrictLoreResponse(district_id=district_id)
+    if lore is not None:
+        base = DistrictLoreResponse(
+            district_id=district_id,
+            classification=lore.classification,
+            adjectives=list(lore.adjectives),
+            accent_notes=lore.accent_notes,
+            urban_rural_notes=lore.urban_rural_notes,
+            academy_name=lore.academy_name,
+            academy_notes=lore.academy_notes,
+            games_history=lore.games_history,
+            regime_notes=lore.regime_notes,
+            opinions=dict(lore.opinions),
+            misc_notes=lore.misc_notes,
+            updated_by=lore.updated_by,
+        )
+    base.people = [_district_lore_person_response(p) for p in people]
+    return base
+
+
+def build_district_lore_router(
+    *,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    discord_token: str = "",
+    discord_guild_id: int = 0,
+    staff_role_id: int = 0,
+) -> APIRouter:
+    """The Activity's staff-only History tab: staff-authored district
+    context (adjectives, accent notes, urban/rural feel, career academy
+    naming, a natural-language Games-performance summary, opinions of other
+    districts, inner/outlier classification, and victor/mentor rosters)
+    that `panem_bot.services.dialogue` folds a short, capped excerpt of
+    into an NPC's prompt (see `panem_shared.district_lore.prompt_summary`).
+
+    Every route here re-checks `discord_staff.fetch_is_staff` itself, same
+    posture as `build_staff_router` -- this is staff-only content (district
+    opinions, regime notes) that a player's own dashboard session should
+    never be able to read or write just by knowing the URL, not only a
+    write-time check."""
+    router = APIRouter(prefix="/activity/dashboard/history", tags=["dashboard"])
+
+    async def _require_staff(discord_id: int) -> None:
+        ok = await discord_staff.fetch_is_staff(
+            discord_id,
+            bot_token=discord_token,
+            guild_id=discord_guild_id,
+            staff_role_id=staff_role_id,
+        )
+        if not ok:
+            raise HTTPException(status_code=403, detail="staff_only")
+
+    @router.get("/districts", response_model=DistrictLoreCatalogResponse)
+    async def all_district_lore(discord_id: int) -> DistrictLoreCatalogResponse:
+        await _require_staff(discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            lore_by_district = {
+                row.district_id: row for row in await district_lore_svc.list_lore(session)
+            }
+            people_by_district: dict[int, list[DistrictLorePerson]] = {}
+            for person in await district_lore_svc.list_people_all(session):
+                people_by_district.setdefault(person.district_id, []).append(person)
+            districts = [
+                _district_lore_response(
+                    did, lore_by_district.get(did), people_by_district.get(did, [])
+                )
+                for did in range(13)
+            ]
+            return DistrictLoreCatalogResponse(districts=districts)
+
+    @router.get("/districts/{district_id}", response_model=DistrictLoreResponse)
+    async def one_district_lore(district_id: int, discord_id: int) -> DistrictLoreResponse:
+        await _require_staff(discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            lore = await district_lore_svc.get_lore(session, district_id)
+            people = await district_lore_svc.list_people(session, district_id)
+            return _district_lore_response(district_id, lore, people)
+
+    @router.put("/districts/{district_id}", response_model=DistrictLoreResponse)
+    async def save_district_lore(
+        district_id: int, body: UpsertDistrictLoreRequest
+    ) -> DistrictLoreResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                lore = await district_lore_svc.upsert_lore(
+                    session,
+                    district_id,
+                    classification=body.classification,
+                    adjectives=body.adjectives,
+                    accent_notes=body.accent_notes,
+                    urban_rural_notes=body.urban_rural_notes,
+                    academy_name=body.academy_name,
+                    academy_notes=body.academy_notes,
+                    games_history=body.games_history,
+                    regime_notes=body.regime_notes,
+                    opinions=body.opinions,
+                    misc_notes=body.misc_notes,
+                    updated_by=body.discord_id,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            people = await district_lore_svc.list_people(session, district_id)
+            return _district_lore_response(district_id, lore, people)
+
+    @router.post("/districts/{district_id}/people", response_model=DistrictLorePersonResponse)
+    async def create_district_lore_person(
+        district_id: int, body: CreateDistrictLorePersonRequest
+    ) -> DistrictLorePersonResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                row = await district_lore_svc.create_person(
+                    session,
+                    district_id=district_id,
+                    role=body.role,
+                    name=body.name,
+                    character_id=body.character_id,
+                    is_active=body.is_active,
+                    notes=body.notes,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            if row.character_id is not None:
+                await session.refresh(row, attribute_names=["character"])
+            return _district_lore_person_response(row)
+
+    @router.patch("/people/{person_id}", response_model=DistrictLorePersonResponse)
+    async def update_district_lore_person(
+        person_id: int, body: UpdateDistrictLorePersonRequest
+    ) -> DistrictLorePersonResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                row = await district_lore_svc.update_person(
+                    session,
+                    person_id,
+                    role=body.role,
+                    name=body.name,
+                    character_id=body.character_id,
+                    character_id_set=body.character_id_set,
+                    is_active=body.is_active,
+                    notes=body.notes,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            await session.refresh(row, attribute_names=["character"])
+            return _district_lore_person_response(row)
+
+    @router.post("/people/{person_id}/delete")
+    async def delete_district_lore_person(
+        person_id: int, body: DeleteDistrictLorePersonRequest
+    ) -> dict[str, bool]:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                await district_lore_svc.delete_person(session, person_id)
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
         return {"deleted": True}
