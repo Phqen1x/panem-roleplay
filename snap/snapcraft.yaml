@@ -108,12 +108,22 @@ parts:
 
       PYROOT="$(dirname "$(dirname "$PYBIN")")"
       mkdir -p "$CRAFT_PART_INSTALL"
-      cp -a "$PYROOT" "$CRAFT_PART_INSTALL/python"
+      # -L/--dereference: uv's managed-python install dir can hand back
+      # PYROOT as (or containing) a symlink into its own cache/store rather
+      # than a self-contained tree -- plain `cp -a` preserves symlinks
+      # as-is, which then point into this ephemeral build container and
+      # are dangling on any machine the snap actually runs on. Force real
+      # file contents into the prime instead.
+      cp -aL "$PYROOT" "$CRAFT_PART_INSTALL/python"
       cp -a "$CRAFT_PART_BUILD/data" "$CRAFT_PART_INSTALL/data"
       cp -a "$CRAFT_PART_BUILD/lemonade" "$CRAFT_PART_INSTALL/lemonade"
       cp -a "$CRAFT_PART_BUILD/scripts" "$CRAFT_PART_INSTALL/scripts"
       cp -a "$CRAFT_PART_BUILD/migrations" "$CRAFT_PART_INSTALL/migrations"
       cp "$CRAFT_PART_BUILD/alembic.ini" "$CRAFT_PART_INSTALL/alembic.ini"
+      test -e "$CRAFT_PART_INSTALL/python/bin/python3" || {
+        echo "python3 missing from staged interpreter tree" >&2
+        exit 1
+      }
     stage:
       - python
       - data
