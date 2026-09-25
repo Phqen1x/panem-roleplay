@@ -26,7 +26,12 @@
 import { fetchJson, el, renderTabIcon } from "./tabs/_shared.js?v=6";
 import { mountThemePicker } from "./theme_picker.js?v=3";
 
-const DISCORD_SDK_URL = "/vendor/discord-embedded-app-sdk.js";
+// `?v=N`, same cache-busting convention as every other asset this page
+// loads (see the `tabs/_shared.js`/`theme_picker.js` imports above) --
+// this one never had it, so a 502 Discord's Activity proxy cached for
+// this exact bare URL during an outage has no way to get invalidated
+// short of the proxy's own cache expiring on its own.
+const DISCORD_SDK_URL = "/vendor/discord-embedded-app-sdk.js?v=1";
 const STEP_TIMEOUT_MS = 8000;
 
 // Set once `authenticateWithDiscord()` gets past `discordSdk.ready()` --
