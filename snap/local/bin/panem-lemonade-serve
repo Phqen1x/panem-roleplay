@@ -43,4 +43,10 @@ export LD_LIBRARY_PATH="$SNAP/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LI
 export XDG_RUNTIME_DIR="$LEMONADE_HOME/runtime"
 mkdir -p "$XDG_RUNTIME_DIR"
 
-exec "$SNAP/python/bin/python3" "$SNAP/scripts/lemonade_omni.py" serve
+# Same `:=` re-default-on-blank as LEMONADE_HOME above. Matches
+# lemonade_omni.py serve's own --port default (13305) -- set LEMONADE_PORT
+# here *and* point LLM_BASE_URL at the same port in $SNAP_DATA/env if you
+# need lemond to bind somewhere else.
+: "${LEMONADE_PORT:=13305}"
+
+exec "$SNAP/python/bin/python3" "$SNAP/scripts/lemonade_omni.py" serve --port "$LEMONADE_PORT"
