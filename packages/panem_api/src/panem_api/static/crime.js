@@ -25,7 +25,7 @@
 // in an `<iframe>` for the lockpick/steal/burgle/poach minigames (see
 // static/tabs/jail.js, static/tabs/crime.js) and use it to refresh their
 // own status without a reload. A no-op outside an iframe.
-const ASSET_VERSION = "12";
+const ASSET_VERSION = "13";
 
 // Donor dashboard theme (`static/theme_picker.js`'s popup, saved via the
 // profile endpoints under `/activity/dashboard/theme/profiles`): `app.js`
@@ -46,6 +46,28 @@ try {
   if (text) document.documentElement.style.setProperty("--text", text);
 } catch {
   // Private browsing / blocked storage -- falls back to the default theme.
+}
+
+// Reports this page's actual rendered height to whatever parent embedded
+// it (the dashboard's Jail/Crime tabs, in an iframe -- see
+// static/tabs/_shared.js's `watchIframeResize`) so that iframe can grow to
+// fit instead of clipping or scrolling internally. Matches work.js's own
+// `reportSize` -- see its comment for the full reasoning. A no-op outside
+// an iframe, same posture as `notifyParent` below.
+function reportSize() {
+  if (window.parent === window) return;
+  try {
+    window.parent.postMessage(
+      { source: "panem-activity", type: "resize", height: document.documentElement.scrollHeight },
+      "*"
+    );
+  } catch {
+    // Embedded in a cross-origin frame this can't reach -- nothing to do.
+  }
+}
+if (window.parent !== window) {
+  new ResizeObserver(reportSize).observe(document.documentElement);
+  window.addEventListener("load", reportSize);
 }
 
 const [lockpick, pickpocket, archery] = await Promise.all([

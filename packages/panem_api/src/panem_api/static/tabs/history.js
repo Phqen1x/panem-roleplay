@@ -13,7 +13,7 @@
 // same shape as `affliction_types_svc.update_type`'s cure/auto-apply
 // pair). Victors & mentors are a separate, always-visible list under the
 // same district since they're per-entry CRUD, not a single row to resave.
-import { el, fetchJson, setStatusText } from "./_shared.js?v=6";
+import { el, fetchJson, setStatusText } from "./_shared.js?v=7";
 
 const DISTRICT_IDS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 

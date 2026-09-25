@@ -6,7 +6,7 @@
 // `/lockpick` mints) and embedding crime.html in an <iframe>, reusing that
 // page's minigame unmodified; a postMessage from crime.js on completion
 // (see that file's docstring) tells this tab to refresh.
-import { fetchJson, el, setStatusText } from "./_shared.js?v=6";
+import { fetchJson, el, setStatusText, watchIframeResize } from "./_shared.js?v=7";
 
 // Matches tabs/crime.js's/work.js's identical fix: crime.html's own
 // result screen used to disappear the instant it appeared, since the
@@ -107,11 +107,16 @@ export function mount(root, ctx) {
 
   let messageListener = null;
   let closeResultTimer = null;
+  let stopResizeWatch = null;
 
   function stopListening() {
     if (messageListener) {
       window.removeEventListener("message", messageListener);
       messageListener = null;
+    }
+    if (stopResizeWatch) {
+      stopResizeWatch();
+      stopResizeWatch = null;
     }
   }
 
@@ -189,6 +194,12 @@ export function mount(root, ctx) {
         src: `/crime.html?attempt_id=${encodeURIComponent(body.attempt_id)}&kind=lockpick`,
       });
       iframeHost.append(iframe);
+      // Brings the newly-mounted lockpick game into view instead of
+      // leaving the player to scroll down and find it themselves --
+      // crime.html's own `reportSize` then keeps this iframe grown to fit
+      // (see watchIframeResize's own comment).
+      iframe.scrollIntoView({ behavior: "smooth", block: "start" });
+      stopResizeWatch = watchIframeResize(iframe);
       messageListener = (event) => {
         if (event.data && event.data.source === "panem-activity" && event.data.type === "crime-result") {
           stopListening();

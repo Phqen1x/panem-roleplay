@@ -23,7 +23,7 @@
 // every other dashboard endpoint re-validating discord_id+character_id
 // together) -- there's still no cryptographic auth here, same documented
 // gap as the rest of this process.
-import { fetchJson, el, renderTabIcon } from "./tabs/_shared.js?v=6";
+import { fetchJson, el, renderTabIcon } from "./tabs/_shared.js?v=7";
 import { mountThemePicker } from "./theme_picker.js?v=3";
 
 // `?v=N`, same cache-busting convention as every other asset this page
@@ -60,7 +60,7 @@ async function openExternalLink(url) {
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "37";
+const ASSET_VERSION = "38";
 
 // District names mapping for Capitol and Districts 1-12
 const DISTRICT_NAMES = {

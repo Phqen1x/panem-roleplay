@@ -3,7 +3,7 @@
 // and a mode-switch control. Reads `/activity/dashboard/mode/{id}/status`
 // (Milestone 6), the same endpoint `/character mode`'s bot-side confirm
 // view is built against, so the two surfaces never drift apart.
-import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=6";
+import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=7";
 
 const MODE_LABELS = { story: "Story", life: "Life", simulation: "Simulation" };
 

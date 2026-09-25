@@ -166,6 +166,37 @@ export function dropdown(initialOptions) {
   return wrapper;
 }
 
+// Auto-resizes a same-origin minigame `<iframe>` (work.html/crime.html/
+// vitals.html, all embedded by tabs/work.js|crime.js|jail.js|vitals.js) to
+// fit its actual content height, instead of leaving it at dashboard.css's
+// `.minigame-frame` fallback height. Those pages report their own
+// rendered height via `postMessage({source: "panem-activity", type:
+// "resize", height})` any time it changes (a `ResizeObserver` on their
+// own `<html>` -- see work.js/crime.js/vitals.js's own `reportSize`) since
+// a fixed height can't fit every minigame: Minesweeper's grid grows with
+// job level, Solitaire's tableau is several rows tall, and Cook/Bake's
+// gauge plus its win/lose text needs more room than Coin Flip does. Before
+// this, that extra content either got silently clipped or forced a
+// separate scrollbar *inside* the iframe -- easy to miss on a phone,
+// which is what "have to scroll to find the minigame" reports were
+// actually seeing. Returns an unsubscribe function the caller should run
+// once it tears the iframe down (e.g. on tab unmount), so a stale
+// listener never outlives its iframe.
+export function watchIframeResize(iframe) {
+  const listener = (event) => {
+    if (event.source !== iframe.contentWindow) return;
+    if (!event.data || event.data.source !== "panem-activity" || event.data.type !== "resize") {
+      return;
+    }
+    const height = Number(event.data.height);
+    if (Number.isFinite(height) && height > 0) {
+      iframe.style.height = `${Math.ceil(height)}px`;
+    }
+  };
+  window.addEventListener("message", listener);
+  return () => window.removeEventListener("message", listener);
+}
+
 export function el(tag, attrs, ...children) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs || {})) {

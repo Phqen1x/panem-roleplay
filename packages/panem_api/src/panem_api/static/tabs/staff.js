@@ -15,7 +15,7 @@
 // use this panel, which is built to render sensibly on zero categories
 // (just the "New category" form, nothing else) rather than assuming
 // something is already there.
-import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=6";
+import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=7";
 
 // `panem_shared.enums.AfflictionStat`'s five values -- the only stats a
 // staff-authored affliction type's cure/auto-apply condition can name.

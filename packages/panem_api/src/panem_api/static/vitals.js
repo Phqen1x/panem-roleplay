@@ -22,7 +22,7 @@
 // `?v=` cache-busting matches work.js/crime.js's own reasoning: bump
 // ASSET_VERSION (and vitals.html's/vitals.css's matching `?v=`) any time
 // this file or games/cook.js|bake.js changes.
-const ASSET_VERSION = "2";
+const ASSET_VERSION = "3";
 
 // Donor dashboard theme, same best-effort localStorage mirror every other
 // standalone Activity page here already does (see crime.js's own comment
@@ -39,6 +39,29 @@ try {
   if (text) document.documentElement.style.setProperty("--text", text);
 } catch {
   // Private browsing / blocked storage -- falls back to the default theme.
+}
+
+// Reports this page's actual rendered height to whatever parent embedded
+// it (the dashboard's Vitals tab, in an iframe -- see static/tabs/
+// _shared.js's `watchIframeResize`) so that iframe can grow to fit instead
+// of clipping or scrolling internally. Matches work.js's own `reportSize`
+// -- see its comment for the full reasoning (Cook/Bake's gauge plus its
+// win/lose text needs more room than a quick Entertainment game does). A
+// no-op outside an iframe, same posture as `notifyParent` below.
+function reportSize() {
+  if (window.parent === window) return;
+  try {
+    window.parent.postMessage(
+      { source: "panem-activity", type: "resize", height: document.documentElement.scrollHeight },
+      "*"
+    );
+  } catch {
+    // Embedded in a cross-origin frame this can't reach -- nothing to do.
+  }
+}
+if (window.parent !== window) {
+  new ResizeObserver(reportSize).observe(document.documentElement);
+  window.addEventListener("load", reportSize);
 }
 
 const TITLES = {

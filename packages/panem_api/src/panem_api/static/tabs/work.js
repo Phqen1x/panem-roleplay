@@ -15,7 +15,7 @@
 // a browser profile would share it -- an acceptable tradeoff for a
 // convenience log, not a source of truth (the DB's `money`/`shifts_completed`
 // columns are that).
-import { fetchJson, el, setStatusText } from "./_shared.js?v=6";
+import { fetchJson, el, setStatusText, watchIframeResize } from "./_shared.js?v=7";
 
 const WORK_LOG_LIMIT = 20;
 // How long the minigame's own result screen (posted via postMessage, see
@@ -108,11 +108,16 @@ export function mount(root, ctx) {
   let currentShiftId = null;
   let messageListener = null;
   let closeResultTimer = null;
+  let stopResizeWatch = null;
 
   function stopListening() {
     if (messageListener) {
       window.removeEventListener("message", messageListener);
       messageListener = null;
+    }
+    if (stopResizeWatch) {
+      stopResizeWatch();
+      stopResizeWatch = null;
     }
   }
 
@@ -184,7 +189,13 @@ export function mount(root, ctx) {
         src: `/work.html?shift_id=${encodeURIComponent(currentShiftId)}`,
       });
       iframeHost.append(iframe);
+      // Brings the newly-mounted game into view instead of leaving the
+      // player to scroll down and find it themselves -- work.html's own
+      // `reportSize` then keeps this iframe grown to fit whatever board it
+      // ends up mounting (see watchIframeResize's own comment).
+      iframe.scrollIntoView({ behavior: "smooth", block: "start" });
       stopListening();
+      stopResizeWatch = watchIframeResize(iframe);
       messageListener = (event) => {
         if (event.data && event.data.source === "panem-activity" && event.data.type === "work-result") {
           stopListening();

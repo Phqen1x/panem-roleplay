@@ -2,7 +2,7 @@
 // /blackmarket prices|buy|sell in one place (a legal/illicit toggle
 // instead of two separate tabs) -- both are instant-resolve, no
 // minigame/iframe involved, same as their bot commands.
-import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=6";
+import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=7";
 
 // Each row carries its own qty input + action button, so buying/selling a
 // good never requires typing its id -- the id only ever travels in the

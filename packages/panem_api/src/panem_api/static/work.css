@@ -117,6 +117,16 @@ main {
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--bg);
+  /* The canvas's `width`/`height` attributes (set in games/snake.js) fix
+     its drawing-buffer resolution at 400x400 -- capping its on-screen size
+     here instead lets it shrink to fit a phone-width viewport (which would
+     otherwise force #board's horizontal scroll fallback, fighting the same
+     swipe gesture that's supposed to steer) without touching that
+     resolution or the touch/pointer coordinates games/snake.js reads off
+     it (a swipe reads as a relative delta between two points, not an
+     absolute canvas-space position, so CSS-scaling it doesn't skew steering). */
+  max-width: 100%;
+  height: auto;
 }
 
 .snake-score {

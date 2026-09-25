@@ -2,7 +2,7 @@
 // crime attempt (same shape /activity/crime/{id} already reads) and play
 // via an embedded crime.html <iframe>, reusing the pickpocket/lockpick/
 // archery minigames unmodified -- same pattern as static/tabs/jail.js.
-import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=6";
+import { fetchJson, el, dropdown, setStatusText, watchIframeResize } from "./_shared.js?v=7";
 
 // How long crime.html's own result screen (posted via postMessage, see
 // static/crime.js's `finish()`) stays visible before this tab clears the
@@ -68,11 +68,16 @@ export function mount(root, ctx) {
 
   let messageListener = null;
   let closeResultTimer = null;
+  let stopResizeWatch = null;
 
   function stopListening() {
     if (messageListener) {
       window.removeEventListener("message", messageListener);
       messageListener = null;
+    }
+    if (stopResizeWatch) {
+      stopResizeWatch();
+      stopResizeWatch = null;
     }
   }
 
@@ -91,7 +96,13 @@ export function mount(root, ctx) {
       src: `/crime.html?attempt_id=${encodeURIComponent(attemptId)}&kind=${kind}`,
     });
     iframeHost.append(iframe);
+    // Brings the newly-mounted game into view instead of leaving the
+    // player to scroll down and find it themselves -- crime.html's own
+    // `reportSize` then keeps this iframe grown to fit whichever minigame
+    // it mounts (see watchIframeResize's own comment).
+    iframe.scrollIntoView({ behavior: "smooth", block: "start" });
     stopListening();
+    stopResizeWatch = watchIframeResize(iframe);
     messageListener = (event) => {
       if (event.data && event.data.source === "panem-activity" && event.data.type === "crime-result") {
         stopListening();

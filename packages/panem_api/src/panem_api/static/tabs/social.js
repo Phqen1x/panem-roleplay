@@ -20,7 +20,7 @@
 // Accept/Decline view does -- a recipient discovers a pending offer by
 // reopening this tab (or switching characters, which remounts it), same
 // "poll, don't push" posture the Engagement panel already has.
-import { fetchJson, el, renderIcon, setStatusText } from "./_shared.js?v=6";
+import { fetchJson, el, renderIcon, setStatusText } from "./_shared.js?v=7";
 
 function determineStatus(r) {
   if (r.status) return r.status;
