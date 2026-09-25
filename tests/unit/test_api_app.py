@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from panem_api import discord_staff
 from panem_api.app import create_app
-from panem_shared import simtime
+from panem_shared import constants, simtime
 from panem_shared.constants import TRANSIT_TICKS
 from panem_shared.content.loader import ContentBundle
 from panem_shared.content.schemas import (
@@ -162,7 +162,16 @@ def make_content_with_outskirts() -> ContentBundle:
     )
     return ContentBundle(
         districts={0: make_district(0, "The Capitol"), 1: district_1},
-        goods={"grain": Good(id="grain", name="Grain", base_price=1.0, category="food")},
+        goods={
+            "grain": Good(id="grain", name="Grain", base_price=1.0, category="food"),
+            constants.POACH_GOOD_ID: Good(
+                id=constants.POACH_GOOD_ID,
+                name="Wild Game",
+                base_price=20.0,
+                category="food",
+                hunger_value=35.0,
+            ),
+        },
         jobs={"miner": make_job()},
         routes=[],
     )
@@ -395,19 +404,23 @@ def poach_app(db_session_factory):
 def make_content_with_market() -> ContentBundle:
     """District 1 trades `grain` (imported) legally and `contraband` on
     the black market, with `fence` as its fence NPC -- for `/activity/
-    dashboard/market` and `.../blackmarket` tests. Two separate
-    `kind="market"` locations: `legal_market` (not `illicit`) for the
-    legal-market tests, and `market` (`illicit=True`, required by
-    `resolve_black_market_location`) for the black-market ones -- sharing
-    one location between them would expose the legal tests to `buy`/
-    `sell`'s own illicit-detection roll (`market.py::_roll_illicit_
-    detection` fires for *any* `illicit` location, not just illicit
-    goods), flaking a fine onto an otherwise-deterministic legal trade."""
+    dashboard/market` and `.../blackmarket` tests. `legal_market` (not
+    `illicit`) is for the legal-market tests; `market` (`illicit=True`)
+    stays only so `market.py`'s own illicit-detection-at-a-flagged-legal-
+    location tests have somewhere separate from `legal_market` to use
+    (sharing one location between them would expose the legal tests to
+    `buy`/`sell`'s own illicit-detection roll -- `market.py::_roll_
+    illicit_detection` fires for *any* `illicit` location, not just
+    illicit goods -- flaking a fine onto an otherwise-deterministic legal
+    trade). The dedicated black-market tests below use `outskirts`
+    instead -- `resolve_black_market_location` requires it, and it's the
+    only place `/blackmarket` can be reached from at all now."""
     locations = [
         Location(id="square", name="The Square", kind="public"),
         Location(id="station", name="Rail Station", kind="station"),
         Location(id="legal_market", name="The Market", kind="market"),
         Location(id="market", name="The Underground Market", kind="market", illicit=True),
+        Location(id="outskirts", name="The Outskirts", kind="outskirts"),
     ]
     coords = {loc.id: (0, 0) for loc in locations}
     district_1 = District(
@@ -2845,7 +2858,7 @@ class TestDashboardCrime:
             "kind": "poach",
             "character_id": char_id,
             "district_id": 1,
-            "good_id": "grain",
+            "good_id": constants.POACH_GOOD_ID,
             "current_tick": 0,
         }
 
@@ -3213,7 +3226,7 @@ class TestDashboardBlackMarket:
         char_id = await seed_character(
             db_session_factory,
             discord_id=5,
-            character_overrides={"location_id": "market", "money": 1000},
+            character_overrides={"location_id": "outskirts", "money": 1000},
         )
         transport = httpx.ASGITransport(app=market_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -3222,12 +3235,43 @@ class TestDashboardBlackMarket:
                 json={"discord_id": 5, "good_id": "contraband", "qty": 1},
             )
         assert response.status_code == 400
+        assert response.json()["detail"] == "blackmarket_not_trusted"
+
+    async def test_buy_refuses_away_from_the_outskirts(self, market_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"location_id": "market", "money": 1000},
+        )
+        async with db_session_factory() as session, session.begin():
+            key = relationship_key(
+                (OwnerKind.CHARACTER.value, str(char_id)), (OwnerKind.NPC.value, "fence")
+            )
+            session.add(
+                RelationshipRow(
+                    subject_kind=key[0],
+                    subject_id=key[1],
+                    object_kind=key[2],
+                    object_id=key[3],
+                    affinity=0,
+                    trust=0.0,
+                    stance=Stance.LOVES.value,
+                )
+            )
+        transport = httpx.ASGITransport(app=market_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/blackmarket/{char_id}/buy",
+                json={"discord_id": 5, "good_id": "contraband", "qty": 1},
+            )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "blackmarket_not_at_market"
 
     async def test_buy_succeeds_when_trusted(self, market_app, db_session_factory):
         char_id = await seed_character(
             db_session_factory,
             discord_id=5,
-            character_overrides={"location_id": "market", "money": 1000},
+            character_overrides={"location_id": "outskirts", "money": 1000},
         )
         async with db_session_factory() as session, session.begin():
             key = relationship_key(

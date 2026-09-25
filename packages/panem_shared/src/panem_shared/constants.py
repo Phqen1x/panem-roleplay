@@ -624,10 +624,19 @@ PROB`/`MARKET_ILLICIT_FINE`/`MARKET_ILLICIT_JAIL_TICKS`/`REP_ILLICIT_
 CAUGHT_PENALTY` exactly -- getting caught poaching is no better or worse
 than getting caught at an illicit market stall."""
 POACH_YIELD_QTY = 1
-"""Units of the district's primary food good a successful, uncaught
-attempt yields -- deliberately modest (an /work shift's `PLAYER_SHIFT_
-OUTPUT_QTY` is the same order of magnitude), so poaching supplements a
-short market allocation rather than replacing it outright."""
+"""Units of `POACH_GOOD_ID` a successful, uncaught attempt yields --
+deliberately modest (an /work shift's `PLAYER_SHIFT_OUTPUT_QTY` is the
+same order of magnitude), so poaching supplements a short market
+allocation rather than replacing it outright."""
+POACH_GOOD_ID = "wild_game"
+"""What a poaching attempt actually brings home -- a single good, not
+whichever legal good the district happens to produce/import, since
+poaching game at the outskirts (at night, the only time the outskirts
+can be reached at all -- `panem_shared.travel.check_can_travel`) is a
+different thing from working a district's own supply chain. `goods.yaml`
+gives it a higher `hunger_value` than any good sold in an ordinary
+district market -- the whole point of risking a poaching run over just
+buying dinner."""
 POACH_ARCHERY_BASE_SUCCESS = 0.6
 """The RNG-fallback stand-in for the archery minigame's own "3+ hits out
 of 5 arrows in 30 seconds" win condition -- used when no Activity is

@@ -15,8 +15,9 @@ def make_district() -> District:
         Location(id="square", name="The Square", kind="public"),
         Location(id="station", name="Rail Station", kind="station"),
         Location(id="labs", name="Gamemaker Labs", kind="workplace", restricted=True),
+        Location(id="outskirts", name="The Outskirts", kind="outskirts"),
     ]
-    coords = {"square": (10, 10), "station": (20, 20), "labs": (30, 30)}
+    coords = {"square": (10, 10), "station": (20, 20), "labs": (30, 30), "outskirts": (40, 40)}
     return District(
         id=12,
         name="District 12",
@@ -120,6 +121,37 @@ class TestCheckCanTravel:
         travel_svc.check_can_travel(
             character=character, location=location, current_tick=0
         )  # no raise
+
+    def test_allows_the_outskirts_at_night(self):
+        district = make_district()
+        character = make_character()
+        location = travel_svc.resolve_location(district, "outskirts")
+        travel_svc.check_can_travel(
+            character=character, location=location, current_tick=0
+        )  # no raise -- tick 0 is night
+
+    def test_refuses_the_outskirts_outside_night(self):
+        district = make_district()
+        character = make_character()
+        location = travel_svc.resolve_location(district, "outskirts")
+        with pytest.raises(NotAllowed) as exc_info:
+            travel_svc.check_can_travel(
+                character=character,
+                location=location,
+                current_tick=6,  # morning
+            )
+        assert exc_info.value.reason_key == "outskirts_night_only"
+
+    def test_story_mode_still_refuses_the_outskirts_outside_night(self):
+        # The night gate is about *when* it is, not who's asking -- unlike
+        # the job/position-based restricted-location gate just above,
+        # Story mode doesn't bypass it.
+        district = make_district()
+        character = make_character(rp_mode="story")
+        location = travel_svc.resolve_location(district, "outskirts")
+        with pytest.raises(NotAllowed) as exc_info:
+            travel_svc.check_can_travel(character=character, location=location, current_tick=6)
+        assert exc_info.value.reason_key == "outskirts_night_only"
 
 
 class TestResolveStation:

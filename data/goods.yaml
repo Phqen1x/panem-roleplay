@@ -69,6 +69,18 @@
   category: food
   hunger_value: 25.0
   cook_method: stove
+- id: wild_game
+  name: Wild Game
+  base_price: 20.0
+  perishable: true
+  category: food
+  hunger_value: 35.0
+  cook_method: stove
+  # Never listed in any district's produces/imports/quota -- the only way
+  # to get this is poaching at the outskirts (panem_shared.poaching,
+  # constants.POACH_GOOD_ID), which is deliberately never sold in the
+  # legal market. Its hunger_value is the highest of any food good on
+  # purpose: poaching is supposed to reward better food than buying does.
 - id: produce
   name: Fruits/Drinks
   base_price: 3.0

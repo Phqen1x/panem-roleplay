@@ -60,6 +60,7 @@ STRINGS: dict[str, str] = {
     "npc_not_here": "{name} isn't at this location right now.",
     # Travel/locations (FR-LOC)
     "location_restricted": "You don't have access to that location.",
+    "outskirts_night_only": "**{name}** can't reach the outskirts except at night.",
     "location_not_found": "Not a valid location for that district.",
     "travel_ok": "**{name}** travels to **{location}**.",
     "no_location_set": "**{name}** hasn't traveled anywhere yet -- use `/travel`.",
@@ -130,6 +131,8 @@ STRINGS: dict[str, str] = {
     "inventory_empty": "**{name}** isn't carrying anything.",
     "poach_no_outskirts": "There's nowhere to poach in this district.",
     "poach_not_at_outskirts": "**{name}** needs to be at **{location}** to try poaching.",
+    "poach_night_only": "**{name}** can only poach at night -- the outskirts are watched too "
+    "closely by day.",
     "poach_nothing_to_poach": "There's nothing worth poaching here.",
     "poach_on_cooldown": "**{name}** already tried poaching this phase of the day.",
     "poach_jailed": "**{name}** is locked up and can't go poaching.",
@@ -151,7 +154,9 @@ STRINGS: dict[str, str] = {
     "lockpick_already_tried": "This lock has already been tried!",
     # Black market (contraband system: /blackmarket)
     "blackmarket_no_fence": "This district has no black market contact.",
-    "blackmarket_not_at_market": "**{name}** needs to be at the district's black market to trade.",
+    "blackmarket_not_at_market": "**{name}** needs to be at the district's outskirts to trade "
+    "on the black market.",
+    "blackmarket_night_only": "**{name}** can only reach the black market at night.",
     "blackmarket_not_trusted": (
         "**{name}** isn't on good enough terms with {fence} to be shown the black market."
     ),
