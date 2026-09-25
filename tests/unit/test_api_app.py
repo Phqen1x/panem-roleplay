@@ -28,6 +28,8 @@ from panem_shared.db.models import (
     AfflictionType,
     ApartmentLease,
     Character,
+    DistrictState,
+    EngagementSettings,
     Inventory,
     LayerCategory,
     LayerOption,
@@ -45,7 +47,9 @@ from panem_shared.db.models import (
 from panem_shared.enums import (
     CharacterStatus,
     DayPhase,
+    JobLevel,
     OwnerKind,
+    Position,
     PropertyKind,
     SceneKind,
     SceneStatus,
@@ -4412,6 +4416,504 @@ class TestDashboardStaff:
             await discord_staff.post_staff_log(
                 channel_id=555, bot_token="test-bot-token", content="ignored"
             )  # no raise
+
+
+class TestDashboardStaffExtras:
+    """The rest of `/staff ...`'s subcommands, consolidated into the same
+    Staff tab (see `dashboard_routes.build_staff_router`'s own comment for
+    which two stayed bot-only). One 403-without-the-role check plus one
+    happy path per endpoint is enough here -- the role check itself
+    (`_require_staff`) is already covered exhaustively by `TestDashboardStaff`
+    above, and it's the exact same helper on every route in this class."""
+
+    async def test_give_money_refuses_without_the_staff_role(self, staff_app, db_session_factory):
+        await seed_character(db_session_factory, character_overrides={"name": "Wren"})
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([1]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/give/money",
+                    json={"discord_id": 42, "character_name": "Wren", "amount": 50},
+                )
+        assert response.status_code == 403
+
+    async def test_give_money_happy_path(self, staff_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, character_overrides={"name": "Wren", "money": 100}
+        )
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/give/money",
+                    json={"discord_id": 42, "character_name": "Wren", "amount": 50},
+                )
+        assert response.status_code == 200
+        assert response.json()["new_balance"] == 150
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.money == 150
+            actions = (
+                await session.execute(
+                    select(StaffAction).where(StaffAction.action == "give_money")
+                )
+            ).scalars().all()
+        assert len(actions) == 1 and actions[0].payload == {"amount": 50}
+
+    async def test_give_money_never_takes_a_character_below_zero(
+        self, staff_app, db_session_factory
+    ):
+        char_id = await seed_character(
+            db_session_factory, character_overrides={"name": "Wren", "money": 20}
+        )
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/give/money",
+                    json={"discord_id": 42, "character_name": "Wren", "amount": -1000},
+                )
+        assert response.status_code == 200
+        assert response.json()["new_balance"] == 0
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.money == 0
+
+    async def test_give_item_happy_path(self, staff_market_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, character_overrides={"name": "Wren"})
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_market_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/give/item",
+                    json={
+                        "discord_id": 42,
+                        "character_name": "Wren",
+                        "good_id": "grain",
+                        "qty": 3,
+                    },
+                )
+        assert response.status_code == 200
+        assert response.json() == {
+            "character_name": "Wren",
+            "good_id": "grain",
+            "good_name": "Grain",
+            "new_qty": 3,
+        }
+        async with db_session_factory() as session:
+            inv = await session.get(Inventory, (OwnerKind.CHARACTER.value, str(char_id), "grain"))
+            assert inv is not None and inv.qty == 3
+
+    async def test_give_item_refuses_an_unknown_good(self, staff_market_app, db_session_factory):
+        await seed_character(db_session_factory, character_overrides={"name": "Wren"})
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_market_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/give/item",
+                    json={
+                        "discord_id": 42,
+                        "character_name": "Wren",
+                        "good_id": "nonexistent",
+                        "qty": 1,
+                    },
+                )
+        assert response.status_code == 404
+
+    async def test_give_position_grants_then_revokes(self, staff_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, character_overrides={"name": "Wren"})
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                grant = await client.post(
+                    "/activity/dashboard/staff/give/position",
+                    json={
+                        "discord_id": 42,
+                        "character_name": "Wren",
+                        "position": Position.VICTOR.value,
+                        "grant": True,
+                    },
+                )
+                revoke = await client.post(
+                    "/activity/dashboard/staff/give/position",
+                    json={
+                        "discord_id": 42,
+                        "character_name": "Wren",
+                        "position": Position.VICTOR.value,
+                        "grant": False,
+                    },
+                )
+        assert grant.status_code == 200
+        assert grant.json()["positions"] == [Position.VICTOR.value]
+        assert revoke.status_code == 200
+        assert revoke.json()["positions"] == []
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.positions == []
+
+    async def test_give_job_sets_title_and_shift(self, staff_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, character_overrides={"name": "Wren"})
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/give/job",
+                    json={
+                        "discord_id": 42,
+                        "character_name": "Wren",
+                        "job_title": "Baker",
+                        "shift_phase": DayPhase.MORNING.value,
+                        "illicit": False,
+                    },
+                )
+        assert response.status_code == 200
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.job_title == "Baker"
+            assert character.shift_phase == DayPhase.MORNING.value
+            assert character.job_is_illicit is False
+
+    async def test_give_mastery_sets_shifts_completed_directly(
+        self, staff_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, character_overrides={"name": "Wren"})
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/give/mastery",
+                    json={"discord_id": 42, "character_name": "Wren", "shifts_completed": 40},
+                )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["shifts_completed"] == 40
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.shifts_completed == 40
+
+    async def test_give_mastery_jumps_to_a_levels_threshold(self, staff_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, character_overrides={"name": "Wren"})
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/give/mastery",
+                    json={"discord_id": 42, "character_name": "Wren", "level": JobLevel.EXPERT.value},
+                )
+        assert response.status_code == 200
+        assert response.json()["level"] == JobLevel.EXPERT.value
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.shifts_completed == constants.JOB_LEVEL_SHIFT_THRESHOLDS["expert"]
+
+    async def test_give_mastery_needs_a_value(self, staff_app, db_session_factory):
+        await seed_character(db_session_factory, character_overrides={"name": "Wren"})
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/give/mastery",
+                    json={"discord_id": 42, "character_name": "Wren"},
+                )
+        assert response.status_code == 400
+
+    async def test_kill_character_sets_status_and_cause(self, staff_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, character_overrides={"name": "Wren"})
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/character/kill",
+                    json={"discord_id": 42, "character_name": "Wren", "reason": "Fell in the arena"},
+                )
+        assert response.status_code == 200
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.status == CharacterStatus.DEAD.value
+            assert character.death_cause == "Fell in the arena"
+
+    async def test_note_logs_a_staff_action_without_changing_the_character(
+        self, staff_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, character_overrides={"name": "Wren"})
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/character/note",
+                    json={"discord_id": 42, "character_name": "Wren", "text": "Watching this one."},
+                )
+        assert response.status_code == 200
+        async with db_session_factory() as session:
+            actions = (
+                await session.execute(select(StaffAction).where(StaffAction.action == "note"))
+            ).scalars().all()
+        assert len(actions) == 1
+        assert actions[0].target == str(char_id)
+        assert actions[0].payload == {"text": "Watching this one."}
+
+    async def test_delete_pending_removes_a_pending_application(
+        self, staff_app, db_session_factory
+    ):
+        char_id = await seed_character(
+            db_session_factory,
+            character_overrides={"name": "Hopeful", "status": CharacterStatus.PENDING.value},
+        )
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/character/delete-pending",
+                    json={"discord_id": 42, "character_name": "Hopeful"},
+                )
+        assert response.status_code == 200
+        async with db_session_factory() as session:
+            assert await session.get(Character, char_id) is None
+
+    async def test_delete_pending_refuses_an_approved_character(
+        self, staff_app, db_session_factory
+    ):
+        await seed_character(
+            db_session_factory,
+            character_overrides={"name": "Wren", "status": CharacterStatus.APPROVED.value},
+        )
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/character/delete-pending",
+                    json={"discord_id": 42, "character_name": "Wren"},
+                )
+        assert response.status_code == 400
+
+    async def test_character_limit_override_and_reset(self, staff_app, db_session_factory):
+        await seed_character(db_session_factory, discord_id=99)
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                set_resp = await client.post(
+                    "/activity/dashboard/staff/character/limit",
+                    json={"discord_id": 42, "target_discord_id": 99, "limit": 7},
+                )
+                reset_resp = await client.post(
+                    "/activity/dashboard/staff/character/limit",
+                    json={"discord_id": 42, "target_discord_id": 99, "limit": None},
+                )
+        assert set_resp.status_code == 200 and set_resp.json()["limit"] == 7
+        assert reset_resp.status_code == 200 and reset_resp.json()["limit"] is None
+        async with db_session_factory() as session:
+            user = (
+                await session.execute(select(User).where(User.discord_id == 99))
+            ).scalar_one()
+            assert user.max_characters_override is None
+
+    async def test_ban_sets_banned_at(self, staff_app, db_session_factory):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/ban",
+                    json={"discord_id": 42, "target_discord_id": 12345},
+                )
+        assert response.status_code == 200
+        async with db_session_factory() as session:
+            user = (
+                await session.execute(select(User).where(User.discord_id == 12345))
+            ).scalar_one()
+            assert user.banned_at is not None
+
+    async def test_housing_set_price_overrides_and_clears(self, staff_app, db_session_factory):
+        property_id = await seed_property(db_session_factory, suggested_price=1000.0)
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                set_resp = await client.post(
+                    "/activity/dashboard/staff/housing/set-price",
+                    json={"discord_id": 42, "property_id": property_id, "price": 2500.0},
+                )
+                clear_resp = await client.post(
+                    "/activity/dashboard/staff/housing/set-price",
+                    json={"discord_id": 42, "property_id": property_id, "price": None},
+                )
+        assert set_resp.status_code == 200 and set_resp.json()["price"] == 2500.0
+        assert clear_resp.status_code == 200 and clear_resp.json()["price"] is None
+        async with db_session_factory() as session:
+            property_ = await session.get(Property, property_id)
+            assert property_.asking_price is None
+
+    async def test_engagement_timeout_creates_then_updates_the_singleton_row(
+        self, staff_app, db_session_factory
+    ):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                first = await client.post(
+                    "/activity/dashboard/staff/engagement/timeout",
+                    json={"discord_id": 42, "minutes": 15},
+                )
+                second = await client.post(
+                    "/activity/dashboard/staff/engagement/timeout",
+                    json={"discord_id": 42, "minutes": 30},
+                )
+        assert first.status_code == 200 and first.json()["minutes"] == 15
+        assert second.status_code == 200 and second.json()["minutes"] == 30
+        async with db_session_factory() as session:
+            settings_row = await session.get(EngagementSettings, 1)
+            assert settings_row.idle_timeout_minutes == 30
+
+    async def test_district_state_view_and_crackdown(self, staff_app, db_session_factory):
+        async with db_session_factory() as session, session.begin():
+            session.add(
+                DistrictState(
+                    district_id=1,
+                    crisis_level=2,
+                    crisis_kind="unrest",
+                    unrest=0.5,
+                    peacekeeper_pressure=0.3,
+                )
+            )
+        # `fetch_is_staff` (not `httpx.AsyncClient.get`) is what's patched
+        # here -- this test issues its own GET through the same client
+        # class the app uses to reach Discord's API, and patching that
+        # globally would intercept the outer test request too (see
+        # `post_staff_log`'s own tests below for the identical trap on the
+        # POST side).
+        with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=True)):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                view = await client.get(
+                    "/activity/dashboard/staff/district/1", params={"discord_id": 42}
+                )
+                crackdown = await client.post(
+                    "/activity/dashboard/staff/district/crackdown",
+                    json={"discord_id": 42, "district_id": 1, "duration_ticks": 10},
+                )
+        assert view.status_code == 200
+        assert view.json()["crisis_level"] == 2
+        assert crackdown.status_code == 200
+        assert crackdown.json()["until_tick"] == 10
+        async with db_session_factory() as session:
+            row = await session.get(DistrictState, 1)
+            assert row.crackdown_until_tick == 10
+            assert row.peacekeeper_pressure > 0.3
+
+    async def test_npc_add_then_rename_background_appearance_traits_speech(
+        self, staff_app, db_session_factory
+    ):
+        # Same reasoning as the district-state test above: this test issues
+        # its own GET (the NPC listing), so `fetch_is_staff` is patched
+        # directly rather than `httpx.AsyncClient.get`.
+        with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=True)):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                add_resp = await client.post(
+                    "/activity/dashboard/staff/npcs/add",
+                    json={
+                        "discord_id": 42,
+                        "name": "Cato",
+                        "district_id": 1,
+                        "age": 18,
+                        "home_location_id": "square",
+                        "traits": "brash, proud",
+                        "gender": "male",
+                    },
+                )
+                assert add_resp.status_code == 200
+                npc_id = add_resp.json()["id"]
+
+                listing = await client.get(
+                    "/activity/dashboard/staff/npcs",
+                    params={"district_id": 1, "discord_id": 42},
+                )
+                assert any(row["id"] == npc_id for row in listing.json())
+
+                rename = await client.post(
+                    "/activity/dashboard/staff/npcs/rename",
+                    json={"discord_id": 42, "npc_id": npc_id, "new_name": "Cato Ludara"},
+                )
+                background = await client.post(
+                    "/activity/dashboard/staff/npcs/background",
+                    json={"discord_id": 42, "npc_id": npc_id, "backstory": "A career from D2."},
+                )
+                appearance = await client.post(
+                    "/activity/dashboard/staff/npcs/appearance",
+                    json={"discord_id": 42, "npc_id": npc_id, "appearance": "Tall, scarred."},
+                )
+                traits = await client.post(
+                    "/activity/dashboard/staff/npcs/traits",
+                    json={"discord_id": 42, "npc_id": npc_id, "traits": "ruthless, loyal"},
+                )
+                speech = await client.post(
+                    "/activity/dashboard/staff/npcs/speech",
+                    json={"discord_id": 42, "npc_id": npc_id, "tone": "blunt"},
+                )
+        assert rename.status_code == 200 and rename.json()["name"] == "Cato Ludara"
+        assert background.status_code == 200
+        assert appearance.status_code == 200
+        assert traits.status_code == 200
+        assert speech.status_code == 200
+        async with db_session_factory() as session:
+            npc = await session.get(Npc, npc_id)
+            assert npc.name == "Cato Ludara"
+            assert npc.backstory_override == "A career from D2."
+            assert npc.appearance_override == "Tall, scarred."
+            assert npc.traits == ["ruthless", "loyal"]
+            assert npc.speech_style["tone"] == "blunt"
+
+    async def test_npc_add_refuses_an_unknown_location(self, staff_app, db_session_factory):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/npcs/add",
+                    json={
+                        "discord_id": 42,
+                        "name": "Cato",
+                        "district_id": 1,
+                        "age": 18,
+                        "home_location_id": "nonexistent",
+                        "traits": "brash",
+                    },
+                )
+        assert response.status_code == 404
 
 
 class TestDashboardStaffMarket:

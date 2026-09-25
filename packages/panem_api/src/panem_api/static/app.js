@@ -24,7 +24,7 @@
 // together) -- there's still no cryptographic auth here, same documented
 // gap as the rest of this process.
 import { fetchJson, el, renderTabIcon } from "./tabs/_shared.js?v=7";
-import { mountThemePicker } from "./theme_picker.js?v=3";
+import { mountThemePicker } from "./theme_picker.js?v=4";
 
 // `?v=N`, same cache-busting convention as every other asset this page
 // loads (see the `tabs/_shared.js`/`theme_picker.js` imports above) --
@@ -60,7 +60,7 @@ async function openExternalLink(url) {
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "43";
+const ASSET_VERSION = "44";
 
 // District names mapping for Capitol and Districts 1-12
 const DISTRICT_NAMES = {

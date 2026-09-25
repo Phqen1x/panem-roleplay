@@ -568,10 +568,35 @@ export function mountThemePicker(
     }, "Resetting…")
   );
 
+  // CSS alone (`right: 0` anchored to `.theme-picker`, plus a `max-width:
+  // calc(100vw - 32px)` floor) still overflows off-screen whenever the
+  // *toggle button itself* isn't pinned to the header's true right edge --
+  // e.g. mid-layout on some viewport widths, or if header wrapping ever
+  // regresses again (see 645c6f6's own attempt at this, which only capped
+  // width, not position). Computing the popup's position from the toggle
+  // button's actual on-screen rect every time it opens (and on resize
+  // while it's open) is what actually guarantees it never overflows a
+  // side, regardless of where the button ends up.
+  function positionPopup() {
+    const margin = 16;
+    const btnRect = toggleBtn.getBoundingClientRect();
+    const width = Math.min(280, window.innerWidth - margin * 2);
+    popup.style.width = `${width}px`;
+    const left = clamp(btnRect.right - width, margin, window.innerWidth - width - margin);
+    const top = btnRect.bottom + 8;
+    popup.style.left = `${left}px`;
+    popup.style.top = `${top}px`;
+    popup.style.maxHeight = `${Math.max(160, window.innerHeight - top - margin)}px`;
+  }
+  window.addEventListener("resize", () => {
+    if (!popup.hidden) positionPopup();
+  });
+
   toggleBtn.addEventListener("click", () => {
     if (popup.hidden) {
       syncFromSaved();
       setStatus("");
+      positionPopup();
       popup.hidden = false;
       toggleBtn.setAttribute("aria-expanded", "true");
     } else {

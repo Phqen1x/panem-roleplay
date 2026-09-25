@@ -1295,16 +1295,20 @@ table.data-table .btn {
 }
 
 .theme-picker-popup {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
+  /* `position: fixed` rather than `absolute` -- theme_picker.js's own
+     `positionPopup()` sets `top`/`left`/`width`/`max-height` from the
+     toggle button's actual `getBoundingClientRect()` (viewport
+     coordinates) every time the popup opens or the window resizes, and
+     clamps them to stay fully on-screen. That replaced anchoring this via
+     CSS `right: 0` to `.theme-picker` (the nearest positioned ancestor),
+     which put the popup off-screen whenever the toggle itself wasn't
+     pinned to the header's true right edge -- the failure mode
+     `min-width: 0` on #tab-nav above was meant to prevent but didn't
+     cover every case. These are just sane initial/fallback values before
+     JS runs its first `positionPopup()` call. */
+  position: fixed;
   z-index: 200;
   width: 280px;
-  /* Belt-and-suspenders alongside #tab-nav's own overflow fix above: even
-     if something else ever pushes `.theme-picker` away from the header's
-     right edge again, this keeps the popup from extending past the left
-     edge of a narrow viewport (`right: 0` alone has no such floor -- it's
-     anchored to the toggle, wherever that ends up). */
   max-width: calc(100vw - 32px);
   max-height: calc(100vh - 70px);
   overflow-y: auto;

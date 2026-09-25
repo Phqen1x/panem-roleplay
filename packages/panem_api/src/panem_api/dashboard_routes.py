@@ -30,6 +30,7 @@ import datetime as dt
 import json
 import random
 import secrets
+import uuid
 from pathlib import Path
 
 import redis.asyncio as redis
@@ -62,6 +63,7 @@ from panem_shared import trades as trades_svc
 from panem_shared import travel as travel_svc
 from panem_shared.content.loader import ContentBundle
 from panem_shared.content.schemas import Location
+from panem_shared.content.traits import speech_tone
 from panem_shared.db.models import (
     AfflictionType,
     ApartmentLease,
@@ -69,6 +71,9 @@ from panem_shared.db.models import (
     CharacterAffliction,
     DistrictLore,
     DistrictLorePerson,
+    DistrictState,
+    EngagementSettings,
+    Inventory,
     LayerCategory,
     Npc,
     PanemHistoryEntry,
@@ -88,6 +93,7 @@ from panem_shared.enums import (
     CharacterStatus,
     DayPhase,
     Gender,
+    JobLevel,
     LocationKind,
     OwnerKind,
     Position,
@@ -3557,6 +3563,237 @@ class DeleteAfflictionTypeRequest(BaseModel):
     discord_id: int
 
 
+# ---- The rest of `/staff ...`'s subcommands, consolidated into this same
+# tab -- every one of these mirrors a `panem_bot.cogs.staff.StaffCog`
+# subcommand exactly (same service calls, same validation, same
+# `StaffAction` logging where the original logged one), so staff no longer
+# need to leave the Activity for anything that isn't tied to a specific
+# Discord channel/thread (`/staff scene ...`) or a raw message link
+# (`/staff whois`) -- those two stay Discord-only since there's no
+# meaningful web equivalent of "this channel" or "that message" here.
+
+
+class StaffGiveMoneyRequest(BaseModel):
+    discord_id: int
+    character_name: str
+    amount: int
+
+
+class StaffGiveMoneyResponse(BaseModel):
+    character_name: str
+    new_balance: int
+
+
+class StaffGiveItemRequest(BaseModel):
+    discord_id: int
+    character_name: str
+    good_id: str
+    qty: int
+
+
+class StaffGiveItemResponse(BaseModel):
+    character_name: str
+    good_id: str
+    good_name: str
+    new_qty: int
+
+
+class StaffGoodOption(BaseModel):
+    id: str
+    name: str
+
+
+class StaffGivePositionRequest(BaseModel):
+    discord_id: int
+    character_name: str
+    position: Position
+    grant: bool = True
+
+
+class StaffGivePositionResponse(BaseModel):
+    character_name: str
+    positions: list[str]
+
+
+class StaffGiveJobRequest(BaseModel):
+    discord_id: int
+    character_name: str
+    job_title: str
+    shift_phase: DayPhase
+    illicit: bool | None = None
+
+
+class StaffGiveJobResponse(BaseModel):
+    character_name: str
+    job_title: str
+    shift_phase: str
+
+
+class StaffGiveMasteryRequest(BaseModel):
+    discord_id: int
+    character_name: str
+    shifts_completed: int | None = None
+    level: JobLevel | None = None
+
+
+class StaffGiveMasteryResponse(BaseModel):
+    character_name: str
+    shifts_completed: int
+    level: str
+
+
+class StaffKillRequest(BaseModel):
+    discord_id: int
+    character_name: str
+    reason: str | None = None
+
+
+class StaffKillResponse(BaseModel):
+    character_name: str
+
+
+class StaffNoteRequest(BaseModel):
+    discord_id: int
+    character_name: str
+    text: str
+
+
+class StaffDeletePendingRequest(BaseModel):
+    discord_id: int
+    character_name: str
+    reason: str | None = None
+
+
+class StaffDeletePendingResponse(BaseModel):
+    character_name: str
+
+
+class StaffCharacterLimitRequest(BaseModel):
+    discord_id: int
+    target_discord_id: int
+    limit: int | None = None
+
+
+class StaffCharacterLimitResponse(BaseModel):
+    target_discord_id: int
+    limit: int | None
+
+
+class StaffBanRequest(BaseModel):
+    discord_id: int
+    target_discord_id: int
+
+
+class StaffHousingSetPriceRequest(BaseModel):
+    discord_id: int
+    property_id: int
+    price: float | None = None
+
+
+class StaffHousingSetPriceResponse(BaseModel):
+    property_id: int
+    price: float | None
+
+
+class StaffEngagementTimeoutRequest(BaseModel):
+    discord_id: int
+    minutes: int
+
+
+class StaffEngagementTimeoutResponse(BaseModel):
+    minutes: int
+
+
+class StaffCrackdownRequest(BaseModel):
+    discord_id: int
+    district_id: int
+    duration_ticks: int | None = None
+
+
+class StaffCrackdownResponse(BaseModel):
+    district_id: int
+    duration_ticks: int
+    until_tick: int
+
+
+class StaffDistrictStateResponse(BaseModel):
+    district_id: int
+    district_name: str
+    crisis_level: int
+    crisis_kind: str | None
+    unrest: float
+    peacekeeper_pressure: float
+    morale: float
+    capitol_favor: float
+    quota_progress: float
+    quota_target: float
+    treasury: float
+    crackdown_until_tick: int | None
+
+
+class StaffNpcOption(BaseModel):
+    id: str
+    name: str
+
+
+class StaffLocationOption(BaseModel):
+    id: str
+    name: str
+
+
+class StaffJobOption(BaseModel):
+    id: str
+    title: str
+
+
+class StaffNpcRenameRequest(BaseModel):
+    discord_id: int
+    npc_id: str
+    new_name: str
+
+
+class StaffNpcBackgroundRequest(BaseModel):
+    discord_id: int
+    npc_id: str
+    backstory: str
+
+
+class StaffNpcAppearanceRequest(BaseModel):
+    discord_id: int
+    npc_id: str
+    appearance: str
+
+
+class StaffNpcTraitsRequest(BaseModel):
+    discord_id: int
+    npc_id: str
+    traits: str
+
+
+class StaffNpcSpeechRequest(BaseModel):
+    discord_id: int
+    npc_id: str
+    tone: str
+
+
+class StaffNpcSummary(BaseModel):
+    id: str
+    name: str
+
+
+class StaffNpcAddRequest(BaseModel):
+    discord_id: int
+    name: str
+    district_id: int
+    age: int
+    home_location_id: str
+    traits: str
+    gender: str | None = None
+    job_id: str | None = None
+    backstory: str | None = None
+    appearance: str | None = None
+
+
 class ActiveAfflictionSummary(BaseModel):
     id: int
     name: str
@@ -4020,6 +4257,545 @@ def build_staff_router(
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
         return {"deleted": True}
+
+    # ---- Everything else `/staff ...` could do, consolidated here -------
+    # Mirrors `panem_bot.cogs.staff.StaffCog` subcommand-for-subcommand
+    # (see that file for the Discord-side originals); `/staff scene ...`
+    # and `/staff whois` are the only two left bot-only, since both need a
+    # specific Discord channel/thread or message link that has no web
+    # equivalent here.
+
+    async def _find_character_by_name(session: AsyncSession, name: str) -> Character:
+        row = (
+            await session.execute(select(Character).where(Character.name == name))
+        ).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(status_code=404, detail="character_not_found")
+        return row
+
+    @router.get("/goods", response_model=list[StaffGoodOption])
+    async def list_goods() -> list[StaffGoodOption]:
+        return [
+            StaffGoodOption(id=good.id, name=good.name)
+            for good in sorted(content.goods.values(), key=lambda g: g.name)
+        ]
+
+    @router.post("/give/money", response_model=StaffGiveMoneyResponse)
+    async def give_money(body: StaffGiveMoneyRequest) -> StaffGiveMoneyResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _find_character_by_name(session, body.character_name)
+            character.money = max(0, character.money + body.amount)
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="give_money",
+                    target=str(character.id),
+                    payload={"amount": body.amount},
+                )
+            )
+            new_balance = character.money
+        return StaffGiveMoneyResponse(character_name=body.character_name, new_balance=new_balance)
+
+    @router.post("/give/item", response_model=StaffGiveItemResponse)
+    async def give_item(body: StaffGiveItemRequest) -> StaffGiveItemResponse:
+        await _require_staff(body.discord_id)
+        good = content.goods.get(body.good_id)
+        if good is None:
+            raise HTTPException(status_code=404, detail="staff_good_not_found")
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _find_character_by_name(session, body.character_name)
+            owner_id = str(character.id)
+            inv = await session.get(Inventory, (OwnerKind.CHARACTER.value, owner_id, good.id))
+            current = inv.qty if inv is not None else 0
+            new_qty = max(0, current + body.qty)
+            if inv is None:
+                inv = Inventory(
+                    owner_kind=OwnerKind.CHARACTER.value,
+                    owner_id=owner_id,
+                    good_id=good.id,
+                    qty=new_qty,
+                )
+                session.add(inv)
+            else:
+                inv.qty = new_qty
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="give_item",
+                    target=str(character.id),
+                    payload={"good": good.id, "qty": body.qty},
+                )
+            )
+        return StaffGiveItemResponse(
+            character_name=body.character_name, good_id=good.id, good_name=good.name, new_qty=new_qty
+        )
+
+    @router.post("/give/position", response_model=StaffGivePositionResponse)
+    async def give_position(body: StaffGivePositionRequest) -> StaffGivePositionResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _find_character_by_name(session, body.character_name)
+            held = set(character.positions)
+            if body.grant:
+                held.add(body.position.value)
+            else:
+                held.discard(body.position.value)
+            character.positions = sorted(held)
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="give_position",
+                    target=str(character.id),
+                    payload={"position": body.position.value, "grant": body.grant},
+                )
+            )
+            positions = character.positions
+        return StaffGivePositionResponse(character_name=body.character_name, positions=positions)
+
+    @router.post("/give/job", response_model=StaffGiveJobResponse)
+    async def give_job(body: StaffGiveJobRequest) -> StaffGiveJobResponse:
+        await _require_staff(body.discord_id)
+        try:
+            characters_svc.validate_job_title(body.job_title)
+        except ServiceError as exc:
+            raise _http_from_service_error(exc) from exc
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _find_character_by_name(session, body.character_name)
+            character.job_title = body.job_title
+            character.shift_phase = body.shift_phase.value
+            if body.illicit is not None:
+                character.job_is_illicit = body.illicit
+            character.job_started_tick = None
+            character.consecutive_missed = 0
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="give_job",
+                    target=str(character.id),
+                    payload={
+                        "job_title": body.job_title,
+                        "shift_phase": body.shift_phase.value,
+                        "illicit": body.illicit,
+                    },
+                )
+            )
+        return StaffGiveJobResponse(
+            character_name=body.character_name,
+            job_title=body.job_title,
+            shift_phase=body.shift_phase.value,
+        )
+
+    @router.post("/give/mastery", response_model=StaffGiveMasteryResponse)
+    async def give_mastery(body: StaffGiveMasteryRequest) -> StaffGiveMasteryResponse:
+        await _require_staff(body.discord_id)
+        if body.shifts_completed is None and body.level is None:
+            raise HTTPException(status_code=400, detail="mastery_needs_value")
+        if body.shifts_completed is not None and body.shifts_completed < 0:
+            raise HTTPException(status_code=400, detail="invalid_shifts_completed")
+        new_shifts = (
+            body.shifts_completed
+            if body.shifts_completed is not None
+            else constants.JOB_LEVEL_SHIFT_THRESHOLDS[body.level.value]  # type: ignore[union-attr]
+        )
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _find_character_by_name(session, body.character_name)
+            character.shifts_completed = new_shifts
+            new_level = job_levels.job_level_for_shifts(new_shifts)
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="give_mastery",
+                    target=str(character.id),
+                    payload={"shifts_completed": new_shifts, "level": new_level.value},
+                )
+            )
+        return StaffGiveMasteryResponse(
+            character_name=body.character_name, shifts_completed=new_shifts, level=new_level.value
+        )
+
+    @router.post("/character/kill", response_model=StaffKillResponse)
+    async def kill_character(body: StaffKillRequest) -> StaffKillResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _find_character_by_name(session, body.character_name)
+            character.status = CharacterStatus.DEAD.value
+            reason = body.reason.strip() if body.reason and body.reason.strip() else None
+            character.death_cause = reason
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="kill",
+                    target=str(character.id),
+                    payload={"reason": reason},
+                )
+            )
+        return StaffKillResponse(character_name=body.character_name)
+
+    @router.post("/character/note")
+    async def note_character(body: StaffNoteRequest) -> dict[str, bool]:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _find_character_by_name(session, body.character_name)
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="note",
+                    target=str(character.id),
+                    payload={"text": body.text},
+                )
+            )
+        return {"logged": True}
+
+    @router.post("/character/delete-pending", response_model=StaffDeletePendingResponse)
+    async def delete_pending_character(body: StaffDeletePendingRequest) -> StaffDeletePendingResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _find_character_by_name(session, body.character_name)
+            if character.status != CharacterStatus.PENDING.value:
+                raise HTTPException(status_code=400, detail="not_pending")
+            char_id = character.id
+            await session.delete(character)
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="delete_pending",
+                    target=str(char_id),
+                    payload={"name": body.character_name, "reason": body.reason},
+                )
+            )
+        return StaffDeletePendingResponse(character_name=body.character_name)
+
+    @router.post("/character/limit", response_model=StaffCharacterLimitResponse)
+    async def set_character_limit(body: StaffCharacterLimitRequest) -> StaffCharacterLimitResponse:
+        await _require_staff(body.discord_id)
+        if body.limit is not None and body.limit < 0:
+            raise HTTPException(status_code=400, detail="invalid_limit")
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            user = await characters_svc.get_or_create_user(session, body.target_discord_id)
+            user.max_characters_override = body.limit
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="character_limit",
+                    target=str(body.target_discord_id),
+                    payload={"limit": body.limit},
+                )
+            )
+        return StaffCharacterLimitResponse(
+            target_discord_id=body.target_discord_id, limit=body.limit
+        )
+
+    @router.post("/ban")
+    async def ban_user(body: StaffBanRequest) -> dict[str, bool]:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            row = (
+                await session.execute(
+                    select(User).where(User.discord_id == body.target_discord_id)
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                row = User(discord_id=body.target_discord_id)
+                session.add(row)
+                await session.flush()
+            row.banned_at = dt.datetime.now(dt.UTC)
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="ban",
+                    target=str(body.target_discord_id),
+                )
+            )
+        return {"banned": True}
+
+    @router.post("/housing/set-price", response_model=StaffHousingSetPriceResponse)
+    async def set_housing_price(body: StaffHousingSetPriceRequest) -> StaffHousingSetPriceResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            property_ = await session.get(Property, body.property_id)
+            if property_ is None:
+                raise HTTPException(status_code=404, detail="housing_not_found")
+            property_.asking_price = body.price
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="housing_set_price",
+                    target=str(body.property_id),
+                    payload={"price": body.price},
+                )
+            )
+        return StaffHousingSetPriceResponse(property_id=body.property_id, price=body.price)
+
+    @router.post("/engagement/timeout", response_model=StaffEngagementTimeoutResponse)
+    async def set_engagement_timeout(
+        body: StaffEngagementTimeoutRequest,
+    ) -> StaffEngagementTimeoutResponse:
+        await _require_staff(body.discord_id)
+        if body.minutes < 1:
+            raise HTTPException(status_code=400, detail="invalid_minutes")
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            settings_row = await session.get(EngagementSettings, 1)
+            if settings_row is None:
+                settings_row = EngagementSettings(id=1, idle_timeout_minutes=body.minutes)
+                session.add(settings_row)
+            else:
+                settings_row.idle_timeout_minutes = body.minutes
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="engagement_set_timeout",
+                    target="engagement_settings",
+                    payload={"minutes": body.minutes},
+                )
+            )
+        return StaffEngagementTimeoutResponse(minutes=body.minutes)
+
+    @router.get("/district/{district_id}", response_model=StaffDistrictStateResponse)
+    async def district_state(district_id: int, discord_id: int) -> StaffDistrictStateResponse:
+        await _require_staff(discord_id)
+        if district_id not in content.districts:
+            raise HTTPException(status_code=404, detail="invalid_district")
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            row = await session.get(DistrictState, district_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="district_state_not_seeded")
+            return StaffDistrictStateResponse(
+                district_id=district_id,
+                district_name=content.district(district_id).name,
+                crisis_level=row.crisis_level,
+                crisis_kind=row.crisis_kind,
+                unrest=row.unrest,
+                peacekeeper_pressure=row.peacekeeper_pressure,
+                morale=row.morale,
+                capitol_favor=row.capitol_favor,
+                quota_progress=row.quota_progress,
+                quota_target=row.quota_target,
+                treasury=row.treasury,
+                crackdown_until_tick=row.crackdown_until_tick,
+            )
+
+    @router.post("/district/crackdown", response_model=StaffCrackdownResponse)
+    async def trigger_crackdown(body: StaffCrackdownRequest) -> StaffCrackdownResponse:
+        await _require_staff(body.discord_id)
+        if body.district_id not in content.districts:
+            raise HTTPException(status_code=404, detail="invalid_district")
+        duration = body.duration_ticks or constants.CRACKDOWN_DEFAULT_DURATION_TICKS
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            current_tick = await _current_tick(session)
+            row = await session.get(DistrictState, body.district_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="district_state_not_seeded")
+            row.crackdown_until_tick = current_tick + duration
+            row.peacekeeper_pressure = min(
+                1.0, row.peacekeeper_pressure + constants.CRACKDOWN_PRESSURE_DELTA
+            )
+            until_tick = row.crackdown_until_tick
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="crackdown",
+                    target=str(body.district_id),
+                    payload={"duration_ticks": duration, "until_tick": until_tick},
+                )
+            )
+        return StaffCrackdownResponse(
+            district_id=body.district_id, duration_ticks=duration, until_tick=until_tick
+        )
+
+    # ---- NPC management (`/staff npc ...`) ------------------------------
+
+    @router.get("/npcs", response_model=list[StaffNpcSummary])
+    async def list_district_npcs(district_id: int, discord_id: int) -> list[StaffNpcSummary]:
+        await _require_staff(discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            rows = (
+                await session.execute(
+                    select(Npc).where(Npc.district_id == district_id).order_by(Npc.name)
+                )
+            ).scalars()
+            return [StaffNpcSummary(id=row.id, name=row.name) for row in rows]
+
+    @router.get("/npcs/locations", response_model=list[StaffLocationOption])
+    async def list_district_locations(
+        district_id: int, discord_id: int
+    ) -> list[StaffLocationOption]:
+        await _require_staff(discord_id)
+        if district_id not in content.districts:
+            raise HTTPException(status_code=404, detail="invalid_district")
+        return [
+            StaffLocationOption(id=loc.id, name=loc.name)
+            for loc in content.district(district_id).locations
+        ]
+
+    @router.get("/npcs/jobs", response_model=list[StaffJobOption])
+    async def list_district_jobs(district_id: int, discord_id: int) -> list[StaffJobOption]:
+        await _require_staff(discord_id)
+        return [
+            StaffJobOption(id=job.id, title=job.title)
+            for job in content.jobs.values()
+            if job.district == district_id
+        ]
+
+    async def _find_npc_by_id(session: AsyncSession, npc_id: str) -> Npc:
+        row = await session.get(Npc, npc_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="staff_npc_not_found")
+        return row
+
+    @router.post("/npcs/rename", response_model=StaffNpcSummary)
+    async def rename_npc(body: StaffNpcRenameRequest) -> StaffNpcSummary:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            npc = await _find_npc_by_id(session, body.npc_id)
+            old_name = npc.name
+            npc.name = body.new_name
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="npc_rename",
+                    target=npc.id,
+                    payload={"old_name": old_name, "new_name": body.new_name},
+                )
+            )
+        return StaffNpcSummary(id=body.npc_id, name=body.new_name)
+
+    @router.post("/npcs/background")
+    async def set_npc_background(body: StaffNpcBackgroundRequest) -> dict[str, bool]:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            npc = await _find_npc_by_id(session, body.npc_id)
+            npc.backstory_override = body.backstory
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="npc_set_background",
+                    target=npc.id,
+                    payload={"backstory": body.backstory},
+                )
+            )
+        return {"updated": True}
+
+    @router.post("/npcs/appearance")
+    async def set_npc_appearance(body: StaffNpcAppearanceRequest) -> dict[str, bool]:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            npc = await _find_npc_by_id(session, body.npc_id)
+            npc.appearance_override = body.appearance
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="npc_set_appearance",
+                    target=npc.id,
+                    payload={"appearance": body.appearance},
+                )
+            )
+        return {"updated": True}
+
+    @router.post("/npcs/traits")
+    async def set_npc_traits(body: StaffNpcTraitsRequest) -> dict[str, bool]:
+        await _require_staff(body.discord_id)
+        trait_list = [t_.strip() for t_ in body.traits.split(",") if t_.strip()]
+        if not trait_list:
+            raise HTTPException(status_code=400, detail="npc_needs_trait")
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            npc = await _find_npc_by_id(session, body.npc_id)
+            npc.traits = trait_list
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="npc_set_traits",
+                    target=npc.id,
+                    payload={"traits": trait_list},
+                )
+            )
+        return {"updated": True}
+
+    @router.post("/npcs/speech")
+    async def set_npc_speech(body: StaffNpcSpeechRequest) -> dict[str, bool]:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            npc = await _find_npc_by_id(session, body.npc_id)
+            npc.speech_style = {**npc.speech_style, "tone": body.tone}
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="npc_set_speech",
+                    target=npc.id,
+                    payload={"tone": body.tone},
+                )
+            )
+        return {"updated": True}
+
+    @router.post("/npcs/add", response_model=StaffNpcSummary)
+    async def add_npc(body: StaffNpcAddRequest) -> StaffNpcSummary:
+        await _require_staff(body.discord_id)
+        if body.district_id not in content.districts:
+            raise HTTPException(status_code=404, detail="invalid_district")
+        district_content = content.district(body.district_id)
+        location = next(
+            (loc for loc in district_content.locations if loc.id == body.home_location_id), None
+        )
+        if location is None:
+            raise HTTPException(status_code=404, detail="invalid_location")
+        trait_list = [t_.strip() for t_ in body.traits.split(",") if t_.strip()]
+        if not trait_list:
+            raise HTTPException(status_code=400, detail="npc_needs_trait")
+        job_row = content.jobs.get(body.job_id) if body.job_id else None
+        if body.job_id and (job_row is None or job_row.district != body.district_id):
+            raise HTTPException(status_code=404, detail="invalid_job")
+        npc_gender = body.gender if body.gender else random.choice(list(Gender)).value
+        npc_id = f"staff_{body.district_id}_{uuid.uuid4().hex[:8]}"
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            row = Npc(
+                id=npc_id,
+                district_id=body.district_id,
+                name=body.name,
+                age=body.age,
+                gender=npc_gender,
+                job_id=job_row.id if job_row is not None else None,
+                home_location_id=body.home_location_id,
+                location_id=body.home_location_id,
+                traits=trait_list,
+                speech_style={"tone": speech_tone(trait_list)},
+                backstory_override=body.backstory,
+                appearance_override=body.appearance,
+            )
+            session.add(row)
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="npc_add",
+                    target=npc_id,
+                    payload={
+                        "name": body.name,
+                        "district": body.district_id,
+                        "home_location": body.home_location_id,
+                    },
+                )
+            )
+        return StaffNpcSummary(id=npc_id, name=body.name)
 
     return router
 
