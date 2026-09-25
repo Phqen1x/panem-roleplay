@@ -194,6 +194,19 @@ export function mount(root, ctx) {
       // `reportSize` then keeps this iframe grown to fit whatever board it
       // ends up mounting (see watchIframeResize's own comment).
       iframe.scrollIntoView({ behavior: "smooth", block: "start" });
+      // A freshly inserted iframe doesn't hold keyboard focus just for
+      // being on screen -- this dashboard's own document does, so a game
+      // like Snake that steers off `keydown` would never see a keystroke
+      // until the player clicked into the frame first. Handing focus over
+      // once work.html has actually loaded (and can focus its own board)
+      // is what makes WASD/arrow keys work the instant the game mounts.
+      iframe.addEventListener("load", () => {
+        try {
+          iframe.contentWindow.focus();
+        } catch {
+          // Cross-origin or already torn down -- nothing to do.
+        }
+      });
       stopListening();
       stopResizeWatch = watchIframeResize(iframe);
       messageListener = (event) => {

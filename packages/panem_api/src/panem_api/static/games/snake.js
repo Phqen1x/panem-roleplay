@@ -47,6 +47,18 @@ export function mount(boardEl, { onFinish, setStatus, levelIndex = 0 }) {
   // one at all) -- this is what actually made "tapping/swiping" look
   // broken on mobile: the page scrolled instead of steering the snake.
   canvas.style.touchAction = "none";
+  // Arrow keys/WASD are read off a `keydown` listener below, but keydown
+  // only reaches whichever element (and, when this page is loaded inside
+  // work.js's dashboard-tab `<iframe>`, whichever *frame*) currently has
+  // focus -- neither the canvas nor the iframe gets that automatically
+  // just by being on screen, which is what made the keys look dead
+  // without first clicking into the board. Giving the canvas a tabIndex
+  // and focusing it here (plus work.js/tabs/work.js focusing their side
+  // of an iframe embedding) means a shift's snake game is steerable the
+  // instant it mounts, no click required.
+  canvas.tabIndex = -1;
+  canvas.style.outline = "none";
+  canvas.focus({ preventScroll: true });
 
   let snake = [
     { x: 10, y: 10 },
@@ -95,6 +107,11 @@ export function mount(boardEl, { onFinish, setStatus, levelIndex = 0 }) {
 
   function onPointerDown(event) {
     pointerStart = { x: event.clientX, y: event.clientY };
+    // `preventDefault()` (needed below to stop the touch turning into a
+    // page scroll) also suppresses the browser's default click-to-focus
+    // behavior, so a tap wouldn't hand keyboard focus back to the canvas
+    // without this explicit call.
+    canvas.focus({ preventScroll: true });
     event.preventDefault();
   }
 

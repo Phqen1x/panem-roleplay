@@ -22,7 +22,7 @@
 // `?v=` cache-busting matches work.js/crime.js's own reasoning: bump
 // ASSET_VERSION (and vitals.html's/vitals.css's matching `?v=`) any time
 // this file or games/cook.js|bake.js changes.
-const ASSET_VERSION = "3";
+const ASSET_VERSION = "4";
 
 // Donor dashboard theme, same best-effort localStorage mirror every other
 // standalone Activity page here already does (see crime.js's own comment
@@ -138,10 +138,14 @@ async function finishCookBake(bonus) {
     resultEl.className = bonus ? "win" : "lose";
     resultEl.textContent = `${body.good_name} eaten -- hunger now ${body.hunger}/100${bonus ? " (bonus!)" : ""}.`;
     notifyParent({ kind, goodId, bonus, ...body });
+    // Unhiding it below the board doesn't bring it into view by itself --
+    // see work.js's `finish()` for the same fix and why it's needed.
+    resultEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
   } catch (err) {
     resultEl.hidden = false;
     resultEl.className = "lose";
     resultEl.textContent = `Couldn't report the result: ${err.message}`;
+    resultEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 }
 
@@ -157,10 +161,14 @@ async function finishEntertain(won) {
     resultEl.className = won ? "win" : "lose";
     resultEl.textContent = `Sanity now ${body.sanity}/100.`;
     notifyParent({ kind, gameId, won, ...body });
+    // Unhiding it below the board doesn't bring it into view by itself --
+    // see work.js's `finish()` for the same fix and why it's needed.
+    resultEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
   } catch (err) {
     resultEl.hidden = false;
     resultEl.className = "lose";
     resultEl.textContent = `Couldn't report the result: ${err.message}`;
+    resultEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 }
 

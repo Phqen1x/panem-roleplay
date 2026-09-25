@@ -57,7 +57,7 @@
 // own status without the player having to reload anything. A no-op when
 // there's no parent to hear it (the normal Discord-launched/plain-link
 // case).
-const ASSET_VERSION = "14";
+const ASSET_VERSION = "15";
 
 // Donor dashboard theme (`static/theme_picker.js`'s popup, saved via the
 // profile endpoints under `/activity/dashboard/theme/profiles`): `app.js`
@@ -199,10 +199,18 @@ async function finish(won, { neutral = false } = {}) {
       resultEl.textContent += " Peacekeepers catch up with them -- fined and jailed.";
     }
     notifyParent({ shiftId, game: currentGameLabel, ...body });
+    // The result text lands below whatever board the game mounted (a
+    // full Solitaire tableau or Minesweeper's grid can already fill the
+    // screen), so simply unhiding it left it off-screen until the player
+    // scrolled to find it -- `reportSize`'s resize keeps the enclosing
+    // panel (or dashboard iframe) tall enough to fit it, but doesn't move
+    // anyone's scroll position to it.
+    resultEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
   } catch (err) {
     resultEl.hidden = false;
     resultEl.className = "lose";
     resultEl.textContent = `Couldn't report the result: ${err.message}`;
+    resultEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 }
 

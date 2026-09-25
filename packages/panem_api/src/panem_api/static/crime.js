@@ -25,7 +25,7 @@
 // in an `<iframe>` for the lockpick/steal/burgle/poach minigames (see
 // static/tabs/jail.js, static/tabs/crime.js) and use it to refresh their
 // own status without a reload. A no-op outside an iframe.
-const ASSET_VERSION = "13";
+const ASSET_VERSION = "14";
 
 // Donor dashboard theme (`static/theme_picker.js`'s popup, saved via the
 // profile endpoints under `/activity/dashboard/theme/profiles`): `app.js`
@@ -178,10 +178,14 @@ async function finish(won) {
     resultEl.className = body.success ? "win" : "lose";
     resultEl.textContent = describeResult(body);
     notifyParent({ attemptId, kind, ...body });
+    // Unhiding it below the board doesn't bring it into view by itself --
+    // see work.js's `finish()` for the same fix and why it's needed.
+    resultEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
   } catch (err) {
     resultEl.hidden = false;
     resultEl.className = "lose";
     resultEl.textContent = `Couldn't report the result: ${err.message}`;
+    resultEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 }
 
