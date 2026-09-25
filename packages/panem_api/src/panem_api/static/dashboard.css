@@ -1084,6 +1084,18 @@ table.data-table .qty-input {
   justify-content: center;
 }
 
+/* The dossier's real avatar image, for a "user" row whose character has
+   one set -- same size/shape as the monogram fallback above, which stays
+   in the DOM and hidden rather than replaced, so a row with no avatar_url
+   (or an NPC, which never has one) still shows the monogram unchanged. */
+.dossier-avatar-img {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  object-fit: cover;
+}
+
 .dossier-name {
   font-family: var(--font-serif);
   font-size: 18px;

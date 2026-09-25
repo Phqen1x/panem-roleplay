@@ -2017,6 +2017,26 @@ class ResidentProfileResponse(BaseModel):
     backstory: str
 
 
+class CharacterProfileResponse(BaseModel):
+    """Another player's character, as submitted at creation
+    (`CreateCharacterRequest`) -- everything here is the same kind of
+    public, in-fiction flavor text an NPC's own dossier
+    (`ResidentProfileResponse`) already shows anyone who clicks it, just
+    for a player's character instead of a district's."""
+
+    name: str
+    age: int
+    gender: str | None = None
+    appearance: str
+    backstory: str
+    avatar_url: str | None = None
+    appearance_layers: dict[str, int] = Field(default_factory=dict)
+    job_title: str | None = None
+    shift_phase: str | None = None
+    district_name: str
+    location_name: str | None = None
+
+
 def build_residents_router(
     *, content: ContentBundle, session_factory: async_sessionmaker[AsyncSession] | None
 ) -> APIRouter:
@@ -2038,6 +2058,25 @@ def build_residents_router(
         if npc is None:
             raise HTTPException(status_code=404, detail="resident_not_found")
         return npc
+
+    async def _resolve_other_character(session: AsyncSession, name: str) -> Character:
+        """Character names are globally unique (a case-insensitive unique
+        index -- see the migration adding it), so this needs no district
+        scoping the way `_resolve_npc` does to disambiguate; the Residents
+        list only ever offers a name that's both approved and currently in
+        the viewer's own district, but this route re-checks approval itself
+        rather than trusting that a stale client-side row still holds."""
+        other = (
+            await session.execute(
+                select(Character).where(
+                    Character.name == name,
+                    Character.status == CharacterStatus.APPROVED.value,
+                )
+            )
+        ).scalar_one_or_none()
+        if other is None:
+            raise HTTPException(status_code=404, detail="resident_not_found")
+        return other
 
     def _character_status(
         char: Character, *, engaged_character_ids: set[int], locations_by_id: dict[str, Location]
@@ -2188,6 +2227,38 @@ def build_residents_router(
             stance=stance,
             appearance=appearance,
             backstory=backstory,
+        )
+
+    @router.get("/{character_id}/character/{other_name}", response_model=CharacterProfileResponse)
+    async def character_profile(
+        character_id: int, other_name: str, discord_id: int
+    ) -> CharacterProfileResponse:
+        """The player-character counterpart to `resident_profile` above --
+        everything a player submitted about their character at creation,
+        for the Social tab's dossier modal to show when a "user" row (not
+        an NPC) is clicked."""
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            other = await _resolve_other_character(session, other_name)
+            other_district = content.district(other.current_district_id)
+            location = next(
+                (loc for loc in other_district.locations if loc.id == other.location_id), None
+            )
+        return CharacterProfileResponse(
+            name=other.name,
+            age=other.age,
+            gender=other.gender,
+            appearance=other.appearance,
+            backstory=other.backstory,
+            avatar_url=other.avatar_url,
+            appearance_layers=layers_svc.sanitize_stored_selection(other.appearance_layers),
+            job_title=other.job_title,
+            shift_phase=other.shift_phase,
+            district_name=other_district.name,
+            location_name=location.name if location is not None else None,
         )
 
     return router

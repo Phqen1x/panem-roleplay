@@ -3552,6 +3552,75 @@ class TestDashboardResidents:
             )
         assert response.status_code == 404
 
+    async def test_character_profile_returns_what_they_submitted_at_creation(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_character(
+            db_session_factory,
+            discord_id=43,
+            character_overrides={
+                "name": "Other",
+                "age": 22,
+                "gender": "female",
+                "appearance": "Tall, dark-haired.",
+                "backstory": "Grew up in the Seam.",
+                "avatar_url": "https://example.com/a.png",
+                "appearance_layers": {"1": 5},
+                "job_title": "Baker",
+                "shift_phase": "morning",
+                "location_id": "station",
+            },
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}/character/Other",
+                params={"discord_id": 42},
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["name"] == "Other"
+        assert body["age"] == 22
+        assert body["gender"] == "female"
+        assert body["appearance"] == "Tall, dark-haired."
+        assert body["backstory"] == "Grew up in the Seam."
+        assert body["avatar_url"] == "https://example.com/a.png"
+        assert body["appearance_layers"] == {"1": 5}
+        assert body["job_title"] == "Baker"
+        assert body["shift_phase"] == "morning"
+        assert body["district_name"] == "District 1"
+        assert body["location_name"] == "Rail Station"
+
+    async def test_character_profile_404s_for_an_unapproved_character(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_character(
+            db_session_factory,
+            discord_id=43,
+            character_overrides={"name": "Pending", "status": CharacterStatus.PENDING.value},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}/character/Pending",
+                params={"discord_id": 42},
+            )
+        assert response.status_code == 404
+
+    async def test_character_profile_404s_for_an_unknown_character(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}/character/Nobody",
+                params={"discord_id": 42},
+            )
+        assert response.status_code == 404
+
 
 class TestDashboardSocial:
     async def test_status_reports_not_in_a_scene(self, social_app, db_session_factory):

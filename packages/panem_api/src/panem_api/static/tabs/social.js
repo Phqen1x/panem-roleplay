@@ -6,8 +6,10 @@
 //    residents and other players' characters currently in the district
 //    (each labeled NPC/USER), monogram avatar badges, status indicators
 //    (NPCs: Available/Working/Busy; other players: Sleeping/Talking to
-//    Residents/Idle), and an interactive dossier modal for NPC backstories
-//    and stances (other players' characters have no dossier here).
+//    Residents/Idle), and an interactive dossier modal -- NPC backstories
+//    and stances for an NPC row, everything a player submitted about their
+//    character at creation (age, gender, appearance text, backstory,
+//    avatar, and their Picrew-style layered appearance) for a USER row.
 //
 // The Engagement panel is deliberately read-only + a "Continue in
 // Discord" deep link, not a full chat UI -- per the user's own choice
@@ -21,6 +23,19 @@
 // reopening this tab (or switching characters, which remounts it), same
 // "poll, don't push" posture the Engagement panel already has.
 import { fetchJson, el, renderIcon, setStatusText } from "./_shared.js?v=7";
+import { mountAvatar } from "./avatar_creator.js?v=11";
+
+// Same one-shot cache pattern as tabs/character.js's own `loadLayerCatalog`
+// -- the layer catalog is staff-authored and effectively static for the
+// lifetime of this tab, so every dossier open reuses the first fetch
+// instead of refetching it every time a USER row is clicked.
+let layerCatalogPromise = null;
+function loadLayerCatalog(ctx) {
+  if (!layerCatalogPromise) {
+    layerCatalogPromise = ctx.apiFetch("/activity/dashboard/layers").then((body) => body.categories);
+  }
+  return layerCatalogPromise;
+}
 
 function determineStatus(r) {
   if (r.status) return r.status;
@@ -408,27 +423,20 @@ function residentsPanel(ctx, openDossierFn) {
         )
       );
 
-      // Only NPC residents have a dossier (`/activity/dashboard/residents/
-      // {id}/{name}` only ever resolves an `Npc` -- see `_resolve_npc`) --
-      // another player's character isn't clickable here, since there's
-      // nothing for it to open.
+      // Every row opens the dossier modal now -- an NPC's own backstory/
+      // traits/opinion (`/activity/dashboard/residents/{id}/{name}`) or,
+      // for another player's character, everything they submitted at
+      // creation (`/activity/dashboard/residents/{id}/character/{name}`).
       const row = el(
         "tr",
-        isNpc
-          ? { class: "clickable-row", onclick: () => openDossierFn(r.name) }
-          : {},
+        { class: "clickable-row", onclick: () => openDossierFn(r.name, r.kind) },
         nameCell,
         el("td", { text: r.job_title }),
         el("td", { text: r.location_name || "unknown" }),
         el("td", {}, opinionCell),
         el("td", {}, kindBadge),
         el("td", {}, statusBadge),
-        el(
-          "td",
-          isNpc
-            ? { class: "row-arrow", text: "›", style: "color: var(--muted); font-size: 16px;" }
-            : {}
-        )
+        el("td", { class: "row-arrow", text: "›", style: "color: var(--muted); font-size: 16px;" })
       );
       tbody.append(row);
     }
@@ -473,6 +481,8 @@ function residentsPanel(ctx, openDossierFn) {
 function dossierModal(ctx) {
   const overlay = el("div", { class: "modal-overlay" });
   const avatarEl = el("div", { class: "dossier-avatar", text: "A" });
+  const avatarImgEl = el("img", { class: "dossier-avatar-img", alt: "" });
+  avatarImgEl.hidden = true;
   const nameEl = el("div", { class: "dossier-name", text: "Citizen" });
   const jobEl = el("div", { class: "dossier-job", text: "District Resident" });
   const closeBtn = el("button", { class: "btn-close-modal", text: "×", onclick: close });
@@ -483,6 +493,23 @@ function dossierModal(ctx) {
   const stanceEl = el("span", { text: "Neutral." });
   const appearanceEl = el("span", { text: "" });
   const backstoryEl = el("span", { text: "" });
+  const ageGenderEl = el("span", { text: "" });
+  const appearancePreviewHost = el("div", { class: "avatar-preview small" });
+  let appearancePreview = null; // mountAvatar's handle -- disposed/remade per open()
+
+  // NPC-only rows (traits/speech-style/opinion-of-you) vs. USER-only rows
+  // (age & gender, the layered appearance preview) -- one dossier layout
+  // serves both kinds, toggling which half shows via `open`'s `kind`.
+  const npcRow1 = el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "Traits" }), traitsEl);
+  const npcRow2 = el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "Speech Style" }), speechEl);
+  const npcRow3 = el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "Opinion of You" }), stanceEl);
+  const userRow1 = el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "Age & Gender" }), ageGenderEl);
+  const userRow2 = el(
+    "div",
+    { class: "dossier-prop" },
+    el("span", { class: "dossier-prop-label", text: "Character Appearance" }),
+    appearancePreviewHost
+  );
 
   const card = el(
     "div",
@@ -490,17 +517,25 @@ function dossierModal(ctx) {
     el(
       "div",
       { class: "dossier-header" },
-      el("div", { class: "dossier-header-info" }, avatarEl, el("div", {}, nameEl, jobEl)),
+      el(
+        "div",
+        { class: "dossier-header-info" },
+        avatarEl,
+        avatarImgEl,
+        el("div", {}, nameEl, jobEl)
+      ),
       closeBtn
     ),
     el(
       "div",
       { class: "dossier-body" },
       el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "Current Location" }), locationEl),
-      el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "Traits" }), traitsEl),
-      el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "Speech Style" }), speechEl),
-      el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "Opinion of You" }), stanceEl),
+      userRow1,
+      npcRow1,
+      npcRow2,
+      npcRow3,
       el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "Appearance" }), appearanceEl),
+      userRow2,
       el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "Backstory" }), backstoryEl)
     )
   );
@@ -512,9 +547,36 @@ function dossierModal(ctx) {
     overlay.classList.remove("open");
   }
 
-  async function open(residentName) {
+  function showNpcRows(show) {
+    npcRow1.hidden = !show;
+    npcRow2.hidden = !show;
+    npcRow3.hidden = !show;
+  }
+
+  function showUserRows(show) {
+    userRow1.hidden = !show;
+    userRow2.hidden = !show;
+  }
+
+  async function renderAppearancePreview(selection) {
+    if (appearancePreview) {
+      appearancePreview.dispose();
+      appearancePreview = null;
+    }
+    try {
+      const catalog = await loadLayerCatalog(ctx);
+      appearancePreview = mountAvatar(appearancePreviewHost, catalog, selection || {});
+    } catch {
+      // No layer catalog to render (not configured, or offline) -- the
+      // rest of the dossier is still useful without this one preview.
+    }
+  }
+
+  async function open(residentName, kind = "npc") {
     overlay.classList.add("open");
     avatarEl.textContent = residentName.charAt(0);
+    avatarEl.hidden = false;
+    avatarImgEl.hidden = true;
     nameEl.textContent = residentName;
     jobEl.textContent = "Loading citizen profile...";
     traitsEl.innerHTML = "";
@@ -523,18 +585,45 @@ function dossierModal(ctx) {
     stanceEl.textContent = "—";
     appearanceEl.textContent = "—";
     backstoryEl.textContent = "—";
+    ageGenderEl.textContent = "—";
+    showNpcRows(kind === "npc");
+    showUserRows(kind === "user");
+
+    const charList = typeof ctx.characters === "function" ? ctx.characters() : [];
+    const viewer = charList.find((c) => c.id === ctx.characterId());
+    const districtId = viewer ? (viewer.current_district_id ?? viewer.district_id ?? 1) : 1;
+    const districtName =
+      (viewer && (viewer.current_district_name || viewer.district_name)) ||
+      (ctx.districtName ? ctx.districtName(districtId) : `District ${districtId}`);
+
+    if (kind === "user") {
+      try {
+        const profile = await ctx.apiFetch(
+          `/activity/dashboard/residents/${ctx.characterId()}/character/${encodeURIComponent(residentName)}` +
+            `?discord_id=${encodeURIComponent(ctx.discordId())}`
+        );
+        jobEl.textContent = `${profile.job_title || "Unemployed"} • ${profile.district_name || districtName}`;
+        locationEl.textContent = profile.location_name || "unknown";
+        ageGenderEl.textContent = [profile.age, profile.gender].filter(Boolean).join(", ") || "—";
+        appearanceEl.textContent = profile.appearance || "No appearance description given.";
+        backstoryEl.textContent = profile.backstory || "No backstory given.";
+        if (profile.avatar_url) {
+          avatarImgEl.src = profile.avatar_url;
+          avatarImgEl.hidden = false;
+          avatarEl.hidden = true;
+        }
+        await renderAppearancePreview(profile.appearance_layers);
+      } catch (err) {
+        jobEl.textContent = `Error: ${err.message}`;
+      }
+      return;
+    }
 
     try {
       const profile = await ctx.apiFetch(
         `/activity/dashboard/residents/${ctx.characterId()}/${encodeURIComponent(residentName)}` +
           `?discord_id=${encodeURIComponent(ctx.discordId())}`
       );
-      const charList = typeof ctx.characters === "function" ? ctx.characters() : [];
-      const character = charList.find((c) => c.id === ctx.characterId());
-      const districtId = character ? (character.current_district_id ?? character.district_id ?? 1) : 1;
-      const districtName =
-        (character && (character.current_district_name || character.district_name)) ||
-        (ctx.districtName ? ctx.districtName(districtId) : `District ${districtId}`);
       jobEl.textContent = `${profile.job_title} • ${profile.district_name || districtName}`;
       locationEl.textContent = profile.location_name || "The Square";
       speechEl.textContent = profile.tone || "Polished and measured.";
@@ -759,7 +848,7 @@ export function mount(root, ctx) {
   const modal = dossierModal(ctx);
   const layout = el("div", { class: "social-layout" });
   const eng = engagementPanel(ctx);
-  const res = residentsPanel(ctx, (name) => modal.open(name));
+  const res = residentsPanel(ctx, (name, kind) => modal.open(name, kind));
   layout.append(eng, res);
   root.append(layout, modal.element, payPanel(ctx), tradePanel(ctx));
 
