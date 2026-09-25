@@ -208,6 +208,27 @@ async def market_multiplier_for_district(
     return market_wage_multiplier(price, good.base_price)
 
 
+def can_work_from_current_location(character: Character, current_tick: int) -> bool:
+    """FR-LOC: `/work` may only open or resolve a shift while `character`
+    is physically present in their home district right now -- mid-transit
+    to another district, or already arrived somewhere else, blocks it
+    outright. This is a stricter, "right now" gate than `panem_sim.
+    systems.jobs._is_within_travel_grace`'s after-the-fact excuse for a
+    shift that goes *unworked* while away: the two don't overlap -- a
+    missed shift being excused later doesn't mean a still-open one may be
+    worked from wherever the character happens to be standing today.
+    Callers exempt a Gamemaker (or real Discord staff) from this the same
+    way `open_adhoc_shift_override` already exempts them from needing an
+    open shift at all -- staff shouldn't have to travel a character home
+    just to demonstrate or test a job."""
+    if (
+        character.in_transit_until_tick is not None
+        and character.in_transit_until_tick > current_tick
+    ):
+        return False
+    return character.current_district_id == character.district_id
+
+
 def has_job(character: Character) -> bool:
     """Whether `character` has enough set to `/work` at all -- both a
     free-typed `job_title` and a `shift_phase` are required, since staff

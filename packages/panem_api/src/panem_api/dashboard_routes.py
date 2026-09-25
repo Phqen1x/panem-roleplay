@@ -103,6 +103,7 @@ from panem_shared.redis_keys import (
 from panem_shared.relationships import relationship_key
 from panem_shared.shifts import (
     already_worked_this_tick,
+    can_work_from_current_location,
     has_job,
     open_adhoc_shift_override,
     start_shift_game,
@@ -1562,13 +1563,13 @@ def build_work_router(*, session_factory: async_sessionmaker[AsyncSession] | Non
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
 
+            is_gamemaker = Position.GAMEMAKER.value in character.positions
             open_shift = (
                 await session.execute(
                     select(Shift).where(Shift.character_id == character.id, Shift.result.is_(None))
                 )
             ).scalar_one_or_none()
             if open_shift is None:
-                is_gamemaker = Position.GAMEMAKER.value in character.positions
                 current_tick = await _current_tick(session)
                 open_shift = open_adhoc_shift_override(
                     character, current_tick, is_staff=is_gamemaker
@@ -1579,6 +1580,12 @@ def build_work_router(*, session_factory: async_sessionmaker[AsyncSession] | Non
                 await session.flush()
 
             current_tick = await _current_tick(session)
+            if not is_gamemaker and not can_work_from_current_location(character, current_tick):
+                raise HTTPException(
+                    status_code=400,
+                    detail="This character isn't in their home district right now and can't "
+                    "work this shift -- come back once they've returned home.",
+                )
             already_worked = already_worked_this_tick(open_shift, current_tick)
             if not already_worked:
                 start_shift_game(open_shift, current_tick)

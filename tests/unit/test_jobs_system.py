@@ -516,7 +516,15 @@ class TestNpcJobCompletion:
     def test_npc_gains_wage_probabilistically_at_phase_boundary(self):
         job = make_job(shift_phase="morning", wage=10.0)
         content = make_content(job)
-        npc = Npc(id="npc1", district_id=1, name="npc1", age=30, job_id="miner", money=0.0)
+        npc = Npc(
+            id="npc1",
+            district_id=1,
+            name="npc1",
+            age=30,
+            job_id="miner",
+            money=0.0,
+            location_id="mine",
+        )
         state = WorldState(
             districts={}, npcs={"npc1": npc}, npc_schedules={}, characters={}, open_shifts=[]
         )
@@ -525,10 +533,42 @@ class TestNpcJobCompletion:
 
         assert npc.money in (0.0, 10.0)
 
+    def test_npc_away_from_the_workplace_never_gets_paid(self):
+        """FR-LOC: an NPC whose schedule sent them somewhere other than
+        their job's `workplace` this phase isn't actually there to work
+        it, however likely `NPC_JOB_COMPLETION_PROB` would otherwise make
+        the payout."""
+        job = make_job(shift_phase="morning", wage=10.0)
+        content = make_content(job)
+        npc = Npc(
+            id="npc1",
+            district_id=1,
+            name="npc1",
+            age=30,
+            job_id="miner",
+            money=0.0,
+            location_id="square",
+        )
+        state = WorldState(
+            districts={}, npcs={"npc1": npc}, npc_schedules={}, characters={}, open_shifts=[]
+        )
+
+        jobs.run(state, make_ctx(content, tick=PHASE_TICKS, phase=DayPhase.MORNING))
+
+        assert npc.money == 0.0
+
     def test_no_shift_row_ever_created_for_npcs(self):
         job = make_job(shift_phase="morning")
         content = make_content(job)
-        npc = Npc(id="npc1", district_id=1, name="npc1", age=30, job_id="miner", money=0.0)
+        npc = Npc(
+            id="npc1",
+            district_id=1,
+            name="npc1",
+            age=30,
+            job_id="miner",
+            money=0.0,
+            location_id="mine",
+        )
         state = WorldState(
             districts={}, npcs={"npc1": npc}, npc_schedules={}, characters={}, open_shifts=[]
         )
@@ -543,7 +583,15 @@ class TestNpcJobCompletion:
         content = make_content(job)
 
         def run_once() -> float:
-            npc = Npc(id="npc1", district_id=1, name="npc1", age=30, job_id="miner", money=0.0)
+            npc = Npc(
+                id="npc1",
+                district_id=1,
+                name="npc1",
+                age=30,
+                job_id="miner",
+                money=0.0,
+                location_id="mine",
+            )
             state = WorldState(
                 districts={}, npcs={"npc1": npc}, npc_schedules={}, characters={}, open_shifts=[]
             )

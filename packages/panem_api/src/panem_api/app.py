@@ -84,6 +84,7 @@ from panem_shared.db.models import (
     WorldClock,
 )
 from panem_shared.db.session import session_scope
+from panem_shared.enums import Position
 from panem_shared.jail import apply_lockpick_attempt, lockpick_difficulty, resolve_illicit_heat
 from panem_shared.job_levels import job_level_for_shifts
 from panem_shared.logging import get_logger
@@ -98,6 +99,7 @@ from panem_shared.redis_keys import (
 from panem_shared.shifts import (
     already_worked_this_tick,
     apply_shift_outcome,
+    can_work_from_current_location,
     illicit_shift_output,
     market_multiplier_for_district,
     resolve_shift_game,
@@ -575,6 +577,15 @@ def create_app(
             tick = clock.tick if clock is not None else 0
             if already_worked_this_tick(shift, tick):
                 raise HTTPException(status_code=409, detail="Already worked this shift this tick")
+            if (
+                Position.GAMEMAKER.value not in character.positions
+                and not can_work_from_current_location(character, tick)
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="This character isn't in their home district right now and can't "
+                    "work this shift -- come back once they've returned home.",
+                )
             district = content.district(character.district_id)
             market_multiplier = await market_multiplier_for_district(session, content, district)
             before_level = job_level_for_shifts(character.shifts_completed)

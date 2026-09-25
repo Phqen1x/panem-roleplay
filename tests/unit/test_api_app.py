@@ -904,6 +904,32 @@ class TestWorkShiftResult:
             "arrested": False,
         }
 
+    async def test_refuses_while_away_from_home_district(self, work_app, db_session_factory):
+        shift_id = await seed_shift(
+            db_session_factory,
+            character_overrides={"district_id": 1, "current_district_id": 2},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(f"/activity/work/{shift_id}/result", json={"won": True})
+        assert response.status_code == 400
+
+    async def test_allows_a_gamemaker_resolving_a_shift_away_from_home(
+        self, work_app, db_session_factory
+    ):
+        shift_id = await seed_shift(
+            db_session_factory,
+            character_overrides={
+                "district_id": 1,
+                "current_district_id": 2,
+                "positions": ["gamemaker"],
+            },
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(f"/activity/work/{shift_id}/result", json={"won": True})
+        assert response.status_code == 200
+
     async def test_does_not_call_discord_when_no_launch_message_was_stashed(
         self, work_app, db_session_factory
     ):
@@ -2995,6 +3021,45 @@ class TestDashboardWork:
                 f"/activity/dashboard/work/{char_id}/start", json={"discord_id": 5}
             )
         assert response.status_code == 400
+
+    async def test_start_refuses_while_away_from_home_district(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={
+                "job_title": "Miner",
+                "shift_phase": "morning",
+                "district_id": 1,
+                "current_district_id": 2,
+            },
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/work/{char_id}/start", json={"discord_id": 5}
+            )
+        assert response.status_code == 400
+
+    async def test_start_allows_a_gamemaker_working_away_from_home(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={
+                "job_title": "Miner",
+                "shift_phase": "morning",
+                "district_id": 1,
+                "current_district_id": 2,
+                "positions": ["gamemaker"],
+            },
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/work/{char_id}/start", json={"discord_id": 5}
+            )
+        assert response.status_code == 200
 
     async def test_start_opens_an_adhoc_shift_for_a_gamemaker(self, work_app, db_session_factory):
         char_id = await seed_character(

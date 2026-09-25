@@ -84,6 +84,8 @@ STRINGS: dict[str, str] = {
     "`/staff give job`.",
     "work_jailed": "**{name}** is locked up and can't work a shift.",
     "job_no_open_shift": "**{name}** doesn't have a shift open right now.",
+    "job_wrong_district": "**{name}** isn't in their home district right now and can't work "
+    "this shift -- come back once you've returned home.",
     "shift_no_longer_open": "That shift is no longer open.",
     "shift_already_worked_this_tick": (
         "**{name}** already worked this shift this tick -- try again next tick."

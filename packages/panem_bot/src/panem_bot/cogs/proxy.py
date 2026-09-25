@@ -203,6 +203,17 @@ class ProxyCog(commands.Cog):
             return
         if not qualifies:
             return
+        if not shifts_svc.can_earn_rp_credit_anywhere(
+            character
+        ) and not shifts_svc.can_work_from_current_location(character, current_tick):
+            # FR-LOC: proxying is allowed from either the character's home
+            # district or wherever they've actually traveled to
+            # (`can_rp_in_district`) -- but crediting a *shift* still
+            # requires actually being home, the same gate `/work` itself
+            # enforces. A character RPing away from home still gets the
+            # fatigue/sanity credit above; their open shift just isn't
+            # silently completed by it.
+            return
 
         bot_content = self.bot.content  # type: ignore[attr-defined]
         district = bot_content.district(character.district_id)
