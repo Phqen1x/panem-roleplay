@@ -3394,8 +3394,53 @@ class TestDashboardResidents:
                 "location_name": "The Square",
                 "kind": "npc",
                 "status": None,
+                "opinion_label": "stranger",
+                "opinion_score": 0,
             }
         ]
+
+    async def test_list_reports_the_viewing_characters_relationship_with_each_npc(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_npc(db_session_factory, job_id="miner")
+        async with db_session_factory() as session, session.begin():
+            session.add(
+                RelationshipRow(
+                    subject_kind=OwnerKind.CHARACTER.value,
+                    subject_id=str(char_id),
+                    object_kind=OwnerKind.NPC.value,
+                    object_id="d1_npc_1",
+                    affinity=12,
+                    stance="likes",
+                )
+            )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}", params={"discord_id": 42}
+            )
+        resident = response.json()["residents"][0]
+        assert resident["opinion_label"] == "likes"
+        assert resident["opinion_score"] == 12
+
+    async def test_list_leaves_opinion_unset_for_other_characters(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_character(
+            db_session_factory,
+            discord_id=43,
+            character_overrides={"name": "Other", "location_id": "station"},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}", params={"discord_id": 42}
+            )
+        other = next(r for r in response.json()["residents"] if r["name"] == "Other")
+        assert other["opinion_label"] is None
+        assert other["opinion_score"] is None
 
     async def test_list_includes_other_characters_labeled_user_and_idle(
         self, work_app, db_session_factory

@@ -94,6 +94,7 @@ from panem_shared.enums import (
     PropertyKind,
     RpMode,
     SceneStatus,
+    Stance,
     TradeStatus,
 )
 from panem_shared.errors import NotAllowed, NotFound, ServiceError
@@ -1986,6 +1987,18 @@ class ResidentSummary(BaseModel):
     status: str | None = None
     """`"sleeping"`/`"engaged"`/`"idle"` for a `"user"` row -- see
     `resident_list`'s `_character_status` for how each is decided."""
+    opinion_label: str | None = None
+    """The viewing character's `RelationshipRow.stance` toward this NPC --
+    `"stranger"` (never `None`) when no row exists yet, same default
+    `resident_profile`'s own "Opinion of You" already uses. `None` (not
+    "stranger") for a `"user"` row -- character-to-character relationships
+    aren't tracked the same way, so there's nothing real to show."""
+    opinion_score: int | None = None
+    """The same relationship's raw `affinity`, for sorting the Social tab's
+    table numerically -- `stance` alone is a bucketed label (`hates` ..
+    `loves`), not itself an orderable scale a client should try to sort
+    alphabetically. `0` (not `None`) alongside a `"stranger"` label when no
+    row exists, `None` for a `"user"` row same as `opinion_label`."""
 
 
 class ResidentsResponse(BaseModel):
@@ -2088,10 +2101,30 @@ def build_residents_router(
             }
             all_jobs = await jobs_svc.get_all_jobs(session, content)
             locations_by_id = {loc.id: loc for loc in district.locations}
+            # One query for every NPC's relationship with `character`, not
+            # one per row -- `relationship_key` always puts the character
+            # side first here (`"character" < "npc"` lexicographically, for
+            # any ids), so this direct filter is equivalent to looking each
+            # one up individually via that key.
+            relationship_by_npc_id = {
+                row.object_id: row
+                for row in (
+                    await session.execute(
+                        select(RelationshipRow).where(
+                            RelationshipRow.subject_kind == OwnerKind.CHARACTER.value,
+                            RelationshipRow.subject_id == str(character.id),
+                            RelationshipRow.object_kind == OwnerKind.NPC.value,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            }
             residents = []
             for npc in npcs:
                 job = all_jobs.get(npc.job_id) if npc.job_id else None
                 location = locations_by_id.get(npc.location_id) if npc.location_id else None
+                relationship = relationship_by_npc_id.get(npc.id)
                 residents.append(
                     ResidentSummary(
                         name=npc.name,
@@ -2099,6 +2132,8 @@ def build_residents_router(
                         location_id=npc.location_id,
                         location_name=location.name if location is not None else None,
                         kind="npc",
+                        opinion_label=relationship.stance if relationship else Stance.STRANGER.value,
+                        opinion_score=relationship.affinity if relationship else 0,
                     )
                 )
             for other in other_characters:

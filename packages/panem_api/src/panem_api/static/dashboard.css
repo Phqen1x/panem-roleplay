@@ -806,6 +806,43 @@ table.data-table .qty-input {
   border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
 }
 
+/* An NPC's opinion of the viewing character (Residents directory's
+   sortable Opinion column, tabs/social.js) -- `panem_shared.enums.Stance`'s
+   five buckets (plus "stranger" for no relationship yet) collapse to the
+   same three-color success/neutral/danger language `.result-line`'s own
+   win/lose already uses, rather than inventing six new colors for what's
+   ultimately just "good/neutral/bad". */
+.opinion-pill {
+  display: inline-block;
+  font-family: var(--font-serif);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.opinion-pill.likes,
+.opinion-pill.loves {
+  color: color-mix(in srgb, var(--success) 85%, var(--text));
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--success) 42%, var(--border));
+}
+
+.opinion-pill.dislikes,
+.opinion-pill.hates {
+  color: color-mix(in srgb, var(--danger) 88%, var(--text));
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+
+.opinion-pill.neutral,
+.opinion-pill.stranger {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+  border: 1px solid var(--border);
+}
+
 /* Social Tab Layout & Cards */
 /* Card Header & Section Titles */
 .card-header {

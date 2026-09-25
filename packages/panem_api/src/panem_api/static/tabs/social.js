@@ -212,6 +212,21 @@ function residentsPanel(ctx, openDossierFn) {
     });
 
     filtered.sort((a, b) => {
+      // `opinion_score` is numeric (an NPC's raw relationship affinity, or
+      // `null` for a "user" row -- see dashboard_routes.py's
+      // `ResidentSummary`) -- sorting it as lowercased text would put -3
+      // after -20 and before 4, so it gets its own numeric compare instead
+      // of the generic string one every other column uses. A `null` (a
+      // player row, opinion not tracked) always sorts last regardless of
+      // direction, same as it has nothing meaningful to compare.
+      if (sortCol === "opinion_score") {
+        const nA = a.opinion_score;
+        const nB = b.opinion_score;
+        if (nA == null && nB == null) return 0;
+        if (nA == null) return 1;
+        if (nB == null) return -1;
+        return sortAsc ? nA - nB : nB - nA;
+      }
       let vA = (a[sortCol] || "").toLowerCase();
       let vB = (b[sortCol] || "").toLowerCase();
       if (vA < vB) return sortAsc ? -1 : 1;
@@ -335,6 +350,15 @@ function residentsPanel(ctx, openDossierFn) {
               renderTable(searchInput.value, jobSelect.value, locSelect.value, kindSelect.value);
             },
           }),
+          el("th", {
+            text: "Opinion ↕",
+            style: "cursor: pointer;",
+            onclick: () => {
+              if (sortCol === "opinion_score") sortAsc = !sortAsc;
+              else { sortCol = "opinion_score"; sortAsc = false; }
+              renderTable(searchInput.value, jobSelect.value, locSelect.value, kindSelect.value);
+            },
+          }),
           el("th", { text: "Type" }),
           el("th", { text: "Status" }),
           el("th", { style: "width: 24px;" })
@@ -361,6 +385,17 @@ function residentsPanel(ctx, openDossierFn) {
         isNpc ? "NPC" : "USER"
       );
 
+      // `opinion_label` is only ever set for an NPC row (see
+      // dashboard_routes.py's `ResidentSummary`) -- another player's
+      // character has no tracked relationship to show here.
+      const opinionCell = r.opinion_label
+        ? el(
+            "span",
+            { class: `opinion-pill ${r.opinion_label}` },
+            r.opinion_label.charAt(0).toUpperCase() + r.opinion_label.slice(1)
+          )
+        : el("span", { text: "—" });
+
       const avatar = el("div", { class: "avatar-badge", text: initial });
       const nameCell = el(
         "td",
@@ -385,6 +420,7 @@ function residentsPanel(ctx, openDossierFn) {
         nameCell,
         el("td", { text: r.job_title }),
         el("td", { text: r.location_name || "unknown" }),
+        el("td", {}, opinionCell),
         el("td", {}, kindBadge),
         el("td", {}, statusBadge),
         el(
