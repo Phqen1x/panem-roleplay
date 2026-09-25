@@ -81,6 +81,7 @@ from panem_shared.db.models import (
     Npc,
     Property,
     Shift,
+    Shipment,
     WorldClock,
 )
 from panem_shared.db.session import session_scope
@@ -104,6 +105,7 @@ from panem_shared.shifts import (
     market_multiplier_for_district,
     resolve_shift_game,
 )
+from panem_shared.shipments import apply_shipment_outcome, shipment_difficulty
 from panem_shared.stealing import (
     apply_burgle_outcome,
     apply_steal_outcome,
@@ -265,11 +267,12 @@ class CrimeResultResponse(BaseModel):
     alerted: bool = False
     caught: bool = False
     amount: int = 0
-    """Unused by `/steal`/`/burgle`/`/poach` -- all three grant loot, not
-    money (see `good_name`/`qty`); kept only for older API compatibility."""
+    """Unused by `/steal`/`/burgle`/`/poach`/`/shipment` -- all four grant
+    loot, not money (see `good_name`/`qty`); kept only for older API
+    compatibility."""
     tries_left: int | None = None
-    # What was actually brought home (or not) -- steal/burgle/poach alike,
-    # all three moved off a cash payout onto random goods.
+    # What was actually brought home (or not) -- steal/burgle/poach/shipment
+    # alike, all four moved off a cash payout onto random goods.
     good_name: str | None = None
     qty: int | None = None
     fine: int | None = None
@@ -631,9 +634,9 @@ def create_app(
 
     @app.get("/activity/crime/{attempt_id}", response_model=CrimeAttemptStatus)
     async def crime_attempt_status(attempt_id: str) -> CrimeAttemptStatus:
-        """Lets `crime.html` show who/what a `/lockpick`/`/steal`/`/burgle`
-        attempt is for, and how hard to size the minigame's target zone
-        (`difficulty`), before mounting a game at all."""
+        """Lets `crime.html` show who/what a `/lockpick`/`/steal`/`/burgle`/
+        `/shipment` attempt is for, and how hard to size the minigame's
+        target zone (`difficulty`), before mounting a game at all."""
         if session_factory is None:
             raise HTTPException(status_code=503, detail="The crime minigame isn't configured")
         raw = await redis_client.get(crime_attempt_key(attempt_id))
@@ -677,13 +680,20 @@ def create_app(
                 return CrimeAttemptStatus(
                     kind=kind, character_name=character.name, difficulty=poach_difficulty()
                 )
+            if kind == "shipment":
+                shipment = await session.get(Shipment, attempt["shipment_id"])
+                if shipment is None:
+                    raise HTTPException(status_code=404, detail="No such attempt")
+                return CrimeAttemptStatus(
+                    kind=kind, character_name=character.name, difficulty=shipment_difficulty()
+                )
             raise HTTPException(status_code=400, detail="Unknown crime kind")
 
     @app.post("/activity/crime/{attempt_id}/result", response_model=CrimeResultResponse)
     async def crime_attempt_result(
         attempt_id: str, body: CrimeResultRequest
     ) -> CrimeResultResponse:
-        """Resolves a `/lockpick`/`/steal`/`/burgle` attempt once the
+        """Resolves a `/lockpick`/`/steal`/`/burgle`/`/shipment` attempt once the
         minigame reports whether the player won it -- the initial skill
         check the RNG-fallback path would otherwise roll for itself
         (`panem_bot.services.stealing.roll_and_apply_steal`/`_burgle`,
@@ -794,6 +804,32 @@ def create_app(
                     good_name=poach_result.good.name if poach_result.good is not None else None,
                     qty=constants.POACH_YIELD_QTY if poach_result.good is not None else None,
                     fine=constants.POACH_FINE if poach_result.caught else None,
+                )
+            elif kind == "shipment":
+                district_row = await session.get(DistrictState, attempt["district_id"])
+                shipment = await session.get(Shipment, attempt["shipment_id"])
+                if shipment is None:
+                    raise HTTPException(status_code=404, detail="No such attempt")
+                result = await apply_shipment_outcome(
+                    session,
+                    character=character,
+                    shipment=shipment,
+                    district_row=district_row,
+                    current_tick=attempt["current_tick"],
+                    success=body.won,
+                    rng=rng,
+                    goods=content.goods,
+                )
+                banner = "This shipment has already been tried!"
+                response_obj = CrimeResultResponse(
+                    kind=kind,
+                    character_name=character.name,
+                    success=result.success,
+                    alerted=result.alerted,
+                    caught=result.caught,
+                    good_name=result.good_name,
+                    qty=result.amount if result.good_name is not None else None,
+                    fine=constants.SHIPMENT_FINE if result.caught else None,
                 )
             else:
                 raise HTTPException(status_code=400, detail="Unknown crime kind")

@@ -90,6 +90,7 @@ class TestFixedOrder:
             "needs",
             "jobs",
             "economy",
+            "shipments",
             "housing",
             "social",
             "npc_chatter",

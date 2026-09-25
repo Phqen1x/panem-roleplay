@@ -251,6 +251,20 @@ STRINGS: dict[str, str] = {
     ),
     "burgle_game_ready": "**{name}** kneels at {owner}'s door, pick in hand -- go pick the lock!",
     "burgle_already_tried": "This break-in has already been tried!",
+    # Shipment heists (contraband system: /shipment)
+    "shipment_none_here": "There's no shipment sitting here right now.",
+    "shipment_jailed": "**{name}** is locked up and can't try that.",
+    "shipment_not_here": "**{name}** needs to be at the shipment's location to try this.",
+    "shipment_gone": "The peacekeepers already cleared that shipment out.",
+    "shipment_ok": "**{name}** slips {amount}x {good} off the shipment before anyone notices.",
+    "shipment_miss": "**{name}** can't get near the shipment -- and slips away unnoticed.",
+    "shipment_alerted_escape": "**{name}** is spotted going for the shipment -- and bolts clear.",
+    "shipment_caught": (
+        "**{name}** is caught robbing the shipment -- roughed up, fined {fine} money and held "
+        "for {jail_ticks} ticks."
+    ),
+    "shipment_game_ready": "**{name}** eyes the shipment's guards -- go make the grab!",
+    "shipment_already_tried": "This shipment has already been tried!",
     "crimelog_header": "**{name}**'s recent crime log:",
     "crimelog_empty": "**{name}** hasn't attempted any crimes yet.",
     # Housing (buying/renting houses/apartments/inns, fatigue, sleep)

@@ -134,12 +134,16 @@ def make_job() -> Job:
 
 
 def make_stolen_goods() -> dict[str, Good]:
-    """Every id `STEAL_LOOT_GOOD_IDS`/`BURGLE_LOOT_GOOD_IDS` can pick --
-    `apply_steal_outcome`/`apply_burgle_outcome` look these up by id on a
-    successful attempt, so any content fixture a steal/burgle test uses
-    needs them present (mirrors `test_stealing_service.py`'s own
-    `make_goods()`)."""
-    good_ids = set(constants.STEAL_LOOT_GOOD_IDS) | set(constants.BURGLE_LOOT_GOOD_IDS)
+    """Every id `STEAL_LOOT_GOOD_IDS`/`BURGLE_LOOT_GOOD_IDS`/`SHIPMENT_
+    LOOT_GOOD_IDS` can pick -- `apply_steal_outcome`/`apply_burgle_outcome`/
+    `apply_shipment_outcome` look these up by id on a successful attempt,
+    so any content fixture a steal/burgle/shipment test uses needs them
+    present (mirrors `test_stealing_service.py`'s own `make_goods()`)."""
+    good_ids = (
+        set(constants.STEAL_LOOT_GOOD_IDS)
+        | set(constants.BURGLE_LOOT_GOOD_IDS)
+        | set(constants.SHIPMENT_LOOT_GOOD_IDS)
+    )
     return {
         good_id: Good(id=good_id, name=good_id.replace("_", " ").title(), base_price=10.0, category="stolen")
         for good_id in good_ids
@@ -334,6 +338,25 @@ async def seed_house(session_factory, *, owner_id: int, **overrides: object) -> 
         session.add(house)
         await session.flush()
         return house.id
+
+
+async def seed_shipment(session_factory, **overrides: object) -> int:
+    from panem_shared.db.models import Shipment
+
+    async with session_factory() as session, session.begin():
+        kwargs: dict[str, object] = dict(
+            district_id=1,
+            location_id="station",
+            good_id=constants.SHIPMENT_LOOT_GOOD_IDS[0],
+            qty=2,
+            spawned_tick=0,
+            expires_tick=100,
+        )
+        kwargs.update(overrides)
+        shipment = Shipment(**kwargs)  # type: ignore[arg-type]
+        session.add(shipment)
+        await session.flush()
+        return shipment.id
 
 
 async def seed_property(session_factory, **overrides: object) -> int:
@@ -1209,6 +1232,48 @@ class TestCrimeAttemptStatus:
         assert body["target_name"] is None
         assert 0.0 <= body["difficulty"] <= 1.0
 
+    async def test_shipment_status(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, character_overrides={"location_id": "station"})
+        shipment_id = await seed_shipment(db_session_factory)
+        redis_client = work_app.state.fake_redis
+        redis_client.store[crime_attempt_key("a1")] = json.dumps(
+            {
+                "kind": "shipment",
+                "character_id": char_id,
+                "shipment_id": shipment_id,
+                "district_id": 1,
+                "current_tick": 0,
+            }
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/activity/crime/a1")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["kind"] == "shipment"
+        assert body["character_name"] == "Wren"
+        assert body["target_name"] is None
+        assert 0.0 <= body["difficulty"] <= 1.0
+
+    async def test_shipment_status_404s_once_the_shipment_is_gone(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, character_overrides={"location_id": "station"})
+        redis_client = work_app.state.fake_redis
+        redis_client.store[crime_attempt_key("a1")] = json.dumps(
+            {
+                "kind": "shipment",
+                "character_id": char_id,
+                "shipment_id": 999,
+                "district_id": 1,
+                "current_tick": 0,
+            }
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/activity/crime/a1")
+        assert response.status_code == 404
+
 
 class TestCrimeAttemptResult:
     async def test_503s_when_not_configured(self):
@@ -1397,6 +1462,70 @@ class TestCrimeAttemptResult:
         assert body["success"] is False
         assert body["good_name"] is None
         assert body["fine"] > 0
+
+    async def test_shipment_win_grants_the_shipment_s_own_loot(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, character_overrides={"money": 0})
+        shipment_id = await seed_shipment(
+            db_session_factory, good_id=constants.SHIPMENT_LOOT_GOOD_IDS[0], qty=3
+        )
+        redis_client = work_app.state.fake_redis
+        redis_client.store[crime_attempt_key("a1")] = json.dumps(
+            {
+                "kind": "shipment",
+                "character_id": char_id,
+                "shipment_id": shipment_id,
+                "district_id": 1,
+                "current_tick": 0,
+            }
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/activity/crime/a1/result", json={"won": True})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is True
+        assert body["good_name"] is not None
+        assert body["qty"] == 3
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.money == 0  # never touched -- the payout is a good, not cash
+            from panem_shared.db.models import Shipment
+
+            assert await session.get(Shipment, shipment_id) is None  # one-shot: gone either way
+
+    async def test_shipment_caught_applies_the_fine_and_health_penalty(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(
+            db_session_factory, character_overrides={"money": 100, "health": 100.0}
+        )
+        shipment_id = await seed_shipment(db_session_factory)
+        redis_client = work_app.state.fake_redis
+        redis_client.store[crime_attempt_key("a1")] = json.dumps(
+            {
+                "kind": "shipment",
+                "character_id": char_id,
+                "shipment_id": shipment_id,
+                "district_id": 1,
+                "current_tick": 0,
+            }
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            # A value under SHIPMENT_ALERT_PROB (0.6) but not under
+            # SHIPMENT_ESCAPE_BASE_PROB (0.45) clears the "alerted" roll
+            # without clearing the "escapes" roll -- i.e. caught.
+            with patch("random.Random.random", return_value=0.5):
+                response = await client.post("/activity/crime/a1/result", json={"won": False})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["caught"] is True
+        assert body["success"] is False
+        assert body["fine"] == constants.SHIPMENT_FINE
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.money == 100 - constants.SHIPMENT_FINE
+            assert character.health == 100.0 - constants.SHIPMENT_HEALTH_PENALTY
 
     async def test_one_shot_a_second_post_404s(self, work_app, db_session_factory):
         char_id = await seed_character(
@@ -2987,6 +3116,89 @@ class TestDashboardCrime:
                 f"/activity/dashboard/crime/{char_id}/log", params={"discord_id": 999}
             )
         assert response.status_code == 404
+
+    async def test_shipment_status_reports_presence(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"location_id": "station"}
+        )
+        await seed_shipment(db_session_factory, good_id=constants.SHIPMENT_LOOT_GOOD_IDS[0], qty=3)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/crime/{char_id}/shipment", params={"discord_id": 5}
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["present"] is True
+        assert body["qty"] == 3
+        assert body["good_name"] is not None
+
+    async def test_shipment_status_reports_absence(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"location_id": "station"}
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/crime/{char_id}/shipment", params={"discord_id": 5}
+            )
+        assert response.status_code == 200
+        assert response.json() == {
+            "present": False,
+            "good_name": None,
+            "qty": None,
+            "expires_tick": None,
+        }
+
+    async def test_shipment_start_mints_an_attempt(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"location_id": "station"}
+        )
+        shipment_id = await seed_shipment(db_session_factory)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/crime/{char_id}/shipment/start",
+                json={"discord_id": 5},
+            )
+        assert response.status_code == 200
+        body = response.json()
+        redis_client = work_app.state.fake_redis
+        raw = json.loads(redis_client.store[crime_attempt_key(body["attempt_id"])])
+        assert raw == {
+            "kind": "shipment",
+            "character_id": char_id,
+            "shipment_id": shipment_id,
+            "district_id": 1,
+            "current_tick": 0,
+        }
+
+    async def test_shipment_start_404s_when_none_is_here(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"location_id": "station"}
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/crime/{char_id}/shipment/start",
+                json={"discord_id": 5},
+            )
+        assert response.status_code == 404
+
+    async def test_shipment_start_refuses_on_cooldown(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"location_id": "station", "last_steal_tick": 0},
+        )
+        await seed_shipment(db_session_factory)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/crime/{char_id}/shipment/start",
+                json={"discord_id": 5},
+            )
+        assert response.status_code == 400
 
 
 class TestDashboardWork:

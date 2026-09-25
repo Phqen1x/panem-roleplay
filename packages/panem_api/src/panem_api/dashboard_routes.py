@@ -56,6 +56,7 @@ from panem_shared import market as market_svc
 from panem_shared import pay as pay_svc
 from panem_shared import poaching as poaching_svc
 from panem_shared import rp_modes as rp_modes_svc
+from panem_shared import shipments as shipments_svc
 from panem_shared import stealing as stealing_svc
 from panem_shared import sustenance as sustenance_svc
 from panem_shared import theme as theme_svc
@@ -1211,6 +1212,17 @@ class PoachStartRequest(BaseModel):
     discord_id: int
 
 
+class ShipmentStatusResponse(BaseModel):
+    present: bool
+    good_name: str | None = None
+    qty: int | None = None
+    expires_tick: int | None = None
+
+
+class ShipmentStartRequest(BaseModel):
+    discord_id: int
+
+
 class CrimeLogEntry(BaseModel):
     kind: str
     tick: int
@@ -1232,10 +1244,10 @@ def build_crime_router(
     session_factory: async_sessionmaker[AsyncSession] | None,
     redis_client: redis.Redis,
 ) -> APIRouter:
-    """The Crime tab's REST surface: mirrors `/steal`, `/burgle`, `/poach`.
-    All three `*-start` routes mint a crime attempt exactly like their
-    Discord commands do (same Redis shape `/activity/crime/{id}` reads) for
-    the dashboard to embed in an iframe."""
+    """The Crime tab's REST surface: mirrors `/steal`, `/burgle`, `/poach`,
+    `/shipment`. Every `*-start` route mints a crime attempt exactly like
+    its Discord command does (same Redis shape `/activity/crime/{id}`
+    reads) for the dashboard to embed in an iframe."""
     router = APIRouter(prefix="/activity/dashboard/crime", tags=["dashboard"])
 
     @router.get("/{character_id}/steal-targets", response_model=StealTargetsResponse)
@@ -1473,6 +1485,63 @@ def build_crime_router(
                     "character_id": character_id,
                     "district_id": district_id,
                     "good_id": good_id,
+                    "current_tick": current_tick,
+                }
+            ),
+            ex=CRIME_ATTEMPT_TTL_S,
+        )
+        return CrimeStartResponse(attempt_id=attempt_id, difficulty=difficulty)
+
+    @router.get("/{character_id}/shipment", response_model=ShipmentStatusResponse)
+    async def shipment_status(character_id: int, discord_id: int) -> ShipmentStatusResponse:
+        """Whether a shipment is currently sitting at `character_id`'s
+        exact district+location -- what the Crime tab's Shipment panel
+        polls before offering the attempt button."""
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            current_tick = await _current_tick(session)
+            found = await shipments_svc.find_shipment_here(session, character, current_tick)
+            if found is None:
+                return ShipmentStatusResponse(present=False)
+            good = content.goods.get(found.good_id)
+            return ShipmentStatusResponse(
+                present=True,
+                good_name=good.name if good is not None else found.good_id,
+                qty=found.qty,
+                expires_tick=found.expires_tick,
+            )
+
+    @router.post("/{character_id}/shipment/start", response_model=CrimeStartResponse)
+    async def start_shipment(character_id: int, body: ShipmentStartRequest) -> CrimeStartResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            current_tick = await _current_tick(session)
+            found = await shipments_svc.find_shipment_here(session, character, current_tick)
+            if found is None:
+                raise HTTPException(status_code=404, detail="shipment_none_here")
+            try:
+                shipments_svc.check_can_steal_shipment(character, found, current_tick)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            character.last_steal_tick = current_tick
+            shipment_id, district_id = found.id, found.district_id
+            difficulty = shipments_svc.shipment_difficulty()
+
+        attempt_id = secrets.token_urlsafe(16)
+        await redis_client.set(
+            crime_attempt_key(attempt_id),
+            json.dumps(
+                {
+                    "kind": "shipment",
+                    "character_id": character_id,
+                    "shipment_id": shipment_id,
+                    "district_id": district_id,
                     "current_tick": current_tick,
                 }
             ),

@@ -21,7 +21,12 @@ from panem_shared.db.models import Character, CrimeLog, DistrictState, Npc, Prop
 from panem_shared.enums import CharacterStatus, OwnerKind, PropertyKind, RpMode
 from panem_shared.stealing import StealResult, StealVictim
 
-_CRIME_LOG_VERBS = {"steal": "Steal", "burgle": "Burgle", "poach": "Poach"}
+_CRIME_LOG_VERBS = {
+    "steal": "Steal",
+    "burgle": "Burgle",
+    "poach": "Poach",
+    "shipment": "Shipment",
+}
 
 
 def _describe_crime_log_entry(entry: CrimeLog) -> str:

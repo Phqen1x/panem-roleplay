@@ -22,6 +22,7 @@ from panem_sim.systems import (
     npc_chatter,
     reputation,
     schedule,
+    shipments,
     social,
     time,
 )
@@ -34,6 +35,7 @@ FIXED_ORDER: list[SystemFn] = [
     needs.run,
     jobs.run,
     economy.run,
+    shipments.run,
     housing.run,
     social.run,
     npc_chatter.run,

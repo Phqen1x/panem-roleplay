@@ -866,13 +866,36 @@ class StaffAction(TimestampMixin, Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
 
+class Shipment(Base):
+    """A contraband shipment sitting at a district's Rail Station
+    (`LocationKind.STATION`), spawned by `panem_sim.systems.shipments` and
+    a one-shot opportunity: `panem_shared.shipments.apply_shipment_outcome`
+    deletes the row the moment anyone attempts it, win or lose, the same
+    way `expires_tick` (peacekeepers clearing it untouched) does. Mirrors
+    `PropertyAuction`'s "exists in a district for a window of ticks, then
+    the sim itself removes it" shape -- there's no `status` column the
+    way that table has one, since there's no "closed but still on the
+    books" state here to distinguish; gone is gone."""
+
+    __tablename__ = "shipments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    district_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    location_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    good_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    qty: Mapped[int] = mapped_column(Integer, nullable=False)
+    spawned_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+    expires_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
 class CrimeLog(TimestampMixin, Base):
-    """One resolved `/steal`, `/burgle`, or `/poach` attempt -- written by
-    `panem_shared.stealing.apply_steal_outcome`/`apply_burgle_outcome` and
-    `panem_shared.poaching.apply_poach_outcome` (the one funnel every
-    attempt passes through either way: the RNG-fallback roll or the
-    Activity minigame's own result), so both paths log identically and no
-    cog/endpoint has to remember to call this separately.
+    """One resolved `/steal`, `/burgle`, `/poach`, or `/shipment` attempt --
+    written by `panem_shared.stealing.apply_steal_outcome`/`apply_burgle_
+    outcome`, `panem_shared.poaching.apply_poach_outcome`, and `panem_shared.
+    shipments.apply_shipment_outcome` (the one funnel every attempt passes
+    through either way: the RNG-fallback roll or the Activity minigame's
+    own result), so every path logs identically and no cog/endpoint has to
+    remember to call this separately.
 
     `target_name`/`good_name` are plain snapshot strings, not foreign
     keys -- the same choice `StaffAction.target` already made -- so a log

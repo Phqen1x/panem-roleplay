@@ -730,6 +730,60 @@ anything `/steal` can turn up) -- breaking into a house is a bigger risk
 than lifting a wallet, so it pays out in kind."""
 BURGLE_LOOT_QTY_RANGE = (1, 2)
 
+SHIPMENT_SPAWN_CHANCE_PER_TICK = 0.03
+"""Per district with a `LocationKind.STATION` location and no shipment
+currently sitting there, the per-tick odds `panem_sim.systems.shipments`
+rolls to spawn one -- a bit more often than `NPC_CHATTER_CHANCE_PER_TICK`
+since this is meant to be a noticeable, semi-regular opportunity ("various
+shipments... throughout the days"), not backdrop flavor."""
+SHIPMENT_WINDOW_TICKS = 8
+"""How long a spawned shipment sits before peacekeepers clear it
+untouched -- a bit longer than `simtime.TICKS_PER_PHASE` (6), so a
+shipment that arrives late in a phase is still catchable early in the
+next one."""
+SHIPMENT_LOOT_GOOD_IDS = (
+    "contraband_weapons",
+    "forbidden_literature",
+    "smuggled_luxuries",
+    "counterfeit_papers",
+    "stolen_jewelry",
+    "stolen_furniture",
+    "stolen_silverware",
+    "stolen_heirlooms",
+    "pilfered_valuables",
+)
+"""What a spawned shipment is carrying -- a random pick, `SHIPMENT_LOOT_
+QTY_RANGE` units. Blends the four real `category: "contraband"` goods
+(the same ones any district's `illicit_produces` might already trade,
+here just as cargo passing through -- sellable at a fence only where that
+good is actually listed, not everywhere) with the `category: "stolen"`
+loot pool `STEAL_LOOT_GOOD_IDS`/`BURGLE_LOOT_GOOD_IDS` already draw from
+(always fence-sellable anywhere, per `blackmarket.resolve_good`). A
+contraband-good shipment hit somewhere that good isn't locally traded is
+by design: you got something, now go find the right fence for it."""
+SHIPMENT_LOOT_QTY_RANGE = (1, 3)
+SHIPMENT_BASE_SUCCESS = 0.45
+"""Between `BURGLE_BASE_SUCCESS` (0.35) and pickpocketing an NPC (0.6) --
+a guarded shipment is a harder mark than a random pocket, but a more
+exposed one than a locked, empty house."""
+SHIPMENT_ALERT_PROB = 0.6
+"""Higher than `STEAL_ALERT_PROB` (0.5) -- peacekeepers are actively
+watching the cargo, not just a bystander who might notice."""
+SHIPMENT_ESCAPE_BASE_PROB = 0.45
+"""Lower than `STEAL_ESCAPE_BASE_PROB` (0.5) -- guards posted on a
+shipment react faster than a lone mark giving chase."""
+SHIPMENT_FINE = 40
+SHIPMENT_JAIL_TICKS = 18
+SHIPMENT_HEALTH_PENALTY = 15.0
+"""Getting caught here means getting roughed up by the guards, not just
+fined and marched off -- `Character.health` takes this hit on top of the
+usual fine/jail/reputation consequence, floored at 0 like every other
+`health` write in this codebase."""
+REP_SHIPMENT_CAUGHT_PENALTY = 15
+SHIPMENT_PRESSURE_DELTA = 0.05
+"""Mirrors `stealing.STEAL_PRESSURE_DELTA`/`poaching.PEACEKEEPER_PRESSURE_
+DELTA` exactly -- same placeholder-weighting caveat those already carry."""
+
 CRACKDOWN_DEFAULT_DURATION_TICKS = 48
 CRACKDOWN_PRESSURE_DELTA = 0.3
 """`/staff district crackdown`'s default window and the immediate

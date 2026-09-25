@@ -25,7 +25,7 @@
 // in an `<iframe>` for the lockpick/steal/burgle/poach minigames (see
 // static/tabs/jail.js, static/tabs/crime.js) and use it to refresh their
 // own status without a reload. A no-op outside an iframe.
-const ASSET_VERSION = "15";
+const ASSET_VERSION = "16";
 
 // Donor dashboard theme (`static/theme_picker.js`'s popup, saved via the
 // profile endpoints under `/activity/dashboard/theme/profiles`): `app.js`
@@ -81,6 +81,7 @@ const TITLES = {
   steal: "Pick the pocket",
   burgle: "Pick the lock",
   poach: "Hunt at the outskirts",
+  shipment: "Rob the shipment",
 };
 
 const statusEl = document.getElementById("status");
@@ -139,25 +140,40 @@ function notifyParent(payload) {
   }
 }
 
-// steal/burgle/poach all share this result shape now: a success carries
-// off `qty`x `good_name` (never money -- the only way to turn any of it
-// into cash is the black market), a catch carries a `fine`, and steal/
-// burgle alone can also come back "alerted" (spotted but got away clean).
+// steal/burgle/poach/shipment all share this result shape now: a success
+// carries off `qty`x `good_name` (never money -- the only way to turn any
+// of it into cash is the black market), a catch carries a `fine`, and
+// steal/burgle/shipment alone can also come back "alerted" (spotted but
+// got away clean).
 function describeResult(body) {
   if (kind === "lockpick") {
     if (body.success) return `${body.character_name} works the lock loose and slips out.`;
     return `The lock holds. ${body.tries_left} attempt(s) left.`;
   }
   if (body.caught) {
-    const verb = kind === "burgle" ? "breaking in" : kind === "steal" ? "going for the pocket" : "poaching";
+    const verb =
+      kind === "burgle"
+        ? "breaking in"
+        : kind === "steal"
+          ? "going for the pocket"
+          : kind === "shipment"
+            ? "robbing the shipment"
+            : "poaching";
     return `${body.character_name} is caught ${verb} -- fined ${body.fine} money and jailed.`;
   }
   if (body.success) {
-    const verb = kind === "poach" ? "slips back with" : kind === "burgle" ? "slips out with" : "lifts";
+    const verb =
+      kind === "poach"
+        ? "slips back with"
+        : kind === "burgle"
+          ? "slips out with"
+          : kind === "shipment"
+            ? "slips off with"
+            : "lifts";
     return `${body.character_name} ${verb} ${body.qty}x ${body.good_name}, unseen.`;
   }
   if (body.alerted) {
-    const verb = kind === "burgle" ? "breaking in" : "going for the pocket";
+    const verb = kind === "burgle" ? "breaking in" : kind === "shipment" ? "going for the shipment" : "going for the pocket";
     return `${body.character_name} is spotted ${verb} -- and bolts clear.`;
   }
   if (kind === "poach") {
@@ -205,13 +221,15 @@ async function main() {
     return;
   }
   titleEl.textContent = TITLES[kind] || "Contraband";
-  const game = kind === "steal" ? pickpocket : kind === "poach" ? archery : lockpick;
+  const game = kind === "steal" || kind === "shipment" ? pickpocket : kind === "poach" ? archery : lockpick;
   setStatus(
     kind === "steal"
       ? `${info.character_name} lines up on ${info.target_name}.`
       : kind === "poach"
         ? `${info.character_name} draws a bow at the treeline.`
-        : `${info.character_name} works the lock.`
+        : kind === "shipment"
+          ? `${info.character_name} eyes the shipment's guards.`
+          : `${info.character_name} works the lock.`
   );
   // A dedicated, always-visible line rather than folding the instructions
   // into the status sentence -- `setStatus` gets overwritten as the
