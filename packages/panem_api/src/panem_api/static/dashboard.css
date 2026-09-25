@@ -202,6 +202,20 @@ header {
   padding: 4px;
   border-radius: 8px;
   border: 1px solid var(--border);
+  /* Staff sees enough extra tabs (Staff, History, ...) that this nav's
+     natural width can outgrow the header -- without `min-width: 0` a flex
+     item never shrinks past its content's own intrinsic width (the same
+     flexbox trap work.css's own `main` rule documents), so `header`'s
+     `flex-wrap: wrap` (style.css) had nowhere to reclaim space from except
+     wrapping everything *after* this nav -- world clock, character select,
+     and the theme picker last of all -- onto a second line, left-aligned
+     under the brand instead of staying pinned to the header's right edge.
+     Letting this nav scroll horizontally instead keeps every later header
+     item on the first line regardless of how many tabs are showing. */
+  min-width: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
 }
 
 #tab-nav button {
@@ -1266,6 +1280,12 @@ table.data-table .btn {
   right: 0;
   z-index: 200;
   width: 280px;
+  /* Belt-and-suspenders alongside #tab-nav's own overflow fix above: even
+     if something else ever pushes `.theme-picker` away from the header's
+     right edge again, this keeps the popup from extending past the left
+     edge of a narrow viewport (`right: 0` alone has no such floor -- it's
+     anchored to the toggle, wherever that ends up). */
+  max-width: calc(100vw - 32px);
   max-height: calc(100vh - 70px);
   overflow-y: auto;
   padding: 14px;
