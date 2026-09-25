@@ -282,6 +282,25 @@ def template_reply(npc: Npc, stance: str, message: str) -> str:
     return f"*{npc.name} {opener},* {line}"
 
 
+def _llm_error_detail(exc: Exception) -> str:
+    """`str(exc)` alone, for the `httpx.HTTPStatusError` a non-2xx
+    `response.raise_for_status()` raises, is just something like "Server
+    error '500 Internal Server Error' for url '...'" -- the actual reason
+    the LLM server errored (a stack trace, an out-of-memory or
+    context-length message) rides in the response body, which
+    `raise_for_status()` never surfaces on its own. Folding it in here is
+    what makes `dialogue_llm_failed`/`dialogue_summarize_failed` actually
+    diagnosable from the bot's own log instead of only confirming *that*
+    a call failed -- every catch site below logs through this rather than
+    a bare `str(exc)`."""
+    detail = str(exc)
+    if isinstance(exc, httpx.HTTPStatusError):
+        body = exc.response.text.strip()
+        if body:
+            detail = f"{detail} -- body: {body[:500]}"
+    return detail
+
+
 async def generate_llm_reply(
     ctx: omni.RequestContext,
     message: str,
@@ -406,7 +425,7 @@ async def generate_npc_to_npc_reply(
     try:
         return await generate_llm_reply(ctx, message, settings, history=history)
     except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
-        logger.warning("dialogue_llm_failed", npc_id=npc.id, error=str(exc))
+        logger.warning("dialogue_llm_failed", npc_id=npc.id, error=_llm_error_detail(exc))
         return template_reply(npc, "neutral", message)
 
 
@@ -461,7 +480,7 @@ async def generate_reply(
     try:
         return await generate_llm_reply(ctx, message, settings, history=history)
     except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
-        logger.warning("dialogue_llm_failed", npc_id=npc.id, error=str(exc))
+        logger.warning("dialogue_llm_failed", npc_id=npc.id, error=_llm_error_detail(exc))
         return template_reply(npc, stance, message)
 
 
@@ -506,7 +525,7 @@ async def summarize_engagement(
     try:
         summary = await generate_llm_reply(ctx, prompt, settings)
     except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
-        logger.warning("dialogue_summarize_failed", npc_id=npc.id, error=str(exc))
+        logger.warning("dialogue_summarize_failed", npc_id=npc.id, error=_llm_error_detail(exc))
         return previous_summary
 
     words = summary.split()

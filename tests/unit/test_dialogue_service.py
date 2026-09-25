@@ -539,6 +539,35 @@ class TestTemplateReply:
         assert first == second
 
 
+class TestLlmErrorDetail:
+    """`str(exc)` alone for an `httpx.HTTPStatusError` is just "Server
+    error '500 ...' for url '...'" -- no reason. Regression coverage for
+    the real-world case that prompted this: Lemonade 500s with no detail
+    in the bot's own log, making it undiagnosable without also having the
+    LLM server's own log open."""
+
+    def test_appends_the_response_body_for_an_http_status_error(self):
+        request = httpx.Request("POST", "http://127.0.0.1:13305/v1/chat/completions")
+        response = httpx.Response(500, text="CUDA error: out of memory", request=request)
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            detail = dialogue._llm_error_detail(exc)
+        assert "500" in detail
+        assert "CUDA error: out of memory" in detail
+
+    def test_omits_the_body_suffix_when_the_response_has_none(self):
+        request = httpx.Request("POST", "http://127.0.0.1:13305/v1/chat/completions")
+        response = httpx.Response(500, text="", request=request)
+        exc = httpx.HTTPStatusError("Server error", request=request, response=response)
+        detail = dialogue._llm_error_detail(exc)
+        assert "body:" not in detail
+
+    def test_non_http_errors_pass_through_unchanged(self):
+        exc = httpx.ConnectError("no route to host")
+        assert dialogue._llm_error_detail(exc) == str(exc)
+
+
 class TestGenerateReply:
     async def test_template_provider_never_calls_the_llm(self):
         npc = make_npc()
