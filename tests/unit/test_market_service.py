@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from panem_bot.errors import NotAllowed, NotFound
+from panem_bot.errors import NotAllowed, NotFound, ValidationFailed
 from panem_bot.services import market as market_svc
 from panem_bot.strings import t
 from panem_shared import constants
@@ -134,6 +134,48 @@ class TestGetPrice:
         good = Good(id="coal", name="Coal", base_price=4.0, category="fuel")
         price = await market_svc.get_price(db_session, 1, good)
         assert price == 7.5
+
+
+class TestGetSupply:
+    async def test_none_with_no_row(self, db_session):
+        supply = await market_svc.get_supply(db_session, 1, "coal")
+        assert supply is None
+
+    async def test_uses_existing_supply_row(self, db_session):
+        db_session.add(MarketPrice(district_id=1, good_id="coal", price=4.0, supply=12.0, tick=0))
+        await db_session.flush()
+        supply = await market_svc.get_supply(db_session, 1, "coal")
+        assert supply == 12.0
+
+
+class TestAddStock:
+    async def test_creates_a_row_when_none_exists(self, db_session):
+        good = Good(id="coal", name="Coal", base_price=4.0, category="fuel")
+        row = await market_svc.add_stock(
+            db_session, district_id=1, good=good, qty=10.0, current_tick=5
+        )
+        assert row.district_id == 1
+        assert row.good_id == "coal"
+        assert row.price == 4.0
+        assert row.supply == 10.0
+        assert row.tick == 5
+
+    async def test_adds_on_top_of_existing_supply(self, db_session):
+        db_session.add(MarketPrice(district_id=1, good_id="coal", price=7.5, supply=3.0, tick=0))
+        await db_session.flush()
+        good = Good(id="coal", name="Coal", base_price=4.0, category="fuel")
+        row = await market_svc.add_stock(
+            db_session, district_id=1, good=good, qty=5.0, current_tick=9
+        )
+        assert row.supply == 8.0
+        # A top-up doesn't clobber the sim's own live price.
+        assert row.price == 7.5
+
+    async def test_rejects_a_non_positive_qty(self, db_session):
+        good = Good(id="coal", name="Coal", base_price=4.0, category="fuel")
+        with pytest.raises(ValidationFailed) as exc_info:
+            await market_svc.add_stock(db_session, district_id=1, good=good, qty=0, current_tick=0)
+        assert exc_info.value.reason_key == "market_stock_qty_must_be_positive"
 
 
 class TestBuy:

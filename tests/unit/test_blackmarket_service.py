@@ -149,6 +149,20 @@ class TestResolveBlackMarketLocation:
         assert exc_info.value.reason_key == "blackmarket_night_only"
 
 
+class TestGetSupply:
+    async def test_none_with_no_row(self, db_session):
+        supply = await blackmarket_svc.get_supply(db_session, 1, "contraband_weapons")
+        assert supply is None
+
+    async def test_uses_existing_supply_row(self, db_session):
+        db_session.add(
+            MarketPrice(district_id=1, good_id="contraband_weapons", price=35.0, supply=6.0, tick=0)
+        )
+        await db_session.flush()
+        supply = await blackmarket_svc.get_supply(db_session, 1, "contraband_weapons")
+        assert supply == 6.0
+
+
 class TestCheckCanTrade:
     async def test_trusted_stance_allowed(self, db_session):
         character = make_character()

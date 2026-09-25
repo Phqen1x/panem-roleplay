@@ -26,6 +26,9 @@ from panem_shared.blackmarket import (
     get_price as get_price,
 )
 from panem_shared.blackmarket import (
+    get_supply as get_supply,
+)
+from panem_shared.blackmarket import (
     resolve_black_market_location as resolve_black_market_location,
 )
 from panem_shared.blackmarket import (

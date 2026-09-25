@@ -591,6 +591,27 @@ def staff_app(db_session_factory):
     return app
 
 
+@pytest.fixture
+def staff_market_app(db_session_factory):
+    """Same shape as `staff_app`, but with `make_content_with_market()`'s
+    goods/districts -- for staff endpoints (`add-stock`) that need a real
+    good/district to act on, which `staff_app`'s own empty-goods content
+    doesn't provide."""
+    content = make_content_with_market()
+    redis_client = FakeRedis()
+    app = create_app(
+        content=content,
+        redis_client=redis_client,
+        session_factory=db_session_factory,
+        discord_guild_id=999,
+        discord_token="test-bot-token",
+        staff_role_id=777,
+        log_channel_id=0,
+    )
+    app.state.fake_redis = redis_client  # type: ignore[attr-defined]
+    return app
+
+
 def _fake_member_response(role_ids: list[int]) -> httpx.Response:
     return httpx.Response(200, json={"roles": [str(r) for r in role_ids]})
 
@@ -3113,7 +3134,21 @@ class TestDashboardMarket:
         assert [p["good_id"] for p in body["prices"]] == ["grain"]
         assert body["prices"][0]["hunger_value"] == 15.0
         assert body["prices"][0]["cook_method"] == "oven"
+        assert body["prices"][0]["stock"] is None
         assert body["inventory"] == []
+
+    async def test_status_reports_current_stock(self, market_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"location_id": "legal_market"}
+        )
+        async with db_session_factory() as session, session.begin():
+            session.add(MarketPrice(district_id=1, good_id="grain", price=2.0, supply=42.0, tick=0))
+        transport = httpx.ASGITransport(app=market_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/market/{char_id}", params={"discord_id": 5}
+            )
+        assert response.json()["prices"][0]["stock"] == 42.0
 
     async def test_buy_happy_path(self, market_app, db_session_factory):
         char_id = await seed_character(
@@ -4377,6 +4412,78 @@ class TestDashboardStaff:
             await discord_staff.post_staff_log(
                 channel_id=555, bot_token="test-bot-token", content="ignored"
             )  # no raise
+
+
+class TestDashboardStaffMarket:
+    async def test_add_stock_refuses_without_the_staff_role(self, staff_market_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([1, 2]))
+        ):
+            transport = httpx.ASGITransport(app=staff_market_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/market/add-stock",
+                    json={"discord_id": 42, "district_id": 1, "good_id": "grain", "qty": 10},
+                )
+        assert response.status_code == 403
+
+    async def test_add_stock_creates_a_row_when_none_exists(self, staff_market_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_market_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/market/add-stock",
+                    json={"discord_id": 42, "district_id": 1, "good_id": "grain", "qty": 10},
+                )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["good_name"] == "Grain"
+        assert body["new_supply"] == 10.0
+
+    async def test_add_stock_tops_up_existing_supply(
+        self, staff_market_app, db_session_factory
+    ):
+        async with db_session_factory() as session, session.begin():
+            session.add(MarketPrice(district_id=1, good_id="grain", price=2.0, supply=5.0, tick=0))
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_market_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/market/add-stock",
+                    json={"discord_id": 42, "district_id": 1, "good_id": "grain", "qty": 3},
+                )
+        assert response.status_code == 200
+        assert response.json()["new_supply"] == 8.0
+
+    async def test_add_stock_404s_for_an_unknown_good(self, staff_market_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_market_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/market/add-stock",
+                    json={"discord_id": 42, "district_id": 1, "good_id": "nonexistent", "qty": 1},
+                )
+        assert response.status_code == 404
+        assert response.json()["detail"] == "staff_good_not_found"
+
+    async def test_add_stock_rejects_a_non_positive_qty(self, staff_market_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_market_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/market/add-stock",
+                    json={"discord_id": 42, "district_id": 1, "good_id": "grain", "qty": 0},
+                )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "market_stock_qty_must_be_positive"
 
 
 class TestDashboardStaffLayers:

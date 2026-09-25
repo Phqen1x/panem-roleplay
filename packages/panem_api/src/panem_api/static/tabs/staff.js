@@ -86,6 +86,70 @@ function jailPanel(ctx) {
   );
 }
 
+function marketStockPanel(ctx) {
+  const resultLine = el("p", { class: "result-line" });
+
+  const districtOptions = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((id) => {
+    const name = ctx.districtName ? ctx.districtName(id) : (id === 0 ? "The Capitol" : `District ${id}`);
+    return el("option", { value: String(id) }, `${id}: ${name}`);
+  });
+  const districtSelect = el("select", { class: "field-input" }, ...districtOptions);
+  districtSelect.value = "1";
+
+  const goodIdInput = el("input", { type: "text", placeholder: "e.g. grain, wild_game, coal" });
+  const qtyInput = el("input", { type: "number", value: "10", min: "1" });
+  const addBtn = el("button", { class: "btn primary", type: "button" }, "Add Stock");
+
+  addBtn.addEventListener("click", async () => {
+    resultLine.textContent = "";
+    const goodId = goodIdInput.value.trim();
+    const qty = Number(qtyInput.value);
+    if (!goodId || !Number.isFinite(qty) || qty <= 0) {
+      resultLine.className = "result-line lose";
+      resultLine.textContent = "Enter a good id and a positive quantity.";
+      return;
+    }
+    try {
+      const body = await fetchJson("/activity/dashboard/staff/market/add-stock", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          discord_id: ctx.discordId(),
+          district_id: Number(districtSelect.value),
+          good_id: goodId,
+          qty,
+        }),
+      });
+      resultLine.className = "result-line win";
+      const dName = ctx.districtName ? ctx.districtName(body.district_id) : `District ${body.district_id}`;
+      resultLine.textContent =
+        `Added ${body.qty_added} ${body.good_name} to ${dName}'s market -- ` +
+        `now ${body.new_supply} in stock.`;
+      goodIdInput.value = "";
+    } catch (err) {
+      resultLine.className = "result-line lose";
+      resultLine.textContent = err.message;
+    }
+  });
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "Add Market Stock" }),
+    el(
+      "p",
+      { class: "tab-status" },
+      "Tops up a district's current stock of a good directly, for legal or illicit goods alike " +
+        "-- doesn't wait on the sim's own daily supply update."
+    ),
+    el("div", { class: "field-row" }, el("label", { text: "District" }), districtSelect),
+    el("div", { class: "field-row" }, el("label", { text: "Good id" }), goodIdInput),
+    el("div", { class: "field-row" }, el("label", { text: "Quantity" }), qtyInput),
+    el("div", { class: "field-row" }, addBtn),
+    resultLine
+  );
+}
+
 function optionRow(ctx, category, option, { onChanged }) {
   const resultLine = el("p", { class: "result-line" });
   const deleteBtn = el("button", { class: "btn secondary", type: "button" }, "Delete");
@@ -643,5 +707,11 @@ function afflictionTypesPanel(ctx) {
 }
 
 export function mount(root, ctx) {
-  root.append(jailPanel(ctx), mottosPanel(ctx), layersPanel(ctx), afflictionTypesPanel(ctx));
+  root.append(
+    jailPanel(ctx),
+    marketStockPanel(ctx),
+    mottosPanel(ctx),
+    layersPanel(ctx),
+    afflictionTypesPanel(ctx)
+  );
 }

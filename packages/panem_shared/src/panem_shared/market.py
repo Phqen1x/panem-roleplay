@@ -25,7 +25,7 @@ from panem_shared import constants
 from panem_shared.content.schemas import District, Good, Location
 from panem_shared.db.models import Character, DistrictState, Inventory, MarketOrder, MarketPrice
 from panem_shared.enums import CharacterStatus, LocationKind, OwnerKind, RpMode
-from panem_shared.errors import NotAllowed, NotFound
+from panem_shared.errors import NotAllowed, NotFound, ValidationFailed
 from panem_shared.jail import commit_to_jail, crackdown_bad_odds
 
 ILLICIT_PRESSURE_DELTA = 0.05
@@ -78,6 +78,47 @@ def resolve_good(district: District, goods: dict[str, Good], good_id: str) -> Go
 async def get_price(session: AsyncSession, district_id: int, good: Good) -> float:
     row = await session.get(MarketPrice, (district_id, good.id))
     return row.price if row is not None else good.base_price
+
+
+async def get_supply(session: AsyncSession, district_id: int, good_id: str) -> float | None:
+    """`MarketPrice.supply` -- today's remaining purchasable stock (see
+    `_reserve_stock`'s own docstring) -- for the Market tab's stock
+    display. `None` (not `0.0`) when no row exists yet (a fresh world, or
+    a good `panem_sim.systems.economy` hasn't priced today): that's "not
+    tracked yet", not "sold out"."""
+    row = await session.get(MarketPrice, (district_id, good_id))
+    return row.supply if row is not None else None
+
+
+async def add_stock(
+    session: AsyncSession, *, district_id: int, good: Good, qty: float, current_tick: int
+) -> MarketPrice:
+    """Staff-only direct top-up of a district's `MarketPrice.supply` for
+    `good` -- for correcting a shortage (a slow sim day, a district whose
+    economy needs a nudge) without waiting for `panem_sim.systems.
+    economy`'s own daily update. Creates the row (at `good.base_price`,
+    the same fallback every other read here already uses) if the sim
+    hasn't priced this good in this district yet this run. `qty` must be
+    positive -- staff wanting to *reduce* stock should let it sell down or
+    decay naturally rather than going negative here."""
+    if qty <= 0:
+        raise ValidationFailed("market_stock_qty_must_be_positive")
+    row = await session.get(MarketPrice, (district_id, good.id))
+    if row is None:
+        # `MarketPrice.supply`'s column default only applies once SQLAlchemy
+        # actually inserts the row -- a freshly constructed, not-yet-flushed
+        # instance still reads `None` for it (same trap `shifts.
+        # apply_shift_outcome`'s own `shift.output` comment documents).
+        row = MarketPrice(
+            district_id=district_id,
+            good_id=good.id,
+            price=good.base_price,
+            supply=0.0,
+            tick=current_tick,
+        )
+        session.add(row)
+    row.supply += qty
+    return row
 
 
 async def _reserve_stock(session: AsyncSession, district_id: int, good: Good, qty: int) -> None:

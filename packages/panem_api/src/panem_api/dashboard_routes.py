@@ -1614,6 +1614,10 @@ class GoodPrice(BaseModel):
     hunger_value: float = 0.0
     thirst_value: float = 0.0
     cook_method: str | None = None
+    stock: float | None = None
+    """Today's remaining purchasable stock (`MarketPrice.supply`) --
+    `None` when it hasn't been priced yet this run (not the same as `0`,
+    genuinely sold out). See `market_svc.get_supply`."""
 
 
 class InventoryItem(BaseModel):
@@ -1674,6 +1678,7 @@ def build_market_router(
                 if good is None:
                     continue
                 price = await market_svc.get_price(session, district.id, good)
+                stock = await market_svc.get_supply(session, district.id, good_id)
                 prices.append(
                     GoodPrice(
                         good_id=good_id,
@@ -1682,6 +1687,7 @@ def build_market_router(
                         hunger_value=good.hunger_value,
                         thirst_value=good.thirst_value,
                         cook_method=good.cook_method,
+                        stock=stock,
                     )
                 )
             inventory = await _inventory_items(session, content, character_id)
@@ -1760,7 +1766,10 @@ def build_blackmarket_router(
                 if good is None:
                     continue
                 price = await blackmarket_svc.get_price(session, district.id, good)
-                prices.append(GoodPrice(good_id=good_id, name=good.name, price=price))
+                stock = await blackmarket_svc.get_supply(session, district.id, good_id)
+                prices.append(
+                    GoodPrice(good_id=good_id, name=good.name, price=price, stock=stock)
+                )
             trusted = False
             try:
                 fence = blackmarket_svc.resolve_fence(district.id, content.npcs)
@@ -3476,6 +3485,21 @@ class StaffJailResponse(BaseModel):
     jailed_until_tick: int
 
 
+class StaffAddStockRequest(BaseModel):
+    discord_id: int
+    district_id: int
+    good_id: str
+    qty: float
+
+
+class StaffAddStockResponse(BaseModel):
+    district_id: int
+    good_id: str
+    good_name: str
+    qty_added: float
+    new_supply: float
+
+
 class CreateLayerCategoryRequest(BaseModel):
     discord_id: int
     name: str
@@ -3667,6 +3691,7 @@ def build_rp_mode_router(
 
 def build_staff_router(
     *,
+    content: ContentBundle,
     session_factory: async_sessionmaker[AsyncSession] | None,
     static_dir: Path,
     discord_token: str = "",
@@ -3735,6 +3760,59 @@ def build_staff_router(
             content=(
                 f"**Staff action:** <@{body.discord_id}> `jail` -> `{response.character_name}` "
                 f"(ticks={body.ticks}, applied={applied}, reason={body.reason!r})"
+            ),
+        )
+        return response
+
+    @router.post("/market/add-stock", response_model=StaffAddStockResponse)
+    async def add_market_stock(body: StaffAddStockRequest) -> StaffAddStockResponse:
+        """Directly tops up a district's market stock (`MarketPrice.
+        supply`) -- for correcting a shortage without waiting on `panem_sim.
+        systems.economy`'s own daily update. Works for any good staff name,
+        legal or illicit alike (whether it's actually tradeable there is
+        `market_svc.resolve_good`/`blackmarket_svc.resolve_good`'s concern
+        at buy/sell time, not this one's)."""
+        await _require_staff(body.discord_id)
+        good = content.goods.get(body.good_id)
+        if good is None:
+            raise HTTPException(status_code=404, detail="staff_good_not_found")
+        if body.district_id not in content.districts:
+            raise HTTPException(status_code=404, detail="invalid_district")
+        district = content.district(body.district_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            current_tick = await _current_tick(session)
+            try:
+                row = await market_svc.add_stock(
+                    session,
+                    district_id=district.id,
+                    good=good,
+                    qty=body.qty,
+                    current_tick=current_tick,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="add_stock",
+                    target=f"{district.id}:{good.id}",
+                    payload={"qty": body.qty, "new_supply": row.supply},
+                )
+            )
+            response = StaffAddStockResponse(
+                district_id=district.id,
+                good_id=good.id,
+                good_name=good.name,
+                qty_added=body.qty,
+                new_supply=row.supply,
+            )
+        await discord_staff.post_staff_log(
+            channel_id=log_channel_id,
+            bot_token=discord_token,
+            content=(
+                f"**Staff action:** <@{body.discord_id}> `add_stock` -> district {district.id} "
+                f"`{good.name}` (+{body.qty}, now {response.new_supply})"
             ),
         )
         return response

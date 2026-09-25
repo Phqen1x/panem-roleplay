@@ -720,6 +720,14 @@ table.data-table .qty-input {
   padding: 4px 6px;
 }
 
+/* Market tab's Stock column (tabs/market.js) -- flags a good that's
+   genuinely sold out today (MarketPrice.supply == 0) rather than just
+   "not tracked yet" (shown as a plain "—" with no color at all). */
+table.data-table .stock-empty {
+  color: color-mix(in srgb, var(--danger) 85%, var(--text));
+  font-weight: 600;
+}
+
 /* Badges & Monogram Initial Avatars */
 .avatar-badge {
   width: 26px;

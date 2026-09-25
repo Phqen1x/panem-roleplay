@@ -850,6 +850,7 @@ def create_app(
     )
     app.include_router(
         build_staff_router(
+            content=content,
             session_factory=session_factory,
             static_dir=static_dir or STATIC_DIR,
             discord_token=discord_token,

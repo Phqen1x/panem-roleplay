@@ -127,6 +127,15 @@ async def get_price(session: AsyncSession, district_id: int, good: Good) -> floa
     return row.price if row is not None else good.base_price
 
 
+async def get_supply(session: AsyncSession, district_id: int, good_id: str) -> float | None:
+    """Mirrors `panem_shared.market.get_supply` exactly, for the Market
+    tab's black-market stock display -- `None` (not `0.0`) when no illicit
+    supply has been produced yet today rather than manufacturing a "sold
+    out" figure that was never actually allocated."""
+    row = await session.get(MarketPrice, (district_id, good_id))
+    return row.supply if row is not None else None
+
+
 async def _reserve_stock(session: AsyncSession, district_id: int, good: Good, qty: int) -> None:
     """Unlike the legal market's `_reserve_stock`, a missing row means
     zero stock, not "not priced yet" -- illicit supply only ever exists

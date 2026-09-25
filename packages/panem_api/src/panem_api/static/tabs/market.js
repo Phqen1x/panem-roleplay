@@ -7,6 +7,15 @@ import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=7";
 // Each row carries its own qty input + action button, so buying/selling a
 // good never requires typing its id -- the id only ever travels in the
 // request body, read straight off the row's own data.
+// `p.stock` is `MarketPrice.supply` -- today's remaining purchasable
+// units, `null` when the district hasn't priced this good yet this run
+// (not the same as "0 in stock"). Formatted as a whole number since stock
+// is always a whole-unit count in practice, unlike price.
+function stockLabel(stock) {
+  if (stock == null) return "—";
+  return String(Math.max(0, Math.round(stock)));
+}
+
 function priceTable(prices, onBuy) {
   const table = el(
     "table",
@@ -14,7 +23,15 @@ function priceTable(prices, onBuy) {
     el(
       "thead",
       {},
-      el("tr", {}, el("th", { text: "Good" }), el("th", { text: "Price" }), el("th", { text: "Qty" }), el("th", {}))
+      el(
+        "tr",
+        {},
+        el("th", { text: "Good" }),
+        el("th", { text: "Price" }),
+        el("th", { text: "Stock" }),
+        el("th", { text: "Qty" }),
+        el("th", {})
+      )
     )
   );
   const tbody = el("tbody", {});
@@ -41,12 +58,17 @@ function priceTable(prices, onBuy) {
             el("div", { class: "tab-status" }, badges.join(", "))
           )
         : el("td", { text: p.name });
+    const stockCell = el("td", {
+      text: stockLabel(p.stock),
+      class: p.stock === 0 ? "stock-empty" : "",
+    });
     tbody.append(
       el(
         "tr",
         {},
         goodCell,
         el("td", { text: p.price.toFixed(2) }),
+        stockCell,
         el("td", {}, qtyInput),
         el("td", {}, buyBtn)
       )
