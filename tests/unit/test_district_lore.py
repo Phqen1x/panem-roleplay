@@ -105,24 +105,24 @@ class TestUpsertLore:
             )
         assert exc_info.value.reason_key == "district_lore_invalid_classification"
 
-    async def test_rejects_too_many_adjectives(self, db_session):
-        with pytest.raises(ValidationFailed) as exc_info:
-            await district_lore.upsert_lore(
-                db_session,
-                1,
-                classification=None,
-                adjectives=[f"word{i}" for i in range(20)],
-                accent_notes="",
-                urban_rural_notes="",
-                academy_name=None,
-                academy_notes="",
-                games_history="",
-                regime_notes="",
-                opinions={},
-                misc_notes="",
-                updated_by=1,
-            )
-        assert exc_info.value.reason_key == "district_lore_too_many_adjectives"
+    async def test_allows_an_unbounded_number_of_adjectives(self, db_session):
+        words = [f"word{i}" for i in range(20)]
+        row = await district_lore.upsert_lore(
+            db_session,
+            1,
+            classification=None,
+            adjectives=words,
+            accent_notes="",
+            urban_rural_notes="",
+            academy_name=None,
+            academy_notes="",
+            games_history="",
+            regime_notes="",
+            opinions={},
+            misc_notes="",
+            updated_by=1,
+        )
+        assert row.adjectives == words
 
     async def test_rejects_an_out_of_range_opinion_key(self, db_session):
         with pytest.raises(ValidationFailed) as exc_info:

@@ -31,7 +31,6 @@ from panem_shared.db.models import DistrictLore, DistrictLorePerson
 from panem_shared.enums import DistrictClassification
 from panem_shared.errors import NotFound, ValidationFailed
 
-ADJECTIVES_MAX_COUNT = 12
 ADJECTIVE_MAX_LEN = 32
 NOTES_MAX_LEN = 4000
 ACADEMY_NAME_MAX_LEN = 120
@@ -87,8 +86,6 @@ def _clean_adjectives(adjectives: list[str] | None) -> list[str]:
         if len(word) > ADJECTIVE_MAX_LEN:
             raise ValidationFailed("district_lore_adjective_too_long")
         cleaned.append(word)
-    if len(cleaned) > ADJECTIVES_MAX_COUNT:
-        raise ValidationFailed("district_lore_too_many_adjectives")
     return cleaned
 
 
