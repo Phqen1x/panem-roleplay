@@ -28,15 +28,10 @@ def _describe_crime_log_entry(entry: CrimeLog) -> str:
     verb = _CRIME_LOG_VERBS.get(entry.kind, entry.kind)
     if entry.caught:
         return f"**{verb}** (tick {entry.tick}) -- caught, fined and jailed."
+    if entry.good_name:
+        return f"**{verb}** (tick {entry.tick}) -- brought home {entry.amount}x {entry.good_name}."
     if entry.kind == "poach":
-        if entry.good_name:
-            return (
-                f"**{verb}** (tick {entry.tick}) -- brought home {entry.amount}x {entry.good_name}."
-            )
         return f"**{verb}** (tick {entry.tick}) -- came back empty-handed."
-    if entry.success:
-        target = f" from {entry.target_name}" if entry.target_name else ""
-        return f"**{verb}** (tick {entry.tick}) -- got away with {entry.amount} money{target}."
     target = f" ({entry.target_name})" if entry.target_name else ""
     return f"**{verb}** (tick {entry.tick}) -- failed{target}."
 
@@ -51,7 +46,9 @@ def _strip_at(name: str) -> str:
 
 def _steal_result_text(result: StealResult, name: str, target_name: str) -> str:
     if result.success:
-        return t("steal_ok", name=name, amount=result.amount, target=target_name)
+        return t(
+            "steal_ok", name=name, amount=result.amount, good=result.good_name, target=target_name
+        )
     if result.caught:
         return t(
             "steal_caught",
@@ -67,7 +64,9 @@ def _steal_result_text(result: StealResult, name: str, target_name: str) -> str:
 
 def _burgle_result_text(result: StealResult, name: str, owner_name: str) -> str:
     if result.success:
-        return t("burgle_ok", name=name, owner=owner_name, amount=result.amount)
+        return t(
+            "burgle_ok", name=name, owner=owner_name, amount=result.amount, good=result.good_name
+        )
     if result.caught:
         return t(
             "burgle_caught",
@@ -161,6 +160,7 @@ class StealingCog(commands.Cog):
                 district_row=district_row,
                 current_tick=current_tick,
                 rng=random.Random(),
+                goods=self.bot.content.goods,  # type: ignore[attr-defined]
             )
             name, target_name = char.name, victim.name
         return _steal_result_text(result, name, target_name)
@@ -307,6 +307,7 @@ class StealingCog(commands.Cog):
                 district_row=district_row,
                 current_tick=current_tick,
                 rng=random.Random(),
+                goods=self.bot.content.goods,  # type: ignore[attr-defined]
             )
             name = char.name
         return _burgle_result_text(result, name, owner_name)

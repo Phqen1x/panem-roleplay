@@ -25,7 +25,7 @@
 // in an `<iframe>` for the lockpick/steal/burgle/poach minigames (see
 // static/tabs/jail.js, static/tabs/crime.js) and use it to refresh their
 // own status without a reload. A no-op outside an iframe.
-const ASSET_VERSION = "14";
+const ASSET_VERSION = "15";
 
 // Donor dashboard theme (`static/theme_picker.js`'s popup, saved via the
 // profile endpoints under `/activity/dashboard/theme/profiles`): `app.js`
@@ -139,29 +139,29 @@ function notifyParent(payload) {
   }
 }
 
+// steal/burgle/poach all share this result shape now: a success carries
+// off `qty`x `good_name` (never money -- the only way to turn any of it
+// into cash is the black market), a catch carries a `fine`, and steal/
+// burgle alone can also come back "alerted" (spotted but got away clean).
 function describeResult(body) {
   if (kind === "lockpick") {
     if (body.success) return `${body.character_name} works the lock loose and slips out.`;
     return `The lock holds. ${body.tries_left} attempt(s) left.`;
   }
-  if (kind === "poach") {
-    if (body.caught) {
-      return `${body.character_name} is caught poaching -- fined ${body.fine} money and jailed.`;
-    }
-    if (body.success) {
-      return `${body.character_name} slips back with ${body.qty}x ${body.good_name}, unseen.`;
-    }
-    return `${body.character_name} can't land the shot and comes back empty-handed.`;
-  }
-  const verb = kind === "burgle" ? "breaking in" : "going for the pocket";
-  if (body.success) {
-    return `${body.character_name} gets away with ${body.amount} money, unnoticed.`;
-  }
   if (body.caught) {
-    return `${body.character_name} is caught ${verb} -- fined and jailed.`;
+    const verb = kind === "burgle" ? "breaking in" : kind === "steal" ? "going for the pocket" : "poaching";
+    return `${body.character_name} is caught ${verb} -- fined ${body.fine} money and jailed.`;
+  }
+  if (body.success) {
+    const verb = kind === "poach" ? "slips back with" : kind === "burgle" ? "slips out with" : "lifts";
+    return `${body.character_name} ${verb} ${body.qty}x ${body.good_name}, unseen.`;
   }
   if (body.alerted) {
+    const verb = kind === "burgle" ? "breaking in" : "going for the pocket";
     return `${body.character_name} is spotted ${verb} -- and bolts clear.`;
+  }
+  if (kind === "poach") {
+    return `${body.character_name} can't land the shot and comes back empty-handed.`;
   }
   return `${body.character_name} comes up empty-handed -- and, as far as they can tell, unnoticed.`;
 }

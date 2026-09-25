@@ -265,8 +265,11 @@ class CrimeResultResponse(BaseModel):
     alerted: bool = False
     caught: bool = False
     amount: int = 0
+    """Unused by `/steal`/`/burgle`/`/poach` -- all three grant loot, not
+    money (see `good_name`/`qty`); kept only for older API compatibility."""
     tries_left: int | None = None
-    # Set for `/poach` only: what was actually brought home (or not).
+    # What was actually brought home (or not) -- steal/burgle/poach alike,
+    # all three moved off a cash payout onto random goods.
     good_name: str | None = None
     qty: int | None = None
     fine: int | None = None
@@ -731,6 +734,7 @@ def create_app(
                     current_tick=attempt["current_tick"],
                     success=body.won,
                     rng=rng,
+                    goods=content.goods,
                 )
                 banner = "This lift has already been tried!"
                 response_obj = CrimeResultResponse(
@@ -740,7 +744,9 @@ def create_app(
                     success=result.success,
                     alerted=result.alerted,
                     caught=result.caught,
-                    amount=result.amount,
+                    good_name=result.good_name,
+                    qty=result.amount if result.good_name is not None else None,
+                    fine=constants.STEAL_FINE if result.caught else None,
                 )
             elif kind == "burgle":
                 district_row = await session.get(DistrictState, attempt["district_id"])
@@ -755,6 +761,7 @@ def create_app(
                     current_tick=attempt["current_tick"],
                     success=body.won,
                     rng=rng,
+                    goods=content.goods,
                 )
                 banner = "This break-in has already been tried!"
                 response_obj = CrimeResultResponse(
@@ -763,7 +770,9 @@ def create_app(
                     success=result.success,
                     alerted=result.alerted,
                     caught=result.caught,
-                    amount=result.amount,
+                    good_name=result.good_name,
+                    qty=result.amount if result.good_name is not None else None,
+                    fine=constants.STEAL_FINE if result.caught else None,
                 )
             elif kind == "poach":
                 good = content.goods[attempt["good_id"]]

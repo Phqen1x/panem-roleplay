@@ -14,8 +14,9 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from panem_shared import constants
+from panem_shared.content.schemas import Good
 from panem_shared.crime_log import record_crime_log
-from panem_shared.db.models import Character, DistrictState, Npc, Property, RelationshipRow
+from panem_shared.db.models import Character, DistrictState, Inventory, Npc, Property, RelationshipRow
 from panem_shared.enums import CharacterStatus, OwnerKind, PropertyKind, RpMode
 from panem_shared.errors import NotAllowed
 from panem_shared.jail import (
@@ -41,6 +42,27 @@ class StealResult:
     alerted: bool
     caught: bool
     amount: int
+    """Units of `good_name` taken home on a success (0 on a miss/catch) --
+    never money; see `apply_steal_outcome`/`apply_burgle_outcome`'s own
+    docstrings for why this moved off a cash payout."""
+    good_name: str | None = None
+    """The loot's display name, set only alongside a positive `amount`."""
+
+
+async def _grant_good(session: AsyncSession, character: Character, good_id: str, qty: int) -> None:
+    """Mirrors `panem_shared.poaching._grant_good` exactly -- both this
+    module and that one duplicate the same few lines rather than sharing
+    a helper, the same per-file-self-contained convention `blackmarket.
+    _adjust_inventory`/`market.adjust_inventory` already established for
+    this exact operation."""
+    owner_id = str(character.id)
+    row = await session.get(Inventory, (OwnerKind.CHARACTER.value, owner_id, good_id))
+    if row is None:
+        session.add(
+            Inventory(owner_kind=OwnerKind.CHARACTER.value, owner_id=owner_id, good_id=good_id, qty=qty)
+        )
+    else:
+        row.qty += qty
 
 
 def _check_crime_mode(character: Character) -> None:
@@ -230,19 +252,24 @@ async def apply_steal_outcome(
     current_tick: int,
     success: bool,
     rng: random.Random,
+    goods: dict[str, Good],
 ) -> StealResult:
     """Given whether the pickpocket skill check itself succeeded -- a
     roll (`STEAL_FROM_*_BASE_SUCCESS`), or the pickpocket minigame's own
     result when `/steal` launched via Activity -- resolves the rest: a
-    clean, consequence-free lift, or the alert/escape/caught chain. Logs
-    the attempt to `CrimeLog` either way (`record_crime_log`) -- this is
-    the one funnel both the RNG-fallback and Activity paths already share,
-    so the log stays complete without either caller doing it separately."""
+    clean, consequence-free lift, or the alert/escape/caught chain. A
+    success lifts a random item off the mark (`STEAL_LOOT_GOOD_IDS`), not
+    money -- the only way to turn it into cash is the black market
+    (`blackmarket.resolve_good`'s `category: "stolen"` carve-out), so the
+    victim's own wallet is never touched here. Logs the attempt to
+    `CrimeLog` either way (`record_crime_log`) -- this is the one funnel
+    both the RNG-fallback and Activity paths already share, so the log
+    stays complete without either caller doing it separately."""
     if success:
-        amount = min(int(victim.money), rng.randint(*constants.STEAL_YIELD_MONEY_RANGE))
-        victim.money -= amount
-        character.money += amount
-        result = StealResult(True, False, False, amount)
+        good_id = rng.choice(constants.STEAL_LOOT_GOOD_IDS)
+        good = goods[good_id]
+        await _grant_good(session, character, good_id, constants.STEAL_LOOT_QTY)
+        result = StealResult(True, False, False, constants.STEAL_LOOT_QTY, good.name)
     else:
         result = await _apply_alert_escape_caught(
             session,
@@ -260,6 +287,7 @@ async def apply_steal_outcome(
         success=result.success,
         caught=result.caught,
         target_name=victim.name,
+        good_name=result.good_name,
         amount=result.amount,
     )
     return result
@@ -274,28 +302,28 @@ async def apply_burgle_outcome(
     current_tick: int,
     success: bool,
     rng: random.Random,
+    goods: dict[str, Good],
 ) -> StealResult:
     """The house-burglary counterpart to `apply_steal_outcome` -- same
-    alert/escape/caught shape, a payout from the house's own value
-    (`BURGLE_YIELD_FRACTION` of `suggested_price`, capped at
-    `BURGLE_YIELD_CAP`) instead of debiting a victim, and no
-    `RelationshipRow` to touch (a house has no single NPC standing).
-    Takes the whole `house` (not just its `suggested_price`, the previous
-    signature) so the `CrimeLog` entry can name its owner -- `None` for an
-    NPC-owned/unclaimed house, which the existing `/burgle owner:<name>`
-    flow can't target anyway since it only searches `Character` rows."""
+    alert/escape/caught shape, and the same shift off a cash payout onto
+    a random item (`BURGLE_LOOT_GOOD_IDS`, `BURGLE_LOOT_QTY_RANGE` units)
+    instead of debiting the house's value, with no `RelationshipRow` to
+    touch (a house has no single NPC standing). Takes the whole `house`
+    (not just its `suggested_price`, the previous signature) so the
+    `CrimeLog` entry can name its owner -- `None` for an NPC-owned/
+    unclaimed house, which the existing `/burgle owner:<name>` flow can't
+    target anyway since it only searches `Character` rows."""
     owner_name: str | None = None
     if house.owner_kind == OwnerKind.CHARACTER.value and house.owner_id is not None:
         owner = await session.get(Character, house.owner_id)
         if owner is not None:
             owner_name = owner.name
     if success:
-        amount = min(
-            constants.BURGLE_YIELD_CAP,
-            round(house.suggested_price * constants.BURGLE_YIELD_FRACTION),
-        )
-        character.money += amount
-        result = StealResult(True, False, False, amount)
+        good_id = rng.choice(constants.BURGLE_LOOT_GOOD_IDS)
+        good = goods[good_id]
+        qty = rng.randint(*constants.BURGLE_LOOT_QTY_RANGE)
+        await _grant_good(session, character, good_id, qty)
+        result = StealResult(True, False, False, qty, good.name)
     else:
         result = await _apply_alert_escape_caught(
             session,
@@ -313,6 +341,7 @@ async def apply_burgle_outcome(
         success=result.success,
         caught=result.caught,
         target_name=owner_name,
+        good_name=result.good_name,
         amount=result.amount,
     )
     return result

@@ -22,7 +22,7 @@
 // `?v=` cache-busting matches work.js/crime.js's own reasoning: bump
 // ASSET_VERSION (and vitals.html's/vitals.css's matching `?v=`) any time
 // this file or games/cook.js|bake.js changes.
-const ASSET_VERSION = "4";
+const ASSET_VERSION = "5";
 
 // Donor dashboard theme, same best-effort localStorage mirror every other
 // standalone Activity page here already does (see crime.js's own comment

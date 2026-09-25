@@ -133,10 +133,23 @@ def make_job() -> Job:
     )
 
 
+def make_stolen_goods() -> dict[str, Good]:
+    """Every id `STEAL_LOOT_GOOD_IDS`/`BURGLE_LOOT_GOOD_IDS` can pick --
+    `apply_steal_outcome`/`apply_burgle_outcome` look these up by id on a
+    successful attempt, so any content fixture a steal/burgle test uses
+    needs them present (mirrors `test_stealing_service.py`'s own
+    `make_goods()`)."""
+    good_ids = set(constants.STEAL_LOOT_GOOD_IDS) | set(constants.BURGLE_LOOT_GOOD_IDS)
+    return {
+        good_id: Good(id=good_id, name=good_id.replace("_", " ").title(), base_price=10.0, category="stolen")
+        for good_id in good_ids
+    }
+
+
 def make_content_with_job() -> ContentBundle:
     return ContentBundle(
         districts={0: make_district(0, "The Capitol"), 1: make_district(1, "District 1")},
-        goods={},
+        goods=make_stolen_goods(),
         jobs={"miner": make_job()},
         routes=[],
     )
@@ -1254,7 +1267,7 @@ class TestCrimeAttemptResult:
             character = await session.get(Character, char_id)
             assert character.jailed_until_tick == 50
 
-    async def test_steal_win_moves_money(self, work_app, db_session_factory):
+    async def test_steal_win_grants_loot_not_money(self, work_app, db_session_factory):
         char_id = await seed_character(db_session_factory, character_overrides={"money": 0})
         npc_id = await seed_npc(db_session_factory, money=50.0)
         redis_client = work_app.state.fake_redis
@@ -1274,16 +1287,13 @@ class TestCrimeAttemptResult:
         assert response.status_code == 200
         body = response.json()
         assert body["success"] is True
-        assert body["amount"] > 0
+        assert body["good_name"] is not None
+        assert body["qty"] == constants.STEAL_LOOT_QTY
         async with db_session_factory() as session:
             character = await session.get(Character, char_id)
-            assert character.money == body["amount"]
+            assert character.money == 0  # never touched -- the payout is a good, not cash
 
-    async def test_burgle_win_pays_a_fraction_of_the_house_value(
-        self, work_app, db_session_factory
-    ):
-        from panem_shared import constants
-
+    async def test_burgle_win_grants_loot_not_money(self, work_app, db_session_factory):
         char_id = await seed_character(db_session_factory, character_overrides={"money": 0})
         other_id = await seed_character(
             db_session_factory, discord_id=99, character_overrides={"name": "Owner"}
@@ -1304,7 +1314,14 @@ class TestCrimeAttemptResult:
             response = await client.post("/activity/crime/a1/result", json={"won": True})
         assert response.status_code == 200
         body = response.json()
-        assert body["amount"] == round(1000.0 * constants.BURGLE_YIELD_FRACTION)
+        assert body["success"] is True
+        assert body["good_name"] is not None
+        assert body["qty"] in range(
+            constants.BURGLE_LOOT_QTY_RANGE[0], constants.BURGLE_LOOT_QTY_RANGE[1] + 1
+        )
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.money == 0
 
     async def test_poach_win_grants_the_good(self, poach_app, db_session_factory):
         char_id = await seed_character(db_session_factory, character_overrides={"money": 100})

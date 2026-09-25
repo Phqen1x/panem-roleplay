@@ -118,3 +118,34 @@
   base_price: 25.0
   perishable: false
   category: contraband
+# `category: stolen` (not `contraband`) -- these are /steal's and /burgle's
+# loot, never a district's own produced/smuggled goods, so they're not
+# listed in any district's `illicit_produces`. `blackmarket.resolve_good`
+# lets a `stolen` good through at *any* district's fence on that category
+# alone, unlike a `contraband` good which only trades where that
+# district's own `illicit_produces` names it.
+- id: stolen_jewelry
+  name: Stolen Jewelry
+  base_price: 30.0
+  perishable: false
+  category: stolen
+- id: stolen_furniture
+  name: Stolen Furniture
+  base_price: 22.0
+  perishable: false
+  category: stolen
+- id: stolen_silverware
+  name: Stolen Silverware
+  base_price: 16.0
+  perishable: false
+  category: stolen
+- id: pilfered_valuables
+  name: Pilfered Valuables
+  base_price: 10.0
+  perishable: false
+  category: stolen
+- id: stolen_heirlooms
+  name: Stolen Heirlooms
+  base_price: 38.0
+  perishable: false
+  category: stolen

@@ -12,11 +12,16 @@ export function instructions() {
 }
 
 const SWEEP_MS = 4200;
+// Perfect is half the width it used to be (40-60 -> 45-55): the same
+// 10 points come off evenly on each side, widening Undercooked/
+// Overcooked rather than shrinking Raw/Burnt, so a wildly early or late
+// take-off still reads the same as before -- only the near-miss margin
+// around Perfect got tighter.
 const ZONES = [
   { key: "raw", label: "Raw", from: 0, to: 20 },
-  { key: "undercooked", label: "Undercooked", from: 20, to: 40 },
-  { key: "perfect", label: "Perfect", from: 40, to: 60 },
-  { key: "overcooked", label: "Overcooked", from: 60, to: 80 },
+  { key: "undercooked", label: "Undercooked", from: 20, to: 45 },
+  { key: "perfect", label: "Perfect", from: 45, to: 55 },
+  { key: "overcooked", label: "Overcooked", from: 55, to: 80 },
   { key: "burnt", label: "Burnt", from: 80, to: 100 },
 ];
 const INGREDIENTS = ["\u{1F9C2}", "\u{1F9C4}", "\u{1F525}"]; // salt, garlic, flame

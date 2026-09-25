@@ -699,7 +699,13 @@ STEAL_ALERT_PROB = 0.5
 rest of the time it's a clean, consequence-free miss."""
 STEAL_ESCAPE_BASE_PROB = 0.5
 """Once alerted, the odds of getting away before peacekeepers catch up."""
-STEAL_YIELD_MONEY_RANGE = (5, 25)
+STEAL_LOOT_GOOD_IDS = ("pilfered_valuables", "stolen_jewelry")
+"""What a successful `/steal` lifts off the mark -- a random pick from
+here, `STEAL_LOOT_QTY` units, `category: "stolen"` in `goods.yaml` so it
+only ever trades at a fence (`blackmarket.resolve_good`), never the
+legal market. Pickpocketing a person yields smaller personal items than
+breaking into their house does (`BURGLE_LOOT_GOOD_IDS`)."""
+STEAL_LOOT_QTY = 1
 STEAL_FINE = 25
 STEAL_JAIL_TICKS = 14
 REP_STEAL_CAUGHT_GENERAL_PENALTY = 10
@@ -715,11 +721,14 @@ BURGLE_BASE_SUCCESS = 0.35
 """A flat harder tier than either `/steal` target -- there's no owner
 physically present to read a "same location" precision off, so
 difficulty stands in for that missing signal instead."""
-BURGLE_YIELD_FRACTION = 0.05
-BURGLE_YIELD_CAP = 50
-"""A successful burglary nets `BURGLE_YIELD_FRACTION` of the property's
-`suggested_price`, capped at `BURGLE_YIELD_CAP` -- a rich house is a
-better mark, but never a jackpot."""
+BURGLE_LOOT_GOOD_IDS = ("stolen_furniture", "stolen_jewelry", "stolen_silverware", "stolen_heirlooms")
+"""What a successful `/burgle` carries out of the house -- a random pick
+from here, `BURGLE_LOOT_QTY_RANGE` units, same `category: "stolen"`
+fence-only sale restriction as `STEAL_LOOT_GOOD_IDS`. Pricier goods on
+average than the pickpocket pool (`stolen_heirlooms` alone outvalues
+anything `/steal` can turn up) -- breaking into a house is a bigger risk
+than lifting a wallet, so it pays out in kind."""
+BURGLE_LOOT_QTY_RANGE = (1, 2)
 
 CRACKDOWN_DEFAULT_DURATION_TICKS = 48
 CRACKDOWN_PRESSURE_DELTA = 0.3

@@ -12,11 +12,13 @@ export function instructions() {
 }
 
 const SWEEP_MS = 5000;
+// Perfect is half the width it used to be -- see cook.js's own ZONES
+// comment for the reasoning (same 40-60 -> 45-55 shrink, same reason).
 const ZONES = [
   { key: "raw", label: "Doughy", from: 0, to: 20 },
-  { key: "undercooked", label: "Underbaked", from: 20, to: 40 },
-  { key: "perfect", label: "Perfect", from: 40, to: 60 },
-  { key: "overcooked", label: "Overbaked", from: 60, to: 80 },
+  { key: "undercooked", label: "Underbaked", from: 20, to: 45 },
+  { key: "perfect", label: "Perfect", from: 45, to: 55 },
+  { key: "overcooked", label: "Overbaked", from: 55, to: 80 },
   { key: "burnt", label: "Burnt", from: 80, to: 100 },
 ];
 const INGREDIENTS = ["\u{1F33E}", "\u{1F95B}", "\u{1F525}"]; // grain, dairy, flame

@@ -227,7 +227,7 @@ STRINGS: dict[str, str] = {
     "steal_not_here": "**{name}** needs to be at the same location as the mark to try this.",
     "steal_on_cooldown": "**{name}** already tried to steal something this phase of the day.",
     "steal_jailed": "**{name}** is locked up and can't try that.",
-    "steal_ok": "**{name}** lifts {amount} money off {target}, unnoticed.",
+    "steal_ok": "**{name}** lifts {amount}x {good} off {target}, unnoticed.",
     "steal_miss": "**{name}** comes up empty-handed -- and, as far as they can tell, unnoticed.",
     "steal_alerted_escape": "**{name}** is spotted going for {target}'s pocket -- and bolts clear.",
     "steal_caught": (
@@ -242,7 +242,7 @@ STRINGS: dict[str, str] = {
     "burgle_wrong_district": "**{name}** needs to be in the house's district to break in.",
     "burgle_own_house": "**{name}** can't burgle their own house.",
     "burgle_owner_home": "{owner} is home right now -- **{name}** can't break in undetected.",
-    "burgle_ok": "**{name}** slips out of {owner}'s house with {amount} money.",
+    "burgle_ok": "**{name}** slips out of {owner}'s house with {amount}x {good}.",
     "burgle_miss": "**{name}** finds nothing worth taking -- and slips out unnoticed.",
     "burgle_alerted_escape": "**{name}** is spotted breaking into {owner}'s house -- and bolts.",
     "burgle_caught": (

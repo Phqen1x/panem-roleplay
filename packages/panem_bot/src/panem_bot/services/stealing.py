@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from panem_bot.services import jail as jail_svc
 from panem_shared import constants
+from panem_shared.content.schemas import Good
 from panem_shared.db.models import Character, DistrictState, Npc, Property
 from panem_shared.stealing import (
     STEAL_PRESSURE_DELTA as STEAL_PRESSURE_DELTA,
@@ -48,6 +49,7 @@ async def resolve_steal(
     district_id: int,
     current_tick: int,
     rng: random.Random,
+    goods: dict[str, Good],
 ) -> StealResult:
     check_can_steal(character, victim, current_tick)
     character.last_steal_tick = current_tick
@@ -59,6 +61,7 @@ async def resolve_steal(
         district_row=district_row,
         current_tick=current_tick,
         rng=rng,
+        goods=goods,
     )
 
 
@@ -70,6 +73,7 @@ async def roll_and_apply_steal(
     district_row: DistrictState | None,
     current_tick: int,
     rng: random.Random,
+    goods: dict[str, Good],
 ) -> StealResult:
     """The RNG-fallback skill check (no `ACTIVITY_PUBLIC_URL` configured,
     or the player hits Skip) -- split out from `resolve_steal` so the
@@ -93,6 +97,7 @@ async def roll_and_apply_steal(
         current_tick=current_tick,
         success=success,
         rng=rng,
+        goods=goods,
     )
 
 
@@ -103,14 +108,13 @@ async def resolve_burgle(
     house: Property,
     current_tick: int,
     rng: random.Random,
+    goods: dict[str, Good],
     owner: Character | None = None,
 ) -> StealResult:
     """The house-burglary counterpart to `resolve_steal` -- same alert/
     escape/caught shape, `BURGLE_BASE_SUCCESS` odds (flatly harder, no
-    owner to reuse `/steal`'s per-target tiers off of), and a payout
-    from the house's own value instead of a person's wallet
-    (`BURGLE_YIELD_FRACTION` of `suggested_price`, capped at `BURGLE_
-    YIELD_CAP`) rather than debiting anyone."""
+    owner to reuse `/steal`'s per-target tiers off of), and a random-item
+    payout (`BURGLE_LOOT_GOOD_IDS`) instead of debiting anyone."""
     check_can_burgle(character, house, current_tick, owner=owner)
     character.last_steal_tick = current_tick
     district_row = await session.get(DistrictState, house.district_id)
@@ -121,6 +125,7 @@ async def resolve_burgle(
         district_row=district_row,
         current_tick=current_tick,
         rng=rng,
+        goods=goods,
     )
 
 
@@ -132,6 +137,7 @@ async def roll_and_apply_burgle(
     district_row: DistrictState | None,
     current_tick: int,
     rng: random.Random,
+    goods: dict[str, Good],
 ) -> StealResult:
     """`roll_and_apply_steal`'s burglary counterpart -- see its docstring
     for why this is split out from `resolve_burgle`."""
@@ -147,4 +153,5 @@ async def roll_and_apply_burgle(
         current_tick=current_tick,
         success=success,
         rng=rng,
+        goods=goods,
     )

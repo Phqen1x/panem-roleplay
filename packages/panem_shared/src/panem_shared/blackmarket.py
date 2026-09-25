@@ -114,10 +114,18 @@ async def check_can_trade(session: AsyncSession, character: Character, fence: Np
 
 
 def resolve_good(district: District, goods: dict[str, Good], good_id: str) -> Good:
-    if good_id not in district.illicit_produces:
-        raise NotFound("blackmarket_good_not_traded")
+    """A district's own illicit produce trades only at that district's
+    fence (`good_id in district.illicit_produces`) -- but loot from
+    `/steal`/`/burgle` (`panem_shared.stealing`'s `category: "stolen"`
+    goods) was never produced anywhere in particular, so it trades at
+    *any* fence on that category alone, regardless of district. This is
+    the actual enforcement of "the only way to sell stolen goods is the
+    black market": nothing else (the legal market's own `resolve_good`)
+    ever accepts a `stolen`-category good at all."""
     good = goods.get(good_id)
     if good is None:
+        raise NotFound("blackmarket_good_not_traded")
+    if good_id not in district.illicit_produces and good.category != "stolen":
         raise NotFound("blackmarket_good_not_traded")
     return good
 

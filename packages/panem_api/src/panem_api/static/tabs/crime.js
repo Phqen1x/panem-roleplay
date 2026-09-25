@@ -120,20 +120,19 @@ export function mount(root, ctx) {
     window.addEventListener("message", messageListener);
   }
 
+  // steal/burgle/poach all log the same shape now: a success names the
+  // good and qty taken (never money), so a plain `entry.good_name` check
+  // covers all three instead of branching on `entry.kind` first.
   function describeLogEntry(entry) {
     const verb = { steal: "Steal", burgle: "Burgle", poach: "Poach" }[entry.kind] || entry.kind;
     if (entry.caught) {
       return { verb, result: "Caught", cls: "lose", detail: "Fined and jailed" };
     }
-    if (entry.kind === "poach") {
-      if (entry.good_name) {
-        return { verb, result: "Success", cls: "win", detail: `${entry.amount}x ${entry.good_name}` };
-      }
-      return { verb, result: "Missed", cls: "", detail: "Came back empty-handed" };
+    if (entry.good_name) {
+      return { verb, result: "Success", cls: "win", detail: `${entry.amount}x ${entry.good_name}` };
     }
-    if (entry.success) {
-      const from = entry.target_name ? ` from ${entry.target_name}` : "";
-      return { verb, result: "Success", cls: "win", detail: `${entry.amount} money${from}` };
+    if (entry.kind === "poach") {
+      return { verb, result: "Missed", cls: "", detail: "Came back empty-handed" };
     }
     return { verb, result: "Failed", cls: "", detail: entry.target_name || "No one to blame" };
   }
