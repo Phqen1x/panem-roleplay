@@ -50,6 +50,7 @@ from panem_shared import housing as housing_svc
 from panem_shared import jail as jail_svc
 from panem_shared import jobs as jobs_svc
 from panem_shared import layers as layers_svc
+from panem_shared import lore as lore_svc
 from panem_shared import market as market_svc
 from panem_shared import pay as pay_svc
 from panem_shared import poaching as poaching_svc
@@ -70,6 +71,7 @@ from panem_shared.db.models import (
     DistrictLorePerson,
     LayerCategory,
     Npc,
+    PanemHistoryEntry,
     Property,
     PropertyAuction,
     RelationshipRow,
@@ -3906,6 +3908,45 @@ class DeleteDistrictLorePersonRequest(BaseModel):
     discord_id: int
 
 
+class PanemHistoryEntryResponse(BaseModel):
+    id: int
+    keywords: list[str]
+    text: str
+    created_by_staff_discord_id: int
+
+
+class PanemHistoryCatalogResponse(BaseModel):
+    entries: list[PanemHistoryEntryResponse]
+
+
+class CreatePanemHistoryEntryRequest(BaseModel):
+    discord_id: int
+    keywords: list[str] = Field(default_factory=list)
+    text: str = ""
+
+
+class DeletePanemHistoryEntryRequest(BaseModel):
+    discord_id: int
+
+
+class WorldLoreResponse(BaseModel):
+    alternate_universe_notes: str = ""
+
+
+class UpdateWorldLoreRequest(BaseModel):
+    discord_id: int
+    alternate_universe_notes: str = ""
+
+
+def _panem_history_entry_response(row: PanemHistoryEntry) -> PanemHistoryEntryResponse:
+    return PanemHistoryEntryResponse(
+        id=row.id,
+        keywords=list(row.keywords),
+        text=row.text,
+        created_by_staff_discord_id=row.created_by_staff_discord_id,
+    )
+
+
 def _district_lore_person_response(row: DistrictLorePerson) -> DistrictLorePersonResponse:
     return DistrictLorePersonResponse(
         id=row.id,
@@ -4087,5 +4128,78 @@ def build_district_lore_router(
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
         return {"deleted": True}
+
+    # ---------------------------------------------------- Panem-wide history
+
+    @router.get("/panem-history", response_model=PanemHistoryCatalogResponse)
+    async def list_panem_history(discord_id: int) -> PanemHistoryCatalogResponse:
+        """The nation-wide counterpart to the per-district sections above --
+        `panem_shared.lore.PanemHistoryEntry` rows every NPC in every
+        district can draw on when a proxied line matches one of an entry's
+        keywords (`panem_bot.services.dialogue`), previously only
+        manageable via `/staff lore history-add|remove|list`."""
+        await _require_staff(discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            entries = await lore_svc.list_history_entries(session)
+            return PanemHistoryCatalogResponse(
+                entries=[_panem_history_entry_response(e) for e in entries]
+            )
+
+    @router.post("/panem-history", response_model=PanemHistoryEntryResponse)
+    async def create_panem_history(body: CreatePanemHistoryEntryRequest) -> PanemHistoryEntryResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                entry = await lore_svc.add_history_entry(
+                    session,
+                    keywords=body.keywords,
+                    text=body.text,
+                    created_by_staff_discord_id=body.discord_id,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            return _panem_history_entry_response(entry)
+
+    @router.post("/panem-history/{entry_id}/delete")
+    async def delete_panem_history(
+        entry_id: int, body: DeletePanemHistoryEntryRequest
+    ) -> dict[str, bool]:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                await lore_svc.delete_history_entry(session, entry_id)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"deleted": True}
+
+    @router.get("/world-lore", response_model=WorldLoreResponse)
+    async def get_world_lore(discord_id: int) -> WorldLoreResponse:
+        """`panem_shared.lore.WorldLoreSettings`'s singleton "Alternate
+        Universe" notes -- unconditional background every NPC in the
+        nation keeps in mind, unlike the keyword-gated history entries
+        above. Previously only manageable via `/staff lore au-set|au-show`."""
+        await _require_staff(discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            row = await lore_svc.get_world_lore(session)
+            return WorldLoreResponse(
+                alternate_universe_notes=row.alternate_universe_notes if row is not None else ""
+            )
+
+    @router.put("/world-lore", response_model=WorldLoreResponse)
+    async def save_world_lore(body: UpdateWorldLoreRequest) -> WorldLoreResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                row = await lore_svc.set_world_lore(
+                    session, alternate_universe_notes=body.alternate_universe_notes
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            return WorldLoreResponse(alternate_universe_notes=row.alternate_universe_notes)
 
     return router

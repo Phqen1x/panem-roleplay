@@ -13,6 +13,16 @@
 // same shape as `affliction_types_svc.update_type`'s cure/auto-apply
 // pair). Victors & mentors are a separate, always-visible list under the
 // same district since they're per-entry CRUD, not a single row to resave.
+//
+// Below the per-district sections, two nation-wide ones (`panemHistoryPanel`/
+// `worldLorePanel`) cover `panem_shared.lore`'s `PanemHistoryEntry`/
+// `WorldLoreSettings` -- context every NPC in every district can draw on,
+// not scoped to any one of them, previously only manageable via `/staff
+// lore history-add|remove|list`/`au-set|au-show`.
+//
+// Every textarea on this tab (district notes and both nation-wide panels
+// alike) auto-expands to fit its content via `resizeTextarea`/
+// `setTextareaValue` below, rather than scrolling within a fixed-height box.
 import { el, fetchJson, setStatusText } from "./_shared.js?v=7";
 
 const DISTRICT_IDS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
@@ -25,10 +35,30 @@ function fieldRow(labelText, inputEl) {
   return el("div", { class: "field-row" }, el("label", { text: labelText }), inputEl);
 }
 
+// Grows `t` to fit its current content instead of leaving staff to scroll
+// within a tiny fixed box to read/edit what they already wrote -- the
+// classic auto-expanding-textarea trick (reset to `auto` first so a
+// shrinking edit doesn't get stuck at its old, taller height, since
+// `scrollHeight` never reports smaller than the box's current rendered
+// height otherwise). Exported as its own function (rather than folded
+// silently into an `input` listener alone) since setting `.value`
+// programmatically -- `applyLore`, loading a fresh district -- never
+// fires that event, so callers doing that must resize by hand too.
+function resizeTextarea(t) {
+  t.style.height = "auto";
+  t.style.height = `${t.scrollHeight}px`;
+}
+
 function textarea(value, placeholder, rows = 3) {
-  const t = el("textarea", { rows: String(rows), placeholder: placeholder || "" });
+  const t = el("textarea", { rows: String(rows), placeholder: placeholder || "", class: "auto-textarea" });
   t.value = value || "";
+  t.addEventListener("input", () => resizeTextarea(t));
   return t;
+}
+
+function setTextareaValue(t, value) {
+  t.value = value || "";
+  resizeTextarea(t);
 }
 
 function lorePanel(ctx) {
@@ -98,13 +128,13 @@ function lorePanel(ctx) {
   function applyLore(districtId, lore) {
     classificationSelect.value = lore.classification || "";
     adjectivesInput.value = (lore.adjectives || []).join(", ");
-    accentNotes.value = lore.accent_notes || "";
-    urbanRuralNotes.value = lore.urban_rural_notes || "";
+    setTextareaValue(accentNotes, lore.accent_notes);
+    setTextareaValue(urbanRuralNotes, lore.urban_rural_notes);
     academyNameInput.value = lore.academy_name || "";
-    academyNotes.value = lore.academy_notes || "";
-    gamesHistory.value = lore.games_history || "";
-    regimeNotes.value = lore.regime_notes || "";
-    miscNotes.value = lore.misc_notes || "";
+    setTextareaValue(academyNotes, lore.academy_notes);
+    setTextareaValue(gamesHistory, lore.games_history);
+    setTextareaValue(regimeNotes, lore.regime_notes);
+    setTextareaValue(miscNotes, lore.misc_notes);
     rebuildOpinionsWrap(districtId);
     for (const [otherId, input] of opinionInputs) {
       input.value = (lore.opinions && lore.opinions[String(otherId)]) || "";
@@ -390,10 +420,197 @@ function peoplePanel(ctx, getDistrictId) {
   return { root, refresh: (districtId, lore) => refresh(districtId, lore) };
 }
 
+// -------------------------------------------------- Panem-wide history
+
+// `panem_shared.lore.PanemHistoryEntry` -- unlike everything in `lorePanel`
+// above (one district's own context), these facts aren't scoped to any
+// district at all: every NPC nationwide can draw on one once a proxied
+// line matches one of its keywords (`panem_bot.services.dialogue`).
+// Previously only manageable via `/staff lore history-add|remove|list`.
+function panemHistoryEntryRow(ctx, entry, { onDeleted }) {
+  const resultLine = el("p", { class: "result-line" });
+  const deleteBtn = el("button", { class: "btn secondary", type: "button" }, "Delete");
+
+  deleteBtn.addEventListener("click", async () => {
+    if (!confirm("Remove this history entry for good?")) return;
+    try {
+      await fetchJson(`/activity/dashboard/history/panem-history/${entry.id}/delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ discord_id: ctx.discordId() }),
+      });
+      onDeleted();
+    } catch (err) {
+      resultLine.className = "result-line lose";
+      resultLine.textContent = err.message;
+    }
+  });
+
+  return el(
+    "div",
+    { class: "layer-category" },
+    el(
+      "div",
+      { class: "field-row" },
+      el("span", {}, `[${entry.keywords.join(", ")}]`),
+      deleteBtn
+    ),
+    el("p", {}, entry.text),
+    resultLine
+  );
+}
+
+function panemHistoryPanel(ctx) {
+  const statusEl = el("p", { class: "tab-status" }, "Loading…");
+  const listEl = el("div", {});
+  const keywordsInput = el("input", {
+    type: "text",
+    placeholder: "Comma-separated keywords, e.g. \"dark days, district 13\"",
+  });
+  const textInput = textarea("", "The fact itself, as an NPC should understand it.", 3);
+  const addBtn = el("button", { class: "btn primary", type: "button" }, "Add");
+  const addResult = el("p", { class: "result-line" });
+
+  async function refresh() {
+    setStatusText(statusEl, "Loading…");
+    try {
+      const body = await fetchJson(
+        `/activity/dashboard/history/panem-history?discord_id=${ctx.discordId()}`
+      );
+      listEl.innerHTML = "";
+      if (body.entries.length === 0) {
+        listEl.append(el("p", { class: "tab-status" }, "No history entries yet."));
+      }
+      for (const entry of body.entries) {
+        listEl.append(panemHistoryEntryRow(ctx, entry, { onDeleted: refresh }));
+      }
+      setStatusText(statusEl, "");
+    } catch (err) {
+      setStatusText(statusEl, `Could not load Panem-wide history: ${err.message}`, { error: true });
+    }
+  }
+
+  addBtn.addEventListener("click", async () => {
+    addResult.textContent = "";
+    try {
+      await fetchJson("/activity/dashboard/history/panem-history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          discord_id: ctx.discordId(),
+          keywords: keywordsInput.value.split(","),
+          text: textInput.value,
+        }),
+      });
+      keywordsInput.value = "";
+      setTextareaValue(textInput, "");
+      await refresh();
+    } catch (err) {
+      addResult.className = "result-line lose";
+      addResult.textContent = err.message;
+    }
+  });
+
+  const root = el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "Panem-Wide History" }),
+    el(
+      "p",
+      { class: "tab-status" },
+      "Facts every NPC in every district can draw on -- not scoped to one district the way the " +
+        "section above is. Brought up only when a keyword matches what's actually being said."
+    ),
+    statusEl,
+    listEl,
+    el(
+      "div",
+      { class: "panel" },
+      el("h3", { text: "Add a history fact" }),
+      fieldRow("Keywords", keywordsInput),
+      fieldRow("Fact", textInput),
+      el("div", { class: "field-row" }, addBtn),
+      addResult
+    )
+  );
+
+  refresh();
+  return { root };
+}
+
+// ---------------------------------------------- Alternate Universe notes
+
+// `panem_shared.lore.WorldLoreSettings` -- unconditional background every
+// NPC in the nation keeps in mind (unlike the keyword-gated facts above,
+// this is always included in a dialogue request). Previously only
+// manageable via `/staff lore au-set|au-show`.
+function worldLorePanel(ctx) {
+  const statusEl = el("p", { class: "tab-status" }, "Loading…");
+  const notesInput = textarea("", "How this version of Panem's canon diverges, ongoing world-shaping facts, etc.", 4);
+  const saveBtn = el("button", { class: "btn primary", type: "button" }, "Save");
+  const resultLine = el("p", { class: "result-line" });
+
+  async function load() {
+    setStatusText(statusEl, "Loading…");
+    try {
+      const body = await fetchJson(
+        `/activity/dashboard/history/world-lore?discord_id=${ctx.discordId()}`
+      );
+      setTextareaValue(notesInput, body.alternate_universe_notes);
+      setStatusText(statusEl, "");
+    } catch (err) {
+      setStatusText(statusEl, `Could not load Alternate Universe notes: ${err.message}`, {
+        error: true,
+      });
+    }
+  }
+
+  saveBtn.addEventListener("click", async () => {
+    resultLine.textContent = "";
+    try {
+      const body = await fetchJson("/activity/dashboard/history/world-lore", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          discord_id: ctx.discordId(),
+          alternate_universe_notes: notesInput.value,
+        }),
+      });
+      setTextareaValue(notesInput, body.alternate_universe_notes);
+      resultLine.className = "result-line win";
+      resultLine.textContent = "Saved.";
+    } catch (err) {
+      resultLine.className = "result-line lose";
+      resultLine.textContent = err.message;
+    }
+  });
+
+  const root = el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "Alternate Universe Notes" }),
+    el(
+      "p",
+      { class: "tab-status" },
+      "Free-form notes every NPC in the nation keeps in mind, always -- not something recalled " +
+        "on cue like the history facts above."
+    ),
+    statusEl,
+    fieldRow("Notes", notesInput),
+    el("div", { class: "field-row" }, saveBtn),
+    resultLine
+  );
+
+  load();
+  return { root };
+}
+
 export function mount(root, ctx) {
   const lore = lorePanel(ctx);
   const people = peoplePanel(ctx, lore.getDistrictId);
   lore.setPeoplePanel(people);
-  root.append(lore.root, people.root);
+  const panemHistory = panemHistoryPanel(ctx);
+  const worldLore = worldLorePanel(ctx);
+  root.append(lore.root, people.root, panemHistory.root, worldLore.root);
   lore.loadDistrict().then((loreData) => people.refresh(lore.getDistrictId(), loreData));
 }

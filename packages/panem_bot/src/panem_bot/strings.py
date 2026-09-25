@@ -339,6 +339,11 @@ STRINGS: dict[str, str] = {
     "generator samples names per district, so that happens), pick one from the "
     "autocomplete suggestions to tell them apart.",
     "staff_good_not_found": "Not a valid good id.",
+    # Panem-wide history/lore (`/staff lore ...`, `panem_shared.lore`)
+    "panem_history_needs_a_keyword": "Give at least one keyword, comma-separated.",
+    "panem_history_text_required": "The history fact can't be empty.",
+    "panem_history_text_too_long": "That history fact is too long (4000 characters max).",
+    "panem_history_au_notes_too_long": "Those notes are too long (4000 characters max).",
 }
 
 

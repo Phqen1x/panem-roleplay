@@ -23,6 +23,7 @@ from panem_bot.services.staff import log_staff_action
 from panem_bot.strings import t
 from panem_bot.views import GENDER_LABELS
 from panem_shared import constants, job_levels
+from panem_shared import lore as lore_svc
 from panem_shared.content.traits import speech_tone
 from panem_shared.db.models import (
     Character,
@@ -30,12 +31,10 @@ from panem_shared.db.models import (
     EngagementSettings,
     Inventory,
     Npc,
-    PanemHistoryEntry,
     Property,
     Scene,
     User,
     WorldClock,
-    WorldLoreSettings,
 )
 from panem_shared.enums import (
     CharacterStatus,
@@ -1088,21 +1087,20 @@ class StaffCog(commands.Cog):
     async def lore_history_add(
         self, interaction: discord.Interaction, keywords: str, text: str
     ) -> None:
-        parsed_keywords = [k.strip() for k in keywords.split(",") if k.strip()]
-        if not parsed_keywords:
-            await interaction.response.send_message(
-                "Give at least one keyword, comma-separated.", ephemeral=True
-            )
-            return
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            entry = PanemHistoryEntry(
-                keywords=parsed_keywords,
-                text=text,
-                created_by_staff_discord_id=interaction.user.id,
-            )
-            session.add(entry)
-            await session.flush()
-            entry_id = entry.id
+            try:
+                entry = await lore_svc.add_history_entry(
+                    session,
+                    keywords=keywords.split(","),
+                    text=text,
+                    created_by_staff_discord_id=interaction.user.id,
+                )
+            except ServiceError as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+            entry_id, parsed_keywords = entry.id, entry.keywords
             await log_staff_action(
                 session,
                 bot=self.bot,
@@ -1121,21 +1119,20 @@ class StaffCog(commands.Cog):
     @app_commands.check(_is_staff)
     async def lore_history_remove(self, interaction: discord.Interaction, entry_id: int) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            entry = await session.get(PanemHistoryEntry, entry_id)
-            if entry is None:
+            try:
+                entry = await lore_svc.delete_history_entry(session, entry_id)
+            except ServiceError:
                 await interaction.response.send_message(
                     f"No history entry `#{entry_id}`.", ephemeral=True
                 )
                 return
-            keywords, text = entry.keywords, entry.text
-            await session.delete(entry)
             await log_staff_action(
                 session,
                 bot=self.bot,
                 staff_discord_id=interaction.user.id,
                 action="lore_history_remove",
                 target=str(entry_id),
-                payload={"keywords": keywords, "text": text},
+                payload={"keywords": entry.keywords, "text": entry.text},
             )
         await interaction.response.send_message(
             f"Removed history entry **#{entry_id}**.", ephemeral=True
@@ -1145,11 +1142,7 @@ class StaffCog(commands.Cog):
     @app_commands.check(_is_staff)
     async def lore_history_list(self, interaction: discord.Interaction) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            entries = (
-                (await session.execute(select(PanemHistoryEntry).order_by(PanemHistoryEntry.id)))
-                .scalars()
-                .all()
-            )
+            entries = await lore_svc.list_history_entries(session)
         if not entries:
             await interaction.response.send_message("No history entries yet.", ephemeral=True)
             return
@@ -1169,12 +1162,13 @@ class StaffCog(commands.Cog):
     @app_commands.check(_is_staff)
     async def lore_au_set(self, interaction: discord.Interaction, text: str) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            settings_row = await session.get(WorldLoreSettings, 1)
-            if settings_row is None:
-                settings_row = WorldLoreSettings(id=1, alternate_universe_notes=text)
-                session.add(settings_row)
-            else:
-                settings_row.alternate_universe_notes = text
+            try:
+                await lore_svc.set_world_lore(session, alternate_universe_notes=text)
+            except ServiceError as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
             await log_staff_action(
                 session,
                 bot=self.bot,
@@ -1189,7 +1183,7 @@ class StaffCog(commands.Cog):
     @app_commands.check(_is_staff)
     async def lore_au_show(self, interaction: discord.Interaction) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            settings_row = await session.get(WorldLoreSettings, 1)
+            settings_row = await lore_svc.get_world_lore(session)
         notes = settings_row.alternate_universe_notes if settings_row is not None else ""
         await interaction.response.send_message(
             notes[:1900] or "No Alternate Universe notes set.", ephemeral=True

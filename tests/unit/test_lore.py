@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import pytest
+
 from panem_shared import constants, lore
 from panem_shared.db.models import PanemHistoryEntry
+from panem_shared.errors import NotFound, ValidationFailed
 
 
 def make_history_entry(id_: int, **overrides: object) -> PanemHistoryEntry:
@@ -52,3 +55,78 @@ class TestMatchHistoryEntries:
         ]
         result = lore.match_history_entries(rows, "the dark days")
         assert result == ["first", "second"]
+
+
+class TestAddHistoryEntry:
+    async def test_creates_a_row_with_cleaned_keywords(self, db_session):
+        entry = await lore.add_history_entry(
+            db_session,
+            keywords=[" dark days ", "", "  ", "treaty of treason"],
+            text="  The Dark Days ended with the Treaty of Treason.  ",
+            created_by_staff_discord_id=42,
+        )
+        assert entry.id is not None
+        assert entry.keywords == ["dark days", "treaty of treason"]
+        assert entry.text == "The Dark Days ended with the Treaty of Treason."
+        assert entry.created_by_staff_discord_id == 42
+
+    async def test_rejects_no_real_keywords(self, db_session):
+        with pytest.raises(ValidationFailed) as exc_info:
+            await lore.add_history_entry(
+                db_session, keywords=["  ", ""], text="Some fact.", created_by_staff_discord_id=1
+            )
+        assert exc_info.value.reason_key == "panem_history_needs_a_keyword"
+
+    async def test_rejects_blank_text(self, db_session):
+        with pytest.raises(ValidationFailed) as exc_info:
+            await lore.add_history_entry(
+                db_session, keywords=["dark days"], text="   ", created_by_staff_discord_id=1
+            )
+        assert exc_info.value.reason_key == "panem_history_text_required"
+
+
+class TestListAndDeleteHistoryEntries:
+    async def test_lists_in_id_order(self, db_session):
+        first = await lore.add_history_entry(
+            db_session, keywords=["a"], text="first", created_by_staff_discord_id=1
+        )
+        second = await lore.add_history_entry(
+            db_session, keywords=["b"], text="second", created_by_staff_discord_id=1
+        )
+        rows = await lore.list_history_entries(db_session)
+        assert [r.id for r in rows] == [first.id, second.id]
+
+    async def test_deletes_an_existing_entry(self, db_session):
+        entry = await lore.add_history_entry(
+            db_session, keywords=["a"], text="fact", created_by_staff_discord_id=1
+        )
+        deleted = await lore.delete_history_entry(db_session, entry.id)
+        assert deleted.id == entry.id
+        assert await lore.list_history_entries(db_session) == []
+
+    async def test_deleting_an_unknown_entry_raises_not_found(self, db_session):
+        with pytest.raises(NotFound) as exc_info:
+            await lore.delete_history_entry(db_session, 999999)
+        assert exc_info.value.reason_key == "panem_history_entry_not_found"
+
+
+class TestWorldLore:
+    async def test_get_returns_none_before_anything_is_set(self, db_session):
+        assert await lore.get_world_lore(db_session) is None
+
+    async def test_set_creates_the_singleton_row(self, db_session):
+        row = await lore.set_world_lore(db_session, alternate_universe_notes="  Some AU note.  ")
+        assert row.id == 1
+        assert row.alternate_universe_notes == "Some AU note."
+        assert (await lore.get_world_lore(db_session)).alternate_universe_notes == "Some AU note."
+
+    async def test_set_updates_the_row_in_place(self, db_session):
+        await lore.set_world_lore(db_session, alternate_universe_notes="first")
+        await lore.set_world_lore(db_session, alternate_universe_notes="second")
+        row = await lore.get_world_lore(db_session)
+        assert row.alternate_universe_notes == "second"
+
+    async def test_set_allows_clearing_the_notes_to_empty(self, db_session):
+        await lore.set_world_lore(db_session, alternate_universe_notes="something")
+        row = await lore.set_world_lore(db_session, alternate_universe_notes="   ")
+        assert row.alternate_universe_notes == ""

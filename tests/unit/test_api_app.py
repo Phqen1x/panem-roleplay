@@ -4403,6 +4403,128 @@ class TestDashboardStaffLayers:
             assert await session.get(LayerOption, option_id) is None
 
 
+class TestDashboardPanemHistory:
+    # `discord_staff.fetch_is_staff` (rather than `httpx.AsyncClient.get`)
+    # is what's mocked below -- these routes are read via `client.get`
+    # itself, so patching the same method Discord's own role lookup uses
+    # would intercept the outer test request too (see `test_post_staff_
+    # log_posts_to_the_configured_channel`'s own comment on this exact
+    # trap, right above `TestDashboardAfflictionTypes`).
+    async def test_list_refuses_without_the_staff_role(self, staff_app):
+        with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=False)):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.get(
+                    "/activity/dashboard/history/panem-history", params={"discord_id": 42}
+                )
+        assert response.status_code == 403
+        assert response.json()["detail"] == "staff_only"
+
+    async def test_create_then_list_round_trips(self, staff_app):
+        with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=True)):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                create_response = await client.post(
+                    "/activity/dashboard/history/panem-history",
+                    json={
+                        "discord_id": 42,
+                        "keywords": [" Dark Days ", "", "district 13"],
+                        "text": "  The Dark Days ended with the Treaty of Treason.  ",
+                    },
+                )
+                assert create_response.status_code == 200
+                created = create_response.json()
+                assert created["keywords"] == ["Dark Days", "district 13"]
+                assert created["text"] == "The Dark Days ended with the Treaty of Treason."
+                assert created["created_by_staff_discord_id"] == 42
+
+                list_response = await client.get(
+                    "/activity/dashboard/history/panem-history", params={"discord_id": 42}
+                )
+        assert list_response.status_code == 200
+        entries = list_response.json()["entries"]
+        assert len(entries) == 1
+        assert entries[0]["id"] == created["id"]
+
+    async def test_create_rejects_no_real_keywords(self, staff_app):
+        with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=True)):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/history/panem-history",
+                    json={"discord_id": 42, "keywords": ["  "], "text": "Some fact."},
+                )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "panem_history_needs_a_keyword"
+
+    async def test_delete_removes_the_entry(self, staff_app):
+        with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=True)):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                created = (
+                    await client.post(
+                        "/activity/dashboard/history/panem-history",
+                        json={"discord_id": 42, "keywords": ["a"], "text": "fact"},
+                    )
+                ).json()
+                delete_response = await client.post(
+                    f"/activity/dashboard/history/panem-history/{created['id']}/delete",
+                    json={"discord_id": 42},
+                )
+                assert delete_response.status_code == 200
+                list_response = await client.get(
+                    "/activity/dashboard/history/panem-history", params={"discord_id": 42}
+                )
+        assert list_response.json()["entries"] == []
+
+    async def test_delete_404s_for_an_unknown_entry(self, staff_app):
+        with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=True)):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/history/panem-history/999999/delete",
+                    json={"discord_id": 42},
+                )
+        assert response.status_code == 404
+
+
+class TestDashboardWorldLore:
+    async def test_get_refuses_without_the_staff_role(self, staff_app):
+        with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=False)):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.get(
+                    "/activity/dashboard/history/world-lore", params={"discord_id": 42}
+                )
+        assert response.status_code == 403
+
+    async def test_get_defaults_to_empty_notes(self, staff_app):
+        with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=True)):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.get(
+                    "/activity/dashboard/history/world-lore", params={"discord_id": 42}
+                )
+        assert response.status_code == 200
+        assert response.json()["alternate_universe_notes"] == ""
+
+    async def test_save_then_get_round_trips(self, staff_app):
+        with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=True)):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                save_response = await client.put(
+                    "/activity/dashboard/history/world-lore",
+                    json={"discord_id": 42, "alternate_universe_notes": "  A new canon note.  "},
+                )
+                assert save_response.status_code == 200
+                assert save_response.json()["alternate_universe_notes"] == "A new canon note."
+
+                get_response = await client.get(
+                    "/activity/dashboard/history/world-lore", params={"discord_id": 42}
+                )
+        assert get_response.json()["alternate_universe_notes"] == "A new canon note."
+
+
 async def seed_affliction_type(session_factory, **overrides: object) -> int:
     async with session_factory() as session, session.begin():
         defaults: dict[str, object] = dict(

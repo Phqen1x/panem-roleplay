@@ -487,6 +487,15 @@ table.data-table td.lose {
   box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
+/* History tab (tabs/history.js): every textarea there grows to fit
+   whatever staff type into it instead of scrolling within a tiny fixed
+   box -- `resize: none` since a manual drag-handle would just fight the
+   JS-driven `height` it sets on every `input` event. */
+.auto-textarea {
+  resize: none;
+  overflow: hidden;
+}
+
 /* A checkbox (e.g. character creation's "Illicit job?", housing's
    "Financed?", the staff affliction-type editor's "Permanent?") was
    falling into the text-input rule above -- `flex: 1; min-width: 120px;`
