@@ -14,3 +14,13 @@ htmlcov/
 node_modules/
 web/dist/
 uv.lock.tmp
+scratch/
+.lemonade/
+dump.rdb
+
+# Staff-uploaded Picrew layer images (panem_shared.layers) -- runtime
+# content written through the dashboard, not source; see deploy/
+# docker-compose.yml's panem_layer_uploads volume for production.
+packages/panem_api/src/panem_api/static/uploads/
+rejected
+

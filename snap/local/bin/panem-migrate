@@ -1,0 +1,14 @@
+#!/bin/sh
+# `sudo panem.migrate` -- runs `alembic upgrade head`. Not a daemon; run by
+# hand after install and after every upgrade that ships a new migration.
+set -eu
+
+if [ -f "$SNAP_DATA/env" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$SNAP_DATA/env"
+  set +a
+fi
+
+cd "$SNAP"
+exec "$SNAP/python/bin/python3" -m alembic -c "$SNAP/alembic.ini" upgrade head

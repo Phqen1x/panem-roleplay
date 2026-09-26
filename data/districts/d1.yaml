@@ -3,6 +3,7 @@ name: District One
 industry: luxury_goods
 produces:
 - luxury_goods
+- career_training
 imports:
 - fish
 - grain
@@ -11,6 +12,9 @@ imports:
 - power
 - produce
 - textiles
+- transport
+illicit_produces:
+- smuggled_luxuries
 population_base: 6000
 culture:
   tone:
@@ -67,6 +71,15 @@ locations:
   capacity: 60
   job_ids:
   - d1_academy_trainer
+- id: black_market
+  name: The Underground Exchange
+  kind: market
+  capacity: 30
+  illicit: true
+- id: jail
+  name: District One Jail
+  kind: jail
+  capacity: 40
 map:
   image: maps/d1.png
   width: 1600
@@ -96,6 +109,12 @@ map:
     academy:
     - 1000
     - 300
+    black_market:
+    - 1200
+    - 650
+    jail:
+    - 950
+    - 150
 quota:
   good: luxury_goods
   amount: 400

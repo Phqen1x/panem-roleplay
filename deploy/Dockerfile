@@ -16,5 +16,7 @@ COPY migrations ./migrations
 RUN uv python install 3.14 && uv sync --frozen --no-dev --all-packages
 
 COPY data ./data
+COPY lemonade ./lemonade
+COPY scripts ./scripts
 
 CMD ["uv", "run", "python", "-m", "panem_bot.main"]

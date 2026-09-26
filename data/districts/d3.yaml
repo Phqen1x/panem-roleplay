@@ -11,6 +11,9 @@ imports:
 - power
 - produce
 - textiles
+- transport
+illicit_produces:
+- contraband_weapons
 population_base: 7000
 culture:
   tone:
@@ -61,6 +64,15 @@ locations:
   access_jobs:
   - d3_assembler
   - d3_technician
+- id: black_market
+  name: The Scrap Circuit
+  kind: market
+  capacity: 30
+  illicit: true
+- id: jail
+  name: District Three Jail
+  kind: jail
+  capacity: 40
 map:
   image: maps/d3.png
   width: 1600
@@ -87,6 +99,12 @@ map:
     outskirts:
     - 1400
     - 800
+    black_market:
+    - 1200
+    - 650
+    jail:
+    - 950
+    - 150
 quota:
   good: electronics
   amount: 700

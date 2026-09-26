@@ -1,0 +1,11 @@
+{
+  "_comment": "lemond config.json overrides for the embedded (private) Lemonade instance that ships inside Panem. Copied next to lemond's data directory by `scripts/lemonade_omni.py serve|bundle` and by the snap's lemond wrapper. Everything not listed inherits lemond's defaults.json.",
+  "host": "localhost",
+  "port": 13305,
+  "broadcast": false,
+  "models_dir": "./models",
+  "auto_check_model_updates": false,
+  "auto_update_models": false,
+  "max_loaded_models": 1,
+  "log_file": "enabled"
+}

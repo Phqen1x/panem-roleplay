@@ -1,0 +1,151 @@
+main {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 16px;
+  text-align: center;
+}
+
+#status {
+  color: var(--muted);
+  font-size: 16px;
+}
+
+#result {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+#result.win {
+  color: #7cd992;
+}
+
+#result.lose {
+  color: #e0736b;
+}
+
+.instructions {
+  color: var(--muted);
+  font-size: 15px;
+  font-style: italic;
+  line-height: 1.4;
+  margin: 4px auto 12px;
+  max-width: 420px;
+}
+
+#board {
+  margin: 12px auto;
+}
+
+/* -------------------------------------------------------------- Cook/Bake */
+
+.board-cookbake {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.stage-label {
+  font-size: 15px;
+  color: var(--muted);
+  margin: 0;
+}
+
+.prep-row {
+  display: flex;
+  gap: 12px;
+}
+
+.prep-btn {
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  border: 2px solid var(--border);
+  background: var(--panel);
+  font-size: 26px;
+  cursor: pointer;
+}
+
+.prep-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.prep-btn.done {
+  border-color: #7cd992;
+}
+
+.gauge-wrap {
+  width: 320px;
+  max-width: 90vw;
+}
+
+.gauge-track {
+  position: relative;
+  height: 28px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  display: flex;
+}
+
+.gauge-zone {
+  height: 100%;
+}
+
+.gauge-zone.raw {
+  background: #3a3a3a;
+}
+
+.gauge-zone.undercooked {
+  background: #6b5a2a;
+}
+
+.gauge-zone.perfect {
+  background: #2a5c34;
+}
+
+.gauge-zone.overcooked {
+  background: #6b3a2a;
+}
+
+.gauge-zone.burnt {
+  background: #3a1414;
+}
+
+.gauge-needle {
+  position: absolute;
+  top: -4px;
+  width: 3px;
+  height: 36px;
+  background: var(--accent);
+  transform: translateX(-1.5px);
+}
+
+.doneness-readout {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.doneness-readout.bonus {
+  color: #7cd992;
+}
+
+.take-off-btn,
+.plate-btn {
+  padding: 10px 24px;
+  border-radius: 6px;
+  border: none;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.take-off-btn:disabled,
+.plate-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

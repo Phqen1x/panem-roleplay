@@ -18,24 +18,43 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import json
 import uuid
 
 import redis.asyncio as redis
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import selectinload
 
+from panem_shared import constants
 from panem_shared.content.loader import ContentBundle
-from panem_shared.db.models import Character, DistrictState, Npc, NpcSchedule, Shift, WorldClock
+from panem_shared.db.models import (
+    AfflictionType,
+    ApartmentLease,
+    Character,
+    CharacterAffliction,
+    DistrictState,
+    MarketPrice,
+    Memory,
+    Npc,
+    NpcSchedule,
+    Property,
+    PropertyAuction,
+    RelationshipRow,
+    Shift,
+    Shipment,
+    WorldClock,
+)
 from panem_shared.db.models import WorldEvent as WorldEventRow
 from panem_shared.db.session import session_scope
+from panem_shared.enums import ShiftResult
 from panem_shared.events import AnyWorldEvent, parse_event, publish
 from panem_shared.logging import get_logger
+from panem_shared.redis_keys import SIM_ALERTS_CHANNEL, positions_key
 from panem_sim.rng import tick_rng
 from panem_sim.state import TickContext, WorldState
 from panem_sim.systems import FIXED_ORDER
 from panem_sim.systems.time import advance
-
-SIM_ALERTS_CHANNEL = "sim:alerts"
 
 logger = get_logger()
 
@@ -58,6 +77,52 @@ async def _load_state(session: AsyncSession) -> tuple[WorldState, WorldClock]:
     open_shifts = list(
         (await session.execute(select(Shift).where(Shift.result.is_(None)))).scalars()
     )
+    completed_shifts = list(
+        (
+            await session.execute(
+                select(Shift).where(
+                    Shift.result == ShiftResult.COMPLETED.value,
+                    Shift.completed_at.is_not(None),
+                    Shift.completed_at > clock.tick - constants.TICKS_PER_DAY,
+                )
+            )
+        ).scalars()
+    )
+    market_prices = {
+        (row.district_id, row.good_id): row
+        for row in (await session.execute(select(MarketPrice))).scalars()
+    }
+    relationships = {
+        (row.subject_kind, row.subject_id, row.object_kind, row.object_id): row
+        for row in (await session.execute(select(RelationshipRow))).scalars()
+    }
+    memories = {row.id: row for row in (await session.execute(select(Memory))).scalars()}
+    properties = {row.id: row for row in (await session.execute(select(Property))).scalars()}
+    apartment_leases = {
+        row.id: row for row in (await session.execute(select(ApartmentLease))).scalars()
+    }
+    property_auctions = {
+        row.id: row
+        for row in (
+            await session.execute(select(PropertyAuction).where(PropertyAuction.status == "open"))
+        ).scalars()
+    }
+    shipments = {
+        row.id: row
+        for row in (
+            await session.execute(select(Shipment).where(Shipment.expires_tick > clock.tick))
+        ).scalars()
+    }
+    affliction_types = list((await session.execute(select(AfflictionType))).scalars())
+    active_afflictions: dict[int, list[CharacterAffliction]] = {}
+    for affliction_row in (
+        await session.execute(
+            select(CharacterAffliction)
+            .where(CharacterAffliction.cured_at.is_(None))
+            .options(selectinload(CharacterAffliction.affliction_type))
+        )
+    ).scalars():
+        active_afflictions.setdefault(affliction_row.character_id, []).append(affliction_row)
 
     state = WorldState(
         districts=districts,
@@ -65,6 +130,16 @@ async def _load_state(session: AsyncSession) -> tuple[WorldState, WorldClock]:
         npc_schedules=schedules,
         characters=characters,
         open_shifts=open_shifts,
+        completed_shifts=completed_shifts,
+        market_prices=market_prices,
+        relationships=relationships,
+        memories=memories,
+        properties=properties,
+        apartment_leases=apartment_leases,
+        property_auctions=property_auctions,
+        shipments=shipments,
+        affliction_types=affliction_types,
+        active_afflictions=active_afflictions,
     )
     return state, clock
 
@@ -85,7 +160,7 @@ async def _run_tick_once(
     session_factory: async_sessionmaker[AsyncSession],
     content: ContentBundle,
     world_seed: str,
-) -> list[AnyWorldEvent]:
+) -> tuple[list[AnyWorldEvent], WorldState]:
     async with session_scope(session_factory) as session:
         state, clock = await _load_state(session)
         tick, phase, day, month = advance(clock.tick)
@@ -110,8 +185,79 @@ async def _run_tick_once(
             session.add(shift)
         for history_row in state.new_job_history:
             session.add(history_row)
+        for price_row in state.new_market_prices:
+            session.add(price_row)
+        for relationship_row in state.new_relationships:
+            session.add(relationship_row)
+        for memory_row in state.new_memories:
+            session.add(memory_row)
+        for auction_row in state.new_property_auctions:
+            session.add(auction_row)
+        for shipment_row in state.new_shipments:
+            session.add(shipment_row)
+        for affliction_row in state.new_character_afflictions:
+            session.add(affliction_row)
+        if state.deleted_memory_ids:
+            await session.execute(delete(Memory).where(Memory.id.in_(state.deleted_memory_ids)))
+        if state.deleted_shipment_ids:
+            await session.execute(
+                delete(Shipment).where(Shipment.id.in_(state.deleted_shipment_ids))
+            )
+        if state.deleted_apartment_lease_ids:
+            await session.execute(
+                delete(ApartmentLease).where(
+                    ApartmentLease.id.in_(state.deleted_apartment_lease_ids)
+                )
+            )
 
-    return events
+    return events, state
+
+
+def _district_positions(state: WorldState, district_id: int) -> str:
+    return json.dumps(
+        {
+            "npcs": [
+                {
+                    "id": npc.id,
+                    "name": npc.name,
+                    "x": npc.x,
+                    "y": npc.y,
+                    "location_id": npc.location_id,
+                }
+                for npc in state.npcs.values()
+                if npc.district_id == district_id
+            ],
+            "characters": [
+                {
+                    "id": character.id,
+                    "name": character.name,
+                    "x": character.x,
+                    "y": character.y,
+                    "location_id": character.location_id,
+                }
+                for character in state.characters.values()
+                if character.current_district_id == district_id
+            ],
+        }
+    )
+
+
+async def _publish_positions(
+    redis_client: redis.Redis, content: ContentBundle, state: WorldState
+) -> None:
+    """Live NPC/character positions for the Activity's map (Phase 5) --
+    a plain Redis SET per district, not a durable `WorldEvent`: this is
+    "what does the map look like right now", freely overwritten every
+    tick, with no announced/replay contract behind it. Best-effort: a
+    Redis hiccup here shouldn't fail the tick or trigger FR-TCK-3's
+    retry/alert path, which exists for the DB transaction, not this."""
+    for district_id in content.districts:
+        try:
+            await redis_client.set(
+                positions_key(district_id), _district_positions(state, district_id)
+            )
+        except Exception:
+            logger.warning("positions_publish_failed", district_id=district_id)
 
 
 async def _publish_and_mark_announced(
@@ -144,12 +290,13 @@ async def run_tick(
     last_error: Exception | None = None
     for attempt in range(2):
         try:
-            events = await _run_tick_once(session_factory, content, world_seed)
+            events, state = await _run_tick_once(session_factory, content, world_seed)
         except Exception as exc:
             last_error = exc
             logger.error("tick_failed", attempt=attempt, error=str(exc))
             continue
         await _publish_and_mark_announced(session_factory, redis_client, events)
+        await _publish_positions(redis_client, content, state)
         return events
 
     assert last_error is not None

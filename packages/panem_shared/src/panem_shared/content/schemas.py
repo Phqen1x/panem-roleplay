@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from panem_shared.enums import DayPhase, LocationKind
+from panem_shared.enums import DayPhase, Gender, LocationKind
 
 # Forum tags = one per location + `Open` + `Closed`, capped at 20 tags
 # per Discord forum (Plan §1.3), so at most 18 locations per district.
@@ -62,6 +62,12 @@ class District(BaseModel):
     industry: str
     produces: list[str] = Field(default_factory=list)
     imports: list[str] = Field(default_factory=list)
+    illicit_produces: list[str] = Field(default_factory=list)
+    """Contraband goods this district's illicit jobs (`Character.job_is_
+    illicit`) can produce -- unlike `produces`/`imports`, these never flow
+    through the national Capitol-cut/redistribution pipeline
+    (`panem_sim.systems.economy`): a district's black market only ever
+    stocks what its own illicit workers made that day."""
     quota: DistrictQuota | None = None
     population_base: int
     culture: DistrictCulture
@@ -106,6 +112,19 @@ class District(BaseModel):
             raise ValueError(f"district {self.id} has no `kind: station` location (FR-LOC-7)")
         if LocationKind.PUBLIC not in kinds:
             raise ValueError(f"district {self.id} has no `kind: public` location (FR-CHR-4)")
+        # A `kind: jail` location isn't required at the schema level (every
+        # real district under `data/` ships exactly one -- enforced by
+        # `tests/unit/test_content_loader.py` instead, the same way the
+        # style checks below don't hard-require every content-authored
+        # kind). Keeping it a soft convention rather than a third required
+        # kind here avoids forcing every hand-built `District(...)` test
+        # fixture across the suite (many of them predate jail entirely) to
+        # carry one just to satisfy validation; `panem_shared.jail.find_
+        # jail_location` and its callers already treat "no jail location"
+        # as a normal, handled case rather than an invariant violation.
+        jail_kinds = [k for k in kinds if k == LocationKind.JAIL]
+        if len(jail_kinds) > 1:
+            raise ValueError(f"district {self.id} has {len(jail_kinds)} `kind: jail` locations")
 
         return self
 
@@ -119,15 +138,20 @@ class Good(BaseModel):
     perishable: bool = False
     category: str
     rationed: bool = False
-    kind: str = "commodity"  # "commodity" | "ticket" (Spec §2.4)
-
-    @model_validator(mode="after")
-    def _check_kind(self) -> Good:
-        if self.kind not in {"commodity", "ticket"}:
-            raise ValueError(
-                f"good {self.id}: kind must be 'commodity' or 'ticket', got {self.kind!r}"
-            )
-        return self
+    hunger_value: float = Field(default=0.0, ge=0.0)
+    """How much `Character.hunger` a Vitals-tab `/eat` of one unit relieves
+    (0.0 = not edible, the default for every non-food good). Doubled by
+    `constants.COOK_BONUS_MULTIPLIER` when eaten via the cook/bake minigame
+    with a landed bonus (`cook_method` must be set for that to apply) --
+    see `panem_shared.sustenance`."""
+    thirst_value: float = Field(default=0.0, ge=0.0)
+    """Same shape as `hunger_value`, for `/drink` (0.0 = not drinkable).
+    No minigame/bonus applies to drinking."""
+    cook_method: Literal["stove", "oven"] | None = None
+    """Which Vitals-tab minigame (`static/games/cook.js` for `"stove"`,
+    `bake.js` for `"oven"`) can be played on this good for the cook bonus.
+    `None` means straight-eat only, no bonus available -- also `None` for
+    every non-edible good (`hunger_value == 0.0`)."""
 
 
 class JobOption(BaseModel):
@@ -153,6 +177,9 @@ class Job(BaseModel):
     shift_phase: DayPhase
     slots: int = Field(gt=0)
     legal: bool = True
+    staff_only: bool = False
+    """A job players can't reach via `/job apply` (e.g. a district's mentor
+    slot) -- only staff can assign it, via `/staff give job`."""
     min_reputation: float | None = None
     ladder_next: str | None = None
     ladder_requirement: dict[str, Any] | None = None
@@ -176,3 +203,35 @@ class Route(BaseModel):
     to: int = Field(ge=0, le=12)
     good: str
     capacity: float = Field(ge=0)
+
+
+class NpcContent(BaseModel):
+    """A hand-authored (or generator-authored, `scripts/npc_generate.py`)
+    resident living in `data/npcs/d<district>.yaml` (Plan §6.1/§11, Spec
+    §5.4) -- real identity/flavor text for a specific NPC, as opposed to
+    the fully-synthetic population `panem_sim.world.seed_npcs` falls back
+    to for any district with no authored file. `backstory`/`appearance`
+    are display-only flavor text, never simulated, so they live here in
+    content rather than as DB columns on `Npc`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    district: int = Field(ge=0, le=12)
+    name: str
+    age: int = Field(ge=12, le=90)
+    gender: Gender | None = None
+    """Unset means `panem_sim.world._seed_authored_npcs` assigns one at
+    random (same rng as the fully-synthetic population), so pre-existing
+    authored files with no `gender` line still get a real value rather
+    than silently reading as "they/their" forever."""
+    job_id: str | None = None
+    home_location_id: str
+    traits: list[str] = Field(default_factory=list)
+    backstory: str = Field(max_length=1500)
+    appearance: str = Field(default="", max_length=400)
+    black_market_contact: bool = False
+    """Marks this NPC as their district's black-market "fence" (contraband
+    system) -- `panem_bot.services.blackmarket.resolve_fence` gates
+    `/blackmarket` access behind a character's `RelationshipRow` stance
+    with *this specific* NPC, not just anyone in the district."""

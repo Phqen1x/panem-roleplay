@@ -4,22 +4,47 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
+import random
 import re
-from typing import Literal
+import uuid
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from panem_bot import autocomplete, redis_keys
 from panem_bot.errors import ServiceError
 from panem_bot.services import characters as characters_svc
+from panem_bot.services import jail as jail_svc
 from panem_bot.services import jobs as jobs_svc
 from panem_bot.services.staff import log_staff_action
 from panem_bot.strings import t
-from panem_shared.db.models import Character, Scene, User
-from panem_shared.enums import CharacterStatus, DayPhase, SceneStatus
+from panem_bot.views import GENDER_LABELS
+from panem_shared import constants, job_levels
+from panem_shared import lore as lore_svc
+from panem_shared.content.traits import speech_tone
+from panem_shared.db.models import (
+    Character,
+    DistrictState,
+    EngagementSettings,
+    Inventory,
+    Npc,
+    Property,
+    Scene,
+    User,
+    WorldClock,
+)
+from panem_shared.enums import (
+    CharacterStatus,
+    DayPhase,
+    Gender,
+    JobLevel,
+    OwnerKind,
+    Position,
+    SceneStatus,
+)
 
 MESSAGE_LINK_RE = re.compile(r"/channels/(\d+)/(\d+)/(\d+)$")
 
@@ -44,6 +69,23 @@ class StaffCog(commands.Cog):
     )
     job_group = app_commands.Group(
         name="job", description="Edit jobs per district without touching code", parent=group
+    )
+    give_group = app_commands.Group(
+        name="give", description="Grant money or items to a character", parent=group
+    )
+    housing_group = app_commands.Group(
+        name="housing", description="Override housing prices", parent=group
+    )
+    engagement_group = app_commands.Group(
+        name="engagement", description="Tune NPC engagement settings", parent=group
+    )
+    npc_group = app_commands.Group(
+        name="npc", description="Add NPCs and edit their identity retroactively", parent=group
+    )
+    lore_group = app_commands.Group(
+        name="lore",
+        description="Panem-wide history and Alternate Universe notes NPCs draw on",
+        parent=group,
     )
 
     @group.command(name="whois", description="Look up who a proxied message belongs to")
@@ -70,6 +112,83 @@ class StaffCog(commands.Cog):
             f"<@{user_id_str}> playing **{name}**", ephemeral=True
         )
 
+    @group.command(name="district", description="See a district's crisis/economy state (Phase 4)")
+    @app_commands.describe(district="District number (0 = The Capitol)")
+    @app_commands.check(_is_staff)
+    async def district(
+        self, interaction: discord.Interaction, district: app_commands.Range[int, 0, 12]
+    ) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            row = await session.get(DistrictState, district)
+        if row is None:
+            await interaction.response.send_message(
+                "No district_state row yet -- the sim hasn't seeded it.", ephemeral=True
+            )
+            return
+
+        district_name = self.bot.content.district(district).name  # type: ignore[attr-defined]
+        embed = discord.Embed(title=f"{district_name} -- district state")
+        embed.add_field(
+            name="Crisis level", value=f"{row.crisis_level} ({row.crisis_kind or 'calm'})"
+        )
+        embed.add_field(name="Unrest", value=f"{row.unrest:.2f}")
+        embed.add_field(name="Peacekeeper pressure", value=f"{row.peacekeeper_pressure:.2f}")
+        embed.add_field(name="Morale", value=f"{row.morale:.0f}")
+        embed.add_field(name="Capitol favor", value=f"{row.capitol_favor:+.1f}")
+        embed.add_field(name="Quota", value=f"{row.quota_progress:.0f} / {row.quota_target:.0f}")
+        embed.add_field(name="Treasury", value=f"{row.treasury:.0f}")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @group.command(
+        name="crackdown", description="Trigger a peacekeeper crackdown in a district (contraband)"
+    )
+    @app_commands.describe(
+        district="District number (0 = The Capitol)",
+        duration_ticks="How long the crackdown lasts -- defaults to CRACKDOWN_DEFAULT_DURATION_TICKS",
+    )
+    @app_commands.check(_is_staff)
+    async def crackdown(
+        self,
+        interaction: discord.Interaction,
+        district: app_commands.Range[int, 0, 12],
+        duration_ticks: app_commands.Range[int, 1, None] | None = None,
+    ) -> None:
+        """Every illicit-activity detection roll in `district` (market/
+        black-market catches, illicit-work arrest evasion, stealing,
+        burglary) scales harder for the window -- `panem_shared.jail.
+        crackdown_bad_odds`/`crackdown_good_odds` read `DistrictState.
+        crackdown_until_tick` directly, no per-system wiring needed
+        beyond this one row. Also immediately spikes `peacekeeper_
+        pressure`, which `panem_sim.systems.crisis` relaxes back toward
+        baseline once the window passes, same as any other bump."""
+        duration = duration_ticks or constants.CRACKDOWN_DEFAULT_DURATION_TICKS
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            clock = await session.get(WorldClock, 1)
+            current_tick = clock.tick if clock is not None else 0
+            row = await session.get(DistrictState, district)
+            if row is None:
+                await interaction.response.send_message(
+                    "No district_state row yet -- the sim hasn't seeded it.", ephemeral=True
+                )
+                return
+            row.crackdown_until_tick = current_tick + duration
+            row.peacekeeper_pressure = min(
+                1.0, row.peacekeeper_pressure + constants.CRACKDOWN_PRESSURE_DELTA
+            )
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="crackdown",
+                target=str(district),
+                payload={"duration_ticks": duration, "until_tick": row.crackdown_until_tick},
+            )
+        district_name = self.bot.content.district(district).name  # type: ignore[attr-defined]
+        await interaction.response.send_message(
+            f"Peacekeepers crack down on **{district_name}** for {duration} ticks.",
+            ephemeral=True,
+        )
+
     @group.command(name="ban", description="Ban a user from the bot")
     @app_commands.describe(user="User to ban")
     @app_commands.check(_is_staff)
@@ -84,7 +203,11 @@ class StaffCog(commands.Cog):
                 await session.flush()
             row.banned_at = dt.datetime.now(dt.UTC)
             await log_staff_action(
-                session, staff_discord_id=interaction.user.id, action="ban", target=str(user.id)
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="ban",
+                target=str(user.id),
             )
         await interaction.response.send_message(f"Banned {user.mention}.", ephemeral=True)
 
@@ -108,6 +231,7 @@ class StaffCog(commands.Cog):
             row.max_characters_override = limit
             await log_staff_action(
                 session,
+                bot=self.bot,
                 staff_discord_id=interaction.user.id,
                 action="character_limit",
                 target=str(user.id),
@@ -125,10 +249,12 @@ class StaffCog(commands.Cog):
             )
 
     @group.command(name="kill", description="Kill a character")
-    @app_commands.describe(character="Character name")
+    @app_commands.describe(character="Character name", reason="Cause of death, sent to the owner")
     @app_commands.autocomplete(character=autocomplete.any_approved)
     @app_commands.check(_is_staff)
-    async def kill(self, interaction: discord.Interaction, character: str) -> None:
+    async def kill(
+        self, interaction: discord.Interaction, character: str, reason: str | None = None
+    ) -> None:
         async with self.bot.db() as session:
             row = (
                 await session.execute(select(Character).where(Character.name == character))
@@ -137,10 +263,65 @@ class StaffCog(commands.Cog):
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
             row.status = CharacterStatus.DEAD.value
+            row.death_cause = reason.strip() if reason and reason.strip() else None
+            discord_id = (await session.get(User, row.user_id)).discord_id
             await log_staff_action(
-                session, staff_discord_id=interaction.user.id, action="kill", target=str(row.id)
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="kill",
+                target=str(row.id),
+                payload={"reason": reason},
             )
         await interaction.response.send_message(f"**{character}** has died.", ephemeral=True)
+
+        member = interaction.guild.get_member(discord_id) if interaction.guild else None
+        if member:
+            with contextlib.suppress(discord.Forbidden):
+                await member.send(
+                    t(
+                        "character_death_dm",
+                        name=character,
+                        cause=reason or "Killed by order of the Capitol.",
+                    )
+                )
+
+    @group.command(name="jail", description="Forcibly jail a character for a set number of ticks")
+    @app_commands.describe(
+        character="Character name",
+        ticks="Sentence length in ticks",
+        reason="Optional reason, logged with the action",
+    )
+    @app_commands.autocomplete(character=autocomplete.any_approved)
+    @app_commands.check(_is_staff)
+    async def jail(
+        self,
+        interaction: discord.Interaction,
+        character: str,
+        ticks: app_commands.Range[int, 1, None],
+        reason: str | None = None,
+    ) -> None:
+        async with self.bot.db() as session:
+            row = await self._find_character(session, character)
+            if row is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            clock = await session.get(WorldClock, 1)
+            current_tick = clock.tick if clock is not None else 0
+            applied = jail_svc.commit_to_jail(row, ticks, current_tick)
+            until_tick = row.jailed_until_tick
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="jail",
+                target=str(row.id),
+                payload={"ticks": ticks, "applied_ticks": applied, "reason": reason},
+            )
+        await interaction.response.send_message(
+            f"**{character}** has been jailed for {applied} ticks (until tick {until_tick}).",
+            ephemeral=True,
+        )
 
     @group.command(name="note", description="Attach a staff note to a character")
     @app_commands.describe(character="Character name", text="Note text")
@@ -156,6 +337,7 @@ class StaffCog(commands.Cog):
                 return
             await log_staff_action(
                 session,
+                bot=self.bot,
                 staff_discord_id=interaction.user.id,
                 action="note",
                 target=str(row.id),
@@ -190,6 +372,7 @@ class StaffCog(commands.Cog):
             await session.delete(row)
             await log_staff_action(
                 session,
+                bot=self.bot,
                 staff_discord_id=interaction.user.id,
                 action="delete_pending",
                 target=str(char_id),
@@ -227,6 +410,7 @@ class StaffCog(commands.Cog):
                 scene.status = SceneStatus.LOCKED.value
             await log_staff_action(
                 session,
+                bot=self.bot,
                 staff_discord_id=interaction.user.id,
                 action="scene_lock",
                 target=str(thread.id),
@@ -249,6 +433,7 @@ class StaffCog(commands.Cog):
                 scene.status = SceneStatus.ARCHIVED.value
             await log_staff_action(
                 session,
+                bot=self.bot,
                 staff_discord_id=interaction.user.id,
                 action="scene_archive",
                 target=str(thread.id),
@@ -283,187 +468,8 @@ class StaffCog(commands.Cog):
         return await scenes_cog.move_location_autocomplete(interaction, current)  # type: ignore[attr-defined]
 
     @job_group.command(
-        name="set",
-        description="Add or edit a job's base fields for a district (use /staff job option "
-        "for its 3 options)",
+        name="list", description="List catalog jobs (NPCs only -- players free-type their own)"
     )
-    @app_commands.describe(
-        job_id="Job id (reuses an existing id to edit it, e.g. 'miner'; a new id adds a job)",
-        district="District number (0 = The Capitol)",
-        title="Job title (required when adding a new job)",
-        workplace="Location id within the district (required when adding a new job)",
-        wage="Wage per shift (required when adding a new job)",
-        shift_phase="Shift phase (required when adding a new job)",
-        slots="Number of slots (required when adding a new job)",
-        legal="Whether working this job is legal (default true for a new job)",
-        min_reputation="Minimum reputation required to take this job; pass -1 to clear",
-        ladder_next="Job id this promotes to; pass 'none' to clear",
-        ladder_requirement_json=(
-            "JSON object of promotion requirements, e.g. "
-            "'{\"shifts_completed\": 40, \"reputation\": 20}'; pass 'none' to clear"
-        ),
-        peacekeeper_attention="Peacekeeper attention this job draws, 0.0-1.0; pass -1 to clear",
-        foreman_npc_id="NPC id who runs this job; pass 'none' to clear",
-        produces_json=("JSON object of goods produced, e.g. '{\"coal\": 8}'; pass 'none' to clear"),
-    )
-    @app_commands.autocomplete(
-        job_id=autocomplete.job_ids,
-        district=autocomplete.districts,
-        workplace=autocomplete.job_workplace,
-        ladder_next=autocomplete.job_ids_clearable,
-        min_reputation=autocomplete.clearable_number,
-        peacekeeper_attention=autocomplete.clearable_number,
-        foreman_npc_id=autocomplete.job_foreman,
-    )
-    @app_commands.check(_is_staff)
-    async def job_set(
-        self,
-        interaction: discord.Interaction,
-        job_id: str,
-        district: int,
-        title: str | None = None,
-        workplace: str | None = None,
-        wage: app_commands.Range[float, 0.0, None] | None = None,
-        shift_phase: DayPhase | None = None,
-        slots: app_commands.Range[int, 1, None] | None = None,
-        legal: bool | None = None,
-        min_reputation: float | None = None,
-        ladder_next: str | None = None,
-        ladder_requirement_json: str | None = None,
-        peacekeeper_attention: float | None = None,
-        foreman_npc_id: str | None = None,
-        produces_json: str | None = None,
-    ) -> None:
-        async with self.bot.db() as session:
-            try:
-                job = await jobs_svc.set_job_fields(
-                    session,
-                    content=self.bot.content,
-                    job_id=job_id,
-                    district_id=district,
-                    staff_discord_id=interaction.user.id,
-                    title=title,
-                    workplace=workplace,
-                    wage=wage,
-                    shift_phase=shift_phase.value if shift_phase is not None else None,
-                    slots=slots,
-                    legal=legal,
-                    min_reputation=min_reputation,
-                    ladder_next=ladder_next,
-                    ladder_requirement_json=ladder_requirement_json,
-                    peacekeeper_attention=peacekeeper_attention,
-                    foreman_npc_id=foreman_npc_id,
-                    produces_json=produces_json,
-                )
-            except ServiceError as exc:
-                await interaction.response.send_message(
-                    t(exc.reason_key, **exc.fmt), ephemeral=True
-                )
-                return
-            await log_staff_action(
-                session,
-                staff_discord_id=interaction.user.id,
-                action="job_set",
-                target=job_id,
-                payload={"district": district},
-            )
-        await interaction.response.send_message(
-            t("job_set_ok", job_id=job.id, district_id=job.district), ephemeral=True
-        )
-
-    @job_group.command(
-        name="option",
-        description="Edit one of a job's 3 options (add the job first with /staff job set)",
-    )
-    @app_commands.describe(
-        job_id="Job id",
-        slot="Which of the 3 options to edit",
-        label="Option label shown to players",
-        output_mult="Output multiplier for this option",
-        risk="Risk of this option, 0.0-1.0",
-        risk_effect_json=(
-            "JSON object of side effects, e.g. '{\"health\": -5}'; pass 'none' to clear"
-        ),
-        rep_delta="Reputation change from this option",
-        wage_mult="Wage multiplier for this option",
-    )
-    @app_commands.autocomplete(job_id=autocomplete.job_ids)
-    @app_commands.check(_is_staff)
-    async def job_option(
-        self,
-        interaction: discord.Interaction,
-        job_id: str,
-        slot: Literal[1, 2, 3],
-        label: str | None = None,
-        output_mult: float | None = None,
-        risk: app_commands.Range[float, 0.0, 1.0] | None = None,
-        risk_effect_json: str | None = None,
-        rep_delta: int | None = None,
-        wage_mult: float | None = None,
-    ) -> None:
-        async with self.bot.db() as session:
-            try:
-                job = await jobs_svc.set_job_option(
-                    session,
-                    content=self.bot.content,
-                    job_id=job_id,
-                    slot=slot,
-                    staff_discord_id=interaction.user.id,
-                    label=label,
-                    output_mult=output_mult,
-                    risk=risk,
-                    risk_effect_json=risk_effect_json,
-                    rep_delta=rep_delta,
-                    wage_mult=wage_mult,
-                )
-            except ServiceError as exc:
-                await interaction.response.send_message(
-                    t(exc.reason_key, **exc.fmt), ephemeral=True
-                )
-                return
-            await log_staff_action(
-                session,
-                staff_discord_id=interaction.user.id,
-                action="job_option",
-                target=job_id,
-                payload={"slot": slot},
-            )
-        await interaction.response.send_message(
-            t("job_option_ok", job_id=job.id, slot=slot), ephemeral=True
-        )
-
-    @job_group.command(
-        name="remove", description="Remove a job (from jobs.yaml or a prior override)"
-    )
-    @app_commands.describe(job_id="Job id to remove")
-    @app_commands.autocomplete(job_id=autocomplete.job_ids)
-    @app_commands.check(_is_staff)
-    async def job_remove(self, interaction: discord.Interaction, job_id: str) -> None:
-        async with self.bot.db() as session:
-            existing = await jobs_svc.get_job(session, self.bot.content, job_id)
-            if existing is None:
-                await interaction.response.send_message(t("job_not_found"), ephemeral=True)
-                return
-            await jobs_svc.remove_job(session, job_id=job_id, staff_discord_id=interaction.user.id)
-            await log_staff_action(
-                session, staff_discord_id=interaction.user.id, action="job_remove", target=job_id
-            )
-        await interaction.response.send_message(t("job_removed_ok", job_id=job_id), ephemeral=True)
-
-    @job_group.command(name="show", description="Show a job's current definition as JSON")
-    @app_commands.describe(job_id="Job id")
-    @app_commands.autocomplete(job_id=autocomplete.job_ids)
-    @app_commands.check(_is_staff)
-    async def job_show(self, interaction: discord.Interaction, job_id: str) -> None:
-        async with self.bot.db() as session:
-            job = await jobs_svc.get_job(session, self.bot.content, job_id)
-        if job is None:
-            await interaction.response.send_message(t("job_not_found"), ephemeral=True)
-            return
-        body = job.model_dump_json(indent=2, by_alias=True)
-        await interaction.response.send_message(f"```json\n{body}\n```", ephemeral=True)
-
-    @job_group.command(name="list", description="List jobs currently available in a district")
     @app_commands.describe(district="District number (0 = The Capitol)")
     @app_commands.autocomplete(district=autocomplete.districts)
     @app_commands.check(_is_staff)
@@ -477,6 +483,711 @@ class StaffCog(commands.Cog):
             return
         lines = [f"**{j.id}** - {j.title} @ {j.workplace} ({j.slots} slots)" for j in jobs]
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+    async def _find_character(self, session: AsyncSession, name: str) -> Character | None:
+        return (
+            await session.execute(select(Character).where(Character.name == name))
+        ).scalar_one_or_none()
+
+    @give_group.command(name="money", description="Grant (or deduct) a character's money")
+    @app_commands.describe(
+        character="Character name", amount="Amount to add -- use a negative number to deduct"
+    )
+    @app_commands.autocomplete(character=autocomplete.any_approved)
+    @app_commands.check(_is_staff)
+    async def give_money(
+        self, interaction: discord.Interaction, character: str, amount: int
+    ) -> None:
+        async with self.bot.db() as session:
+            row = await self._find_character(session, character)
+            if row is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            row.money = max(0, row.money + amount)
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="give_money",
+                target=str(row.id),
+                payload={"amount": amount},
+            )
+            new_balance = row.money
+        await interaction.response.send_message(
+            f"**{character}** now has {new_balance} money.", ephemeral=True
+        )
+
+    @give_group.command(name="item", description="Grant (or remove) an inventory item")
+    @app_commands.describe(
+        character="Character name",
+        good="Good id",
+        qty="Quantity to add -- use a negative number to remove",
+    )
+    @app_commands.autocomplete(character=autocomplete.any_approved)
+    @app_commands.check(_is_staff)
+    async def give_item(
+        self, interaction: discord.Interaction, character: str, good: str, qty: int
+    ) -> None:
+        if good not in self.bot.content.goods:  # type: ignore[attr-defined]
+            await interaction.response.send_message(t("staff_good_not_found"), ephemeral=True)
+            return
+        async with self.bot.db() as session:
+            row = await self._find_character(session, character)
+            if row is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            owner_id = str(row.id)
+            inv = await session.get(Inventory, (OwnerKind.CHARACTER.value, owner_id, good))
+            current = inv.qty if inv is not None else 0
+            new_qty = max(0, current + qty)
+            if inv is None:
+                inv = Inventory(
+                    owner_kind=OwnerKind.CHARACTER.value,
+                    owner_id=owner_id,
+                    good_id=good,
+                    qty=new_qty,
+                )
+                session.add(inv)
+            else:
+                inv.qty = new_qty
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="give_item",
+                target=str(row.id),
+                payload={"good": good, "qty": qty},
+            )
+        await interaction.response.send_message(
+            f"**{character}** now has {new_qty}x **{good}**.", ephemeral=True
+        )
+
+    @give_item.autocomplete("good")
+    async def give_item_good_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        current_lower = current.lower()
+        matches = [
+            good
+            for good in self.bot.content.goods.values()  # type: ignore[attr-defined]
+            if current_lower in good.id.lower() or current_lower in good.name.lower()
+        ]
+        return [
+            app_commands.Choice(name=f"{good.name} ({good.id})", value=good.id)
+            for good in matches[:25]
+        ]
+
+    @give_group.command(name="position", description="Grant or revoke a special position")
+    @app_commands.describe(
+        character="Character name",
+        position="Victor, Gamemaker, or Governor",
+        grant="True to grant, false to revoke",
+    )
+    @app_commands.autocomplete(character=autocomplete.any_approved)
+    @app_commands.check(_is_staff)
+    async def give_position(
+        self,
+        interaction: discord.Interaction,
+        character: str,
+        position: Position,
+        grant: bool = True,
+    ) -> None:
+        async with self.bot.db() as session:
+            row = await self._find_character(session, character)
+            if row is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            held = set(row.positions)
+            if grant:
+                held.add(position.value)
+            else:
+                held.discard(position.value)
+            row.positions = sorted(held)
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="give_position",
+                target=str(row.id),
+                payload={"position": position.value, "grant": grant},
+            )
+            current = row.positions
+        verb = "now holds" if grant else "no longer holds"
+        summary = ", ".join(p.title() for p in current) or "none"
+        await interaction.response.send_message(
+            f"**{character}** {verb} **{position.value.title()}**. Current positions: {summary}.",
+            ephemeral=True,
+        )
+
+    @give_group.command(
+        name="job", description="Set (or change) a character's job title and shift, staff-only"
+    )
+    @app_commands.describe(
+        character="Character name",
+        job_title="Free-typed job title -- same field the player set at character creation",
+        shift_phase="When they work their shift",
+        illicit="Whether this job counts as illicit work -- defaults to whatever it already was",
+    )
+    @app_commands.autocomplete(character=autocomplete.any_approved)
+    @app_commands.check(_is_staff)
+    async def give_job(
+        self,
+        interaction: discord.Interaction,
+        character: str,
+        job_title: str,
+        shift_phase: DayPhase,
+        illicit: bool | None = None,
+    ) -> None:
+        try:
+            characters_svc.validate_job_title(job_title)
+        except ServiceError as exc:
+            await interaction.response.send_message(t(exc.reason_key, **exc.fmt), ephemeral=True)
+            return
+        async with self.bot.db() as session:
+            row = await self._find_character(session, character)
+            if row is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            row.job_title = job_title
+            row.shift_phase = shift_phase.value
+            if illicit is not None:
+                row.job_is_illicit = illicit
+            row.job_started_tick = None
+            row.consecutive_missed = 0
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="give_job",
+                target=str(row.id),
+                payload={
+                    "job_title": job_title,
+                    "shift_phase": shift_phase.value,
+                    "illicit": illicit,
+                },
+            )
+        await interaction.response.send_message(
+            f"**{character}** is now working as **{job_title}** ({shift_phase.value} shift).",
+            ephemeral=True,
+        )
+
+    @give_group.command(
+        name="mastery",
+        description="Set a character's completed shifts / job level (Apprentice-Expert), staff-only",
+    )
+    @app_commands.describe(
+        character="Character name",
+        shifts_completed="Exact completed-shift count to set (takes priority over level)",
+        level="Jump straight to a level's shift threshold instead of an exact count",
+    )
+    @app_commands.autocomplete(character=autocomplete.any_approved)
+    @app_commands.check(_is_staff)
+    async def give_mastery(
+        self,
+        interaction: discord.Interaction,
+        character: str,
+        shifts_completed: int | None = None,
+        level: JobLevel | None = None,
+    ) -> None:
+        if shifts_completed is None and level is None:
+            await interaction.response.send_message(t("mastery_needs_value"), ephemeral=True)
+            return
+        if shifts_completed is not None and shifts_completed < 0:
+            await interaction.response.send_message(t("invalid_shifts_completed"), ephemeral=True)
+            return
+        new_shifts = (
+            shifts_completed
+            if shifts_completed is not None
+            else constants.JOB_LEVEL_SHIFT_THRESHOLDS[level.value]  # type: ignore[union-attr]
+        )
+        async with self.bot.db() as session:
+            row = await self._find_character(session, character)
+            if row is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            row.shifts_completed = new_shifts
+            new_level = job_levels.job_level_for_shifts(new_shifts)
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="give_mastery",
+                target=str(row.id),
+                payload={"shifts_completed": new_shifts, "level": new_level.value},
+            )
+        await interaction.response.send_message(
+            f"**{character}** now has **{new_shifts}** completed shifts -- "
+            f"**{new_level.value.title()}**.",
+            ephemeral=True,
+        )
+
+    @housing_group.command(
+        name="set-price", description="Override a property's listed price, staff-only"
+    )
+    @app_commands.describe(
+        property_id="Property ID (from /housing list)",
+        price="New asking price -- omit to clear the override back to the sim's suggestion",
+    )
+    @app_commands.check(_is_staff)
+    async def housing_set_price(
+        self, interaction: discord.Interaction, property_id: int, price: float | None = None
+    ) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            property_ = await session.get(Property, property_id)
+            if property_ is None:
+                await interaction.response.send_message(t("housing_not_found"), ephemeral=True)
+                return
+            property_.asking_price = price
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="housing_set_price",
+                target=str(property_id),
+                payload={"price": price},
+            )
+        if price is None:
+            await interaction.response.send_message(
+                f"Property `#{property_id}` now uses the sim's suggested price.", ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                f"Property `#{property_id}` now asks **{round(price)}** money.", ephemeral=True
+            )
+
+    @engagement_group.command(
+        name="set-timeout",
+        description="Set how long an engagement can sit idle before it auto-closes",
+    )
+    @app_commands.describe(minutes="Minutes of no player message before an engagement closes")
+    @app_commands.check(_is_staff)
+    async def engagement_set_timeout(self, interaction: discord.Interaction, minutes: int) -> None:
+        if minutes < 1:
+            await interaction.response.send_message("Minutes must be at least 1.", ephemeral=True)
+            return
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            settings_row = await session.get(EngagementSettings, 1)
+            if settings_row is None:
+                settings_row = EngagementSettings(id=1, idle_timeout_minutes=minutes)
+                session.add(settings_row)
+            else:
+                settings_row.idle_timeout_minutes = minutes
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="engagement_set_timeout",
+                target="engagement_settings",
+                payload={"minutes": minutes},
+            )
+        await interaction.response.send_message(
+            f"Engagements now auto-close after **{minutes}** minute(s) of no player message.",
+            ephemeral=True,
+        )
+
+    # ------------------------------------------------------------------ npc
+
+    async def _find_npc(self, session: AsyncSession, npc_id_or_name: str) -> Npc | None:
+        """`autocomplete.any_npc`'s suggestions carry the real `Npc.id` as
+        their value, so a staff member who picks a suggestion always
+        resolves to exactly the one NPC shown -- tried first. A staff
+        member who ignores the suggestions and types a plain name
+        instead still resolves if that name happens to be unique (the
+        common case); it's only ambiguous names (the synthetic name pool
+        is sampled independently per district, so the same name showing
+        up twice is expected, not a bug) that fall through to `None`
+        here, same as no match at all -- the caller's error message
+        tells them to use a suggestion to disambiguate."""
+        by_id = await session.get(Npc, npc_id_or_name)
+        if by_id is not None:
+            return by_id
+        rows = (
+            (await session.execute(select(Npc).where(Npc.name == npc_id_or_name))).scalars().all()
+        )
+        return rows[0] if len(rows) == 1 else None
+
+    @npc_group.command(name="rename", description="Rename an NPC")
+    @app_commands.describe(npc="Resident (pick a suggestion)", new_name="New name")
+    @app_commands.autocomplete(npc=autocomplete.any_npc)
+    @app_commands.check(_is_staff)
+    async def npc_rename(self, interaction: discord.Interaction, npc: str, new_name: str) -> None:
+        async with self.bot.db() as session:
+            row = await self._find_npc(session, npc)
+            if row is None:
+                await interaction.response.send_message(t("staff_npc_not_found"), ephemeral=True)
+                return
+            old_name = row.name
+            row.name = new_name
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="npc_rename",
+                target=row.id,
+                payload={"old_name": old_name, "new_name": new_name},
+            )
+        await interaction.response.send_message(
+            f"**{old_name}** is now known as **{new_name}**.", ephemeral=True
+        )
+
+    @npc_group.command(
+        name="set-background", description="Set (or replace) an NPC's backstory, retroactively"
+    )
+    @app_commands.describe(npc="Resident (pick a suggestion)", backstory="New backstory text")
+    @app_commands.autocomplete(npc=autocomplete.any_npc)
+    @app_commands.check(_is_staff)
+    async def npc_set_background(
+        self,
+        interaction: discord.Interaction,
+        npc: str,
+        backstory: app_commands.Range[str, 1, 1500],
+    ) -> None:
+        async with self.bot.db() as session:
+            row = await self._find_npc(session, npc)
+            if row is None:
+                await interaction.response.send_message(t("staff_npc_not_found"), ephemeral=True)
+                return
+            row.backstory_override = backstory
+            name = row.name
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="npc_set_background",
+                target=row.id,
+                payload={"backstory": backstory},
+            )
+        await interaction.response.send_message(
+            f"**{name}**'s backstory has been updated.", ephemeral=True
+        )
+
+    @npc_group.command(
+        name="set-appearance", description="Set (or replace) an NPC's appearance, retroactively"
+    )
+    @app_commands.describe(npc="Resident (pick a suggestion)", appearance="New appearance text")
+    @app_commands.autocomplete(npc=autocomplete.any_npc)
+    @app_commands.check(_is_staff)
+    async def npc_set_appearance(
+        self,
+        interaction: discord.Interaction,
+        npc: str,
+        appearance: app_commands.Range[str, 1, 400],
+    ) -> None:
+        async with self.bot.db() as session:
+            row = await self._find_npc(session, npc)
+            if row is None:
+                await interaction.response.send_message(t("staff_npc_not_found"), ephemeral=True)
+                return
+            row.appearance_override = appearance
+            name = row.name
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="npc_set_appearance",
+                target=row.id,
+                payload={"appearance": appearance},
+            )
+        await interaction.response.send_message(
+            f"**{name}**'s appearance has been updated.", ephemeral=True
+        )
+
+    @npc_group.command(name="set-traits", description="Replace an NPC's personality traits")
+    @app_commands.describe(npc="Resident (pick a suggestion)", traits="Comma-separated traits")
+    @app_commands.autocomplete(npc=autocomplete.any_npc)
+    @app_commands.check(_is_staff)
+    async def npc_set_traits(self, interaction: discord.Interaction, npc: str, traits: str) -> None:
+        trait_list = [t_.strip() for t_ in traits.split(",") if t_.strip()]
+        if not trait_list:
+            await interaction.response.send_message("Name at least one trait.", ephemeral=True)
+            return
+        async with self.bot.db() as session:
+            row = await self._find_npc(session, npc)
+            if row is None:
+                await interaction.response.send_message(t("staff_npc_not_found"), ephemeral=True)
+                return
+            row.traits = trait_list
+            name = row.name
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="npc_set_traits",
+                target=row.id,
+                payload={"traits": trait_list},
+            )
+        await interaction.response.send_message(
+            f"**{name}**'s traits are now: {', '.join(trait_list)}.", ephemeral=True
+        )
+
+    @npc_group.command(name="set-speech", description="Set an NPC's speech tone")
+    @app_commands.describe(
+        npc="Resident (pick a suggestion)", tone="e.g. warm, blunt, reserved, plain"
+    )
+    @app_commands.autocomplete(npc=autocomplete.any_npc)
+    @app_commands.check(_is_staff)
+    async def npc_set_speech(self, interaction: discord.Interaction, npc: str, tone: str) -> None:
+        async with self.bot.db() as session:
+            row = await self._find_npc(session, npc)
+            if row is None:
+                await interaction.response.send_message(t("staff_npc_not_found"), ephemeral=True)
+                return
+            row.speech_style = {**row.speech_style, "tone": tone}
+            name = row.name
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="npc_set_speech",
+                target=row.id,
+                payload={"tone": tone},
+            )
+        await interaction.response.send_message(
+            f"**{name}**'s speech tone is now **{tone}**.", ephemeral=True
+        )
+
+    @npc_group.command(name="add", description="Add a brand new NPC to a district")
+    @app_commands.describe(
+        name="NPC's name",
+        district="District number (0 = The Capitol)",
+        age="Age in years",
+        home_location="Where they live (also where they start)",
+        traits="Comma-separated personality traits",
+        gender="Feeds pronouns into their dialogue (random if omitted)",
+        job="Catalog job id (optional -- /staff job list to see options)",
+        backstory="Backstory text (optional)",
+        appearance="Appearance text (optional)",
+    )
+    @app_commands.autocomplete(district=autocomplete.districts)
+    @app_commands.choices(
+        gender=[
+            app_commands.Choice(name=label, value=value) for value, label in GENDER_LABELS.items()
+        ]
+    )
+    @app_commands.check(_is_staff)
+    async def npc_add(
+        self,
+        interaction: discord.Interaction,
+        name: str,
+        district: int,
+        age: app_commands.Range[int, 1, 120],
+        home_location: str,
+        traits: str,
+        gender: app_commands.Choice[str] | None = None,
+        job: str | None = None,
+        backstory: app_commands.Range[str, 0, 1500] | None = None,
+        appearance: app_commands.Range[str, 0, 400] | None = None,
+    ) -> None:
+        content = self.bot.content  # type: ignore[attr-defined]
+        if district not in content.districts:
+            await interaction.response.send_message(
+                f"Unknown district `{district}`.", ephemeral=True
+            )
+            return
+        district_content = content.district(district)
+        location = next(
+            (loc for loc in district_content.locations if loc.id == home_location), None
+        )
+        if location is None:
+            await interaction.response.send_message(
+                f"Unknown location `{home_location}` in district {district}.", ephemeral=True
+            )
+            return
+        trait_list = [t_.strip() for t_ in traits.split(",") if t_.strip()]
+        if not trait_list:
+            await interaction.response.send_message("Name at least one trait.", ephemeral=True)
+            return
+        job_row = content.jobs.get(job) if job else None
+        if job and (job_row is None or job_row.district != district):
+            await interaction.response.send_message(
+                f"`{job}` isn't a job in district {district}.", ephemeral=True
+            )
+            return
+
+        npc_id = f"staff_{district}_{uuid.uuid4().hex[:8]}"
+        npc_gender = gender.value if gender is not None else random.choice(list(Gender)).value
+        async with self.bot.db() as session:
+            row = Npc(
+                id=npc_id,
+                district_id=district,
+                name=name,
+                age=age,
+                gender=npc_gender,
+                job_id=job_row.id if job_row is not None else None,
+                home_location_id=home_location,
+                location_id=home_location,
+                traits=trait_list,
+                speech_style={"tone": speech_tone(trait_list)},
+                backstory_override=backstory,
+                appearance_override=appearance,
+            )
+            session.add(row)
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="npc_add",
+                target=npc_id,
+                payload={"name": name, "district": district, "home_location": home_location},
+            )
+        await interaction.response.send_message(
+            f"**{name}** has joined district {district} at **{location.name}** "
+            f"(id `{npc_id}`). They have no schedule yet, so they'll stay put until "
+            "moved by `/staff` or picked up by a future NPC reseed.",
+            ephemeral=True,
+        )
+
+    @npc_add.autocomplete("home_location")
+    async def npc_add_home_location_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        district_id = getattr(interaction.namespace, "district", None)
+        if district_id is None:
+            return []
+        district_content = self.bot.content.district(district_id)  # type: ignore[attr-defined]
+        current_lower = current.lower()
+        matches = [
+            loc
+            for loc in district_content.locations
+            if current_lower in loc.name.lower() or current_lower in loc.id.lower()
+        ]
+        return [
+            app_commands.Choice(name=f"{loc.name} ({loc.id})", value=loc.id) for loc in matches[:25]
+        ]
+
+    @npc_add.autocomplete("job")
+    async def npc_add_job_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        district_id = getattr(interaction.namespace, "district", None)
+        if district_id is None:
+            return []
+        jobs = [
+            j
+            for j in self.bot.content.jobs.values()  # type: ignore[attr-defined]
+            if j.district == district_id
+        ]
+        current_lower = current.lower()
+        matches = [
+            j for j in jobs if current_lower in j.id.lower() or current_lower in j.title.lower()
+        ]
+        return [app_commands.Choice(name=f"{j.title} ({j.id})", value=j.id) for j in matches[:25]]
+
+    # ------------------------------------------------------------- lore
+
+    @lore_group.command(
+        name="history-add",
+        description="Add a Panem-wide history fact NPCs can draw on when it's relevant",
+    )
+    @app_commands.describe(
+        keywords="Comma-separated keywords that bring this fact up (e.g. 'dark days, district 13')",
+        text="The history fact itself, as an NPC should understand it",
+    )
+    @app_commands.check(_is_staff)
+    async def lore_history_add(
+        self, interaction: discord.Interaction, keywords: str, text: str
+    ) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            try:
+                entry = await lore_svc.add_history_entry(
+                    session,
+                    keywords=keywords.split(","),
+                    text=text,
+                    created_by_staff_discord_id=interaction.user.id,
+                )
+            except ServiceError as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+            entry_id, parsed_keywords = entry.id, entry.keywords
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="lore_history_add",
+                target=str(entry_id),
+                payload={"keywords": parsed_keywords, "text": text},
+            )
+        await interaction.response.send_message(
+            f"Added history entry **#{entry_id}** (keywords: {', '.join(parsed_keywords)}).",
+            ephemeral=True,
+        )
+
+    @lore_group.command(name="history-remove", description="Remove a Panem-wide history entry")
+    @app_commands.describe(entry_id="The entry's id, shown by /staff lore history-list")
+    @app_commands.check(_is_staff)
+    async def lore_history_remove(self, interaction: discord.Interaction, entry_id: int) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            try:
+                entry = await lore_svc.delete_history_entry(session, entry_id)
+            except ServiceError:
+                await interaction.response.send_message(
+                    f"No history entry `#{entry_id}`.", ephemeral=True
+                )
+                return
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="lore_history_remove",
+                target=str(entry_id),
+                payload={"keywords": entry.keywords, "text": entry.text},
+            )
+        await interaction.response.send_message(
+            f"Removed history entry **#{entry_id}**.", ephemeral=True
+        )
+
+    @lore_group.command(name="history-list", description="List Panem-wide history entries")
+    @app_commands.check(_is_staff)
+    async def lore_history_list(self, interaction: discord.Interaction) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            entries = await lore_svc.list_history_entries(session)
+        if not entries:
+            await interaction.response.send_message("No history entries yet.", ephemeral=True)
+            return
+        lines = []
+        for entry in entries[:25]:
+            text = entry.text if len(entry.text) <= 200 else entry.text[:200] + "…"
+            lines.append(f"**#{entry.id}** [{', '.join(entry.keywords)}] {text}")
+        body = "\n".join(lines)
+        if len(entries) > 25:
+            body += f"\n… and {len(entries) - 25} more."
+        await interaction.response.send_message(body[:1900], ephemeral=True)
+
+    @lore_group.command(
+        name="au-set", description="Set the Alternate Universe notes every NPC keeps in mind"
+    )
+    @app_commands.describe(text="Free-form notes; replaces whatever was set before")
+    @app_commands.check(_is_staff)
+    async def lore_au_set(self, interaction: discord.Interaction, text: str) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            try:
+                await lore_svc.set_world_lore(session, alternate_universe_notes=text)
+            except ServiceError as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="lore_au_set",
+                target="world_lore_settings",
+                payload={"text": text},
+            )
+        await interaction.response.send_message("Alternate Universe notes updated.", ephemeral=True)
+
+    @lore_group.command(name="au-show", description="Show the current Alternate Universe notes")
+    @app_commands.check(_is_staff)
+    async def lore_au_show(self, interaction: discord.Interaction) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            settings_row = await lore_svc.get_world_lore(session)
+        notes = settings_row.alternate_universe_notes if settings_row is not None else ""
+        await interaction.response.send_message(
+            notes[:1900] or "No Alternate Universe notes set.", ephemeral=True
+        )
 
 
 async def setup(bot: commands.Bot) -> None:

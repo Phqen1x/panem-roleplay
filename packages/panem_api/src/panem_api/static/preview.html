@@ -1,0 +1,1124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Panem: The Long Year — Live Preview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700;800;900&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #0a0c10;
+      --bg-surface: #101319;
+      --bg-card: rgba(18, 22, 30, 0.88);
+      --bg-card-elevated: rgba(26, 31, 42, 0.92);
+      --bg-card-hover: rgba(32, 38, 52, 0.95);
+      
+      --gold-primary: #c5a059;
+      --gold-bright: #e7c67e;
+      --gold-dim: #8e733c;
+      --gold-border: rgba(197, 160, 89, 0.32);
+      --gold-border-glow: rgba(197, 160, 89, 0.55);
+
+      --ruby-primary: #751421;
+      --ruby-bright: #941b2c;
+      --ruby-border: rgba(220, 38, 38, 0.4);
+      --ruby-glow: rgba(148, 27, 44, 0.35);
+
+      --text-main: #f1f3f7;
+      --text-muted: #8b93a4;
+      --text-dim: #5a6272;
+
+      --status-avail-bg: rgba(34, 197, 94, 0.12);
+      --status-avail-border: rgba(34, 197, 94, 0.35);
+      --status-avail-text: #4ade80;
+      --status-work-bg: rgba(234, 179, 8, 0.12);
+      --status-work-border: rgba(234, 179, 8, 0.35);
+      --status-work-text: #facc15;
+      --status-busy-bg: rgba(239, 68, 68, 0.12);
+      --status-busy-border: rgba(239, 68, 68, 0.35);
+      --status-busy-text: #f87171;
+
+      --font-serif: "Cinzel", "Times New Roman", Georgia, serif;
+      --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      background-image: 
+        radial-gradient(circle at 50% 0%, rgba(197, 160, 89, 0.08) 0%, transparent 60%),
+        radial-gradient(circle at 10% 20%, rgba(117, 20, 33, 0.06) 0%, transparent 40%),
+        linear-gradient(180deg, #0b0d12 0%, #060709 100%);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ------------------------------------------------------------- Header */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 28px;
+      background: rgba(11, 13, 18, 0.95);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--gold-border);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      text-decoration: none;
+    }
+
+    .brand-crest {
+      width: 32px;
+      height: 32px;
+      filter: drop-shadow(0 0 8px rgba(197, 160, 89, 0.4));
+    }
+
+    .brand-text {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .brand-title {
+      font-family: var(--font-serif);
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: 2.5px;
+      color: var(--gold-bright);
+      line-height: 1.1;
+      text-transform: uppercase;
+    }
+
+    .brand-subtitle {
+      font-family: var(--font-serif);
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 2px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+
+    /* Tab Navigation */
+    nav.tabs {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      background: rgba(16, 20, 27, 0.7);
+      padding: 4px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .tab-btn {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px solid transparent;
+      padding: 7px 14px;
+      border-radius: 6px;
+      font-family: var(--font-sans);
+      font-size: 12.5px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.18s ease;
+      white-space: nowrap;
+    }
+
+    .tab-btn svg {
+      width: 15px;
+      height: 15px;
+      opacity: 0.75;
+      transition: opacity 0.18s ease;
+    }
+
+    .tab-btn:hover {
+      color: var(--text-main);
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .tab-btn.active {
+      background: linear-gradient(180deg, var(--ruby-primary) 0%, #570e18 100%);
+      color: #fff;
+      border: 1px solid var(--gold-primary);
+      box-shadow: 0 0 14px var(--ruby-glow), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    }
+
+    .tab-btn.active svg {
+      opacity: 1;
+      filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.4));
+    }
+
+    /* User Header Right */
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .character-pill {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(18, 22, 30, 0.9);
+      border: 1px solid var(--gold-border);
+      border-radius: 6px;
+      padding: 6px 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .character-pill:hover {
+      border-color: var(--gold-bright);
+      box-shadow: 0 0 10px rgba(197, 160, 89, 0.2);
+    }
+
+    .character-name {
+      font-family: var(--font-serif);
+      font-size: 13.5px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      color: var(--gold-bright);
+    }
+
+    .discord-status {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 12px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #22c55e;
+      box-shadow: 0 0 8px #22c55e;
+      animation: pulse-dot 2s infinite ease-in-out;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.6; transform: scale(0.9); }
+    }
+
+    /* ------------------------------------------------------------- Layout */
+    main {
+      flex: 1;
+      max-width: 1460px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 22px 28px;
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      gap: 24px;
+      align-items: start;
+    }
+
+    @media (max-width: 1080px) {
+      main {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* ------------------------------------------------------------- Cards */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--gold-border);
+      border-radius: 10px;
+      backdrop-filter: blur(14px);
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent 0%, var(--gold-primary) 50%, transparent 100%);
+      opacity: 0.7;
+    }
+
+    .card-inner {
+      padding: 22px 24px;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    .card-header-icon {
+      width: 22px;
+      height: 22px;
+      color: var(--gold-primary);
+      flex-shrink: 0;
+    }
+
+    .card-header-text h2 {
+      font-family: var(--font-serif);
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      color: #fff;
+    }
+
+    .card-header-text p {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    /* ------------------------------------------------ Left: Current Engagement */
+    .engagement-title {
+      font-family: var(--font-serif);
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--gold-bright);
+      margin-bottom: 14px;
+      letter-spacing: 0.5px;
+    }
+
+    .scene-frame {
+      width: 100%;
+      height: 215px;
+      border-radius: 8px;
+      border: 1px solid var(--gold-border);
+      overflow: hidden;
+      position: relative;
+      margin-bottom: 18px;
+      background: #141720;
+      box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.6);
+    }
+
+    .scene-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      transition: transform 0.4s ease;
+    }
+
+    .scene-frame:hover .scene-img {
+      transform: scale(1.02);
+    }
+
+    .scene-placeholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      color: #f1f3f7;
+      opacity: 0.5;
+    }
+
+    .scene-placeholder-text {
+      font-size: 13px;
+      letter-spacing: 0.3px;
+    }
+
+    .meta-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 22px;
+    }
+
+    .meta-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .meta-item svg {
+      width: 16px;
+      height: 16px;
+      color: var(--gold-dim);
+      flex-shrink: 0;
+    }
+
+    .meta-item strong {
+      color: var(--text-main);
+      font-weight: 500;
+    }
+
+    .btn-discord-cta {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      background: linear-gradient(180deg, var(--ruby-primary) 0%, #520e17 100%);
+      color: #fff;
+      border: 1px solid var(--gold-primary);
+      border-radius: 8px;
+      padding: 12px 18px;
+      font-family: var(--font-sans);
+      font-size: 13.5px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.2s ease;
+      box-shadow: 0 4px 14px var(--ruby-glow);
+    }
+
+    .btn-discord-cta:hover {
+      background: linear-gradient(180deg, var(--ruby-bright) 0%, #68121f 100%);
+      box-shadow: 0 0 20px var(--ruby-glow), 0 0 8px rgba(197, 160, 89, 0.4);
+      transform: translateY(-1px);
+    }
+
+    .btn-discord-cta svg {
+      width: 18px;
+      height: 18px;
+      fill: currentColor;
+    }
+
+    .motto-box {
+      margin-top: 24px;
+      padding-top: 18px;
+      border-top: 1px solid rgba(197, 160, 89, 0.15);
+      text-align: center;
+    }
+
+    .motto-divider {
+      display: inline-block;
+      color: var(--gold-dim);
+      font-size: 10px;
+      margin-bottom: 6px;
+    }
+
+    .district-badge-text {
+      font-family: var(--font-serif);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      color: var(--gold-primary);
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    .district-slogan-text {
+      font-family: var(--font-serif);
+      font-size: 9.5px;
+      font-weight: 500;
+      letter-spacing: 1.5px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+    }
+
+    /* ------------------------------------------------ Right: Residents Directory */
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 18px;
+      flex-wrap: wrap;
+    }
+
+    .search-box {
+      position: relative;
+      flex: 1;
+      min-width: 220px;
+    }
+
+    .search-box svg {
+      position: absolute;
+      left: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 15px;
+      height: 15px;
+      color: var(--text-dim);
+    }
+
+    .search-input {
+      width: 100%;
+      background: rgba(13, 16, 22, 0.85);
+      border: 1px solid var(--gold-border);
+      border-radius: 6px;
+      padding: 9px 12px 9px 36px;
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      font-size: 13px;
+      transition: all 0.2s;
+    }
+
+    .search-input:focus {
+      outline: none;
+      border-color: var(--gold-bright);
+      box-shadow: 0 0 10px rgba(197, 160, 89, 0.25);
+    }
+
+    .filter-select {
+      background: rgba(13, 16, 22, 0.85);
+      border: 1px solid var(--gold-border);
+      border-radius: 6px;
+      padding: 9px 14px;
+      color: var(--text-muted);
+      font-family: var(--font-sans);
+      font-size: 13px;
+      cursor: pointer;
+      min-width: 140px;
+    }
+
+    .filter-select:focus {
+      outline: none;
+      border-color: var(--gold-bright);
+    }
+
+    /* Residents Table */
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 8px;
+      background: rgba(12, 15, 20, 0.4);
+    }
+
+    table.directory-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      text-align: left;
+    }
+
+    table.directory-table th {
+      padding: 12px 16px;
+      background: rgba(20, 25, 34, 0.9);
+      color: var(--text-muted);
+      font-family: var(--font-sans);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      border-bottom: 1px solid var(--gold-border);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    table.directory-table th:hover {
+      color: var(--gold-bright);
+    }
+
+    table.directory-table td {
+      padding: 11px 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      color: var(--text-main);
+      vertical-align: middle;
+    }
+
+    table.directory-table tbody tr {
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+
+    table.directory-table tbody tr:hover {
+      background: var(--bg-card-hover);
+    }
+
+    /* Name Cell with Monogram Avatar */
+    .name-cell {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 500;
+    }
+
+    .avatar-badge {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: rgba(20, 24, 32, 0.9);
+      border: 1px solid var(--gold-border);
+      color: var(--gold-bright);
+      font-family: var(--font-serif);
+      font-size: 11px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    /* Status Pills */
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 11.5px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+    }
+
+    .status-pill.available {
+      background: var(--status-avail-bg);
+      border: 1px solid var(--status-avail-border);
+      color: var(--status-avail-text);
+    }
+
+    .status-pill.working {
+      background: var(--status-work-bg);
+      border: 1px solid var(--status-work-border);
+      color: var(--status-work-text);
+    }
+
+    .status-pill.busy {
+      background: var(--status-busy-bg);
+      border: 1px solid var(--status-busy-border);
+      color: var(--status-busy-text);
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .row-arrow {
+      color: var(--text-dim);
+      font-size: 14px;
+      text-align: right;
+    }
+
+    table.directory-table tbody tr:hover .row-arrow {
+      color: var(--gold-bright);
+      transform: translateX(2px);
+    }
+
+    /* ------------------------------------------------ Dossier Modal */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(8px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 200;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+
+    .modal-overlay.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .dossier-card {
+      background: #12161f;
+      border: 1px solid var(--gold-primary);
+      box-shadow: 0 0 30px rgba(0, 0, 0, 0.8), 0 0 15px rgba(197, 160, 89, 0.25);
+      border-radius: 12px;
+      width: 90%;
+      max-width: 520px;
+      overflow: hidden;
+      transform: translateY(20px);
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .modal-overlay.open .dossier-card {
+      transform: translateY(0);
+    }
+
+    .dossier-header {
+      padding: 18px 24px;
+      background: linear-gradient(180deg, rgba(197, 160, 89, 0.12) 0%, rgba(18, 22, 31, 0.9) 100%);
+      border-bottom: 1px solid var(--gold-border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .dossier-header-info {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .dossier-avatar {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: #1c2230;
+      border: 2px solid var(--gold-primary);
+      color: var(--gold-bright);
+      font-family: var(--font-serif);
+      font-size: 18px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .dossier-name {
+      font-family: var(--font-serif);
+      font-size: 18px;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .dossier-job {
+      font-size: 12.5px;
+      color: var(--gold-bright);
+      margin-top: 2px;
+    }
+
+    .btn-close-modal {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 22px;
+      cursor: pointer;
+      line-height: 1;
+      padding: 4px 8px;
+    }
+
+    .btn-close-modal:hover {
+      color: #fff;
+    }
+
+    .dossier-body {
+      padding: 22px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      font-size: 13.5px;
+      line-height: 1.5;
+    }
+
+    .dossier-prop {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .dossier-prop-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--gold-dim);
+    }
+
+    .traits-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 2px;
+    }
+
+    .trait-chip {
+      background: rgba(197, 160, 89, 0.1);
+      border: 1px solid var(--gold-border);
+      color: var(--gold-bright);
+      padding: 3px 9px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    /* ------------------------------------------------ Footer Telemetry */
+    footer {
+      margin-top: auto;
+      background: #08090d;
+      border-top: 1px solid rgba(197, 160, 89, 0.2);
+      padding: 10px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: var(--font-serif);
+      font-size: 10px;
+      letter-spacing: 1.8px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+    }
+
+    footer span.accent {
+      color: var(--gold-primary);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Header -->
+  <header>
+    <a href="#" class="brand">
+      <img src="/panem_crest.png" alt="Panem Crest" class="brand-crest" />
+      <div class="brand-text">
+        <span class="brand-title">Panem</span>
+        <span class="brand-subtitle">The Long Year</span>
+      </div>
+    </a>
+
+    <!-- 10 Interactive Activity Tabs -->
+    <nav class="tabs">
+      <button class="tab-btn" data-tab="map">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon><line x1="8" y1="2" x2="8" y2="18"></line><line x1="16" y1="6" x2="16" y2="22"></line></svg>
+        Map
+      </button>
+      <button class="tab-btn" data-tab="character">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+        Character
+      </button>
+      <button class="tab-btn" data-tab="work">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
+        Work
+      </button>
+      <button class="tab-btn" data-tab="market">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="21" r="1"></circle><circle cx="20" cy="21" r="1"></circle><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path></svg>
+        Market
+      </button>
+      <button class="tab-btn" data-tab="travel">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon></svg>
+        Travel
+      </button>
+      <button class="tab-btn active" data-tab="social">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+        Social
+      </button>
+      <button class="tab-btn" data-tab="jail">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/></svg>
+        Jail
+      </button>
+      <button class="tab-btn" data-tab="crime">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+        Crime
+      </button>
+      <button class="tab-btn" data-tab="housing">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+        Housing
+      </button>
+      <button class="tab-btn" data-tab="staff">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        Staff
+      </button>
+    </nav>
+
+    <!-- Header Right (Character + Discord State) -->
+    <div class="header-right">
+      <div class="character-pill" title="Active Character">
+        <span class="character-name">Magnus Bane</span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#c5a059" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+      </div>
+      <div class="discord-status">
+        <span class="live-dot"></span> Connected via Discord
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Activity Grid -->
+  <main>
+    <!-- Left Column: Current Engagement -->
+    <section class="card">
+      <div class="card-inner">
+        <div class="card-header">
+          <svg class="card-header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+          <div class="card-header-text">
+            <h2>Current Engagement</h2>
+          </div>
+        </div>
+
+        <div class="engagement-title">The Square — ambient</div>
+
+        <!-- Plaza Illustration -- no location art yet; reserved for future per-district illustrations -->
+        <div class="scene-frame scene-placeholder">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+          <span class="scene-placeholder-text">Location art coming soon</span>
+        </div>
+
+        <!-- Metadata -->
+        <div class="meta-list">
+          <div class="meta-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12h2M6 8h2M10 4h2M14 6h2M18 10h2M22 12h2M6 16h2M10 20h2M14 18h2M18 14h2"></path></svg>
+            <span>Kind: <strong>ambient</strong></span>
+          </div>
+          <div class="meta-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+            <span>Location: <strong>The Square</strong></span>
+          </div>
+          <div class="meta-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+            <span>Characters: <strong>Magnus Bane</strong></span>
+          </div>
+        </div>
+
+        <!-- Deep Link Action Button -->
+        <a href="https://discord.com" target="_blank" class="btn-discord-cta">
+          <svg viewBox="0 0 24 24"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.929 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.893.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>
+          Continue in Discord &rarr;
+        </a>
+
+        <!-- District Motto -->
+        <div class="motto-box">
+          <div class="motto-divider">&#9671;</div>
+          <div class="district-badge-text">District One</div>
+          <div class="district-slogan-text">Beauty Builds a Brighter Tomorrow</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Right Column: Residents of District One -->
+    <section class="card">
+      <div class="card-inner">
+        <div class="card-header">
+          <svg class="card-header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+          <div class="card-header-text">
+            <h2>Residents of District One</h2>
+            <p>Residents of District One: artisans, workers, and citizens of distinction.</p>
+          </div>
+        </div>
+
+        <!-- Search & Filter Controls -->
+        <div class="toolbar">
+          <div class="search-box">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <input type="text" id="searchInput" class="search-input" placeholder="Search residents by name or job..." />
+          </div>
+          <select id="jobFilter" class="filter-select">
+            <option value="all">All Jobs</option>
+            <option value="Jeweler">Jeweler</option>
+            <option value="Clerk">Clerk</option>
+            <option value="Polisher">Polisher</option>
+            <option value="Academy Trainer">Academy Trainer</option>
+          </select>
+          <select id="locationFilter" class="filter-select">
+            <option value="all">All Locations</option>
+            <option value="The Jewelers' Workshop">The Jewelers' Workshop</option>
+            <option value="The Square">The Square</option>
+            <option value="Residential Row">Residential Row</option>
+            <option value="The Exchange">The Exchange</option>
+            <option value="Justice Building">Justice Building</option>
+          </select>
+        </div>
+
+        <!-- Table -->
+        <div class="table-wrap">
+          <table class="directory-table">
+            <thead>
+              <tr>
+                <th onclick="sortTable('name')">Name &#8645;</th>
+                <th onclick="sortTable('job')">Job &#8645;</th>
+                <th onclick="sortTable('where')">Where &#8645;</th>
+                <th onclick="sortTable('status')">Status &#8645;</th>
+                <th style="width: 30px;"></th>
+              </tr>
+            </thead>
+            <tbody id="residentTbody">
+              <!-- Dynamically rendered via JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Dossier Modal for Resident Details -->
+  <div id="dossierModal" class="modal-overlay" onclick="closeDossier(event)">
+    <div class="dossier-card" onclick="event.stopPropagation()">
+      <div class="dossier-header">
+        <div class="dossier-header-info">
+          <div id="dossierAvatar" class="dossier-avatar">A</div>
+          <div>
+            <div id="dossierName" class="dossier-name">Ada Fenwick</div>
+            <div id="dossierJob" class="dossier-job">Master Jeweler &bull; District One</div>
+          </div>
+        </div>
+        <button class="btn-close-modal" onclick="closeDossier()">&times;</button>
+      </div>
+      <div class="dossier-body">
+        <div class="dossier-prop">
+          <span class="dossier-prop-label">Current Location</span>
+          <span id="dossierLocation">The Jewelers' Workshop</span>
+        </div>
+        <div class="dossier-prop">
+          <span class="dossier-prop-label">Personality & Traits</span>
+          <div id="dossierTraits" class="traits-chips"></div>
+        </div>
+        <div class="dossier-prop">
+          <span class="dossier-prop-label">Speech Style</span>
+          <span id="dossierSpeech">Polished and aristocratic, chooses words with gemstone precision.</span>
+        </div>
+        <div class="dossier-prop">
+          <span class="dossier-prop-label">Opinion of Magnus Bane</span>
+          <span id="dossierStance">Respectful and accommodating; views you as a promising patron.</span>
+        </div>
+        <div class="dossier-prop">
+          <span class="dossier-prop-label">Background</span>
+          <span id="dossierBackstory">Descended from three generations of diamond polishers for the Capitol's presidential guard. Proud of her craft and fiercely loyal to District One's prestige.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom Telemetry Footer -->
+  <footer>
+    <div>Panem: The Long Year</div>
+    <div>District One <span class="accent">&#9671;</span> Excellence Endures</div>
+  </footer>
+
+  <script>
+    // Mock residents database matching District 1 seed data & GPT_Frontend.png
+    const RESIDENTS = [
+      { name: "Ada Fenwick", job: "Jeweler", where: "The Jewelers' Workshop", status: "available", traits: ["Polished", "Proud", "Competitive"], speech: "Polished and measured, with gemstone precision.", stance: "Warm and courteous.", backstory: "Third-generation diamond cutter whose works adorn Capitol high dignitaries." },
+      { name: "Ada Hollow", job: "Clerk", where: "The Square", status: "available", traits: ["Meticulous", "Formal", "Sharp"], speech: "Crisp and official.", stance: "Polite neutrality.", backstory: "Manages public permits and registry records at the central fountain plaza." },
+      { name: "Beatrix Hargrove", job: "Jeweler", where: "The Jewelers' Workshop", status: "working", traits: ["Ambitious", "Artistic", "Perfectionist"], speech: "Fast-talking, constantly assessing aesthetic proportions.", stance: "Intrigued by your reputation.", backstory: "Currently forging an emerald torque destined for the Capitol autumn gala." },
+      { name: "Cass Blackwell", job: "Polisher", where: "Residential Row", status: "available", traits: ["Quiet", "Observant", "Patient"], speech: "Subdued and respectful.", stance: "Friendly and candid.", backstory: "Lives in the gilded terraces of District One; takes pride in keeping the family name respected." },
+      { name: "Delphine Kestner", job: "Polisher", where: "The Jewelers' Workshop", status: "working", traits: ["Diligent", "Guarded", "Proud"], speech: "Concise, rarely looks up from the buffing wheel.", stance: "Cautious.", backstory: "Specializes in platinum filigree; spends twelve-hour shifts at the jeweler benches." },
+      { name: "Hollis Hargrove", job: "Academy Trainer", where: "Residential Row", status: "available", traits: ["Athletic", "Disciplined", "Stern"], speech: "Authoritative and crisp.", stance: "Evaluating your fitness.", backstory: "Former Career hopeful, now conditions promising youths for the annual Games trials." },
+      { name: "Hollis Sedgwick", job: "Polisher", where: "The Jewelers' Workshop", status: "working", traits: ["Methodical", "Loyal", "Steadfast"], speech: "Calm and measured.", stance: "Welcoming.", backstory: "Long-standing member of the artisans' guild." },
+      { name: "Ines Mossgrove", job: "Jeweler", where: "Justice Building", status: "busy", traits: ["Sophisticated", "Shrewd", "Eloquent"], speech: "Aristocratic and diplomatic.", stance: "Currently in an executive tribunal.", backstory: "Advising the district mayor on export tariffs and gemstone valuation quotas." },
+      { name: "Junia Blackwell", job: "Academy Trainer", where: "The Jewelers' Workshop", status: "available", traits: ["Vigilant", "Strict", "Loyal"], speech: "Direct, no nonsense.", stance: "Respectful nod.", backstory: "Oversees physical regimentation and fitness for workshop apprentices." },
+      { name: "Kellan Yarrow", job: "Polisher", where: "The Jewelers' Workshop", status: "working", traits: ["Industrious", "Quiet", "Skilled"], speech: "Soft-spoken.", stance: "Nods politely from workbench.", backstory: "Master of sapphire beveling; currently fulfilling a quota order." },
+      { name: "Lior Ironside", job: "Clerk", where: "Residential Row", status: "available", traits: ["Inquisitive", "Courteous", "Sharp"], speech: "Polite and conversational.", stance: "Pleasantly receptive.", backstory: "Audits logistics for residential supply chains." },
+      { name: "Lyra Hollow", job: "Clerk", where: "The Jewelers' Workshop", status: "available", traits: ["Organized", "Cheery", "Attentive"], speech: "Warm and clear.", stance: "Bright smile, eager to assist.", backstory: "Manages manifests and vault access for incoming uncut crystals." },
+      { name: "Nash Mossgrove", job: "Jeweler", where: "The Exchange", status: "working", traits: ["Charismatic", "Sharp", "Calculating"], speech: "Smooth and theatrical.", stance: "Offers a trader's appraisal.", backstory: "Runs one of the premier exchange booths in District One." },
+      { name: "Nash Rowntree", job: "Jeweler", where: "The Exchange", status: "available", traits: ["Generous", "Knowledgeable", "Classic"], speech: "Gentlemanly and eloquent.", stance: "Welcomes you warmly.", backstory: "Senior gemologist renowned throughout the merchant district." },
+      { name: "Noor Quarrie", job: "Jeweler", where: "Residential Row", status: "available", traits: ["Discreet", "Refined", "Artistic"], speech: "Poised and deliberate.", stance: "Courteous greeting.", backstory: "Creates custom jewelry for high-ranking Peacekeeper officers." },
+      { name: "Petra Larke", job: "Polisher", where: "The Square", status: "busy", traits: ["Animated", "Passionate", "Expressive"], speech: "Lively and quick-witted.", stance: "Engaged in discussion with colleagues.", backstory: "Active in district festival design and public square ornamentation." },
+      { name: "Sable Vane", job: "Polisher", where: "The Jewelers' Workshop", status: "available", traits: ["Introspective", "Artistic", "Perceptive"], speech: "Gentle and refined.", stance: "Appreciative of your presence.", backstory: "A quiet artisan whose intricate carvings have won multiple district honors." }
+    ];
+
+    let currentSort = { col: "name", asc: true };
+
+    function renderResidents() {
+      const tbody = document.getElementById("residentTbody");
+      const search = document.getElementById("searchInput").value.toLowerCase().trim();
+      const jobFilter = document.getElementById("jobFilter").value;
+      const locationFilter = document.getElementById("locationFilter").value;
+
+      let filtered = RESIDENTS.filter(r => {
+        const matchesSearch = !search || r.name.toLowerCase().includes(search) || r.job.toLowerCase().includes(search) || r.where.toLowerCase().includes(search);
+        const matchesJob = jobFilter === "all" || r.job === jobFilter;
+        const matchesLocation = locationFilter === "all" || r.where === locationFilter;
+        return matchesSearch && matchesJob && matchesLocation;
+      });
+
+      // Sort
+      filtered.sort((a, b) => {
+        let vA = a[currentSort.col];
+        let vB = b[currentSort.col];
+        if (vA < vB) return currentSort.asc ? -1 : 1;
+        if (vA > vB) return currentSort.asc ? 1 : -1;
+        return 0;
+      });
+
+      tbody.innerHTML = "";
+      if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding: 24px; color: var(--text-dim);">No citizens found matching your filters.</td></tr>`;
+        return;
+      }
+
+      filtered.forEach(r => {
+        const tr = document.createElement("tr");
+        tr.onclick = () => openDossier(r);
+        
+        const initial = r.name.charAt(0);
+        const statusLabel = r.status.charAt(0).toUpperCase() + r.status.slice(1);
+
+        tr.innerHTML = `
+          <td>
+            <div class="name-cell">
+              <div class="avatar-badge">${initial}</div>
+              <span>${r.name}</span>
+            </div>
+          </td>
+          <td>${r.job}</td>
+          <td>${r.where}</td>
+          <td>
+            <span class="status-pill ${r.status}">
+              <span class="status-dot"></span>
+              ${statusLabel}
+            </span>
+          </td>
+          <td class="row-arrow">&rsaquo;</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function sortTable(col) {
+      if (currentSort.col === col) {
+        currentSort.asc = !currentSort.asc;
+      } else {
+        currentSort.col = col;
+        currentSort.asc = true;
+      }
+      renderResidents();
+    }
+
+    function openDossier(r) {
+      document.getElementById("dossierAvatar").textContent = r.name.charAt(0);
+      document.getElementById("dossierName").textContent = r.name;
+      document.getElementById("dossierJob").textContent = `${r.job} • District One`;
+      document.getElementById("dossierLocation").textContent = r.where;
+      document.getElementById("dossierSpeech").textContent = r.speech;
+      document.getElementById("dossierStance").textContent = r.stance;
+      document.getElementById("dossierBackstory").textContent = r.backstory;
+
+      const traitsContainer = document.getElementById("dossierTraits");
+      traitsContainer.innerHTML = "";
+      r.traits.forEach(t => {
+        const chip = document.createElement("span");
+        chip.className = "trait-chip";
+        chip.textContent = t;
+        traitsContainer.appendChild(chip);
+      });
+
+      document.getElementById("dossierModal").classList.add("open");
+    }
+
+    function closeDossier(e) {
+      document.getElementById("dossierModal").classList.remove("open");
+    }
+
+    // Event Listeners
+    document.getElementById("searchInput").addEventListener("input", renderResidents);
+    document.getElementById("jobFilter").addEventListener("change", renderResidents);
+    document.getElementById("locationFilter").addEventListener("change", renderResidents);
+
+    // Tab switching interactivity
+    document.querySelectorAll(".tab-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+      });
+    });
+
+    // Initial render
+    renderResidents();
+  </script>
+</body>
+</html>

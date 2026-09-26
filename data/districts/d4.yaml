@@ -3,12 +3,16 @@ name: District Four
 industry: fish
 produces:
 - fish
+- career_training
 imports:
 - grain
 - medicine
 - power
 - produce
 - textiles
+- transport
+illicit_produces:
+- smuggled_luxuries
 population_base: 7500
 culture:
   tone:
@@ -59,6 +63,21 @@ locations:
   access_jobs:
   - d4_netcaster
   - d4_smoker
+- id: academy
+  name: The Academy
+  kind: workplace
+  capacity: 60
+  job_ids:
+  - d4_academy_trainer
+- id: black_market
+  name: The Smugglers' Wharf
+  kind: market
+  capacity: 30
+  illicit: true
+- id: jail
+  name: District Four Jail
+  kind: jail
+  capacity: 40
 map:
   image: maps/d4.png
   width: 1600
@@ -85,6 +104,15 @@ map:
     outskirts:
     - 1400
     - 800
+    academy:
+    - 1000
+    - 300
+    black_market:
+    - 1200
+    - 650
+    jail:
+    - 950
+    - 150
 quota:
   good: fish
   amount: 1000

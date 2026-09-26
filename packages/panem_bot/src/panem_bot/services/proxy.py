@@ -9,8 +9,10 @@ from dataclasses import dataclass
 
 from panem_shared.constants import PROXY_MESSAGE_MAX_LEN
 from panem_shared.content.schemas import District, Location
-from panem_shared.db.models import Character
-from panem_shared.enums import CharacterStatus
+from panem_shared.db.models import Character, Npc, Scene
+from panem_shared.enums import CharacterStatus, Position, RpMode, SceneKind
+from panem_shared.jail import find_jail_location
+from panem_shared.location_access import has_location_access as has_location_access
 
 
 def is_ooc(content: str) -> bool:
@@ -52,16 +54,73 @@ def resolve_proxy_target(
     return None
 
 
-def has_location_access(*, job_id: str | None, is_victor: bool, location: Location) -> bool:
-    """FR-LOC-3. Item-based access (`access_items`) needs inventory, which
-    doesn't exist before Phase 2, so it's treated as never satisfied here —
-    a restricted item-gated location is inaccessible to everyone until then,
-    which is the safe direction to fail in."""
+def _is_gamemaker(character: Character) -> bool:
+    return Position.GAMEMAKER.value in character.positions
+
+
+def can_rp_in_district(character: Character, district_id: int) -> bool:
+    """Which district a character may be played in -- ordinarily their
+    assigned `district_id` (set at creation from the player's Discord
+    district role) or wherever `/travel district:<id>` has actually taken
+    them (`current_district_id`), never a third district they've never
+    been near. A Gamemaker's characters (Capitol staff overseeing every
+    Games, wherever it's held) may be played in any district without
+    traveling there at all. Story-mode characters get the same free pass,
+    for a different reason: "do not need to travel to different locations
+    in their district to RP in them," extended here to district-level RP
+    too since nothing about the mode ties them to any one place."""
+    if character.rp_mode == RpMode.STORY.value:
+        return True
+    if district_id in (character.district_id, character.current_district_id):
+        return True
+    return _is_gamemaker(character)
+
+
+def can_rp_at_location(character: Character, location_id: str) -> bool:
+    """Within a district a character may otherwise RP in, they still need
+    to have actually traveled to this specific location
+    (`Character.location_id`, set by `/travel location:<id>`) -- posting
+    in a scene doesn't teleport them there for free. A Gamemaker's
+    any-district access (`can_rp_in_district`) extends to skipping this
+    too, since they were never going to have traveled there either --
+    same for a Story-mode character."""
+    if character.rp_mode == RpMode.STORY.value:
+        return True
+    if character.location_id == location_id:
+        return True
+    return _is_gamemaker(character)
+
+
+def npc_district_access(npc: Npc, district_id: int) -> bool:
+    """An NPC only ever converses in threads belonging to its own assigned
+    `district_id` -- unlike a player's character, an NPC has no travel
+    system to justify appearing anywhere else."""
+    return npc.district_id == district_id
+
+
+def npc_has_location_access(npc: Npc, location: Location) -> bool:
+    """Same restricted-location gate as `has_location_access`, but for an
+    NPC pulled into a `/talk`/`/engage start` thread. Unlike a player's
+    free-typed `Character.job_title`, `Npc.job_id` is a real `jobs.yaml`
+    catalog id, so it can be matched against `location.access_jobs`
+    directly and reliably -- an NPC whose profession doesn't grant them
+    access to a restricted location (e.g. the Justice Building) can't be
+    summoned there just because a player named them."""
     if not location.restricted:
         return True
-    if is_victor:
-        return True
-    return job_id is not None and job_id in location.access_jobs
+    return npc.job_id is not None and npc.job_id in location.access_jobs
+
+
+def scene_location_id(scene: Scene | None) -> str | None:
+    """A scene's location, for both the restricted-location and
+    "have you actually traveled here" checks below -- `None` for a staff
+    scene that doesn't pin location (`Scene.pins_location`), which is
+    deliberately a roaming scene nobody needs to have traveled to."""
+    if scene is None:
+        return None
+    if scene.kind == SceneKind.STAFF.value and not scene.pins_location:
+        return None
+    return scene.location_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,21 +128,56 @@ class ProxyRefusal:
     reason_key: str
 
 
+def _jailed_district_allowed(character: Character, district_id: int) -> bool:
+    """While jailed, a character may only be played in the district they
+    call home (`Character.district_id`) or the one they were actually
+    caught in (`Character.current_district_id` -- travel is refused
+    outright for a jailed character, `panem_shared.travel.check_can_
+    travel`/`check_can_travel_district`, so this stays frozen at whichever
+    district they were in the moment they were jailed)."""
+    return district_id in (character.district_id, character.current_district_id)
+
+
 def check_can_proxy(
     *, character: Character, district: District, location_id: str | None, current_tick: int
 ) -> ProxyRefusal | None:
-    """FR-PRX-3. Returns the refusal reason, or `None` if proxying may proceed."""
+    """FR-PRX-3. `district` must be the scene's actual district (not
+    necessarily the character's home one -- see `can_rp_in_district`).
+    Returns the refusal reason, or `None` if proxying may proceed."""
     if character.status == CharacterStatus.DEAD.value:
         return ProxyRefusal("character_dead")
     if character.status != CharacterStatus.APPROVED.value:
         return ProxyRefusal("character_not_approved")
     if character.jailed_until_tick is not None and character.jailed_until_tick > current_tick:
-        return ProxyRefusal("proxy_character_jailed")
+        # A jailed character isn't blocked from RP outright -- they're
+        # confined to the one thread that models their cell: the jail
+        # location's own scene, in either their home district or the one
+        # they were actually jailed in. Every other thread (including
+        # scenes elsewhere in one of those same two districts) is still
+        # refused, same as before this carve-out existed.
+        jail_location = find_jail_location(district)
+        if (
+            jail_location is None
+            or location_id != jail_location.id
+            or not _jailed_district_allowed(character, district.id)
+        ):
+            return ProxyRefusal("proxy_character_jailed")
+        return None
+    if not can_rp_in_district(character, district.id):
+        return ProxyRefusal("proxy_wrong_district")
 
     if location_id is not None:
+        if not can_rp_at_location(character, location_id):
+            return ProxyRefusal("proxy_not_traveled")
         location = next((loc for loc in district.locations if loc.id == location_id), None)
-        if location is not None and not has_location_access(
-            job_id=character.job_id, is_victor=character.is_victor, location=location
+        if (
+            location is not None
+            and character.rp_mode != RpMode.STORY.value
+            and not has_location_access(
+                job_title=character.job_title,
+                has_position=bool(character.positions),
+                location=location,
+            )
         ):
             return ProxyRefusal("proxy_location_restricted")
 

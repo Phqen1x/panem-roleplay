@@ -6,6 +6,7 @@ import pytest
 
 from panem_shared.content.errors import ContentValidationError
 from panem_shared.content.loader import load_content
+from panem_shared.content.schemas import Good
 
 REPO_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 
@@ -23,6 +24,12 @@ class TestRealContentFiles:
             kinds = {loc.kind.value for loc in district.locations}
             assert "station" in kinds
             assert "public" in kinds
+
+    def test_every_district_has_exactly_one_jail(self):
+        bundle = load_content(REPO_DATA_DIR)
+        for district in bundle.districts.values():
+            jail_locations = [loc for loc in district.locations if loc.kind.value == "jail"]
+            assert len(jail_locations) == 1, district.id
 
     def test_goods_and_jobs_and_routes_present(self):
         bundle = load_content(REPO_DATA_DIR)
@@ -51,6 +58,225 @@ class TestRealContentFiles:
             "meadow",
             "station",
         } <= location_ids
+
+    def test_career_districts_produce_career_training_via_an_academy_job(self):
+        bundle = load_content(REPO_DATA_DIR)
+        for district_id in (1, 2, 4, 9):
+            district = bundle.district(district_id)
+            assert "career_training" in district.produces
+            location_ids = {loc.id for loc in district.locations}
+            assert "academy" in location_ids
+            academy_jobs = [j for j in bundle.jobs.values() if j.workplace == "academy"]
+            assert any(
+                j.district == district_id and "career_training" in j.produces for j in academy_jobs
+            )
+
+    def test_every_non_capitol_district_has_exactly_one_illicit_good_and_market(self):
+        bundle = load_content(REPO_DATA_DIR)
+        contraband_goods = {g.id for g in bundle.goods.values() if g.category == "contraband"}
+        for district_id in range(1, 13):
+            district = bundle.district(district_id)
+            assert len(district.illicit_produces) == 1, district_id
+            assert district.illicit_produces[0] in contraband_goods
+            assert any(loc.illicit for loc in district.locations), district_id
+        assert bundle.district(0).illicit_produces == []
+
+    def test_every_district_with_illicit_goods_has_exactly_one_fence_npc(self):
+        bundle = load_content(REPO_DATA_DIR)
+        for district_id in range(1, 13):
+            fences = [
+                npc for npc in bundle.npcs_for_district(district_id) if npc.black_market_contact
+            ]
+            assert len(fences) == 1, district_id
+        assert not any(npc.black_market_contact for npc in bundle.npcs_for_district(0))
+
+    def test_every_district_has_authored_npcs(self):
+        """`scripts/npc_generate.py` has been run for every shipped
+        district (Phase 3 content authoring) -- a district with none
+        would silently fall back to the synthetic population instead,
+        which would be a regression worth catching."""
+        bundle = load_content(REPO_DATA_DIR)
+        for district_id in bundle.districts:
+            assert bundle.npcs_for_district(district_id), (
+                f"district {district_id} has no authored data/npcs/*.yaml content"
+            )
+
+    def test_authored_npcs_have_unique_ids_and_valid_backstories(self):
+        bundle = load_content(REPO_DATA_DIR)
+        assert len(bundle.npcs) > 0
+        for npc in bundle.npcs.values():
+            assert npc.backstory
+            assert npc.name in npc.backstory
+
+
+class TestLoadNpcs:
+    def _base_district_files(self, tmp_path):
+        districts_dir = tmp_path / "districts"
+        districts_dir.mkdir()
+        (districts_dir / "d1.yaml").write_text(
+            """
+id: 1
+name: Test District
+industry: testing
+population_base: 100
+culture: {}
+locations:
+  - {id: square, name: Square, kind: public}
+  - {id: station, name: Station, kind: station}
+  - {id: home, name: Home, kind: residential}
+map:
+  image: x.png
+  width: 10
+  height: 10
+  location_coords: {square: [0, 0], station: [1, 1], home: [2, 2]}
+"""
+        )
+        (tmp_path / "goods.yaml").write_text("[]")
+        (tmp_path / "jobs.yaml").write_text(
+            """
+- id: clerk
+  district: 1
+  title: Clerk
+  workplace: square
+  wage: 10
+  shift_phase: morning
+  slots: 5
+  options:
+    - {label: a}
+    - {label: b}
+    - {label: c}
+"""
+        )
+
+    def test_missing_npcs_dir_loads_empty(self, tmp_path):
+        self._base_district_files(tmp_path)
+        bundle = load_content(tmp_path)
+        assert bundle.npcs == {}
+
+    def test_loads_valid_npc_content(self, tmp_path):
+        self._base_district_files(tmp_path)
+        npcs_dir = tmp_path / "npcs"
+        npcs_dir.mkdir()
+        (npcs_dir / "d1.yaml").write_text(
+            """
+- id: d1_npc_001
+  district: 1
+  name: Test Npc
+  age: 30
+  job_id: clerk
+  home_location_id: home
+  traits: [kind, brave]
+  backstory: A short life story.
+  appearance: Tall.
+"""
+        )
+        bundle = load_content(tmp_path)
+        assert list(bundle.npcs) == ["d1_npc_001"]
+        assert bundle.npcs_for_district(1)[0].name == "Test Npc"
+
+    def test_duplicate_npc_id_rejected(self, tmp_path):
+        self._base_district_files(tmp_path)
+        npcs_dir = tmp_path / "npcs"
+        npcs_dir.mkdir()
+        entry = """
+- id: dupe
+  district: 1
+  name: A
+  age: 30
+  home_location_id: home
+  backstory: x
+"""
+        (npcs_dir / "d1.yaml").write_text(entry)
+        (npcs_dir / "d1b.yaml").write_text(entry)
+        with pytest.raises(ContentValidationError, match="duplicate npc id"):
+            load_content(tmp_path)
+
+    def test_npc_referencing_unknown_district_rejected(self, tmp_path):
+        self._base_district_files(tmp_path)
+        npcs_dir = tmp_path / "npcs"
+        npcs_dir.mkdir()
+        (npcs_dir / "d1.yaml").write_text(
+            """
+- id: ghost
+  district: 9
+  name: Ghost
+  age: 30
+  home_location_id: home
+  backstory: x
+"""
+        )
+        with pytest.raises(ContentValidationError, match="no district file"):
+            load_content(tmp_path)
+
+    def test_npc_referencing_unknown_home_location_rejected(self, tmp_path):
+        self._base_district_files(tmp_path)
+        npcs_dir = tmp_path / "npcs"
+        npcs_dir.mkdir()
+        (npcs_dir / "d1.yaml").write_text(
+            """
+- id: lost
+  district: 1
+  name: Lost
+  age: 30
+  home_location_id: nowhere
+  backstory: x
+"""
+        )
+        with pytest.raises(ContentValidationError, match="home_location_id"):
+            load_content(tmp_path)
+
+    def test_npc_referencing_unknown_job_rejected(self, tmp_path):
+        self._base_district_files(tmp_path)
+        npcs_dir = tmp_path / "npcs"
+        npcs_dir.mkdir()
+        (npcs_dir / "d1.yaml").write_text(
+            """
+- id: jobless
+  district: 1
+  name: Jobless
+  age: 30
+  job_id: nonexistent_job
+  home_location_id: home
+  backstory: x
+"""
+        )
+        with pytest.raises(ContentValidationError, match="job_id"):
+            load_content(tmp_path)
+
+    def test_npc_job_in_wrong_district_rejected(self, tmp_path):
+        self._base_district_files(tmp_path)
+        (tmp_path / "districts" / "d2.yaml").write_text(
+            """
+id: 2
+name: Other District
+industry: testing
+population_base: 100
+culture: {}
+locations:
+  - {id: square, name: Square, kind: public}
+  - {id: station, name: Station, kind: station}
+map:
+  image: x.png
+  width: 10
+  height: 10
+  location_coords: {square: [0, 0], station: [1, 1]}
+"""
+        )
+        npcs_dir = tmp_path / "npcs"
+        npcs_dir.mkdir()
+        (npcs_dir / "d2.yaml").write_text(
+            """
+- id: mismatched
+  district: 2
+  name: Mismatched
+  age: 30
+  job_id: clerk
+  home_location_id: square
+  backstory: x
+"""
+        )
+        with pytest.raises(ContentValidationError, match="belongs to district"):
+            load_content(tmp_path)
 
 
 class TestValidationFailures:
@@ -214,3 +440,53 @@ map:
         )
         with pytest.raises(ContentValidationError, match="workplace"):
             load_content(tmp_path)
+
+
+class TestGoodConsumptionFields:
+    """`hunger_value`/`thirst_value`/`cook_method` (Vitals tab feature) --
+    optional and default to "not consumable" so every pre-existing good in
+    the other 13 district YAMLs keeps loading unchanged."""
+
+    def test_defaults_to_not_consumable(self):
+        good = Good(id="rock", name="Rock", base_price=1.0, category="materials")
+        assert good.hunger_value == 0.0
+        assert good.thirst_value == 0.0
+        assert good.cook_method is None
+
+    def test_accepts_explicit_consumption_values(self):
+        good = Good(
+            id="fish",
+            name="Seafood",
+            base_price=5.0,
+            category="food",
+            hunger_value=20.0,
+            cook_method="stove",
+        )
+        assert good.hunger_value == 20.0
+        assert good.cook_method == "stove"
+
+    def test_rejects_an_unknown_cook_method(self):
+        with pytest.raises(ValueError, match="cook_method"):
+            Good(
+                id="fish",
+                name="Seafood",
+                base_price=5.0,
+                category="food",
+                cook_method="microwave",
+            )
+
+    def test_real_goods_yaml_has_the_expected_consumption_values(self):
+        bundle = load_content(REPO_DATA_DIR)
+        assert bundle.goods["fish"].hunger_value == 20.0
+        assert bundle.goods["fish"].cook_method == "stove"
+        assert bundle.goods["livestock"].hunger_value == 25.0
+        assert bundle.goods["livestock"].cook_method == "stove"
+        assert bundle.goods["grain"].hunger_value == 15.0
+        assert bundle.goods["grain"].cook_method == "oven"
+        assert bundle.goods["produce"].thirst_value == 25.0
+        assert bundle.goods["produce"].cook_method is None
+        # A non-food good stays fully inert -- no accidental consumption.
+        assert bundle.goods["coal"].hunger_value == 0.0
+        assert bundle.goods["coal"].thirst_value == 0.0
+        # `oil` is a pure ingredient: food category, but not directly eaten.
+        assert bundle.goods["oil"].hunger_value == 0.0

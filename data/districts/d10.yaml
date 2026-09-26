@@ -10,6 +10,9 @@ imports:
 - power
 - produce
 - textiles
+- transport
+illicit_produces:
+- contraband_weapons
 population_base: 7500
 culture:
   tone:
@@ -60,6 +63,15 @@ locations:
   access_jobs:
   - d10_herder
   - d10_butcher
+- id: black_market
+  name: The Bone Yard
+  kind: market
+  capacity: 30
+  illicit: true
+- id: jail
+  name: District Ten Jail
+  kind: jail
+  capacity: 40
 map:
   image: maps/d10.png
   width: 1600
@@ -86,6 +98,12 @@ map:
     outskirts:
     - 1400
     - 800
+    black_market:
+    - 1200
+    - 650
+    jail:
+    - 950
+    - 150
 quota:
   good: livestock
   amount: 800

@@ -1,34 +1,28 @@
 from __future__ import annotations
 
-import random
-
-import pytest
-
-from panem_bot.errors import NotAllowed
 from panem_bot.services import shifts as shifts_svc
-from panem_shared.content.schemas import Job, JobOption
-from panem_shared.db.models import Character, Shift
-from panem_shared.enums import CharacterStatus, ShiftResult
+from panem_shared import constants
+from panem_shared.content.loader import ContentBundle
+from panem_shared.content.schemas import (
+    District,
+    DistrictCulture,
+    DistrictMap,
+    DistrictQuota,
+    Good,
+    Location,
+)
+from panem_shared.db.models import Character, DistrictState, MarketPrice, Shift
+from panem_shared.enums import CharacterStatus
 
 
-def make_job(**overrides: object) -> Job:
-    defaults: dict[str, object] = dict(
-        id="miner",
-        district=1,
-        title="Miner",
-        workplace="mine",
-        wage=10.0,
-        produces={"coal": 5.0},
-        shift_phase="morning",
-        slots=5,
-        options=[
-            JobOption(label="safe", wage_mult=0.8, output_mult=0.8, risk=0.0),
-            JobOption(label="normal"),
-            JobOption(label="risky", wage_mult=1.5, output_mult=1.5, risk=1.0, rep_delta=2),
-        ],
-    )
-    defaults.update(overrides)
-    return Job(**defaults)  # type: ignore[arg-type]
+class FixedRng:
+    """A stand-in for `random.Random` that always returns a fixed draw."""
+
+    def __init__(self, value: float) -> None:
+        self._value = value
+
+    def random(self) -> float:
+        return self._value
 
 
 def make_character(**overrides: object) -> Character:
@@ -43,99 +37,109 @@ def make_character(**overrides: object) -> Character:
         reputation=0.0,
         health=100.0,
         consecutive_missed=0,
+        shifts_completed=0,
+        positions=[],
     )
     defaults.update(overrides)
     return Character(**defaults)  # type: ignore[arg-type]
 
 
-class TestResolveShift:
-    def test_applies_option_multipliers_to_wage_and_output(self):
-        job = make_job()
-        outcome = shifts_svc.resolve_shift(job, 0, is_player=True, rng=random.Random(1))
-        assert outcome.wage == pytest.approx(10.0 * 0.8)
-        assert outcome.output["coal"] == pytest.approx(
-            5.0 * 0.8 * shifts_svc.constants.PLAYER_OUTPUT_WEIGHT
+def make_district(*, quota_good: str | None = "coal") -> District:
+    locations = [
+        Location(id="square", name="The Square", kind="public"),
+        Location(id="station", name="Station", kind="station"),
+    ]
+    coords = {loc.id: (0, 0) for loc in locations}
+    return District(
+        id=12,
+        name="District Twelve",
+        industry="coal",
+        locations=locations,
+        culture=DistrictCulture(),
+        population_base=100,
+        quota=DistrictQuota(good=quota_good, amount=100) if quota_good else None,
+        map=DistrictMap(image="x.png", width=10, height=10, location_coords=coords),
+    )
+
+
+class TestHasJob:
+    def test_true_with_both_fields_set(self):
+        character = make_character(job_title="Miner", shift_phase="morning")
+        assert shifts_svc.has_job(character)
+
+    def test_false_without_a_job_title(self):
+        character = make_character(job_title=None, shift_phase="morning")
+        assert not shifts_svc.has_job(character)
+
+    def test_false_without_a_shift_phase(self):
+        character = make_character(job_title="Miner", shift_phase=None)
+        assert not shifts_svc.has_job(character)
+
+
+class TestStartShiftGame:
+    def test_sets_started_at_tick(self):
+        shift = Shift(character_id=1, job_id="Miner", tick_opened=0, tick_due=6)
+        shifts_svc.start_shift_game(shift, 3)
+        assert shift.started_at_tick == 3
+
+    def test_is_idempotent(self):
+        shift = Shift(character_id=1, job_id="Miner", tick_opened=0, tick_due=6)
+        shifts_svc.start_shift_game(shift, 3)
+        shifts_svc.start_shift_game(shift, 10)
+        assert shift.started_at_tick == 3
+
+
+class TestOpenAdhocShiftOverride:
+    def test_none_without_a_job(self):
+        character = make_character(job_title=None, shift_phase=None, positions=["gamemaker"])
+        assert shifts_svc.open_adhoc_shift_override(character, 10) is None
+
+    def test_none_without_the_gamemaker_position_or_staff_override(self):
+        character = make_character(job_title="Miner", shift_phase="morning", positions=[])
+        assert shifts_svc.open_adhoc_shift_override(character, 10) is None
+
+    def test_synthesizes_a_shift_for_a_gamemaker_with_a_job(self):
+        character = make_character(
+            job_title="Miner", shift_phase="morning", positions=["gamemaker"]
         )
+        character.id = 7
+        shift = shifts_svc.open_adhoc_shift_override(character, 10)
+        assert shift is not None
+        assert shift.character_id == 7
+        assert shift.job_id == "Miner"
+        assert shift.tick_opened == 10
+        assert shift.tick_due == 10 + shifts_svc.constants.SHIFT_DURATION_TICKS
+        assert shift.result is None
 
-    def test_player_output_scaled_down_relative_to_npc(self):
-        job = make_job()
-        player_outcome = shifts_svc.resolve_shift(job, 1, is_player=True, rng=random.Random(1))
-        npc_outcome = shifts_svc.resolve_shift(job, 1, is_player=False, rng=random.Random(1))
-        assert player_outcome.output["coal"] < npc_outcome.output["coal"]
+    def test_none_for_staff_override_without_a_job(self):
+        character = make_character(job_title=None, shift_phase=None, positions=[])
+        assert shifts_svc.open_adhoc_shift_override(character, 10, is_staff=True) is None
 
-    def test_zero_risk_option_never_triggers(self):
-        job = make_job()
-        for seed in range(20):
-            outcome = shifts_svc.resolve_shift(job, 0, is_player=True, rng=random.Random(seed))
-            assert outcome.risk_triggered is False
-            assert outcome.risk_effect is None
-
-    def test_certain_risk_option_always_triggers(self):
-        job = make_job()
-        outcome = shifts_svc.resolve_shift(job, 2, is_player=True, rng=random.Random(1))
-        assert outcome.risk_triggered is True
-        assert outcome.rep_delta == 2
-
-    def test_risk_effect_only_carried_when_triggered(self):
-        job = make_job(
-            options=[
-                JobOption(label="safe", risk=0.0, risk_effect={"health": -50}),
-                JobOption(label="b"),
-                JobOption(label="c"),
-            ]
-        )
-        outcome = shifts_svc.resolve_shift(job, 0, is_player=True, rng=random.Random(1))
-        assert outcome.risk_triggered is False
-        assert outcome.risk_effect is None
+    def test_synthesizes_a_shift_for_staff_without_the_gamemaker_position(self):
+        character = make_character(job_title="Miner", shift_phase="morning", positions=[])
+        character.id = 9
+        shift = shifts_svc.open_adhoc_shift_override(character, 10, is_staff=True)
+        assert shift is not None
+        assert shift.character_id == 9
+        assert shift.job_id == "Miner"
 
 
-class TestApplyShiftOutcome:
-    def test_completes_shift_and_updates_character(self):
-        job = make_job()
-        outcome = shifts_svc.resolve_shift(job, 1, is_player=True, rng=random.Random(1))
-        shift = Shift(character_id=1, job_id="miner", tick_opened=1, tick_due=7)
-        character = make_character(money=0, reputation=0.0, consecutive_missed=4)
+class TestAlreadyWorkedThisTick:
+    def test_reexported_from_shared(self):
+        shift = Shift(character_id=1, job_id="Miner", tick_opened=0, tick_due=6)
+        assert shifts_svc.already_worked_this_tick(shift, 3) is False
+        shift.last_worked_tick = 3
+        assert shifts_svc.already_worked_this_tick(shift, 3) is True
 
-        shifts_svc.apply_shift_outcome(shift, character, outcome, tick=7)
 
-        assert shift.result == ShiftResult.COMPLETED.value
-        assert shift.completed_at == 7
-        assert shift.output == outcome.output
-        assert character.money == round(outcome.wage)
-        assert character.reputation == outcome.rep_delta
-        assert character.consecutive_missed == 0
+class TestCanEarnRpCreditAnywhere:
+    def test_true_for_a_gamemaker(self):
+        character = make_character(positions=["gamemaker"])
+        assert shifts_svc.can_earn_rp_credit_anywhere(character)
 
-    def test_applies_health_delta_from_a_triggered_risk_effect(self):
-        job = make_job(
-            options=[
-                JobOption(label="a"),
-                JobOption(label="b"),
-                JobOption(label="risky", risk=1.0, risk_effect={"health": -15}),
-            ]
-        )
-        outcome = shifts_svc.resolve_shift(job, 2, is_player=True, rng=random.Random(1))
-        shift = Shift(character_id=1, job_id="miner", tick_opened=1, tick_due=7)
-        character = make_character(health=100.0)
-
-        shifts_svc.apply_shift_outcome(shift, character, outcome, tick=7)
-
-        assert character.health == 85.0
-
-    def test_jailed_ticks_risk_effect_stacks_onto_existing_jail_time(self):
-        job = make_job(
-            options=[
-                JobOption(label="a"),
-                JobOption(label="b"),
-                JobOption(label="risky", risk=1.0, risk_effect={"jailed_ticks": 12}),
-            ]
-        )
-        outcome = shifts_svc.resolve_shift(job, 2, is_player=True, rng=random.Random(1))
-        shift = Shift(character_id=1, job_id="miner", tick_opened=1, tick_due=7)
-        character = make_character(jailed_until_tick=5)
-
-        shifts_svc.apply_shift_outcome(shift, character, outcome, tick=7)
-
-        assert character.jailed_until_tick == 17
+    def test_false_without_the_position(self):
+        character = make_character(positions=["victor"])
+        assert not shifts_svc.can_earn_rp_credit_anywhere(character)
 
 
 class TestMeetsRpCredit:
@@ -149,70 +153,77 @@ class TestMeetsRpCredit:
         assert shifts_svc.meets_rp_credit("x" * shifts_svc.constants.RP_CREDIT_MIN_CHARS) is True
 
 
-class TestCheckCanApply:
-    def test_allows_unemployed_approved_character(self):
-        job = make_job(min_reputation=None)
-        character = make_character(job_id=None)
-        shifts_svc.check_can_apply(character, job)  # no raise
+class TestMarketMultiplierForDistrict:
+    async def test_no_quota_good_gives_unit_multiplier(self, db_session):
+        district = make_district(quota_good=None)
+        content = ContentBundle(districts={}, goods={}, jobs={}, routes=[])
+        multiplier = await shifts_svc.market_multiplier_for_district(db_session, content, district)
+        assert multiplier == 1.0
 
-    def test_refuses_already_employed(self):
-        job = make_job()
-        character = make_character(job_id="baker")
-        with pytest.raises(NotAllowed) as exc_info:
-            shifts_svc.check_can_apply(character, job)
-        assert exc_info.value.reason_key == "already_employed"
+    async def test_no_price_row_yet_gives_unit_multiplier(self, db_session):
+        district = make_district(quota_good="coal")
+        good = Good(id="coal", name="Coal", base_price=10.0, category="fuel")
+        content = ContentBundle(districts={}, goods={"coal": good}, jobs={}, routes=[])
+        multiplier = await shifts_svc.market_multiplier_for_district(db_session, content, district)
+        assert multiplier == 1.0
 
-    def test_refuses_reputation_below_minimum(self):
-        job = make_job(min_reputation=50)
-        character = make_character(job_id=None, reputation=10)
-        with pytest.raises(NotAllowed) as exc_info:
-            shifts_svc.check_can_apply(character, job)
-        assert exc_info.value.reason_key == "reputation_too_low"
+    async def test_uses_the_live_market_price(self, db_session):
+        district = make_district(quota_good="coal")
+        good = Good(id="coal", name="Coal", base_price=10.0, category="fuel")
+        content = ContentBundle(districts={}, goods={"coal": good}, jobs={}, routes=[])
+        db_session.add(MarketPrice(district_id=12, good_id="coal", price=20.0, tick=0))
+        await db_session.flush()
 
-    def test_refuses_non_approved_character(self):
-        job = make_job()
-        character = make_character(job_id=None, status=CharacterStatus.PENDING.value)
-        with pytest.raises(NotAllowed) as exc_info:
-            shifts_svc.check_can_apply(character, job)
-        assert exc_info.value.reason_key == "character_not_approved"
+        multiplier = await shifts_svc.market_multiplier_for_district(db_session, content, district)
+
+        assert multiplier == 2.0
 
 
-class TestCheckPromotionEligible:
-    def test_false_when_no_ladder_next(self):
-        job = make_job(ladder_next=None)
-        character = make_character(reputation=100)
-        assert shifts_svc.check_promotion_eligible(character, job) is False
+class TestResolveIllicitHeat:
+    async def test_looks_up_the_district_row_and_bumps_pressure_on_arrest(self, db_session):
+        character = make_character(illicit_heat=99.0, jail_count=0, jailed_until_tick=None)
+        db_session.add(DistrictState(district_id=1, peacekeeper_pressure=0.3))
+        await db_session.flush()
 
-    def test_true_when_reputation_requirement_met(self):
-        job = make_job(ladder_next="foreman", ladder_requirement={"min_reputation": 20})
-        character = make_character(reputation=25)
-        assert shifts_svc.check_promotion_eligible(character, job) is True
+        arrested = await shifts_svc.resolve_illicit_heat(
+            db_session,
+            character=character,
+            district_id=1,
+            current_tick=0,
+            lost=False,
+            rng=FixedRng(0.99),
+        )
 
-    def test_false_when_reputation_requirement_not_met(self):
-        job = make_job(ladder_next="foreman", ladder_requirement={"min_reputation": 20})
-        character = make_character(reputation=5)
-        assert shifts_svc.check_promotion_eligible(character, job) is False
+        assert arrested is True
+        assert character.jailed_until_tick == constants.ILLICIT_ARREST_JAIL_TICKS
+        district_row = await db_session.get(DistrictState, 1)
+        assert district_row.peacekeeper_pressure == 0.3 + 0.05
 
+    async def test_below_threshold_never_touches_jail(self, db_session):
+        character = make_character(illicit_heat=0.0, jail_count=0, jailed_until_tick=None)
 
-class TestApplyAndQuitJob:
-    def test_apply_for_job_sets_job_fields_and_resets_miss_streak(self):
-        job = make_job()
-        character = make_character(consecutive_missed=3)
-        shifts_svc.apply_for_job(character, job, tick=100)
-        assert character.job_id == "miner"
-        assert character.job_started_tick == 100
-        assert character.consecutive_missed == 0
+        arrested = await shifts_svc.resolve_illicit_heat(
+            db_session,
+            character=character,
+            district_id=1,
+            current_tick=0,
+            lost=False,
+            rng=FixedRng(0.99),
+        )
 
-    def test_quit_job_clears_job_and_returns_history_fields(self):
-        character = make_character(job_id="miner", job_started_tick=50, consecutive_missed=2)
-        job_id, started_tick = shifts_svc.quit_job(character)
-        assert (job_id, started_tick) == ("miner", 50)
-        assert character.job_id is None
-        assert character.job_started_tick is None
-        assert character.consecutive_missed == 0
+        assert arrested is False
+        assert character.jailed_until_tick is None
 
-    def test_quit_job_without_a_job_raises(self):
-        character = make_character(job_id=None)
-        with pytest.raises(NotAllowed) as exc_info:
-            shifts_svc.quit_job(character)
-        assert exc_info.value.reason_key == "not_employed"
+    async def test_missing_district_row_does_not_raise(self, db_session):
+        character = make_character(illicit_heat=99.0, jail_count=0, jailed_until_tick=None)
+
+        arrested = await shifts_svc.resolve_illicit_heat(
+            db_session,
+            character=character,
+            district_id=999,
+            current_tick=0,
+            lost=False,
+            rng=FixedRng(0.99),
+        )
+
+        assert arrested is True

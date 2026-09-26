@@ -1,0 +1,322 @@
+- id: d0_npc_001
+  district: 0
+  name: Sable Wilder
+  age: 30
+  job_id: stylist_assistant
+  home_location_id: mansions
+  traits:
+  - cowardly
+  - kind
+  backstory: Sable Wilder's earliest memory is the smell of governance work -- The Capitol doesn't let
+    you forget what feeds it. These days Sable Wilder works as a Stylist Assistant at The Remake Center,
+    and has the calluses to prove it. Sable Wilder keeps to the back of any crowd, just in case, and will
+    give away a meal they can't spare without a second thought.
+  appearance: 30 years old, lean and weathered from years of governance work.
+- id: d0_npc_002
+  district: 0
+  name: Farrah Graystone
+  age: 27
+  job_id: avox_handler
+  home_location_id: mansions
+  traits:
+  - brave
+  - cheerful
+  backstory: Farrah Graystone was born and raised right here in The Capitol, theatrical like most of the
+    governance families around them. Farrah Graystone took up work as an Avox Handler at The Mansions
+    -- steady enough, if nothing to brag about. Farrah Graystone walks toward trouble other people walk
+    away from, and somehow keeps smiling no matter how the week's gone.
+  appearance: A 27-year-old who still moves like someone half that age.
+- id: d0_npc_003
+  district: 0
+  name: Ivo Slate
+  age: 52
+  job_id: peacekeeper_capitol
+  home_location_id: mansions
+  traits:
+  - bitter
+  - hot-tempered
+  backstory: Ivo Slate's earliest memory is the smell of governance work -- The Capitol doesn't let you
+    forget what feeds it. Ivo Slate took up work as a Peacekeeper Cadet at Tribute Training Center --
+    steady enough, if nothing to brag about. Ivo Slate carries an old grudge like it happened yesterday,
+    and has a short fuse that's gotten them in trouble more than once.
+  appearance: Looks older than 52 -- The Capitol does that to people.
+- id: d0_npc_004
+  district: 0
+  name: Briar Coalfield
+  age: 30
+  job_id: journalist
+  home_location_id: mansions
+  traits:
+  - ambitious
+  - brave
+  backstory: Briar Coalfield came up in a opulent corner of The Capitol, one of the many faces the governance
+    trade never seems to run short of. These days Briar Coalfield works as a Journalist at The Press Hall,
+    and has the calluses to prove it. Briar Coalfield is always angling for something better than this,
+    and walks toward trouble other people walk away from.
+  appearance: A 30-year-old who still moves like someone half that age.
+- id: d0_npc_005
+  district: 0
+  name: Yusuf Underhill
+  age: 26
+  job_id: journalist
+  home_location_id: mansions
+  traits:
+  - loyal
+  - suspicious
+  backstory: Yusuf Underhill was born and raised right here in The Capitol, detached like most of the
+    governance families around them. Yusuf Underhill spends most days as a Journalist, putting in hours
+    at The Press Hall like everyone else on the block. Yusuf Underhill would stand by a friend even when
+    it costs them, and trusts almost no one, and says so plainly.
+  appearance: 26 years old, lean and weathered from years of governance work.
+- id: d0_npc_006
+  district: 0
+  name: Wren Grimshaw
+  age: 31
+  job_id: stylist_assistant
+  home_location_id: mansions
+  traits:
+  - ambitious
+  - cheerful
+  backstory: Wren Grimshaw's earliest memory is the smell of governance work -- The Capitol doesn't let
+    you forget what feeds it. Wren Grimshaw took up work as a Stylist Assistant at The Remake Center --
+    steady enough, if nothing to brag about. Wren Grimshaw is always angling for something better than
+    this, and somehow keeps smiling no matter how the week's gone.
+  appearance: A 31-year-old who still moves like someone half that age.
+- id: d0_npc_007
+  district: 0
+  name: Emrys Drummond
+  age: 27
+  job_id: gamemaker_aide
+  home_location_id: mansions
+  traits:
+  - ambitious
+  - lazy
+  backstory: Nobody in Emrys Drummond's family has ever left The Capitol; the governance work runs in
+    the blood, generation after generation. Emrys Drummond took up work as a Gamemaker Aide at Gamemaker
+    Laboratories -- steady enough, if nothing to brag about. Emrys Drummond is always angling for something
+    better than this, and does exactly as much as gets by, and not a step more.
+  appearance: A 27-year-old with governance-worn hands and tired eyes.
+- id: d0_npc_008
+  district: 0
+  name: Nash Hollow
+  age: 42
+  job_id: stylist_assistant
+  home_location_id: mansions
+  traits:
+  - humble
+  - suspicious
+  backstory: Nash Hollow came up in a theatrical corner of The Capitol, one of the many faces the governance
+    trade never seems to run short of. Nash Hollow took up work as a Stylist Assistant at The Remake Center
+    -- steady enough, if nothing to brag about. Nash Hollow shrugs off compliments like they don't quite
+    fit, and trusts almost no one, and says so plainly.
+  appearance: A 42-year-old who still moves like someone half that age.
+- id: d0_npc_009
+  district: 0
+  name: Beatrix Kestner
+  age: 63
+  job_id: socialite
+  home_location_id: mansions
+  traits:
+  - cautious
+  - proud
+  backstory: Beatrix Kestner's earliest memory is the smell of governance work -- The Capitol doesn't
+    let you forget what feeds it. Beatrix Kestner took up work as a Socialite at Avenue of the Tributes
+    -- steady enough, if nothing to brag about. Beatrix Kestner weighs every decision twice before making
+    it once, and won't ask for help even when they plainly need it.
+  appearance: Looks older than 63 -- The Capitol does that to people.
+- id: d0_npc_010
+  district: 0
+  name: Hollis Ridgely
+  age: 36
+  job_id: avox_handler
+  home_location_id: mansions
+  traits:
+  - bitter
+  - gossipy
+  backstory: Nobody in Hollis Ridgely's family has ever left The Capitol; the governance work runs in
+    the blood, generation after generation. Hollis Ridgely spends most days as an Avox Handler, putting
+    in hours at The Mansions like everyone else on the block. Hollis Ridgely carries an old grudge like
+    it happened yesterday, and knows everyone's business before they've finished telling it.
+  appearance: Looks older than 36 -- The Capitol does that to people.
+- id: d0_npc_011
+  district: 0
+  name: Zinnia Ironside
+  age: 32
+  job_id: socialite
+  home_location_id: mansions
+  traits:
+  - bitter
+  - patient
+  backstory: Zinnia Ironside was born and raised right here in The Capitol, detached like most of the
+    governance families around them. These days Zinnia Ironside works as a Socialite at Avenue of the
+    Tributes, and has the calluses to prove it. Zinnia Ironside carries an old grudge like it happened
+    yesterday, and can outwait anyone, on anything.
+  appearance: A 32-year-old who still moves like someone half that age.
+- id: d0_npc_012
+  district: 0
+  name: Hollis Yarrow
+  age: 44
+  job_id: socialite
+  home_location_id: mansions
+  traits:
+  - cautious
+  - hot-tempered
+  backstory: Hollis Yarrow's earliest memory is the smell of governance work -- The Capitol doesn't let
+    you forget what feeds it. These days Hollis Yarrow works as a Socialite at Avenue of the Tributes,
+    and has the calluses to prove it. Hollis Yarrow weighs every decision twice before making it once,
+    and has a short fuse that's gotten them in trouble more than once.
+  appearance: A 44-year-old who still moves like someone half that age.
+- id: d0_npc_013
+  district: 0
+  name: Lyra Pryce
+  age: 30
+  job_id: gamemaker_aide
+  home_location_id: mansions
+  traits:
+  - cowardly
+  - paranoid
+  backstory: Lyra Pryce grew up in The Capitol's back streets, the kind of governance household where
+    everyone pitches in young. Lyra Pryce spends most days as a Gamemaker Aide, putting in hours at Gamemaker
+    Laboratories like everyone else on the block. Lyra Pryce keeps to the back of any crowd, just in case,
+    and checks over their shoulder more than anyone should have to.
+  appearance: A 30-year-old with governance-worn hands and tired eyes.
+- id: d0_npc_014
+  district: 0
+  name: Wren Graystone
+  age: 26
+  job_id: peacekeeper_capitol
+  home_location_id: mansions
+  traits:
+  - bitter
+  - stoic
+  backstory: Wren Graystone's earliest memory is the smell of governance work -- The Capitol doesn't let
+    you forget what feeds it. These days Wren Graystone works as a Peacekeeper Cadet at Tribute Training
+    Center, and has the calluses to prove it. Wren Graystone carries an old grudge like it happened yesterday,
+    and doesn't say much, and what little they do say tends to be the truth.
+  appearance: Looks older than 26 -- The Capitol does that to people.
+- id: d0_npc_015
+  district: 0
+  name: Odalys Elmhurst
+  age: 26
+  job_id: peacekeeper_capitol
+  home_location_id: mansions
+  traits:
+  - cheerful
+  - humble
+  backstory: Odalys Elmhurst came up in a detached corner of The Capitol, one of the many faces the governance
+    trade never seems to run short of. Odalys Elmhurst spends most days as a Peacekeeper Cadet, putting
+    in hours at Tribute Training Center like everyone else on the block. Odalys Elmhurst somehow keeps
+    smiling no matter how the week's gone, and shrugs off compliments like they don't quite fit.
+  appearance: Looks older than 26 -- The Capitol does that to people.
+- id: d0_npc_016
+  district: 0
+  name: Lior Underhill
+  age: 63
+  job_id: socialite
+  home_location_id: mansions
+  traits:
+  - boastful
+  - paranoid
+  backstory: Lior Underhill's earliest memory is the smell of governance work -- The Capitol doesn't let
+    you forget what feeds it. These days Lior Underhill works as a Socialite at Avenue of the Tributes,
+    and has the calluses to prove it. Lior Underhill never tells a story without making themself the hero
+    of it, and checks over their shoulder more than anyone should have to.
+  appearance: A 63-year-old with governance-worn hands and tired eyes.
+- id: d0_npc_017
+  district: 0
+  name: Beatrix Underhill
+  age: 50
+  job_id: socialite
+  home_location_id: mansions
+  traits:
+  - cowardly
+  - kind
+  backstory: Beatrix Underhill was born and raised right here in The Capitol, theatrical like most of
+    the governance families around them. Beatrix Underhill spends most days as a Socialite, putting in
+    hours at Avenue of the Tributes like everyone else on the block. Beatrix Underhill keeps to the back
+    of any crowd, just in case, and will give away a meal they can't spare without a second thought.
+  appearance: A 50-year-old who still moves like someone half that age.
+- id: d0_npc_018
+  district: 0
+  name: Beatrix Ironside
+  age: 47
+  job_id: journalist
+  home_location_id: mansions
+  traits:
+  - cheerful
+  - patient
+  backstory: Beatrix Ironside's earliest memory is the smell of governance work -- The Capitol doesn't
+    let you forget what feeds it. Beatrix Ironside took up work as a Journalist at The Press Hall -- steady
+    enough, if nothing to brag about. Beatrix Ironside somehow keeps smiling no matter how the week's
+    gone, and can outwait anyone, on anything.
+  appearance: 47 years old, lean and weathered from years of governance work.
+- id: d0_npc_019
+  district: 0
+  name: Gideon Nettle
+  age: 39
+  job_id: gamemaker_aide
+  home_location_id: mansions
+  traits:
+  - boastful
+  - humble
+  backstory: Gideon Nettle was born and raised right here in The Capitol, opulent like most of the governance
+    families around them. Gideon Nettle took up work as a Gamemaker Aide at Gamemaker Laboratories --
+    steady enough, if nothing to brag about. Gideon Nettle never tells a story without making themself
+    the hero of it, and shrugs off compliments like they don't quite fit.
+  appearance: 39 years old, lean and weathered from years of governance work.
+- id: d0_npc_020
+  district: 0
+  name: Merrick Fenwick
+  age: 25
+  job_id: journalist
+  home_location_id: mansions
+  traits:
+  - bitter
+  - suspicious
+  backstory: Merrick Fenwick grew up in The Capitol's back streets, the kind of governance household where
+    everyone pitches in young. Merrick Fenwick took up work as a Journalist at The Press Hall -- steady
+    enough, if nothing to brag about. Merrick Fenwick carries an old grudge like it happened yesterday,
+    and trusts almost no one, and says so plainly.
+  appearance: A 25-year-old who still moves like someone half that age.
+- id: d0_npc_021
+  district: 0
+  name: Fenn Marrow
+  age: 25
+  job_id: journalist
+  home_location_id: mansions
+  traits:
+  - gossipy
+  - kind
+  backstory: Fenn Marrow was born and raised right here in The Capitol, theatrical like most of the governance
+    families around them. These days Fenn Marrow works as a Journalist at The Press Hall, and has the
+    calluses to prove it. Fenn Marrow knows everyone's business before they've finished telling it, and
+    will give away a meal they can't spare without a second thought.
+  appearance: 25 years old, lean and weathered from years of governance work.
+- id: d0_npc_022
+  district: 0
+  name: Hollis Quarrie
+  age: 37
+  job_id: avox_handler
+  home_location_id: mansions
+  traits:
+  - cowardly
+  - sharp-tongued
+  backstory: Hollis Quarrie grew up in The Capitol's back streets, the kind of governance household where
+    everyone pitches in young. These days Hollis Quarrie works as an Avox Handler at The Mansions, and
+    has the calluses to prove it. Hollis Quarrie keeps to the back of any crowd, just in case, and has
+    a tongue sharper than most peacekeepers' patience.
+  appearance: A 37-year-old with governance-worn hands and tired eyes.
+- id: d0_npc_023
+  district: 0
+  name: Kellan Vane
+  age: 56
+  job_id: journalist
+  home_location_id: mansions
+  traits:
+  - patient
+  - shy
+  backstory: Kellan Vane came up in a theatrical corner of The Capitol, one of the many faces the governance
+    trade never seems to run short of. Kellan Vane spends most days as a Journalist, putting in hours
+    at The Press Hall like everyone else on the block. Kellan Vane can outwait anyone, on anything, and
+    goes quiet the moment a stranger's in the room.
+  appearance: 56 years old, lean and weathered from years of governance work.

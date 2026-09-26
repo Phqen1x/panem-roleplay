@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
-import random
 
 import discord
 from discord import app_commands
@@ -13,14 +12,36 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from panem_bot import redis_keys
+from panem_bot.errors import NotAllowed
 from panem_bot.outbound import OutboundMessage, SendPriority
 from panem_bot.services import characters as characters_svc
-from panem_bot.services import jobs as jobs_svc
+from panem_bot.services import dialogue as dialogue_svc
+from panem_bot.services import engagements as engagements_svc
+from panem_bot.services import housing as housing_svc
+from panem_bot.services import jail as jail_svc
 from panem_bot.services import proxy as proxy_svc
 from panem_bot.services import shifts as shifts_svc
 from panem_bot.strings import t
-from panem_shared.db.models import Character, DiscordChannel, Scene, Shift, User, WorldClock
-from panem_shared.enums import ChannelKind, CharacterStatus, SceneKind
+from panem_shared import constants
+from panem_shared.db.models import (
+    Character,
+    DialogueLog,
+    DiscordChannel,
+    DistrictLore,
+    DistrictState,
+    Memory,
+    Npc,
+    PanemHistoryEntry,
+    RelationshipRow,
+    Scene,
+    SceneMessage,
+    Shift,
+    User,
+    WorldClock,
+    WorldLoreSettings,
+)
+from panem_shared.enums import ChannelKind, CharacterStatus, OwnerKind, RpMode
+from panem_shared.relationships import relationship_key
 
 
 class ProxyCog(commands.Cog):
@@ -76,7 +97,7 @@ class ProxyCog(commands.Cog):
             refusal = proxy_svc.check_can_proxy(
                 character=row,
                 district=district,
-                location_id=scene.location_id if scene else None,
+                location_id=proxy_svc.scene_location_id(scene),
                 current_tick=0,
             )
             if refusal is not None:
@@ -111,14 +132,18 @@ class ProxyCog(commands.Cog):
             if forum_registered is None:
                 return []
             user = await characters_svc.get_or_create_user(session, interaction.user.id)
-            stmt = select(Character.name).where(
+            stmt = select(Character).where(
                 Character.user_id == user.id,
-                Character.district_id == forum_registered.district_id,
                 Character.status == CharacterStatus.APPROVED.value,
             )
             if current:
                 stmt = stmt.where(Character.name.ilike(f"%{current}%"))
-            names = (await session.execute(stmt.limit(25))).scalars().all()
+            rows = (await session.execute(stmt)).scalars().all()
+            names = [
+                c.name
+                for c in rows
+                if proxy_svc.can_rp_in_district(c, forum_registered.district_id)
+            ][:25]
         return [app_commands.Choice(name=name, value=name) for name in names]
 
     @app_commands.command(name="ooc", description="Clear your active character for this scene")
@@ -134,9 +159,41 @@ class ProxyCog(commands.Cog):
     async def _apply_rp_credit(
         self, session: AsyncSession, character: Character, scene: Scene, content: str
     ) -> None:
-        """FR-PRX-7: a long-enough proxied message inside the scene tagged
-        for the character's open shift's workplace completes that shift as
-        if `/work` had picked option 0, with no separate command needed."""
+        """FR-PRX-7: a long-enough proxied message completes an open shift
+        with no separate command needed, counted as a win. Jobs are
+        free-typed now (no catalog `workplace` to tag a scene against), so
+        this no longer gates on `scene`/location -- any proxied RP while a
+        shift is open counts, same as `can_earn_rp_credit_anywhere` already
+        gave Gamemakers before the rework. Also touches `last_active_tick`
+        (the district economy's active-player signal) regardless of
+        whether there's an open shift to credit -- proxying at all counts
+        as "active".
+
+        A qualifying message also docks `FATIGUE_COST_PER_INTERACTION`
+        regardless of whether there's an open shift to credit -- fatigue
+        "goes down... based on how many times they work and interact with
+        other players and NPCs," and RP is the interaction signal this
+        codebase already has a length gate for (`meets_rp_credit`), so it
+        doubles as the fatigue-interaction gate too rather than inventing
+        a second threshold.
+
+        Same qualifying message also trickles `sanity` back up by
+        `SANITY_GAIN_PER_INTERACTION` (Simulation mode only -- Life/Story
+        characters don't track sanity) -- "sending role play messages...
+        should replenish a little sanity each time" (Vitals tab feature)."""
+        clock = await session.get(WorldClock, 1)
+        current_tick = clock.tick if clock is not None else 0
+        character.last_active_tick = current_tick
+
+        qualifies = shifts_svc.meets_rp_credit(content)
+        if qualifies:
+            housing_svc.dock_fatigue(character, constants.FATIGUE_COST_PER_INTERACTION)
+            if character.rp_mode == RpMode.SIMULATION.value:
+                character.sanity = min(
+                    constants.SANITY_MAX,
+                    character.sanity + constants.SANITY_GAIN_PER_INTERACTION,
+                )
+
         open_shift = (
             await session.execute(
                 select(Shift).where(Shift.character_id == character.id, Shift.result.is_(None))
@@ -144,17 +201,29 @@ class ProxyCog(commands.Cog):
         ).scalar_one_or_none()
         if open_shift is None:
             return
-
-        job = await jobs_svc.get_job(session, self.bot.content, open_shift.job_id)  # type: ignore[attr-defined]
-        if job is None or scene.location_id != job.workplace:
+        if not qualifies:
             return
-        if not shifts_svc.meets_rp_credit(content):
+        if not shifts_svc.can_earn_rp_credit_anywhere(
+            character
+        ) and not shifts_svc.can_work_from_current_location(character, current_tick):
+            # FR-LOC: proxying is allowed from either the character's home
+            # district or wherever they've actually traveled to
+            # (`can_rp_in_district`) -- but crediting a *shift* still
+            # requires actually being home, the same gate `/work` itself
+            # enforces. A character RPing away from home still gets the
+            # fatigue/sanity credit above; their open shift just isn't
+            # silently completed by it.
             return
 
-        clock = await session.get(WorldClock, 1)
-        current_tick = clock.tick if clock is not None else 0
-        outcome = shifts_svc.resolve_shift(job, 0, is_player=True, rng=random.Random())
-        shifts_svc.apply_shift_outcome(open_shift, character, outcome, tick=current_tick)
+        bot_content = self.bot.content  # type: ignore[attr-defined]
+        district = bot_content.district(character.district_id)
+        market_multiplier = await shifts_svc.market_multiplier_for_district(
+            session, bot_content, district
+        )
+        outcome = shifts_svc.resolve_shift_game(
+            character, district, won=True, market_multiplier=market_multiplier
+        )
+        shifts_svc.apply_shift_outcome(open_shift, character, outcome, won=True, tick=current_tick)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
@@ -231,11 +300,11 @@ class ProxyCog(commands.Cog):
             if character is None:
                 return
 
-            district = self.bot.content.district(character.district_id)
+            district = self.bot.content.district(forum_registered.district_id)
             refusal = proxy_svc.check_can_proxy(
                 character=character,
                 district=district,
-                location_id=scene.location_id if scene else None,
+                location_id=proxy_svc.scene_location_id(scene),
                 current_tick=0,
             )
             if refusal is not None:
@@ -255,8 +324,9 @@ class ProxyCog(commands.Cog):
 
             if scene is not None:
                 scene.last_message_at = dt.datetime.now(dt.UTC)
-                if scene.kind != SceneKind.STAFF.value or scene.pins_location:
-                    character.location_id = scene.location_id
+                pinned_location = proxy_svc.scene_location_id(scene)
+                if pinned_location is not None:
+                    character.location_id = pinned_location
                 await self._apply_rp_credit(session, character, scene, content)
 
         with contextlib.suppress(discord.HTTPException):
@@ -268,8 +338,14 @@ class ProxyCog(commands.Cog):
             webhook_row.webhook_id, webhook_row.webhook_token, client=self.bot
         )
         chunks = proxy_svc.split_for_webhook(content or "​")
+        # "Engaged" means this scene currently has NPC participants
+        # (`/talk`/`/engage` can attach NPCs to *any* scene -- an ambient
+        # thread, an open `/scene`, not just a dedicated `SceneKind.
+        # ENGAGEMENT` thread -- see `cogs/dialogue.py`'s docstring), not
+        # merely that the scene's `kind` is ENGAGEMENT.
+        is_engagement = scene is not None and bool(scene.participants.get("npcs"))
 
-        async def send_chunk(chunk: str, files: list[discord.File]) -> None:
+        async def send_chunk(chunk: str, files: list[discord.File], *, is_last: bool) -> None:
             sent = await webhook.send(
                 chunk,
                 username=character.name,
@@ -287,17 +363,265 @@ class ProxyCog(commands.Cog):
             await self.bot.redis.expire(
                 redis_keys.scene_presence_key(thread.id), redis_keys.PRESENCE_TTL_S
             )
+            if is_last and is_engagement:
+                assert scene is not None
+                await self.post_engagement_replies(
+                    webhook=webhook,
+                    thread=thread,
+                    scene_id=scene.id,
+                    speaker_character_id=character.id,
+                    speaker_message_id=sent.id,
+                    message_content=content,
+                )
 
         for i, chunk in enumerate(chunks):
-            files = attachments if i == len(chunks) - 1 else []
+            is_last = i == len(chunks) - 1
+            files = attachments if is_last else []
             await self.bot.outbound.enqueue(
                 OutboundMessage(
                     thread_id=thread.id,
                     forum_channel_id=thread.parent_id,
                     priority=SendPriority.PLAYER,
-                    send=(lambda c=chunk, f=files: send_chunk(c, f)),
+                    send=(lambda c=chunk, f=files, last=is_last: send_chunk(c, f, is_last=last)),
                 )
             )
+
+    async def post_engagement_replies(
+        self,
+        *,
+        webhook: discord.Webhook,
+        thread: discord.Thread,
+        scene_id: int,
+        speaker_character_id: int,
+        speaker_message_id: int,
+        message_content: str,
+    ) -> None:
+        """After a player's line lands in an `ENGAGEMENT`-kind scene, let
+        whichever NPCs should respond (`engagements_svc.npcs_that_should_
+        reply` -- every joined NPC in a strict 1:1, only the ones actually
+        named otherwise) generate and post a reply through the same
+        webhook, as themselves -- exactly how the player's own line was
+        just proxied, only NPC-authored. Not underscore-private: `/talk`
+        (`panem_bot.cogs.dialogue`) posts its own player line directly
+        (it isn't a raw channel message `on_message` can intercept) and
+        calls this via `bot.get_cog("ProxyCog")` to trigger the NPC's
+        reply the same way, rather than duplicating this whole method.
+        Records both the player's line and each reply as a `SceneMessage`
+        (read back as `history` for the next reply) and each NPC reply as
+        a `DialogueLog` row -- the first
+        real use of either table. Deliberately never touches `scene.
+        last_message_at`: that column means "last time a *player* spoke"
+        for `EngagementCog`'s idle-timeout background task, and an NPC
+        replying forever must not keep an empty engagement alive."""
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            scene = await session.get(Scene, scene_id)
+            speaker = await session.get(Character, speaker_character_id)
+            if scene is None or speaker is None:
+                return
+
+            session.add(
+                SceneMessage(
+                    scene_id=scene.id,
+                    thread_id=thread.id,
+                    district_id=scene.district_id,
+                    discord_message_id=speaker_message_id,
+                    author_kind="character",
+                    author_id=str(speaker.id),
+                    author_name=speaker.name,
+                    avatar_url=speaker.avatar_url,
+                    content=message_content,
+                    ts=dt.datetime.now(dt.UTC),
+                )
+            )
+
+            participants = scene.participants
+            npc_ids = participants.get("npcs", [])
+            if not npc_ids:
+                return
+            npcs = (await session.execute(select(Npc).where(Npc.id.in_(npc_ids)))).scalars().all()
+            is_one_on_one = len(participants.get("characters", [])) == 1 and len(npc_ids) == 1
+            speaking = engagements_svc.npcs_that_should_reply(
+                list(npcs), message_content, is_one_on_one=is_one_on_one
+            )
+            if not speaking:
+                return
+
+            other_character_ids = [
+                cid for cid in participants.get("characters", []) if cid != speaker.id
+            ]
+            other_character_names = (
+                (
+                    await session.execute(
+                        select(Character.name).where(Character.id.in_(other_character_ids))
+                    )
+                )
+                .scalars()
+                .all()
+                if other_character_ids
+                else []
+            )
+
+            history_rows = list(
+                reversed(
+                    (
+                        await session.execute(
+                            select(SceneMessage)
+                            .where(SceneMessage.scene_id == scene.id)
+                            .order_by(SceneMessage.ts.desc())
+                            .limit(constants.ENGAGEMENT_HISTORY_WINDOW)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+            )
+
+            clock = await session.get(WorldClock, 1)
+            current_tick = clock.tick if clock is not None else 0
+            content_bundle = self.bot.content  # type: ignore[attr-defined]
+            district = content_bundle.district(scene.district_id)
+            location = next(
+                (loc for loc in district.locations if loc.id == scene.location_id), None
+            )
+            if location is None:
+                return
+
+            # Everything an NPC's reply should actually be shaped by
+            # beyond stance -- their own background, the speaker's
+            # standing, and the district's state -- gathered once per
+            # message rather than per NPC, since none of it changes
+            # between the NPCs replying to the same line.
+            district_state = await session.get(DistrictState, scene.district_id)
+            district_lore = await session.get(DistrictLore, scene.district_id)
+            character_job_title = speaker.job_title
+            character_home_district = content_bundle.district(speaker.district_id)
+
+            # Panem-wide staff lore (`/staff lore ...`) -- fetched once per
+            # message, same as `district_state` above, since it doesn't
+            # vary between the NPCs replying to the same line. Keyword
+            # matching against `message_content` happens per-NPC inside
+            # `dialogue_svc.build_request_context` (mirrors how `memories`
+            # is likewise fetched once and filtered per-NPC there).
+            history_entries = (await session.execute(select(PanemHistoryEntry))).scalars().all()
+            world_lore = await session.get(WorldLoreSettings, 1)
+            world_notes = world_lore.alternate_universe_notes if world_lore is not None else None
+
+            for npc in speaking:
+                try:
+                    await dialogue_svc.check_and_spend_stamina(
+                        self.bot.redis,  # type: ignore[attr-defined]
+                        npc=npc,
+                        tick=current_tick,
+                        ttl_seconds=self.bot.settings.tick_interval_seconds * 2,  # type: ignore[attr-defined]
+                    )
+                except NotAllowed:
+                    continue
+
+                key = relationship_key(
+                    (OwnerKind.CHARACTER.value, str(speaker.id)), (OwnerKind.NPC.value, npc.id)
+                )
+                relationship = await session.get(RelationshipRow, key)
+                stance = relationship.stance if relationship is not None else "stranger"
+                known = relationship.summary if relationship is not None else None
+                memory_rows = (
+                    (
+                        await session.execute(
+                            select(Memory).where(
+                                Memory.owner_kind == "npc", Memory.owner_id == npc.id
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+
+                history = [
+                    {
+                        "role": "assistant"
+                        if row.author_kind == "npc" and row.author_id == npc.id
+                        else "user",
+                        "content": row.content
+                        if row.author_kind == "npc" and row.author_id == npc.id
+                        else f"{row.author_name}: {row.content}",
+                    }
+                    for row in history_rows
+                ]
+                present = [other.name for other in npcs if other.id != npc.id] + list(
+                    other_character_names
+                )
+
+                npc_job = content_bundle.jobs.get(npc.job_id) if npc.job_id else None
+                npc_content = content_bundle.npcs.get(npc.id)
+                # A staff edit (`/staff npc set-background`) always wins
+                # over the authored content -- a staff-created NPC
+                # (`/staff npc add`) has no authored entry at all.
+                raw_background = npc.backstory_override or (
+                    npc_content.backstory if npc_content is not None else None
+                )
+                npc_background = None
+                if raw_background:
+                    npc_background = raw_background[: constants.NPC_BACKGROUND_PROMPT_MAX_LEN]
+                    if len(raw_background) > constants.NPC_BACKGROUND_PROMPT_MAX_LEN:
+                        npc_background += "…"
+
+                reply = await dialogue_svc.generate_reply(
+                    npc=npc,
+                    district=district,
+                    location=location,
+                    character=speaker,
+                    stance=stance,
+                    memories=list(memory_rows),
+                    message=message_content,
+                    settings=self.bot.settings,  # type: ignore[attr-defined]
+                    history=history,
+                    history_entries=history_entries,
+                    world_notes=world_notes,
+                    present=present,
+                    npc_job_title=npc_job.title if npc_job is not None else None,
+                    npc_background=npc_background,
+                    district_state=district_state,
+                    character_job_title=character_job_title,
+                    character_home_district=character_home_district,
+                    known=known,
+                    district_on_edge=jail_svc.is_crackdown_active(district_state, current_tick),
+                    district_lore=district_lore,
+                )
+
+                sent = await webhook.send(
+                    reply,
+                    username=npc.name,
+                    avatar_url=npc.avatar_url or discord.utils.MISSING,
+                    thread=thread,
+                    wait=True,
+                )
+                reply_row = SceneMessage(
+                    scene_id=scene.id,
+                    thread_id=thread.id,
+                    district_id=scene.district_id,
+                    discord_message_id=sent.id,
+                    author_kind="npc",
+                    author_id=npc.id,
+                    author_name=npc.name,
+                    avatar_url=npc.avatar_url,
+                    content=reply,
+                    ts=dt.datetime.now(dt.UTC),
+                )
+                session.add(reply_row)
+                history_rows.append(reply_row)
+                session.add(
+                    DialogueLog(
+                        tick=current_tick,
+                        npc_id=npc.id,
+                        character_id=speaker.id,
+                        scene_id=scene.id,
+                        provider=dialogue_svc.resolve_provider(
+                            npc,
+                            self.bot.settings,  # type: ignore[attr-defined]
+                        ),
+                        context={"message": message_content},
+                        output=reply,
+                    )
+                )
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
@@ -338,6 +662,7 @@ class ProxyCog(commands.Cog):
             async with self.bot.db() as session:
                 await log_staff_action(
                     session,
+                    bot=self.bot,
                     staff_discord_id=payload.user_id,
                     action="proxy_delete",
                     target=str(payload.message_id),

@@ -4,9 +4,10 @@ import pytest
 
 from panem_bot.errors import NotAllowed, NotFound
 from panem_bot.services import travel as travel_svc
+from panem_shared import constants
 from panem_shared.content.schemas import District, DistrictCulture, DistrictMap, Location
-from panem_shared.db.models import Character
-from panem_shared.enums import CharacterStatus
+from panem_shared.db.models import Character, Inventory
+from panem_shared.enums import CharacterStatus, OwnerKind
 
 
 def make_district() -> District:
@@ -14,8 +15,9 @@ def make_district() -> District:
         Location(id="square", name="The Square", kind="public"),
         Location(id="station", name="Rail Station", kind="station"),
         Location(id="labs", name="Gamemaker Labs", kind="workplace", restricted=True),
+        Location(id="outskirts", name="The Outskirts", kind="outskirts"),
     ]
-    coords = {"square": (10, 10), "station": (20, 20), "labs": (30, 30)}
+    coords = {"square": (10, 10), "station": (20, 20), "labs": (30, 30), "outskirts": (40, 40)}
     return District(
         id=12,
         name="District 12",
@@ -60,14 +62,16 @@ class TestCheckCanTravel:
         district = make_district()
         character = make_character()
         location = travel_svc.resolve_location(district, "square")
-        travel_svc.check_can_travel(character=character, location=location)  # no raise
+        travel_svc.check_can_travel(
+            character=character, location=location, current_tick=0
+        )  # no raise
 
     def test_refuses_dead_character(self):
         district = make_district()
         character = make_character(status=CharacterStatus.DEAD.value)
         location = travel_svc.resolve_location(district, "square")
         with pytest.raises(NotAllowed) as exc_info:
-            travel_svc.check_can_travel(character=character, location=location)
+            travel_svc.check_can_travel(character=character, location=location, current_tick=0)
         assert exc_info.value.reason_key == "character_dead"
 
     def test_refuses_non_approved_character(self):
@@ -75,22 +79,296 @@ class TestCheckCanTravel:
         character = make_character(status=CharacterStatus.PENDING.value)
         location = travel_svc.resolve_location(district, "square")
         with pytest.raises(NotAllowed) as exc_info:
-            travel_svc.check_can_travel(character=character, location=location)
+            travel_svc.check_can_travel(character=character, location=location, current_tick=0)
         assert exc_info.value.reason_key == "character_not_approved"
+
+    def test_refuses_jailed_character(self):
+        district = make_district()
+        character = make_character(jailed_until_tick=200)
+        location = travel_svc.resolve_location(district, "square")
+        with pytest.raises(NotAllowed) as exc_info:
+            travel_svc.check_can_travel(character=character, location=location, current_tick=100)
+        assert exc_info.value.reason_key == "travel_jailed"
+
+    def test_allows_once_jail_sentence_has_passed(self):
+        district = make_district()
+        character = make_character(jailed_until_tick=50)
+        location = travel_svc.resolve_location(district, "square")
+        travel_svc.check_can_travel(
+            character=character, location=location, current_tick=100
+        )  # no raise
 
     def test_refuses_restricted_location_without_access(self):
         district = make_district()
-        character = make_character(job_id=None, is_victor=False)
+        character = make_character(job_title=None, positions=[])
         location = travel_svc.resolve_location(district, "labs")
         with pytest.raises(NotAllowed) as exc_info:
-            travel_svc.check_can_travel(character=character, location=location)
+            travel_svc.check_can_travel(character=character, location=location, current_tick=0)
         assert exc_info.value.reason_key == "location_restricted"
 
     def test_allows_victor_into_restricted_location(self):
         district = make_district()
-        character = make_character(is_victor=True)
+        character = make_character(positions=["victor"])
         location = travel_svc.resolve_location(district, "labs")
-        travel_svc.check_can_travel(character=character, location=location)  # no raise
+        travel_svc.check_can_travel(
+            character=character, location=location, current_tick=0
+        )  # no raise
+
+    def test_story_mode_bypasses_the_restricted_location_gate(self):
+        district = make_district()
+        character = make_character(job_title=None, positions=[], rp_mode="story")
+        location = travel_svc.resolve_location(district, "labs")
+        travel_svc.check_can_travel(
+            character=character, location=location, current_tick=0
+        )  # no raise
+
+    def test_allows_the_outskirts_at_night(self):
+        district = make_district()
+        character = make_character()
+        location = travel_svc.resolve_location(district, "outskirts")
+        travel_svc.check_can_travel(
+            character=character, location=location, current_tick=0
+        )  # no raise -- tick 0 is night
+
+    def test_refuses_the_outskirts_outside_night(self):
+        district = make_district()
+        character = make_character()
+        location = travel_svc.resolve_location(district, "outskirts")
+        with pytest.raises(NotAllowed) as exc_info:
+            travel_svc.check_can_travel(
+                character=character,
+                location=location,
+                current_tick=6,  # morning
+            )
+        assert exc_info.value.reason_key == "outskirts_night_only"
+
+    def test_story_mode_still_refuses_the_outskirts_outside_night(self):
+        # The night gate is about *when* it is, not who's asking -- unlike
+        # the job/position-based restricted-location gate just above,
+        # Story mode doesn't bypass it.
+        district = make_district()
+        character = make_character(rp_mode="story")
+        location = travel_svc.resolve_location(district, "outskirts")
+        with pytest.raises(NotAllowed) as exc_info:
+            travel_svc.check_can_travel(character=character, location=location, current_tick=6)
+        assert exc_info.value.reason_key == "outskirts_night_only"
+
+
+class TestResolveStation:
+    def test_finds_the_station_location(self):
+        district = make_district()
+        station = travel_svc.resolve_station(district)
+        assert station.id == "station"
+
+
+class TestSpendTransport:
+    async def test_insufficient_transport_raises_and_changes_nothing(self, db_session):
+        character = make_character()
+        character.id = 1
+        db_session.add(
+            Inventory(
+                owner_kind=OwnerKind.CHARACTER.value,
+                owner_id="1",
+                good_id=constants.TRANSPORT_GOOD_ID,
+                qty=1,
+            )
+        )
+        await db_session.flush()
+
+        with pytest.raises(NotAllowed) as exc_info:
+            await travel_svc.spend_transport(db_session, character)
+        assert exc_info.value.reason_key == "travel_insufficient_transport"
+
+        row = await db_session.get(
+            Inventory, (OwnerKind.CHARACTER.value, "1", constants.TRANSPORT_GOOD_ID)
+        )
+        assert row.qty == 1
+
+    async def test_no_inventory_row_at_all_is_treated_as_zero(self, db_session):
+        character = make_character()
+        character.id = 1
+        with pytest.raises(NotAllowed) as exc_info:
+            await travel_svc.spend_transport(db_session, character)
+        assert exc_info.value.reason_key == "travel_insufficient_transport"
+
+    async def test_sufficient_transport_is_deducted(self, db_session):
+        character = make_character()
+        character.id = 1
+        db_session.add(
+            Inventory(
+                owner_kind=OwnerKind.CHARACTER.value,
+                owner_id="1",
+                good_id=constants.TRANSPORT_GOOD_ID,
+                qty=5,
+            )
+        )
+        await db_session.flush()
+
+        await travel_svc.spend_transport(db_session, character)
+
+        row = await db_session.get(
+            Inventory, (OwnerKind.CHARACTER.value, "1", constants.TRANSPORT_GOOD_ID)
+        )
+        assert row.qty == 5 - constants.TRANSPORT_UNITS_PER_TRIP
+
+
+class TestIsFreeVictorRoute:
+    def test_victor_home_to_capitol_is_free(self):
+        character = make_character(district_id=12, positions=["victor"])
+        assert travel_svc.is_free_victor_route(character, 12, 0)
+
+    def test_victor_capitol_to_home_is_free(self):
+        character = make_character(district_id=12, positions=["victor"])
+        assert travel_svc.is_free_victor_route(character, 0, 12)
+
+    def test_victor_to_a_third_district_is_not_free(self):
+        character = make_character(district_id=12, positions=["victor"])
+        assert not travel_svc.is_free_victor_route(character, 12, 5)
+
+    def test_non_victor_never_free(self):
+        character = make_character(district_id=12, positions=[])
+        assert not travel_svc.is_free_victor_route(character, 12, 0)
+
+
+class TestIsFreeRoute:
+    def test_returning_home_is_free_from_anywhere(self):
+        character = make_character(district_id=12, positions=[])
+        assert travel_svc.is_free_route(character, 5, 12)
+        assert travel_svc.is_free_route(character, 0, 12)
+
+    def test_leaving_home_for_an_ordinary_district_still_costs(self):
+        character = make_character(district_id=12, positions=[])
+        assert not travel_svc.is_free_route(character, 12, 5)
+
+    def test_victor_home_to_capitol_is_free(self):
+        character = make_character(district_id=12, positions=["victor"])
+        assert travel_svc.is_free_route(character, 12, 0)
+
+    def test_non_victor_third_district_round_trip_only_home_leg_is_free(self):
+        character = make_character(district_id=12, positions=[])
+        assert not travel_svc.is_free_route(character, 12, 5)
+        assert travel_svc.is_free_route(character, 5, 12)
+
+
+class TestCheckCanTravelDistrict:
+    def test_allows_approved_character_at_the_station(self):
+        district = make_district()
+        character = make_character(location_id="station")
+        travel_svc.check_can_travel_district(
+            character=character, district=district, destination_id=1, current_tick=100
+        )  # no raise
+
+    def test_refuses_dead_character(self):
+        district = make_district()
+        character = make_character(status=CharacterStatus.DEAD.value, location_id="station")
+        with pytest.raises(NotAllowed) as exc_info:
+            travel_svc.check_can_travel_district(
+                character=character, district=district, destination_id=1, current_tick=100
+            )
+        assert exc_info.value.reason_key == "character_dead"
+
+    def test_refuses_non_approved_character(self):
+        district = make_district()
+        character = make_character(status=CharacterStatus.PENDING.value, location_id="station")
+        with pytest.raises(NotAllowed) as exc_info:
+            travel_svc.check_can_travel_district(
+                character=character, district=district, destination_id=1, current_tick=100
+            )
+        assert exc_info.value.reason_key == "character_not_approved"
+
+    def test_refuses_jailed_character(self):
+        district = make_district()
+        character = make_character(location_id="station", jailed_until_tick=200)
+        with pytest.raises(NotAllowed) as exc_info:
+            travel_svc.check_can_travel_district(
+                character=character, district=district, destination_id=1, current_tick=100
+            )
+        assert exc_info.value.reason_key == "travel_jailed"
+
+    def test_allows_once_jail_sentence_has_passed(self):
+        district = make_district()
+        character = make_character(location_id="station", jailed_until_tick=50)
+        travel_svc.check_can_travel_district(
+            character=character, district=district, destination_id=1, current_tick=100
+        )  # no raise
+
+    def test_refuses_character_already_in_transit(self):
+        district = make_district()
+        character = make_character(location_id="station", in_transit_until_tick=150)
+        with pytest.raises(NotAllowed) as exc_info:
+            travel_svc.check_can_travel_district(
+                character=character, district=district, destination_id=1, current_tick=100
+            )
+        assert exc_info.value.reason_key == "travel_already_in_transit"
+
+    def test_refuses_traveling_to_current_district(self):
+        district = make_district()
+        character = make_character(location_id="station")
+        with pytest.raises(NotAllowed) as exc_info:
+            travel_svc.check_can_travel_district(
+                character=character, district=district, destination_id=12, current_tick=100
+            )
+        assert exc_info.value.reason_key == "travel_same_district"
+
+    def test_refuses_when_not_at_the_station(self):
+        district = make_district()
+        character = make_character(location_id="square")
+        with pytest.raises(NotAllowed) as exc_info:
+            travel_svc.check_can_travel_district(
+                character=character, district=district, destination_id=1, current_tick=100
+            )
+        assert exc_info.value.reason_key == "travel_not_at_station"
+
+    def test_story_mode_does_not_need_to_be_at_the_station(self):
+        district = make_district()
+        character = make_character(location_id="square", rp_mode="story")
+        travel_svc.check_can_travel_district(
+            character=character, district=district, destination_id=1, current_tick=100
+        )  # no raise
+
+
+class TestTransitTicksFor:
+    def test_story_mode_is_instant(self):
+        character = make_character(rp_mode="story")
+        assert travel_svc.transit_ticks_for(character) == 0
+
+    def test_life_mode_is_flat_one_tick(self):
+        character = make_character(rp_mode="life")
+        assert travel_svc.transit_ticks_for(character) == constants.LIFE_MODE_TRANSIT_TICKS
+
+    def test_simulation_mode_uses_the_full_transit_time(self):
+        character = make_character(rp_mode="simulation")
+        assert travel_svc.transit_ticks_for(character) == constants.TRANSIT_TICKS
+
+
+class TestShouldChargeTransport:
+    def test_story_mode_never_pays(self):
+        character = make_character(rp_mode="story", district_id=12, positions=[])
+        assert travel_svc.should_charge_transport(character, 12, 3) is False
+
+    def test_life_mode_pays_for_a_non_free_route(self):
+        character = make_character(rp_mode="life", district_id=12, positions=[])
+        assert travel_svc.should_charge_transport(character, 12, 3) is True
+
+    def test_life_mode_does_not_pay_for_the_free_route_home(self):
+        character = make_character(rp_mode="life", district_id=12, positions=[])
+        assert travel_svc.should_charge_transport(character, 3, 12) is False
+
+
+class TestApplyInstantArrival:
+    def test_moves_the_character_to_the_destination_station(self):
+        destination = make_district()
+        destination.id = 3
+        character = make_character(current_district_id=12, location_id="station")
+        travel_svc.apply_instant_arrival(character, destination)
+        assert character.current_district_id == 3
+        assert character.location_id == "station"
+
+    def test_clears_away_since_tick_when_arriving_home(self):
+        destination = make_district()
+        character = make_character(district_id=12, current_district_id=3, away_since_tick=50)
+        travel_svc.apply_instant_arrival(character, destination)
+        assert character.away_since_tick is None
 
 
 class TestPlace:

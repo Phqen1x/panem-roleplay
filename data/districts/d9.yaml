@@ -3,6 +3,7 @@ name: District Nine
 industry: grain
 produces:
 - grain
+- career_training
 imports:
 - coal
 - fish
@@ -10,6 +11,9 @@ imports:
 - power
 - produce
 - textiles
+- transport
+illicit_produces:
+- counterfeit_papers
 population_base: 8500
 culture:
   tone:
@@ -60,6 +64,21 @@ locations:
   access_jobs:
   - d9_thresher
   - d9_miller
+- id: academy
+  name: The Academy
+  kind: workplace
+  capacity: 60
+  job_ids:
+  - d9_academy_trainer
+- id: black_market
+  name: The Chaff Market
+  kind: market
+  capacity: 30
+  illicit: true
+- id: jail
+  name: District Nine Jail
+  kind: jail
+  capacity: 40
 map:
   image: maps/d9.png
   width: 1600
@@ -86,6 +105,15 @@ map:
     outskirts:
     - 1400
     - 800
+    academy:
+    - 1000
+    - 300
+    black_market:
+    - 1200
+    - 650
+    jail:
+    - 950
+    - 150
 quota:
   good: grain
   amount: 1400

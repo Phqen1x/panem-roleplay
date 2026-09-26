@@ -7,6 +7,7 @@ dependencies = [
     "panem-shared",
     "discord.py>=2.4",
     "redis>=5.1",
+    "httpx>=0.27",
 ]
 
 [build-system]

@@ -12,21 +12,13 @@ from __future__ import annotations
 
 import discord
 from discord import app_commands
-from sqlalchemy import or_, select
+from sqlalchemy import select
 
 from panem_bot.services import characters as characters_svc
-from panem_shared.content.errors import ContentValidationError
-from panem_shared.db.models import Character, Npc
+from panem_shared.db.models import AfflictionType, Character, Npc
 from panem_shared.enums import CharacterStatus
 
 MAX_CHOICES = 25
-
-#: Sentinel staff type into a clearable text field to blank it back out
-#: (see `panem_bot.services.jobs`); surfaced here as a suggested choice.
-CLEAR_TEXT = "none"
-
-#: Sentinel staff type into a clearable numeric field to blank it back out.
-CLEAR_NUMBER = -1.0
 
 
 async def _characters(
@@ -88,22 +80,71 @@ async def any_pending(
     )
 
 
-async def job_ids(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+async def any_npc(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    """Any NPC in any district, searched by name -- for staff commands
+    (`/staff npc ...`), which need to reach any resident, not just ones
+    the invoking staff member's own character shares a district with.
+
+    The synthetic name pool (`panem_shared.content.names`) is sampled
+    independently per district, so the same name showing up in two
+    districts is expected, not a bug -- the choice's `value` is the
+    NPC's actual unique `id`, not its name, so picking a suggestion
+    always resolves to exactly the one NPC shown, never an ambiguous
+    name shared by several."""
     bot = interaction.client
-    all_jobs = await bot.all_jobs()  # type: ignore[attr-defined]
-    current_lower = current.lower()
-    matches = [
-        job
-        for job in all_jobs.values()
-        if current_lower in job.id.lower() or current_lower in job.title.lower()
-    ]
-    matches.sort(key=lambda job: job.id)
+    async with bot.db() as session:  # type: ignore[attr-defined]
+        stmt = select(Npc.id, Npc.name, Npc.district_id)
+        if current:
+            stmt = stmt.where(Npc.name.ilike(f"%{current}%"))
+        rows = (await session.execute(stmt.order_by(Npc.name).limit(MAX_CHOICES))).all()
     return [
         app_commands.Choice(
-            name=f"{job.id} - {job.title} ({bot.content.district(job.district).name})",  # type: ignore[attr-defined]
-            value=job.id,
+            name=f"{name} ({bot.content.district(district_id).name})",  # type: ignore[attr-defined]
+            value=npc_id,
         )
-        for job in matches[:MAX_CHOICES]
+        for npc_id, name, district_id in rows
+    ]
+
+
+async def affliction_types(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    """The staff-authored catalog (`panem_shared.affliction_types`, built
+    through the dashboard's Staff tab) -- `/character afflict`'s `type`
+    field. Choice `value` is the type's name (unique, same as a good/job
+    id elsewhere in this module), which the cog re-looks-up by name at
+    submit time rather than carrying a numeric id through the option."""
+    bot = interaction.client
+    async with bot.db() as session:  # type: ignore[attr-defined]
+        stmt = select(AfflictionType.name, AfflictionType.is_permanent)
+        if current:
+            stmt = stmt.where(AfflictionType.name.ilike(f"%{current}%"))
+        rows = (await session.execute(stmt.order_by(AfflictionType.name).limit(MAX_CHOICES))).all()
+    return [
+        app_commands.Choice(name=f"{name} (permanent)" if is_permanent else name, value=name)
+        for name, is_permanent in rows
+    ]
+
+
+async def any_good(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    """Every good in the content catalog, regardless of district --
+    `/trade offer`'s `give_good`/`want_good` fields aren't location-scoped
+    the way `/market`'s are (a trade is between two characters, wherever
+    they each are), so this searches the whole catalog rather than one
+    district's `produces`/`imports` like `market.py`'s own autocomplete."""
+    bot = interaction.client
+    content = bot.content  # type: ignore[attr-defined]
+    current_lower = current.lower()
+    matches = [
+        good
+        for good_id, good in content.goods.items()
+        if current_lower in good_id.lower() or current_lower in good.name.lower()
+    ]
+    matches.sort(key=lambda g: g.name)
+    return [
+        app_commands.Choice(name=f"{g.name} ({g.id})", value=g.id) for g in matches[:MAX_CHOICES]
     ]
 
 
@@ -121,86 +162,3 @@ async def districts(
     return [
         app_commands.Choice(name=f"{d.id} - {d.name}", value=d.id) for d in matches[:MAX_CHOICES]
     ]
-
-
-def _with_clear_choice(
-    choices: list[app_commands.Choice[str]], current: str
-) -> list[app_commands.Choice[str]]:
-    """Offers the `CLEAR_TEXT` sentinel as a suggestion (never as the only
-    allowed value -- dynamic autocomplete lists don't restrict input)."""
-    if CLEAR_TEXT.startswith(current.strip().lower()):
-        return [
-            app_commands.Choice(name=f"{CLEAR_TEXT} (clear)", value=CLEAR_TEXT),
-            *choices[: MAX_CHOICES - 1],
-        ]
-    return choices[:MAX_CHOICES]
-
-
-async def job_ids_clearable(
-    interaction: discord.Interaction, current: str
-) -> list[app_commands.Choice[str]]:
-    """Like `job_ids`, plus the `CLEAR_TEXT` sentinel -- for fields that
-    reference another job id and can be blanked back out (e.g. ladder_next)."""
-    return _with_clear_choice(await job_ids(interaction, current), current)
-
-
-async def job_workplace(
-    interaction: discord.Interaction, current: str
-) -> list[app_commands.Choice[str]]:
-    """Locations in whichever district the command's `district` argument is
-    currently set to; empty until that argument is filled in."""
-    bot = interaction.client
-    district_id = interaction.namespace.district
-    if district_id is None:
-        return []
-    try:
-        district = bot.content.district(district_id)  # type: ignore[attr-defined]
-    except ContentValidationError:
-        return []
-    current_lower = current.lower()
-    matches = [
-        loc
-        for loc in district.locations
-        if current_lower in loc.id.lower() or current_lower in loc.name.lower()
-    ]
-    return [
-        app_commands.Choice(name=f"{loc.id} - {loc.name}", value=loc.id)
-        for loc in matches[:MAX_CHOICES]
-    ]
-
-
-async def job_foreman(
-    interaction: discord.Interaction, current: str
-) -> list[app_commands.Choice[str]]:
-    """NPCs (scoped to the command's `district` argument, if set) that could
-    run a job, plus the `CLEAR_TEXT` sentinel."""
-    bot = interaction.client
-    district_id = interaction.namespace.district
-    stmt = select(Npc.id, Npc.name)
-    if district_id is not None:
-        stmt = stmt.where(Npc.district_id == district_id)
-    if current:
-        stmt = stmt.where(or_(Npc.name.ilike(f"%{current}%"), Npc.id.ilike(f"%{current}%")))
-    async with bot.db() as session:  # type: ignore[attr-defined]
-        rows = (await session.execute(stmt.order_by(Npc.name).limit(MAX_CHOICES))).all()
-    choices = [
-        app_commands.Choice(name=f"{name} ({npc_id})", value=npc_id) for npc_id, name in rows
-    ]
-    return _with_clear_choice(choices, current)
-
-
-async def clearable_number(
-    interaction: discord.Interaction, current: str
-) -> list[app_commands.Choice[float]]:
-    """No fixed set of valid values, but surfaces the `CLEAR_NUMBER` sentinel
-    used to blank an optional numeric field back out (min_reputation,
-    peacekeeper_attention) -- doesn't restrict what can actually be typed."""
-    choices = [app_commands.Choice(name=f"{CLEAR_NUMBER:g} (clear)", value=CLEAR_NUMBER)]
-    if current:
-        try:
-            typed = float(current)
-        except ValueError:
-            return choices
-        if typed != CLEAR_NUMBER:
-            choices.insert(0, app_commands.Choice(name=str(typed), value=typed))
-    return choices

@@ -38,9 +38,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from panem_shared.db.base import Base, TimestampMixin
 from panem_shared.enums import (
     CharacterStatus,
+    OwnerKind,
+    RpMode,
     SceneKind,
     SceneStatus,
     Stance,
+    TradeStatus,
 )
 
 
@@ -56,7 +59,61 @@ class User(TimestampMixin, Base):
     max_characters_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
     """`/staff character_limit`; NULL means the guild default applies."""
 
+    active_theme_profile_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "theme_profiles.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_users_active_theme_profile_id",
+        ),
+        nullable=True,
+    )
+    """The donor dashboard's general/default `ThemeProfile` (`panem_shared.
+    theme`) -- applied whenever the currently selected character (if any)
+    has no `Character.theme_profile_id` of its own. NULL means the plain
+    default style. Only ever *surfaced* while `is_donor` still holds
+    (`dashboard_routes._resolve_theme`), so this stays set (not cleared) if
+    a donor role is later revoked, in case it comes back.
+
+    `use_alter=True` (+ an explicit `name=`, matching the migration's own
+    `op.create_foreign_key` name): `ThemeProfile.user_id` points back at
+    `users.id`, so without it `Base.metadata.create_all`/`drop_all` (every
+    test's DB fixture) can't topologically sort the two tables -- same
+    cyclic-FK situation, and the same fix, as `Character.
+    housing_property_id`'s own docstring already explains in more depth."""
+
     characters: Mapped[list[Character]] = relationship(back_populates="user")
+    theme_profiles: Mapped[list[ThemeProfile]] = relationship(
+        back_populates="user",
+        foreign_keys="ThemeProfile.user_id",
+        cascade="all, delete-orphan",
+    )
+
+
+class ThemeProfile(TimestampMixin, Base):
+    """A named, donor-saved set of the four dashboard colors (`panem_shared.
+    theme`) -- `POST /activity/dashboard/theme/profiles`. A donor can save
+    any number, set one as their account's general default
+    (`User.active_theme_profile_id`) and/or assign different ones to
+    different characters (`Character.theme_profile_id`) -- e.g. one look
+    for one character, a different one for another. Deleting a profile
+    (`POST .../profiles/{id}/delete`) just issues a plain `DELETE`;
+    `ondelete="SET NULL"` on both referencing FKs is what clears any
+    account/character still pointing at it rather than leaving a dangling
+    id -- an unassigned character/account just falls back to the next
+    theme in the resolution order (`dashboard_routes._resolve_theme`)."""
+
+    __tablename__ = "theme_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(40), nullable=False)
+    background_hex: Mapped[str] = mapped_column(String(7), nullable=False)
+    accent_hex: Mapped[str] = mapped_column(String(7), nullable=False)
+    panel_hex: Mapped[str] = mapped_column(String(7), nullable=False)
+    text_hex: Mapped[str] = mapped_column(String(7), nullable=False)
+
+    user: Mapped[User] = relationship(back_populates="theme_profiles", foreign_keys=[user_id])
 
 
 class Character(TimestampMixin, Base):
@@ -70,15 +127,85 @@ class Character(TimestampMixin, Base):
 
     name: Mapped[str] = mapped_column(String(32), nullable=False)
     age: Mapped[int] = mapped_column(Integer, nullable=False)
+    gender: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    """`Gender` -- chosen at creation (`GenderSelectView`), changeable any
+    time via `/character gender`. `None` for a character that never set one
+    (an older row, or the player skipped it) -- NPC dialogue
+    (`panem_bot.services.dialogue`) falls back to "they/their" pronouns."""
     appearance: Mapped[str] = mapped_column(String(400), nullable=False, default="")
     backstory: Mapped[str] = mapped_column(String(1500), nullable=False, default="")
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default=CharacterStatus.PENDING.value, index=True
     )
+    death_cause: Mapped[str | None] = mapped_column(String(400), nullable=True)
+    """Set alongside `status = DEAD` -- either by `/character die` (Life
+    mode, player-entered) or by `panem_shared.afflictions.apply_auto_death`
+    (Simulation mode, a fixed message). Story characters are excluded from
+    the affliction/death system entirely, so this is always `None` for
+    them; Life characters can never reach `DEAD` any other way."""
 
-    job_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    rp_mode: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=RpMode.SIMULATION.value
+    )
+    """`RpMode` -- chosen at creation, changed via `/character mode` (or the
+    dashboard's mode-switch panel) subject to `rp_modes.check_can_switch_
+    mode`'s real-day cooldown. Existing rows backfill to Simulation
+    (the migration's `server_default`), preserving pre-feature behavior for
+    every character that already existed."""
+    rp_mode_changed_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    """`None` means "never manually switched" -- a freshly approved
+    character can pick a different mode immediately; the cooldown only
+    starts counting from the first real switch."""
+    crime_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    """Life-mode-only opt-out (`/character crime`), real-day-cooldown gated
+    the same way as `rp_mode_changed_at`. Always `True` for Simulation
+    (which can never disable it) and irrelevant for Story (already
+    unreachable by crime regardless of this flag) -- `panem_shared.
+    stealing`/`poaching` check both the actor's and, where a `Character`
+    victim is involved, the victim's flag."""
+    crime_toggle_changed_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    job_title: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    """Free-typed by the player at character creation (Spec rework: no more
+    picking from a `jobs.yaml` catalog) -- staff sign off on it (or edit it)
+    as part of approval, same as the rest of the application, and can change
+    it any time after via `/staff give job`. Purely descriptive; wages and
+    market production no longer key off it at all (see `shift_phase` and
+    `panem_shared.shifts`)."""
+    shift_phase: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    """`DayPhase` the player chose to work at creation (staff-editable the
+    same way `job_title` is) -- replaces a catalog `Job.shift_phase`."""
+    shifts_completed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    """Total shifts ever completed (`/work`, win or lose) -- drives the
+    Apprentice->Expert wage-multiplier ladder in `panem_shared.job_levels`,
+    which replaced the old per-job ladder (`Job.ladder_next`)."""
+    job_is_illicit: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    """Self-declared by the player alongside `job_title`/`shift_phase` at
+    character creation (staff-editable via `/staff give job`, same as
+    those two) -- whether their free-typed job counts as illicit work for
+    the contraband system (`panem_bot.cogs.jobs`'s illicit-production
+    branch, heat accumulation, arrest-evasion). Unlike `job_title` there's
+    no catalog to validate this against, so it's just what the player
+    says it is."""
     job_started_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
     consecutive_missed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    consecutive_wins: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    consecutive_losses: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    """Separate from `consecutive_missed` (attendance) -- these track the
+    `/work` minigame's own win/lose streak, which
+    `panem_shared.shifts.resolve_shift_game` reads to decide a reputation
+    streak bonus/penalty. A `neutral` resolution (skipping the minigame)
+    leaves both alone rather than resetting them, since it's neither a win
+    nor a loss."""
+    last_active_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """Last tick this character did something active (`/work`, a proxied
+    message) -- drives the district economy's active-player demand model
+    (`panem_sim.systems.economy`), a proxy for "interacted in the past real
+    week" since ticks run on a fixed real-time cadence."""
 
     reputation: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     money: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -89,20 +216,170 @@ class Character(TimestampMixin, Base):
 
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     proxy_tag: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    theme_profile_id: Mapped[int | None] = mapped_column(
+        ForeignKey("theme_profiles.id", ondelete="SET NULL"), nullable=True
+    )
+    """Overrides `User.active_theme_profile_id` while this character is the
+    dashboard's currently selected one -- lets a donor give different
+    characters different looks (`panem_shared.theme`). NULL falls back to
+    the account's general profile."""
+    appearance_layers: Mapped[dict[str, int] | None] = mapped_column(JSONB, nullable=True)
+    """The dashboard's Picrew-style portrait: `{category_id (as a string,
+    since JSON object keys always are): option_id}`, one selection per
+    `LayerCategory` -- separate from `appearance` above, which stays the
+    player's own free-text description. A category with no entry (or an
+    option id that no longer exists, e.g. staff deleted it) just renders
+    as nothing for that layer rather than erroring; see
+    `panem_shared.layers`. Nullable rather than defaulted so existing rows
+    read as "never customized" -- there is no fixed default selection to
+    backfill, unlike the old fixed-palette trait system this replaced."""
 
     loyalty: Mapped[float] = mapped_column(Float, nullable=False, default=50.0)
     fear: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     health: Mapped[float] = mapped_column(Float, nullable=False, default=100.0)
     hunger: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    fatigue: Mapped[float] = mapped_column(Float, nullable=False, default=100.0)
+    """100 = fully rested. Drained by working a shift
+    (`panem_shared.shifts.apply_shift_outcome`) and by proxied RP
+    (`panem_bot.cogs.proxy`); restored by `/sleep` (full rate in a bed --
+    an owned house, a leased apartment, or an inn stay -- half on the bare
+    ground) or by paying for a night at an inn. `panem_sim.systems.needs`
+    docks health on a night it ends too low, mirroring the existing
+    hunger->health pattern."""
     hospitalized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    tesserae_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    thirst: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    """Simulation-mode only (see `panem_sim.systems.needs`); same 0=fine/
+    100=parched direction as `hunger`. Relieved by `/drink`, docked nightly
+    if `last_drank_tick` isn't today's sim-day; erodes `health` past
+    `HEALTH_DECAY_THIRST_THRESHOLD`, same additive shape as the existing
+    hunger/fatigue health penalties. Sits inert (never read/written) while
+    the character isn't in Simulation mode -- switching back into it simply
+    resumes decay from wherever it was left, no reset."""
+    sanity: Mapped[float] = mapped_column(Float, nullable=False, default=100.0)
+    """Simulation-mode only; same 100=best/0=worst direction as `fatigue`.
+    Relieved by `/entertain`, docked nightly if `last_entertained_tick`
+    isn't today's sim-day; erodes `health` past
+    `HEALTH_DECAY_SANITY_THRESHOLD`."""
+    last_ate_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_drank_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_entertained_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """Once-per-sim-day stamps for `/eat`/`/drink`/`/entertain`, same
+    `tick // simtime.TICKS_PER_DAY` cooldown idiom as `last_steal_tick`'s
+    `TICKS_PER_PHASE` division. `last_ate_tick` doesn't gate anything in
+    `panem_sim.systems.needs` (hunger's own nightly resolution stays
+    money-gated, unchanged) -- it only rate-limits `/eat` itself, added for
+    symmetry with `/drink`/`/entertain` so a player has an explicit action
+    for all three meters the feature asks for."""
 
     jailed_until_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    jail_sentence_ticks: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """The *original* length of the current jailing, set once by
+    `panem_bot.services.jail.commit_to_jail` and left alone while
+    `jailed_until_tick` counts down -- lock-picking difficulty
+    (`/lockpick`) reads this instead, so a longer sentence stays harder to
+    pick for its whole duration rather than getting easier near release."""
+    jail_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    """Total times ever jailed -- scales both the next sentence length and
+    its bail cost (`panem_bot.services.jail`), so repeat offenders serve
+    longer and pay more."""
+    jail_lockpick_tries_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    """`/lockpick` attempts spent on the *current* jailing -- reset to 0
+    whenever `panem_shared.jail.commit_to_jail` starts a fresh sentence;
+    capped at `LOCKPICK_MAX_TRIES` (3) before bail/waiting it out are the
+    only options left."""
+    illicit_heat: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    """Per-character peacekeeper suspicion (0-100ish), separate from a
+    district's own `DistrictState.peacekeeper_pressure` -- built up by
+    working an illicit job (`Character.job_is_illicit`), decayed back
+    toward 0 daily the same way district pressure decays toward its own
+    baseline (`panem_sim.systems.crisis`). Crossing `ILLICIT_HEAT_ARREST_
+    THRESHOLD` triggers an immediate arrest-evasion roll."""
+    last_steal_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """The tick of this character's last `/steal` attempt (success or
+    not) -- gates the once-per-day-phase cooldown by comparing `tick //
+    simtime.TICKS_PER_PHASE` to this same division of `last_steal_tick`."""
+    last_poach_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """The tick of this character's last `/poach` attempt (caught or
+    not) -- same once-per-day-phase cooldown shape as `last_steal_tick`,
+    gated in `panem_shared.poaching.check_can_poach`."""
     in_games: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    is_victor: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    housing_property_id: Mapped[int | None] = mapped_column(
+        ForeignKey("properties.id", use_alter=True, name="fk_characters_housing_property_id"),
+        nullable=True,
+    )
+    """The character's home -- an owned `HOUSE`, or the `Property` behind
+    their current `ApartmentLease`. `None` means no fixed home: sleeping
+    (`/sleep`) falls back to the ground's reduced fatigue restoration and
+    an inn stay is a one-off nightly transaction, not a lasting home.
+
+    `use_alter=True` (+ an explicit `name=`, matching the migration's own
+    `op.create_foreign_key` name): `Property.owner_id` points back at
+    `characters.id`, so without it `Base.metadata.create_all`/`drop_all`
+    (every test's DB fixture) can't topologically sort the two tables --
+    this marks the constraint as addable/droppable via a separate `ALTER
+    TABLE`, breaking the cycle for DDL ordering purposes only. Postgres
+    needs a constraint name to `DROP CONSTRAINT` it, hence the name."""
+    positions: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    """`Position` enum values (Victor/Gamemaker/Governor), staff-granted via
+    `/staff give position` -- not content-authored or applied for like a
+    `Job`. Was a single `is_victor` bool; a list since a character can hold
+    more than one."""
+
+    approval_notified_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    """Stamped once the staff approval-request embed has been posted for
+    this (still-`PENDING`) character -- `None` means it hasn't yet.
+    `/character create` posts it inline and stamps this immediately, the
+    same instant it creates the row, so this is always already set for a
+    Discord-created character by the time anything else could see it. It
+    only matters for a character created via the web dashboard
+    (`panem_api.dashboard_routes`), which has no bot token and so can't
+    post to Discord itself -- `panem_bot`'s `_announce_pending_characters`
+    background task polls for `status == PENDING AND approval_notified_at
+    IS NULL` and posts the same embed those get, then stamps this."""
+
+    pending_rp_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    """Set by `rp_modes.stage_mode_switch` when a mode switch needs staff
+    sign-off before it takes effect -- specifically, switching into
+    Life/Simulation for the first time (`job_title is None`, i.e. this
+    character has never had job info on file) reopens the same job-title/
+    shift-phase/illicit prompts character creation uses and requires
+    re-approval, same as a fresh application. `None` means no switch is
+    awaiting approval. `rp_mode`/`job_title`/`shift_phase`/`job_is_illicit`
+    are left completely untouched while this is set -- the character keeps
+    playing in their current mode, with whatever job info they already had
+    (which is exactly what lets a character who *was* Life/Simulation in
+    the past, and so already has `job_title` set, switch back and forth
+    with Story instantly, no re-approval, per `rp_modes.mode_switch_needs_
+    job_info`). `rp_modes.apply_staged_mode_switch` copies the staged
+    fields below over the real ones (and clears all of them) on staff
+    approval; `discard_staged_mode_switch` just clears them on decline.
+    Unlike rejecting a fresh application, declining a staged switch must
+    never delete the character -- it already exists and is playing -- so
+    this can't reuse `CharacterStatus.PENDING`/`ApprovalView`'s reject-
+    deletes-the-row shape at all."""
+    pending_job_title: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    pending_shift_phase: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    pending_job_is_illicit: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    pending_mode_switch_notified_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    """Same idempotency purpose as `approval_notified_at` above, kept as its
+    own column rather than shared: a mode-switch request and a fresh
+    application are always mutually exclusive (switching modes requires
+    already being `APPROVED`), but the two "has this been posted to staff
+    yet" facts are conceptually different and gate different background
+    tasks (`_announce_pending_characters` vs. `_announce_pending_mode_
+    switches`)."""
 
     in_transit_until_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
     transit_destination_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    away_since_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """Set when a character first leaves `district_id` (home); cleared on
+    return. `panem_sim.systems.jobs` excuses missed shifts for
+    `AWAY_GRACE_DAYS` from this tick before they count against
+    `consecutive_missed` again (FR-LOC-9)."""
 
     user: Mapped[User] = relationship(back_populates="characters")
 
@@ -128,6 +405,12 @@ class Npc(TimestampMixin, Base):
     district_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     age: Mapped[int] = mapped_column(Integer, nullable=False)
+    gender: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    """`Gender` -- every NPC `panem_sim.world.seed_npcs` creates gets one
+    assigned (from `NpcContent.gender` if authored, otherwise randomly);
+    nullable only so a pre-existing row or a manually-inserted one doesn't
+    need a backfill. `None` falls back to "they/their" the same as an
+    unset `Character.gender` does."""
     job_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     traits: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
@@ -154,6 +437,25 @@ class Npc(TimestampMixin, Base):
     importance: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     alive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     provider_override: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    engagement_id: Mapped[int | None] = mapped_column(ForeignKey("scenes.id"), nullable=True)
+    """The `ENGAGEMENT`-kind `Scene` this NPC has been pulled into, if any --
+    set when they join (`panem_bot.services.engagements`), cleared when the
+    engagement ends. `panem_sim.systems.schedule` skips an NPC entirely
+    while this is set, which is what keeps them at the engagement's
+    location instead of wandering off on their normal weighted schedule."""
+
+    backstory_override: Mapped[str | None] = mapped_column(String(1500), nullable=True)
+    appearance_override: Mapped[str | None] = mapped_column(String(400), nullable=True)
+    """`NpcContent.backstory`/`.appearance` (`data/npcs/*.yaml`) are
+    display-only flavor text with no DB column of their own -- fine for an
+    authored resident, but staff have no way to retroactively correct or
+    flesh one out, and a staff-created NPC (`/staff npc add`, not backed by
+    any authored content at all) needs somewhere to hold it in the first
+    place. `panem_bot.cogs.staff`'s NPC-editing commands set these; every
+    read site (`/resident profile`, dialogue's `npc_background`) prefers
+    the override when set and falls back to the authored content
+    otherwise, mirroring `provider_override`'s own override-a-default
+    shape."""
 
 
 class NpcSchedule(Base):
@@ -178,9 +480,24 @@ class RelationshipRow(TimestampMixin, Base):
     affinity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     trust: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     last_interaction_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    interaction_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    """Total interactions ever, not just recent ones -- gates the extreme
+    stances (`STANCE_MIN_INTERACTIONS_EXTREME`): a handful of run-ins
+    can dislike someone, but hating/loving them takes a real history."""
 
     stance: Mapped[str] = mapped_column(String(16), nullable=False, default=Stance.NEUTRAL.value)
     stance_updated_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    """A compacted, running recap of every engagement `subject` and `object`
+    have had together -- `dialogue.summarize_engagement` folds each closed
+    engagement's transcript into an updated version of this on top of
+    whatever it already said, so it stays roughly `RELATIONSHIP_SUMMARY_
+    MAX_WORDS` long rather than growing without bound. Read back into the
+    `[SPEAKER] ... known` field of the next dialogue request between this
+    same pair, so the NPC keeps a real memory of them across days, bot
+    restarts, and any number of separate conversations -- not just the
+    fact-bullet `Memory` rows the sim itself forms from notable events."""
 
 
 class Memory(Base):
@@ -243,6 +560,15 @@ class DistrictState(Base):
     morale: Mapped[float] = mapped_column(Float, nullable=False, default=60.0)
     unrest: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     peacekeeper_pressure: Mapped[float] = mapped_column(Float, nullable=False, default=0.3)
+    crackdown_until_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """A moderator-triggered peacekeeper crackdown (`/staff district
+    crackdown`) -- while set and in the future, every illicit-activity
+    probability roll in the district (market/black-market detection,
+    illicit-work arrest evasion, stealing, lock-picking) is scaled harder,
+    and `dialogue.py` surfaces it as NPC nervousness. Not a new decay
+    mechanism of its own: `/staff district crackdown` also spikes
+    `peacekeeper_pressure` directly, which `crisis.py` already relaxes
+    back toward baseline once the crackdown window passes."""
     crisis_level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     crisis_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
     capitol_favor: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
@@ -270,6 +596,62 @@ class WorldClock(Base):
     process directly."""
 
 
+class EngagementSettings(Base):
+    """Single-row staff-tunable settings for NPC engagements, mirroring
+    `WorldClock`'s singleton shape. A code constant would need a redeploy
+    to change; `/staff engagement set-timeout` edits this row directly, and
+    `EngagementCog`'s idle-close background task reads it fresh every
+    pass, so a change takes effect on the very next check."""
+
+    __tablename__ = "engagement_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    idle_timeout_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class PanemHistoryEntry(TimestampMixin, Base):
+    """One staff-authored fact of Panem-wide history/canon, tagged with
+    comma-separated keywords a staff member typed in (`/staff lore
+    history-add`) -- mirrors `Memory.tags`' `ARRAY(String)` shape, not a
+    single delimited string, so matching (`panem_shared.lore.
+    match_history_entries`) is a plain membership check per keyword.
+    Multi-row, growing over time via add/remove, the same shape
+    `WorldEvent` already uses for a table of discrete global facts --
+    unlike that table this one is staff-written, not sim-written (closer
+    in spirit to `StaffAction`'s staff-authored-content role).
+
+    Read fresh on every dialogue request (`panem_bot.services.dialogue.
+    build_request_context`/`build_npc_to_npc_context`), keyword-filtered
+    against the line being replied to, so every NPC can draw on the same
+    shared canon without needing a Lemonade collection rebuild -- unlike
+    `lemonade/system_prompt.md`'s own hand-written `## Panem` section,
+    which *is* baked into the registered collection and only changes on
+    a redeploy."""
+
+    __tablename__ = "panem_history_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    keywords: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, default=list)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by_staff_discord_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+
+class WorldLoreSettings(Base):
+    """Single-row staff-tunable "Alternate Universe" notes, mirroring
+    `EngagementSettings`'/`WorldClock`'s singleton shape -- free-form prose
+    every NPC in the nation should know and keep in mind (how this
+    version of Panem's canon diverges from anyone's expectations, ongoing
+    world-shaping facts, etc.), unlike `PanemHistoryEntry`'s keyword-gated
+    rows this is always included in a dialogue request rather than
+    matched against what's being said, since "anyone in the nation" means
+    unconditional background, not a fact recalled on cue."""
+
+    __tablename__ = "world_lore_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    alternate_universe_notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+
 class Shift(Base):
     __tablename__ = "shifts"
 
@@ -283,6 +665,24 @@ class Shift(Base):
     completed_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     result: Mapped[str | None] = mapped_column(String(16), nullable=True)
     output: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    started_at_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """Set when `/work` launches this shift's minigame (Plan §5's "paid if
+    you started before the shift ended" rule) -- `panem_sim.systems.jobs`
+    won't mark a shift missed while this is set and it's still within
+    `WORK_GAME_GRACE_TICKS` of `tick_due`, giving the player time to
+    actually finish the game after the shift's nominal deadline."""
+    last_worked_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """The tick of this shift's most recent resolved `/work` action.
+    `panem_shared.shifts.apply_shift_outcome` no longer closes a shift the
+    instant it's worked -- a shift stays open (`result IS NULL`) for its
+    whole `tick_opened`..`tick_due` window so a player can work it again on
+    a later tick, capped at one resolution per tick by comparing the
+    current tick against this column. It also marks whether the shift has
+    ever been worked at all (`None` = never), which is what
+    `apply_shift_outcome` checks to only credit `shifts_completed` once per
+    shift no matter how many ticks it was worked, and what
+    `panem_sim.systems.jobs._resolve_missed_shifts` checks to close a
+    worked shift as COMPLETED rather than MISSED once `tick_due` passes."""
 
 
 class JobHistory(Base):
@@ -298,23 +698,114 @@ class JobHistory(Base):
     reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
 
-class JobOverride(TimestampMixin, Base):
-    """Staff-edited job definitions layered on top of `jobs.yaml` (no code
-    change / redeploy needed to add, edit, or remove a job per district).
+class Property(Base):
+    """A purchasable/rentable house, apartment unit, or inn (housing
+    system). `district_id` is a plain content-referencing column (no FK,
+    same convention as `Character.district_id` -- districts live in
+    content YAML, not a DB table).
 
-    `id` reuses the same job-id namespace as the content file: a row whose
-    id matches a YAML job overrides it; a new id adds a job that doesn't
-    exist in YAML at all. `disabled=True` removes the job from the merged
-    view regardless of whether it originated in YAML or here.
-    """
+    `tier` is a `JobLevel.value` gating who may *buy* the property --
+    meaningful for a house (a character's job level must be at or above
+    it, per `panem_bot.services.housing`), a fixed placeholder for an
+    apartment or inn, neither of which is tier-gated.
 
-    __tablename__ = "job_overrides"
+    `complex_id` groups every `APARTMENT`-kind unit in the same building;
+    owning every unit sharing one `complex_id` is what makes a character
+    that building's landlord (computed on the fly from ownership, not a
+    stored flag -- nothing here directly represents "is a landlord").
 
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    `asking_price` is `None` until a seller (or staff) overrides
+    `suggested_price` -- `panem_bot.services.housing.quoted_price` reads
+    whichever is set. It doubles as more than a sale price depending on
+    `kind`: an apartment unit's listed rent when vacant, or an inn's
+    price per night -- documented here rather than adding a column per
+    kind for what's ultimately one "current listed price" concept.
+
+    `mortgage_principal`/`mortgage_payment`/`mortgage_next_due_tick`/
+    `mortgage_missed_payments` track a financed purchase's remaining
+    installments. For an inn, the same four fields double as its daily
+    maintenance-due tracking (`mortgage_payment` = the daily maintenance
+    cost, `mortgage_principal` unused) -- one collection/foreclosure loop
+    in `panem_sim.systems.housing` handles both rather than two parallel
+    mechanisms for "can't afford the payment".
+
+    `location_id` (contraband system) is only ever set for a `HOUSE` --
+    `panem_sim.world.seed_properties` assigns one of the district's
+    `residential` (or, failing that, `public`) locations at seeding time.
+    `/burgle`'s "nobody's home" check reads whether the owner's own
+    `Character.location_id` currently matches it; `None` (every property
+    seeded before this column existed, and every non-house kind) just
+    skips that check rather than refusing every burglary."""
+
+    __tablename__ = "properties"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     district_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
-    disabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    updated_by_discord_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    tier: Mapped[str] = mapped_column(String(16), nullable=False)
+    complex_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    location_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    owner_kind: Mapped[str] = mapped_column(String(16), nullable=False, default=OwnerKind.NPC.value)
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey("characters.id"), nullable=True)
+
+    for_sale: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    suggested_price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    asking_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    mortgage_principal: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    mortgage_payment: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    mortgage_next_due_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    mortgage_missed_payments: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    created_at_tick: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class ApartmentLease(Base):
+    """The one active tenancy on an `APARTMENT`-kind `Property` -- vacating
+    (voluntary move-out or an eviction past `RENT_MISSES_TO_EVICT`)
+    deletes this row rather than keeping lease history, so a unique
+    `property_id` is enough to guarantee one active lease per unit."""
+
+    __tablename__ = "apartment_leases"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    property_id: Mapped[int] = mapped_column(
+        ForeignKey("properties.id"), nullable=False, index=True
+    )
+    tenant_character_id: Mapped[int] = mapped_column(
+        ForeignKey("characters.id"), nullable=False, index=True
+    )
+    rent_price: Mapped[float] = mapped_column(Float, nullable=False)
+    started_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+    next_rent_due_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+    missed_payments: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    __table_args__ = (UniqueConstraint("property_id", name="uq_apartment_lease_one_per_unit"),)
+
+
+class PropertyAuction(Base):
+    """A `Property` listed for bidding -- either voluntary (`seller_kind`
+    is a real `OwnerKind`) or the automatic foreclosure fallback
+    (`seller_kind="bank"`, no `seller_id`) `panem_sim.systems.housing`
+    creates when a mortgage/rent/maintenance payment is missed too many
+    times."""
+
+    __tablename__ = "property_auctions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    property_id: Mapped[int] = mapped_column(
+        ForeignKey("properties.id"), nullable=False, index=True
+    )
+    seller_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    seller_id: Mapped[int | None] = mapped_column(ForeignKey("characters.id"), nullable=True)
+    minimum_bid: Mapped[float] = mapped_column(Float, nullable=False)
+    current_bid: Mapped[float | None] = mapped_column(Float, nullable=True)
+    current_bidder_id: Mapped[int | None] = mapped_column(
+        ForeignKey("characters.id"), nullable=True
+    )
+    ends_at_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
 
 
 class WorldEvent(TimestampMixin, Base):
@@ -407,3 +898,265 @@ class StaffAction(TimestampMixin, Base):
     action: Mapped[str] = mapped_column(String(64), nullable=False)
     target: Mapped[str] = mapped_column(String(64), nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class Shipment(Base):
+    """A contraband shipment sitting at a district's Rail Station
+    (`LocationKind.STATION`), spawned by `panem_sim.systems.shipments` and
+    a one-shot opportunity: `panem_shared.shipments.apply_shipment_outcome`
+    deletes the row the moment anyone attempts it, win or lose, the same
+    way `expires_tick` (peacekeepers clearing it untouched) does. Mirrors
+    `PropertyAuction`'s "exists in a district for a window of ticks, then
+    the sim itself removes it" shape -- there's no `status` column the
+    way that table has one, since there's no "closed but still on the
+    books" state here to distinguish; gone is gone."""
+
+    __tablename__ = "shipments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    district_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    location_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    good_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    qty: Mapped[int] = mapped_column(Integer, nullable=False)
+    spawned_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+    expires_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class CrimeLog(TimestampMixin, Base):
+    """One resolved `/steal`, `/burgle`, `/poach`, or `/shipment` attempt --
+    written by `panem_shared.stealing.apply_steal_outcome`/`apply_burgle_
+    outcome`, `panem_shared.poaching.apply_poach_outcome`, and `panem_shared.
+    shipments.apply_shipment_outcome` (the one funnel every attempt passes
+    through either way: the RNG-fallback roll or the Activity minigame's
+    own result), so every path logs identically and no cog/endpoint has to
+    remember to call this separately.
+
+    `target_name`/`good_name` are plain snapshot strings, not foreign
+    keys -- the same choice `StaffAction.target` already made -- so a log
+    entry stays readable even after the NPC/character/good it names is
+    gone or renamed."""
+
+    __tablename__ = "crime_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    character_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    """Not a real FK (same choice `StaffAction.staff_discord_id` already
+    made) -- `apply_steal_outcome`/`apply_burgle_outcome`/`apply_poach_
+    outcome` are exercised by plenty of unit tests against a lightweight,
+    never-persisted `Character` fixture (a real Postgres FK would reject
+    every one of those writes), and a log entry outliving a deleted
+    character is a feature here, not a bug."""
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    """`"steal"` | `"burgle"` | `"poach"`."""
+    tick: Mapped[int] = mapped_column(Integer, nullable=False)
+    success: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    """A clean, unnoticed win -- for `/poach` this means the shot landed
+    *and* no peacekeeper noticed; `caught` is tracked separately since a
+    caught attempt is always `success=False` but not every failure was a
+    catch (a steal/burgle can also just miss, or get spotted and escape)."""
+    caught: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    target_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    """Who it was taken from -- the victim's name for `/steal`, the
+    house's owner for `/burgle` (`None` for an NPC/unclaimed house, which
+    the existing `/burgle owner:<name>` flow can't target anyway), always
+    `None` for `/poach` (no victim)."""
+    good_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    """Set only for a successful `/poach` -- `/steal`/`/burgle` take
+    money, not goods."""
+    amount: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    """Money taken (steal/burgle) or units of `good_name` taken (poach);
+    `0` on anything but a clean success."""
+
+
+class LayerCategory(TimestampMixin, Base):
+    """One "part" of the Picrew-style character portrait (e.g. "Base",
+    "Hair", "Eyes") -- a stack position (`z_index`, lower renders behind
+    higher) plus a name, both staff-set. Starts out with zero rows and zero
+    `LayerOption`s in it; the whole picker (`GET /activity/dashboard/
+    layers`) and its admin tooling (`build_layers_router`'s staff routes)
+    are built to render sensibly on an empty catalog, not just a populated
+    one, since content is added after the fact through the dashboard
+    rather than seeded."""
+
+    __tablename__ = "layer_categories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    z_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    options: Mapped[list[LayerOption]] = relationship(
+        back_populates="category", order_by="LayerOption.id", cascade="all, delete-orphan"
+    )
+
+
+class LayerOption(TimestampMixin, Base):
+    """One selectable image within a `LayerCategory` -- an uploaded PNG
+    (`image_path`, relative to `static/`, e.g. `uploads/layers/<uuid>.png`)
+    plus a staff-given display name. `Character.appearance_layers` stores
+    the selected option id per category; nothing here enforces that every
+    category has a selection, or that an option a character has selected
+    still exists after staff deletes it -- both are just "render nothing
+    for that layer," not an error."""
+
+    __tablename__ = "layer_options"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    category_id: Mapped[int] = mapped_column(
+        ForeignKey("layer_categories.id"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    image_path: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    category: Mapped[LayerCategory] = relationship(back_populates="options")
+
+
+class AfflictionType(TimestampMixin, Base):
+    """A staff-authored injury/affliction the self-inflict command
+    (`/character afflict`, Life mode) or the nightly sim-needs system
+    (`panem_sim.systems.needs`, Simulation mode auto-apply) can put on a
+    character (`CharacterAffliction`). Mirrors `LayerCategory`'s "staff
+    manages a small catalog through the dashboard, players/the sim consume
+    it" shape -- starts out empty, not seeded.
+
+    `cure_stat`/`cure_threshold`: cured once that stat *rises above* the
+    threshold (`None`/`None` alongside `is_permanent=True` means
+    incurable). `auto_apply_stat`/`auto_apply_threshold`: for Simulation
+    characters only, applied once that stat *falls beneath* the threshold
+    (`None`/`None` means "manual-only, the sim never applies this on its
+    own"). Both pairs reference one of `AfflictionStat`'s five values."""
+
+    __tablename__ = "affliction_types"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    description: Mapped[str] = mapped_column(String(400), nullable=False, default="")
+    is_permanent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    cure_stat: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    cure_threshold: Mapped[float | None] = mapped_column(Float, nullable=True)
+    auto_apply_stat: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    auto_apply_threshold: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class CharacterAffliction(TimestampMixin, Base):
+    """One applied instance of an `AfflictionType` on a character.
+    `character_id` is a plain (non-FK) column, same choice `CrimeLog.
+    character_id` already made and for the same reason -- see that model's
+    docstring. `cured_at IS NULL` means still active; `cause` is the
+    player-entered explanation for a manual (Life-mode, `/character
+    afflict`) application and `None` for an automatic (Simulation-mode)
+    one."""
+
+    __tablename__ = "character_afflictions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    character_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    affliction_type_id: Mapped[int] = mapped_column(
+        ForeignKey("affliction_types.id"), nullable=False, index=True
+    )
+    cause: Mapped[str | None] = mapped_column(String(400), nullable=True)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    applied_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    cured_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    affliction_type: Mapped[AfflictionType] = relationship()
+
+
+class Trade(TimestampMixin, Base):
+    """A two-party `/trade offer` (`panem_shared.trades`) -- one item-or-
+    money offer per side, not a multi-item cart (see the feature's plan for
+    why). `character_id` columns are plain (non-FK), same choice as
+    `CrimeLog.character_id`. `give_*` is what `initiator_character_id`
+    hands over on accept; `want_*` is what they receive from
+    `recipient_character_id`. A `None` `give_good_id`/`want_good_id` with
+    its `_qty` also `None` means that side offered money only (`give_money`/
+    `want_money`, which default to 0 rather than being nullable so a
+    money-only or item-only offer never needs a null-vs-zero distinction)."""
+
+    __tablename__ = "trades"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    initiator_character_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    recipient_character_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    give_good_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    give_qty: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    give_money: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    want_good_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    want_qty: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    want_money: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=TradeStatus.PENDING.value, index=True
+    )
+    resolved_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DistrictLore(TimestampMixin, Base):
+    """Staff-authored district context/history (the Activity's staff-only
+    History tab) that NPC dialogue draws on -- see `panem_shared.
+    district_lore` for the CRUD/validation layer and `dialogue.
+    build_request_context`'s `district_lore` field for how it reaches the
+    model. One row per district, created lazily on first edit (there's no
+    seed data, same posture as `LayerCategory`/`AfflictionType`).
+
+    Free-text fields are staff prose, not structured data -- `games_history`
+    in particular is meant to be a natural-language summary of the
+    district's tributes/Games performance over time rather than a
+    game-by-game ledger, per the feature's own ask. Only a short, capped
+    excerpt of any of this (`panem_shared.district_lore.prompt_summary`)
+    ever reaches an NPC's prompt at once, by design -- this is reference
+    material staff can richly maintain, not something every reply should
+    lean on."""
+
+    __tablename__ = "district_lore"
+
+    district_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    classification: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    """`DistrictClassification.INNER`/`OUTLIER`, or `None` if unset."""
+    adjectives: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    accent_notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    urban_rural_notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    academy_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    """A staff-chosen name for the district's career academy (Career
+    districts train tributes through one; other districts can leave this
+    blank)."""
+    academy_notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    games_history: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    regime_notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    """Free-text notes on gamemakers/the current regime as this district
+    experiences them. Identifying a *specific* character as a gamemaker,
+    president, vice president, etc. is instead done with `Character.
+    positions` (`Position.GAMEMAKER`/`PRESIDENT`/`VICE_PRESIDENT`) via
+    `/staff give position` -- this field is scene-setting prose, not an
+    identity registry."""
+    opinions: Mapped[dict[str, str]] = mapped_column(JSONB, nullable=False, default=dict)
+    """Keyed by the *other* district's id as a string (e.g. `"4"`) --
+    JSONB object keys are always strings, so this matches rather than
+    fighting that."""
+    misc_notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    updated_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    """The Discord id of whichever staff member last saved this row, for
+    an audit trail -- same idea as `StaffAction.staff_discord_id`."""
+
+
+class DistrictLorePerson(TimestampMixin, Base):
+    """One victor or mentor entry for a district, part of the History tab's
+    lore (`DistrictLore`). `character_id` links to an actual `Character`
+    when one exists in the roster; `name` alone covers a historical
+    victor/mentor staff want on record with no character behind them
+    (retired, deceased, or simply never played)."""
+
+    __tablename__ = "district_lore_people"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    district_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    """`"victor"` or `"mentor"`."""
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    character_id: Mapped[int | None] = mapped_column(
+        ForeignKey("characters.id"), nullable=True
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    character: Mapped[Character | None] = relationship()

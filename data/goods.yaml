@@ -9,7 +9,7 @@
   perishable: false
   category: luxury
 - id: masonry
-  name: Masonry
+  name: Stone
   base_price: 6.0
   perishable: false
   category: materials
@@ -24,10 +24,12 @@
   perishable: false
   category: industrial
 - id: fish
-  name: Fish
+  name: Seafood
   base_price: 5.0
   perishable: true
   category: food
+  hunger_value: 20.0
+  cook_method: stove
 - id: power
   name: Power
   base_price: 3.0
@@ -53,102 +55,97 @@
   base_price: 2.0
   perishable: true
   category: food
+  hunger_value: 15.0
+  cook_method: oven
 - id: oil
   name: Cooking Oil
   base_price: 4.0
   perishable: false
   category: food
 - id: livestock
-  name: Livestock
+  name: Meats
   base_price: 12.0
   perishable: true
   category: food
+  hunger_value: 25.0
+  cook_method: stove
+- id: wild_game
+  name: Wild Game
+  base_price: 20.0
+  perishable: true
+  category: food
+  hunger_value: 35.0
+  cook_method: stove
+  # Never listed in any district's produces/imports/quota -- the only way
+  # to get this is poaching at the outskirts (panem_shared.poaching,
+  # constants.POACH_GOOD_ID), which is deliberately never sold in the
+  # legal market. Its hunger_value is the highest of any food good on
+  # purpose: poaching is supposed to reward better food than buying does.
 - id: produce
-  name: Produce
+  name: Fruits/Drinks
   base_price: 3.0
   perishable: true
   category: food
+  thirst_value: 25.0
 - id: medicine
   name: Medicine
   base_price: 15.0
   perishable: false
   category: medical
   rationed: true
-- id: train_ticket_d0
-  name: Train Ticket - The Capitol
+- id: career_training
+  name: Career Training
+  base_price: 30.0
+  perishable: false
+  category: training
+- id: contraband_weapons
+  name: Contraband Weapons
+  base_price: 35.0
+  perishable: false
+  category: contraband
+- id: forbidden_literature
+  name: Forbidden Literature
   base_price: 20.0
   perishable: false
-  category: ticket
-  kind: ticket
-- id: train_ticket_d1
-  name: Train Ticket - District One
-  base_price: 20.0
+  category: contraband
+- id: smuggled_luxuries
+  name: Smuggled Luxuries
+  base_price: 45.0
   perishable: false
-  category: ticket
-  kind: ticket
-- id: train_ticket_d2
-  name: Train Ticket - District Two
-  base_price: 20.0
+  category: contraband
+- id: counterfeit_papers
+  name: Counterfeit Papers
+  base_price: 25.0
   perishable: false
-  category: ticket
-  kind: ticket
-- id: train_ticket_d3
-  name: Train Ticket - District Three
-  base_price: 20.0
+  category: contraband
+# `category: stolen` (not `contraband`) -- these are /steal's and /burgle's
+# loot, never a district's own produced/smuggled goods, so they're not
+# listed in any district's `illicit_produces`. `blackmarket.resolve_good`
+# lets a `stolen` good through at *any* district's fence on that category
+# alone, unlike a `contraband` good which only trades where that
+# district's own `illicit_produces` names it.
+- id: stolen_jewelry
+  name: Stolen Jewelry
+  base_price: 30.0
   perishable: false
-  category: ticket
-  kind: ticket
-- id: train_ticket_d4
-  name: Train Ticket - District Four
-  base_price: 20.0
+  category: stolen
+- id: stolen_furniture
+  name: Stolen Furniture
+  base_price: 22.0
   perishable: false
-  category: ticket
-  kind: ticket
-- id: train_ticket_d5
-  name: Train Ticket - District Five
-  base_price: 20.0
+  category: stolen
+- id: stolen_silverware
+  name: Stolen Silverware
+  base_price: 16.0
   perishable: false
-  category: ticket
-  kind: ticket
-- id: train_ticket_d6
-  name: Train Ticket - District Six
-  base_price: 20.0
+  category: stolen
+- id: pilfered_valuables
+  name: Pilfered Valuables
+  base_price: 10.0
   perishable: false
-  category: ticket
-  kind: ticket
-- id: train_ticket_d7
-  name: Train Ticket - District Seven
-  base_price: 20.0
+  category: stolen
+- id: stolen_heirlooms
+  name: Stolen Heirlooms
+  base_price: 38.0
   perishable: false
-  category: ticket
-  kind: ticket
-- id: train_ticket_d8
-  name: Train Ticket - District Eight
-  base_price: 20.0
-  perishable: false
-  category: ticket
-  kind: ticket
-- id: train_ticket_d9
-  name: Train Ticket - District Nine
-  base_price: 20.0
-  perishable: false
-  category: ticket
-  kind: ticket
-- id: train_ticket_d10
-  name: Train Ticket - District Ten
-  base_price: 20.0
-  perishable: false
-  category: ticket
-  kind: ticket
-- id: train_ticket_d11
-  name: Train Ticket - District Eleven
-  base_price: 20.0
-  perishable: false
-  category: ticket
-  kind: ticket
-- id: train_ticket_d12
-  name: Train Ticket - District Twelve
-  base_price: 20.0
-  perishable: false
-  category: ticket
-  kind: ticket
+  category: stolen

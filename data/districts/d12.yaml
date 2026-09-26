@@ -11,6 +11,9 @@ imports:
 - power
 - produce
 - textiles
+- transport
+illicit_produces:
+- forbidden_literature
 quota:
   good: coal
   amount: 1200
@@ -71,6 +74,10 @@ locations:
   access_jobs:
   - miner
   - shift_boss
+- id: jail
+  name: District Twelve Jail
+  kind: jail
+  capacity: 40
 map:
   image: maps/d12.png
   width: 1600
@@ -100,3 +107,6 @@ map:
     meadow:
     - 1400
     - 850
+    jail:
+    - 950
+    - 150

@@ -1,0 +1,1761 @@
+/* Additive to style.css (dark theme variables), same as work.css/crime.css --
+   styles for the dashboard shell (header identity controls, tab nav) and
+   generic per-tab building blocks every tabs/*.js module can reuse. */
+
+/* Several tabs toggle an action row's `.hidden` property in JS to show/hide
+   it (e.g. work.js's/jail.js's Play/Skip/Bail/Lockpick buttons while no
+   character -- or no job/not-jailed -- is selected). The browser's own
+   default stylesheet hides a `[hidden]` element via `display: none`, but
+   `.field-row` below sets `display: flex` at equal selector specificity,
+   and being an *author* rule it wins over that default regardless of
+   source order -- so a `.field-row[hidden]` element was never actually
+   hidden, just as visible and clickable as ever. This is the standard,
+   well-precedented fix (the same one CSS frameworks like Bootstrap ship)
+   rather than hunting down and fixing every individual class that sets its
+   own `display` today, or the next one that does so tomorrow.  */
+[hidden] {
+  display: none !important;
+}
+
+header {
+  flex-wrap: wrap;
+}
+
+/* Mobile (Android/iOS), index.html only: Discord's mobile Activity app
+   draws its own drag-handle/title chrome over roughly the top ~1cm of
+   this page when it's the Activity's root iframe -- nothing under it is
+   visible or clickable, so the header's identity/nav controls need to
+   sit below that line instead of right at the true top. This is
+   deliberately scoped to dashboard.css, not style.css's own shared
+   `header` rule, since work.html/crime.html/vitals.html's `<header>` --
+   loaded standalone or nested inside *this* page's own iframe.minigame-
+   frame -- never sits at the screen's true top edge and never has that
+   banner drawn over it, so it must not get this same clearance. Only
+   applies below the breakpoint -- there's no such banner on desktop. */
+@media (max-width: 700px) {
+  header {
+    padding-top: calc(var(--discord-banner-clearance) + var(--safe-top));
+    padding-left: 16px;
+    padding-right: 16px;
+    gap: 10px;
+  }
+
+  /* Secondary identity text -- useful context on a wide desktop header,
+     redundant clutter once the header's already been pushed down and
+     wrapped onto multiple lines on a phone-width screen. */
+  .brand-subtitle,
+  #discord-status-text {
+    display: none;
+  }
+}
+
+#discord-id-input {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  width: 160px;
+}
+
+/* A hand-rolled dropdown, not a native <select> -- Discord scales/transforms
+   an Activity's iframe content for its own embedding, which is known to
+   break Chromium's native select-popup positioning inside that context
+   (the popup either fails to open or renders somewhere invisible). Plain
+   DOM elements sidestep that entirely.
+
+   `.custom-select-menu` is `position: absolute`, which anchors to the
+   nearest *positioned* ancestor -- normally its own `.custom-select`
+   wrapper. Every per-tab dropdown built by `tabs/_shared.js`'s `dropdown()`
+   factory carries that class, but only the header's own `#character-select`
+   (an ID rule, below) ever got `position: relative`. Every other instance
+   (market's mode select, crime's target selects, travel's location/district
+   selects, character creation's shift select, ...) had no positioned
+   ancestor at all, so its menu anchored to the page's initial containing
+   block instead -- `top: calc(100% + 4px)` of that is far down the page,
+   nowhere near the toggle button that opened it. It wasn't failing to open;
+   it was opening somewhere the player would never see it, which looks
+   identical to "doesn't drop down" from the UI. */
+.custom-select {
+  position: relative;
+}
+
+#character-select {
+  margin-left: auto;
+}
+
+.custom-select-toggle {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 28px 6px 12px;
+  cursor: pointer;
+  font-family: var(--font-serif);
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  position: relative;
+  transition: all 0.2s ease;
+}
+
+.custom-select-toggle:hover:not(:disabled) {
+  border-color: var(--accent);
+  box-shadow: 0 0 10px rgba(197, 160, 89, 0.25);
+}
+
+.custom-select-toggle:disabled {
+  cursor: default;
+  color: var(--muted);
+}
+
+.custom-select-toggle::after {
+  content: "\25BE";
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--accent);
+}
+
+/* Anchored from the toggle's *left* edge growing rightward, not its right
+   edge growing leftward -- most of these toggles (crime's target selects,
+   travel's location/district selects, ...) sit mid-row after a label, with
+   free space to their right inside the panel but comparatively little to
+   their left before the viewport edge. A long option label (e.g. "Some
+   Reasonably Long Character Name Here (npc)" in /steal's target list) used
+   to force the menu wider than the toggle while it was still anchored
+   `right: 0`, pushing its *left* edge past `x: 0` and off-screen --
+   "the dropdown gets cut off" was really its own left portion rendering
+   further left than the viewport. `#character-select` below is the one
+   exception (flush to the header's own right edge via `margin-left: auto`)
+   and gets its own override back to right-anchored growth, since for
+   *that* wrapper growing left is the safe direction and growing right
+   would push it off the right edge instead. `max-width` plus wrapping
+   (no `white-space: nowrap` on the buttons) caps how wide either direction
+   can grow in the first place, so even a very long label just wraps onto a
+   second line instead of pushing the menu past either edge. */
+.custom-select-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 100%;
+  max-width: min(320px, calc(100vw - 24px));
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  z-index: 20;
+  max-height: 240px;
+  overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+}
+
+#character-select .custom-select-menu {
+  left: auto;
+  right: 0;
+}
+
+.custom-select-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 13.5px;
+  white-space: normal;
+  word-break: break-word;
+  font-family: var(--font-sans);
+}
+
+.custom-select-menu button:hover,
+.custom-select-menu button.active {
+  background: var(--accent);
+  color: #0b0d12;
+  font-weight: 600;
+}
+
+.world-clock {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  line-height: 1.3;
+}
+
+.world-clock strong {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.discord-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 8px #22c55e;
+  animation: pulse-dot 2s infinite ease-in-out;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(0.9); }
+}
+
+#tab-nav {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: color-mix(in srgb, var(--bg) 75%, var(--panel));
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  /* Staff sees enough extra tabs (Staff, History, ...) that this nav's
+     natural width can outgrow the header -- without `min-width: 0` a flex
+     item never shrinks past its content's own intrinsic width (the same
+     flexbox trap work.css's own `main` rule documents), so `header`'s
+     `flex-wrap: wrap` (style.css) had nowhere to reclaim space from except
+     wrapping everything *after* this nav -- world clock, character select,
+     and the theme picker last of all -- onto a second line, left-aligned
+     under the brand instead of staying pinned to the header's right edge.
+     Letting this nav scroll horizontally instead keeps every later header
+     item on the first line regardless of how many tabs are showing. */
+  min-width: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+#tab-nav button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid transparent;
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  white-space: nowrap;
+}
+
+#tab-nav button svg,
+.tab-icon {
+  width: 15px !important;
+  height: 15px !important;
+  max-width: 15px !important;
+  max-height: 15px !important;
+  min-width: 15px !important;
+  min-height: 15px !important;
+  flex-shrink: 0 !important;
+  opacity: 0.75;
+  transition: opacity 0.18s ease;
+}
+
+#tab-nav button:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+#tab-nav button.active {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 26%, var(--panel)) 0%,
+    color-mix(in srgb, var(--accent) 12%, var(--bg)) 100%
+  );
+  color: var(--text);
+  border: 1px solid var(--accent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 32%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  font-weight: 600;
+}
+
+#tab-nav button.active svg {
+  opacity: 1;
+  color: var(--accent);
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 60%, transparent));
+}
+
+#tab-root {
+  padding: 22px 28px;
+  max-width: 1460px;
+  width: 100%;
+  margin: 0 auto;
+  /* `body` is a flex container (style.css), making this a flex item --
+     flex items default to `min-width: auto`, which refuses to shrink
+     below their content's intrinsic size regardless of `width: 100%`
+     above (the classic flexbox "overflow:auto child doesn't actually
+     scroll, it blows out its ancestor instead" trap). Without this, an
+     oversized child (e.g. a wide table.data-table on a narrow phone)
+     would widen this box -- and the whole page -- past the viewport
+     instead of scrolling within its own `overflow-x: auto`. */
+  min-width: 0;
+}
+
+.tab-status {
+  color: var(--muted);
+  font-size: 15px;
+}
+
+/* A genuine failure sharing a `.tab-status` element with that same
+   element's ordinary loading/empty-state text (`tabs/_shared.js`'s
+   `setStatusText(el, text, { error: true })`) -- recolored to the same
+   `--danger` ink `.result-line.lose` uses and marked with a small glyph,
+   so "couldn't load the market" reads as a problem at a glance instead of
+   sitting in the same muted gray as "Loading…". Lighter-weight than
+   `.result-line`'s bordered banner on purpose: this text often lives
+   inline in a tab's header row, not as its own block. */
+.tab-status.error {
+  color: color-mix(in srgb, var(--danger) 88%, var(--text));
+}
+
+.tab-status.error::before {
+  content: "⚠ ";
+}
+
+/* The whole-tab failure `app.js`'s `showTab()` renders when a tab module
+   itself fails to import/mount -- rare (a real bug, a bad network
+   response for the module file), but when it happens it's the entire
+   tab's content, so it gets a full `.panel` treatment rather than a bare
+   line of text, with the same crimson top edge `.panel::before` normally
+   draws in gold. */
+.tab-load-error::before {
+  background: linear-gradient(90deg, transparent 0%, var(--danger) 50%, transparent 100%);
+}
+
+.tab-load-error h2 {
+  color: color-mix(in srgb, var(--danger) 85%, var(--text));
+}
+
+.tab-placeholder {
+  text-align: center;
+  color: var(--muted);
+  padding: 40px 16px;
+}
+
+.tab-placeholder h2 {
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+/* Work tab: main panel + iframe on the left, a running log of recent
+   shift outcomes on the right (tabs/work.js). */
+.work-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.work-layout .work-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.work-log {
+  width: 240px;
+  flex-shrink: 0;
+}
+
+.work-log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.work-log-list li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 15px;
+}
+
+.work-log-list li:last-child {
+  border-bottom: none;
+}
+
+.work-log-list li.win {
+  color: #7cd992;
+}
+
+.work-log-list li.lose {
+  color: #e0736b;
+}
+
+table.data-table td.win {
+  color: #7cd992;
+}
+
+table.data-table td.lose {
+  color: #e0736b;
+}
+
+@media (max-width: 640px) {
+  .work-layout {
+    flex-direction: column;
+  }
+
+  .work-log {
+    width: 100%;
+  }
+}
+
+.map-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.map-toolbar .tab-counts {
+  color: var(--muted);
+  font-size: 15px;
+  margin-left: auto;
+}
+
+#tab-root canvas {
+  display: block;
+  width: 100%;
+  max-width: 960px;
+  height: auto;
+  margin: 8px auto;
+  border: 1px solid var(--border);
+}
+
+/* Generic building blocks for the read/action tab modules that follow
+   (jail, crime, work, market, travel, social, housing, character). */
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  backdrop-filter: blur(14px);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+  padding: 22px 24px;
+  margin-bottom: 20px;
+  position: relative;
+  /* No `overflow: hidden` here -- every tab's dropdowns
+     (`.custom-select-menu`, `tabs/_shared.js`'s `dropdown()`) are
+     `position: absolute` and meant to spill below their toggle button,
+     often past this panel's own bottom edge; clipping here silently cut
+     them off (looked identical to "the dropdown doesn't open"). None of
+     this panel's other content is full-bleed to its border-radius'd edge
+     (everything sits inside the padding above), so there's nothing left
+     for `overflow: hidden` to usefully clip. */
+}
+
+.panel::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, var(--accent) 50%, transparent 100%);
+  opacity: 0.7;
+}
+
+.panel h2 {
+  margin-top: 0;
+  font-family: var(--font-serif);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  color: #fff;
+}
+
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.field-row label {
+  color: var(--muted);
+  font-size: 13.5px;
+  font-weight: 500;
+  min-width: 90px;
+}
+
+.field-row input:not([type="checkbox"]):not([type="radio"]),
+.field-row select,
+.field-row textarea,
+.search-input,
+.filter-select {
+  background: color-mix(in srgb, var(--bg) 70%, var(--panel));
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  flex: 1;
+  min-width: 120px;
+  transition: border-color 0.2s, box-shadow 0.2s, background-color 0.2s;
+}
+
+.field-row input:not([type="checkbox"]):not([type="radio"]):focus,
+.field-row select:focus,
+.field-row textarea:focus,
+.search-input:focus,
+.filter-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--bg) 50%, var(--panel));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* History tab (tabs/history.js): every textarea there grows to fit
+   whatever staff type into it instead of scrolling within a tiny fixed
+   box -- `resize: none` since a manual drag-handle would just fight the
+   JS-driven `height` it sets on every `input` event. */
+.auto-textarea {
+  resize: none;
+  overflow: hidden;
+}
+
+/* A checkbox (e.g. character creation's "Illicit job?", housing's
+   "Financed?", the staff affliction-type editor's "Permanent?") was
+   falling into the text-input rule above -- `flex: 1; min-width: 120px;`
+   plus the padded/bordered/backgrounded box meant for a text field
+   stretched a native checkbox into a large blank rectangle next to its
+   label, nothing like a checkbox. Left at its native size and un-stretched
+   instead, same as a plain checkbox anywhere else on the web. */
+.field-row input[type="checkbox"],
+.field-row input[type="radio"] {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.btn {
+  background: linear-gradient(180deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 75%, #000) 100%);
+  color: #080a0e;
+  border: 1px solid var(--accent);
+  padding: 8px 18px;
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  border-radius: 6px;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.btn svg,
+.btn .ui-icon {
+  width: 16px !important;
+  height: 16px !important;
+  max-width: 16px !important;
+  max-height: 16px !important;
+  min-width: 16px !important;
+  min-height: 16px !important;
+  flex-shrink: 0 !important;
+}
+
+.btn:hover:not(:disabled) {
+  filter: brightness(1.12);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 40%, transparent);
+  transform: translateY(-1px);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+  transform: none;
+  box-shadow: none;
+}
+
+.btn.primary {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 32%, var(--panel)) 0%,
+    color-mix(in srgb, var(--accent) 18%, var(--bg)) 100%
+  );
+  color: #fff;
+  border: 1px solid var(--accent);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--accent) 30%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 45%, var(--panel)) 0%,
+    color-mix(in srgb, var(--accent) 25%, var(--bg)) 100%
+  );
+  box-shadow: 0 0 20px color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+.btn-discord-cta svg {
+  width: 18px !important;
+  height: 18px !important;
+  max-width: 18px !important;
+  max-height: 18px !important;
+  min-width: 18px !important;
+  min-height: 18px !important;
+  margin-right: 2px;
+}
+
+.btn.secondary {
+  background: color-mix(in srgb, var(--panel) 60%, transparent);
+  color: var(--text);
+  border: 1px solid var(--border);
+  box-shadow: none;
+}
+
+.btn.secondary:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+/* An action's outcome (a bail paid, a trade rejected, a validation
+   complaint) -- read through `err.message`/`humanize()`
+   (`tabs/_shared.js`), so the text itself is already a full sentence;
+   this is the neoclassical chrome around it: a small serif verdict chip
+   ("Confirmed"/"Denied", read like an official notice) plus a tinted,
+   bordered strip instead of the old bare colored text, so a result reads
+   as clearly as a `.panel` heading does rather than blending into
+   whatever's above it. Elements exist in the DOM from the moment their
+   tab mounts (built once, then `.textContent`/`.className` toggled per
+   attempt) -- `:empty` keeps an untouched or just-cleared one collapsed
+   instead of showing a label-less, message-less bar. */
+.result-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 9px 14px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.result-line:empty {
+  display: none;
+  margin-top: 0;
+  padding: 0;
+  border: none;
+}
+
+.result-line::before {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  font-family: var(--font-serif);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 4px;
+  line-height: 1.4;
+}
+
+.result-line.win {
+  color: color-mix(in srgb, var(--success) 82%, var(--text));
+  background: color-mix(in srgb, var(--success) 12%, var(--panel));
+  border-color: color-mix(in srgb, var(--success) 42%, var(--border));
+}
+
+.result-line.win::before {
+  content: "Confirmed";
+  color: #08150c;
+  background: var(--success);
+}
+
+.result-line.lose {
+  color: color-mix(in srgb, var(--danger) 88%, var(--text));
+  background: color-mix(in srgb, var(--danger) 12%, var(--panel));
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+
+.result-line.lose::before {
+  content: "Denied";
+  color: #1c0908;
+  background: var(--danger);
+}
+
+table.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+
+table.data-table th,
+table.data-table td {
+  text-align: left;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+table.data-table th {
+  background: color-mix(in srgb, var(--panel) 85%, var(--bg));
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+}
+
+table.data-table tr.clickable-row {
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+table.data-table tr.clickable-row:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+table.data-table .qty-input {
+  width: 56px;
+  background: color-mix(in srgb, var(--bg) 75%, var(--panel));
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+
+/* Market tab's Stock column (tabs/market.js) -- flags a good that's
+   genuinely sold out today (MarketPrice.supply == 0) rather than just
+   "not tracked yet" (shown as a plain "—" with no color at all). */
+table.data-table .stock-empty {
+  color: color-mix(in srgb, var(--danger) 85%, var(--text));
+  font-weight: 600;
+}
+
+/* Badges & Monogram Initial Avatars */
+.avatar-badge {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--panel) 85%, var(--bg));
+  border: 1px solid var(--border);
+  color: var(--accent);
+  font-family: var(--font-serif);
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.status-pill.available {
+  background: var(--status-avail-bg);
+  border: 1px solid var(--status-avail-border);
+  color: var(--status-avail-text);
+}
+
+.status-pill.working {
+  background: var(--status-work-bg);
+  border: 1px solid var(--status-work-border);
+  color: var(--status-work-text);
+}
+
+.status-pill.busy {
+  background: var(--status-busy-bg);
+  border: 1px solid var(--status-busy-border);
+  color: var(--status-busy-text);
+}
+
+/* Other players' characters (Residents directory, `kind: "user"` rows) --
+   see style.css's `--status-sleep-*`/`--status-engaged-*`/`--status-idle-*`
+   for why each gets its own color family instead of reusing an NPC's. */
+.status-pill.sleeping {
+  background: var(--status-sleep-bg);
+  border: 1px solid var(--status-sleep-border);
+  color: var(--status-sleep-text);
+}
+
+.status-pill.engaged {
+  background: var(--status-engaged-bg);
+  border: 1px solid var(--status-engaged-border);
+  color: var(--status-engaged-text);
+}
+
+.status-pill.idle {
+  background: var(--status-idle-bg);
+  border: 1px solid var(--status-idle-border);
+  color: var(--status-idle-text);
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* NPC vs. USER label (Residents directory) -- the same small serif chip
+   language `.result-line`'s Confirmed/Denied verdicts use, so "who's a
+   citizen of this district and who's another player's character" reads
+   at a glance without needing its own color-coded row style. */
+.kind-badge {
+  display: inline-block;
+  font-family: var(--font-serif);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.kind-badge.npc {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+  border: 1px solid var(--border);
+}
+
+.kind-badge.user {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+/* An NPC's opinion of the viewing character (Residents directory's
+   sortable Opinion column, tabs/social.js) -- `panem_shared.enums.Stance`'s
+   five buckets (plus "stranger" for no relationship yet) collapse to the
+   same three-color success/neutral/danger language `.result-line`'s own
+   win/lose already uses, rather than inventing six new colors for what's
+   ultimately just "good/neutral/bad". */
+.opinion-pill {
+  display: inline-block;
+  font-family: var(--font-serif);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.opinion-pill.likes,
+.opinion-pill.loves {
+  color: color-mix(in srgb, var(--success) 85%, var(--text));
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--success) 42%, var(--border));
+}
+
+.opinion-pill.dislikes,
+.opinion-pill.hates {
+  color: color-mix(in srgb, var(--danger) 88%, var(--text));
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+
+.opinion-pill.neutral,
+.opinion-pill.stranger {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+  border: 1px solid var(--border);
+}
+
+/* Social Tab Layout & Cards */
+/* Card Header & Section Titles */
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.card-header svg,
+.card-header .ui-icon {
+  width: 20px !important;
+  height: 20px !important;
+  max-width: 20px !important;
+  max-height: 20px !important;
+  min-width: 20px !important;
+  min-height: 20px !important;
+  flex-shrink: 0 !important;
+  color: var(--accent);
+}
+
+.card-header-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.card-header-text h2 {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 16.5px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  color: #fff;
+}
+
+.card-header-text p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.social-layout {
+  display: grid;
+  grid-template-columns: 380px 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+@media (max-width: 1080px) {
+  .social-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.scene-frame {
+  width: 100%;
+  height: 215px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+  position: relative;
+  margin-bottom: 18px;
+  background: color-mix(in srgb, var(--bg) 80%, var(--panel));
+  box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.6);
+}
+
+.scene-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.4s ease;
+}
+
+.scene-frame:hover .scene-img {
+  transform: scale(1.02);
+}
+
+.scene-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: color-mix(in srgb, var(--text) 55%, transparent);
+  opacity: 0.6;
+}
+
+.scene-placeholder-text {
+  font-size: 13px;
+  letter-spacing: 0.3px;
+}
+
+.meta-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 22px;
+}
+
+.meta-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.meta-item svg,
+.meta-item .ui-icon {
+  width: 15px !important;
+  height: 15px !important;
+  max-width: 15px !important;
+  max-height: 15px !important;
+  min-width: 15px !important;
+  min-height: 15px !important;
+  color: var(--accent);
+  flex-shrink: 0 !important;
+  opacity: 0.9;
+}
+
+.meta-item strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.motto-box {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(197, 160, 89, 0.15);
+  text-align: center;
+}
+
+.motto-divider {
+  display: inline-block;
+  color: var(--accent);
+  font-size: 10px;
+  margin-bottom: 6px;
+}
+
+.district-badge-text {
+  font-family: var(--font-serif);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--accent);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.district-slogan-text {
+  font-family: var(--font-serif);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 1.5px;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+/* Modal Dossier */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.modal-overlay.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.dossier-card {
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  box-shadow: 0 0 30px rgba(0, 0, 0, 0.8), 0 0 20px color-mix(in srgb, var(--accent) 25%, transparent);
+  border-radius: 12px;
+  width: 90%;
+  max-width: 520px;
+  overflow: hidden;
+  transform: translateY(20px);
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.modal-overlay.open .dossier-card {
+  transform: translateY(0);
+}
+
+.dossier-header {
+  padding: 18px 24px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 14%, var(--panel)) 0%, var(--panel) 100%);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.dossier-header-info {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.dossier-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--bg) 60%, var(--panel));
+  border: 2px solid var(--accent);
+  color: var(--accent);
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* The dossier's real avatar image, for a "user" row whose character has
+   one set -- same size/shape as the monogram fallback above, which stays
+   in the DOM and hidden rather than replaced, so a row with no avatar_url
+   (or an NPC, which never has one) still shows the monogram unchanged. */
+.dossier-avatar-img {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  object-fit: cover;
+}
+
+.dossier-name {
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.dossier-job {
+  font-size: 12.5px;
+  color: var(--accent);
+  margin-top: 2px;
+}
+
+.btn-close-modal {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 22px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 4px 8px;
+}
+
+.btn-close-modal:hover {
+  color: #fff;
+}
+
+.dossier-body {
+  padding: 22px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.dossier-prop {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dossier-prop-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--muted);
+}
+
+.traits-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.trait-chip {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid var(--border);
+  color: var(--accent);
+  padding: 3px 9px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+table.data-table .btn {
+  padding: 6px 14px;
+  font-size: 14px;
+}
+
+.jail-cell-wrap {
+  max-width: 360px;
+  margin: 0 auto 12px;
+}
+
+.jail-cell-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 6px;
+}
+
+.minigame-frame {
+  width: 100%;
+  height: 420px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #111;
+}
+
+/* ---------------------------------------------- Character avatar customizer */
+
+/* avatar_creator.js's compositor puts one absolutely-positioned <img> per
+   layer category inside `.layer-stack`, stacked by z-index -- this
+   container just needs a fixed aspect ratio so every layer's `inset: 0`
+   aligns the same way regardless of the preview's rendered width. A 3:4
+   portrait ratio is a reasonable default for staff-uploaded art; nothing
+   enforces it, so keep every layer image the same aspect ratio as each
+   other for the layers to line up. */
+.avatar-preview {
+  display: block;
+  position: relative;
+  margin: 0 auto 12px;
+  width: 100%;
+  max-width: 320px;
+  aspect-ratio: 3 / 4;
+  border-radius: 8px;
+  background: #171a20;
+  overflow: hidden;
+}
+
+.avatar-preview.small {
+  max-width: 160px;
+}
+
+.layer-stack {
+  position: absolute;
+  inset: 0;
+}
+
+.layer-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.avatar-editor {
+  border-top: 1px solid var(--border);
+  margin-top: 10px;
+  padding-top: 10px;
+}
+
+.layer-picker {
+  align-items: center;
+  gap: 8px;
+}
+
+.layer-thumb {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  border-radius: 4px;
+  background: #171a20;
+}
+
+/* --------------------------------------- Staff tab: layer catalog admin */
+
+.layer-category {
+  margin-bottom: 24px;
+}
+
+.layer-option-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.layer-option-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* --------------------------------- Header: donor dashboard theme picker */
+/* `theme_picker.js`'s `mountThemePicker` -- a little color-wheel button
+   pinned to the header's top-right corner (last child, after `#character-
+   select`'s own `margin-left: auto` already pushes everything before it
+   left), hidden entirely unless `/identify` reports `is_donor`. */
+
+.theme-picker {
+  position: relative;
+  margin-left: 4px;
+}
+
+.theme-picker-toggle {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  cursor: pointer;
+  /* A literal color wheel -- the CSS itself draws it, no image asset. */
+  background: conic-gradient(red, yellow, lime, cyan, blue, magenta, red);
+}
+
+.theme-picker-popup {
+  /* `position: fixed` rather than `absolute` -- theme_picker.js's own
+     `positionPopup()` sets `top`/`left`/`width`/`max-height` from the
+     toggle button's actual `getBoundingClientRect()` (viewport
+     coordinates) every time the popup opens or the window resizes, and
+     clamps them to stay fully on-screen. That replaced anchoring this via
+     CSS `right: 0` to `.theme-picker` (the nearest positioned ancestor),
+     which put the popup off-screen whenever the toggle itself wasn't
+     pinned to the header's true right edge -- the failure mode
+     `min-width: 0` on #tab-nav above was meant to prevent but didn't
+     cover every case. These are just sane initial/fallback values before
+     JS runs its first `positionPopup()` call. */
+  position: fixed;
+  z-index: 200;
+  width: 280px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 70px);
+  overflow-y: auto;
+  padding: 14px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.75), 0 0 20px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.theme-picker-popup::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, var(--accent) 50%, transparent 100%);
+}
+
+/* Quick Palettes / Presets Section */
+.theme-presets-section {
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.theme-presets-title {
+  font-family: var(--font-serif);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+
+.theme-presets-chips {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+
+.theme-preset-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: color-mix(in srgb, var(--bg) 70%, var(--panel));
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 7px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+}
+
+.theme-preset-chip:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 15%, var(--panel));
+}
+
+.preset-chip-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 4px currentColor;
+}
+
+.preset-chip-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Four targets (Background/Accent/Panel/Text) */
+.theme-picker-targets {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.theme-target-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: color-mix(in srgb, var(--bg) 70%, var(--panel));
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.theme-target-btn:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+.theme-target-btn.active {
+  color: var(--text);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 15%, var(--panel));
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.theme-target-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  flex-shrink: 0;
+}
+
+.theme-picker-body {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+/* Saturation/Value Square */
+.theme-picker-sv {
+  position: relative;
+  flex: 1;
+  height: 120px;
+  border-radius: 4px;
+  background:
+    linear-gradient(to top, #000, transparent),
+    linear-gradient(to right, #fff, hsl(var(--picker-hue, 0), 100%, 50%));
+  cursor: crosshair;
+  touch-action: none;
+  border: 1px solid var(--border);
+}
+
+.theme-picker-sv-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.theme-picker-hue {
+  position: relative;
+  width: 18px;
+  height: 120px;
+  border-radius: 4px;
+  background: linear-gradient(to bottom, red, yellow, lime, cyan, blue, magenta, red);
+  cursor: pointer;
+  touch-action: none;
+  border: 1px solid var(--border);
+}
+
+.theme-picker-hue-handle {
+  position: absolute;
+  left: -2px;
+  right: -2px;
+  height: 4px;
+  border-radius: 2px;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.5);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.theme-picker-hex-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.theme-picker-hex-input {
+  flex: 1;
+  background: color-mix(in srgb, var(--bg) 75%, var(--panel));
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-family: monospace;
+  font-size: 13px;
+  text-transform: uppercase;
+}
+
+.theme-picker-hex-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.theme-picker-actions {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.theme-picker-actions:last-of-type {
+  margin-bottom: 0;
+}
+
+.theme-save-btn,
+.theme-reset-btn,
+.theme-btn {
+  flex: 1;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  padding: 6px 0;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--bg) 70%, var(--panel));
+  color: var(--muted);
+  transition: all 0.15s ease;
+}
+
+.theme-btn:hover:not(:disabled),
+.theme-reset-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+}
+
+.theme-save-btn {
+  background: var(--accent);
+  color: #0b0d12;
+  border-color: var(--accent);
+  font-weight: 700;
+}
+
+.theme-save-btn:hover:not(:disabled) {
+  filter: brightness(1.1);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.theme-save-btn:disabled,
+.theme-reset-btn:disabled,
+.theme-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* --------------------------- Header: theme picker's profile manager */
+.theme-picker-profiles {
+  margin: 10px 0;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.theme-picker-profile-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.theme-profile-select {
+  flex: 1;
+  min-width: 0;
+  background: color-mix(in srgb, var(--bg) 75%, var(--panel));
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 13px;
+}
+
+.theme-profile-name-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: color-mix(in srgb, var(--bg) 75%, var(--panel));
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.theme-profile-name-input:focus,
+.theme-profile-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.theme-picker-status {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* Universal SVG Icon Guardrails -- prevents any unstyled SVG from blowing up */
+svg.ui-icon {
+  display: inline-block !important;
+  vertical-align: middle !important;
+  flex-shrink: 0 !important;
+  max-width: 28px !important;
+  max-height: 28px !important;
+}
+
+.panel svg:not(.brand-crest):not(.jail-cell-svg):not(.theme-picker-toggle) {
+  max-width: 48px;
+  max-height: 48px;
+}
+
+.meter-row {
+  margin-bottom: 10px;
+}
+
+.meter-label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.meter-track {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  height: 10px;
+  overflow: hidden;
+}
+
+.meter-fill {
+  background: var(--accent);
+  height: 100%;
+}
+
+.affliction-list,
+.mode-switch-bullets {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+
+.affliction-list li,
+.mode-switch-bullets li {
+  margin-bottom: 4px;
+}
+
+/* Mobile (Android/iOS, inside Discord's Activity webview): touch targets
+   and spacing tuned for a phone-width viewport. The header's own top
+   clearance for Discord's mobile banner chrome lives in style.css (right
+   alongside `header`'s base rules) -- this block is everything below the
+   header. Buttons/inputs are bumped toward Apple's 44pt / Material's 48dp
+   minimum touch target guidance; style.css's own equivalent breakpoint
+   handles the header itself, so both stay in sync at `max-width: 700px`. */
+@media (max-width: 700px) {
+  #tab-root {
+    padding: 16px 14px;
+  }
+
+  .panel {
+    padding: 16px 16px;
+  }
+
+  #tab-nav {
+    gap: 4px;
+    padding: 3px;
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  #tab-nav button {
+    padding: 12px 12px;
+    font-size: 12px;
+  }
+
+  .custom-select-toggle {
+    padding: 12px 30px 12px 14px;
+    font-size: 14px;
+  }
+
+  .btn {
+    padding: 12px 18px;
+    font-size: 14px;
+  }
+
+  .field-row input:not([type="checkbox"]):not([type="radio"]),
+  .field-row select,
+  .field-row textarea,
+  .search-input,
+  .filter-select {
+    padding: 11px 12px;
+    font-size: 15px; /* >=16px avoids iOS Safari/WKWebView auto-zoom on focus; 15px is the largest that still fits these fields' existing widths */
+  }
+
+  .field-row input[type="checkbox"],
+  .field-row input[type="radio"] {
+    width: 20px;
+    height: 20px;
+  }
+
+  /* A table.data-table wider than the viewport (Good/Price/Qty/Buy, or
+     similar) scrolls horizontally within its own box on a phone rather
+     than forcing the whole page wider or clipping columns -- no template
+     changes needed in any tab module, this alone makes every existing
+     `<table class="data-table">` horizontally scrollable. */
+  table.data-table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .minigame-frame {
+    height: 340px;
+  }
+}

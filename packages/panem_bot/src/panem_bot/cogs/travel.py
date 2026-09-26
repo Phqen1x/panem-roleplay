@@ -1,5 +1,4 @@
-"""`/travel` and `/where` (Spec FR-LOC-2, CMD-14/15). Intra-district
-travel only; cross-district travel is Milestone D scope."""
+"""`/travel` and `/where` (Spec FR-LOC-2/7/8/9, CMD-14/14b/15)."""
 
 from __future__ import annotations
 
@@ -34,21 +33,45 @@ class TravelCog(commands.Cog):
         ).scalar_one_or_none()
 
     @app_commands.command(
-        name="travel", description="Move your character to a different location in their district"
+        name="travel",
+        description="Move within your district, or board a train to another district",
     )
-    @app_commands.describe(character="Character name", location="Destination location")
+    @app_commands.describe(
+        character="Character name",
+        location="Destination location in your current district",
+        district="Destination district number (0 = The Capitol) -- boards a train from a station",
+    )
     @app_commands.autocomplete(character=autocomplete.own_approved)
-    async def travel(self, interaction: discord.Interaction, character: str, location: str) -> None:
+    async def travel(
+        self,
+        interaction: discord.Interaction,
+        character: str,
+        location: str | None = None,
+        district: app_commands.Range[int, 0, 12] | None = None,
+    ) -> None:
+        if (location is None) == (district is None):
+            await interaction.response.send_message(t("travel_pick_one"), ephemeral=True)
+            return
+        if district is not None:
+            await self._travel_district(interaction, character, district)
+            return
+        await self._travel_location(interaction, character, location)  # type: ignore[arg-type]
+
+    async def _travel_location(
+        self, interaction: discord.Interaction, character: str, location: str
+    ) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
             char = await self._get_character(session, interaction.user.id, character)
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
 
-            district = self.bot.content.district(char.current_district_id)  # type: ignore[attr-defined]
+            district_content = self.bot.content.district(char.current_district_id)  # type: ignore[attr-defined]
+            clock = await session.get(WorldClock, 1)
+            current_tick = clock.tick if clock is not None else 0
             try:
-                loc = travel_svc.resolve_location(district, location)
-                travel_svc.check_can_travel(character=char, location=loc)
+                loc = travel_svc.resolve_location(district_content, location)
+                travel_svc.check_can_travel(character=char, location=loc, current_tick=current_tick)
             except (NotFound, NotAllowed) as exc:
                 await interaction.response.send_message(
                     t(exc.reason_key, **exc.fmt), ephemeral=True
@@ -56,7 +79,7 @@ class TravelCog(commands.Cog):
                 return
 
             char.location_id = loc.id
-            placed = travel_svc.place(district, loc)
+            placed = travel_svc.place(district_content, loc)
             if placed is not None:
                 char.x, char.y = placed
             name, location_name = char.name, loc.name
@@ -64,6 +87,53 @@ class TravelCog(commands.Cog):
         await interaction.response.send_message(
             t("travel_ok", name=name, location=location_name), ephemeral=True
         )
+
+    async def _travel_district(
+        self, interaction: discord.Interaction, character: str, destination_id: int
+    ) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            char = await self._get_character(session, interaction.user.id, character)
+            if char is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+
+            clock = await session.get(WorldClock, 1)
+            current_tick = clock.tick if clock is not None else 0
+            origin_district = self.bot.content.district(char.current_district_id)  # type: ignore[attr-defined]
+
+            try:
+                travel_svc.check_can_travel_district(
+                    character=char,
+                    district=origin_district,
+                    destination_id=destination_id,
+                    current_tick=current_tick,
+                )
+                if travel_svc.should_charge_transport(char, origin_district.id, destination_id):
+                    await travel_svc.spend_transport(session, char)
+            except (NotFound, NotAllowed) as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+
+            destination_district = self.bot.content.district(destination_id)  # type: ignore[attr-defined]
+            transit_ticks = travel_svc.transit_ticks_for(char)
+            if transit_ticks == 0:
+                travel_svc.apply_instant_arrival(char, destination_district)
+            else:
+                char.in_transit_until_tick = current_tick + transit_ticks
+                char.transit_destination_id = destination_id
+                if char.current_district_id == char.district_id:
+                    char.away_since_tick = current_tick
+            name, destination_name = char.name, destination_district.name
+
+        if transit_ticks == 0:
+            reply = t("travel_district_instant_ok", name=name, district=destination_name)
+        else:
+            reply = t(
+                "travel_district_ok", name=name, district=destination_name, ticks=transit_ticks
+            )
+        await interaction.response.send_message(reply, ephemeral=True)
 
     @travel.autocomplete("location")
     async def travel_location_autocomplete(
@@ -86,6 +156,19 @@ class TravelCog(commands.Cog):
         return [
             app_commands.Choice(name=f"{loc.name} ({loc.id})", value=loc.id) for loc in matches[:25]
         ]
+
+    @travel.autocomplete("district")
+    async def travel_district_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[int]]:
+        current_lower = current.lower()
+        matches = [
+            d
+            for d in self.bot.content.districts.values()  # type: ignore[attr-defined]
+            if current_lower in d.name.lower() or current_lower in str(d.id)
+        ]
+        matches.sort(key=lambda d: d.id)
+        return [app_commands.Choice(name=d.name, value=d.id) for d in matches[:25]]
 
     @app_commands.command(name="where", description="Show where your character currently is")
     @app_commands.describe(character="Character name")

@@ -13,10 +13,21 @@ class CharacterStatus(enum.StrEnum):
     DEAD = "dead"
 
 
+class Gender(enum.StrEnum):
+    """`Character.gender`/`Npc.gender` -- both nullable (an unset/older row
+    reads as `None`, "their"/"they" pronouns everywhere gender feeds into
+    NPC dialogue, `panem_bot.services.dialogue`)."""
+
+    MALE = "male"
+    FEMALE = "female"
+    NONBINARY = "nonbinary"
+
+
 class SceneKind(enum.StrEnum):
     AMBIENT = "ambient"
     PLAYER = "player"
     STAFF = "staff"
+    ENGAGEMENT = "engagement"
 
 
 class SceneStatus(enum.StrEnum):
@@ -63,6 +74,15 @@ class DialogueProviderName(enum.StrEnum):
     TEMPLATE_FALLBACK = "template_fallback"
 
 
+class OwnerKind(enum.StrEnum):
+    """Values for `Inventory.owner_kind`/`MarketOrder.owner_kind` (Milestone D,
+    FR-ECO-3/4). Only characters hold player-facing inventory today; `npc` is
+    here for shopkeeper-side bookkeeping symmetry, not currently written."""
+
+    CHARACTER = "character"
+    NPC = "npc"
+
+
 class LocationKind(enum.StrEnum):
     PUBLIC = "public"
     MARKET = "market"
@@ -71,3 +91,93 @@ class LocationKind(enum.StrEnum):
     RESIDENTIAL = "residential"
     OUTSKIRTS = "outskirts"
     STATION = "station"
+    JAIL = "jail"
+
+
+class Position(enum.StrEnum):
+    """Special standing a character can hold, held in `Character.positions`
+    (a list, not a single value -- nothing stops a character from being
+    both a Victor and a Governor). Unlike a `Job`, a Position isn't
+    content-authored or applied for: staff grant and revoke these directly
+    (`/staff give position`), and holding any of them grants the same
+    location-access privilege Victors always had (`proxy.has_location_access`),
+    generalized from what used to be a single `Character.is_victor` bool."""
+
+    VICTOR = "victor"
+    GAMEMAKER = "gamemaker"
+    GOVERNOR = "governor"
+    PRESIDENT = "president"
+    VICE_PRESIDENT = "vice_president"
+
+
+class PropertyKind(enum.StrEnum):
+    """A `Property` row's kind (housing system). Ownership reuses
+    `OwnerKind`; a house's tier reuses `JobLevel` -- apartments and inns
+    store a placeholder tier (they aren't gated by job level, see
+    `panem_bot.services.housing`)."""
+
+    HOUSE = "house"
+    APARTMENT = "apartment"
+    INN = "inn"
+
+
+class RpMode(enum.StrEnum):
+    """A character's chosen roleplay mode, set at creation and changeable
+    afterward (subject to `rp_modes.check_can_switch_mode`'s real-day
+    cooldown). Story characters are freeform-RP-only (no economy, crime,
+    housing, work, or NPC interaction); Life characters get the full
+    economy/crime/market/work/travel loop but not housing or the needs
+    system; Simulation is today's full experience plus thirst/sanity."""
+
+    STORY = "story"
+    LIFE = "life"
+    SIMULATION = "simulation"
+
+
+class AfflictionStat(enum.StrEnum):
+    """The five `Character` meters an `AfflictionType`'s cure/auto-apply
+    condition can reference."""
+
+    HEALTH = "health"
+    HUNGER = "hunger"
+    THIRST = "thirst"
+    FATIGUE = "fatigue"
+    SANITY = "sanity"
+
+
+class TradeStatus(enum.StrEnum):
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    DECLINED = "declined"
+    CANCELLED = "cancelled"
+    EXPIRED = "expired"
+
+
+class AfflictionSource(enum.StrEnum):
+    MANUAL = "manual"
+    AUTO = "auto"
+
+
+class JobLevel(enum.StrEnum):
+    """A player character's skill level at their free-typed job
+    (`Character.job_title`), driven purely by `Character.shifts_completed`
+    -- replaces the old per-job `ladder_next` progression now that jobs
+    aren't a fixed catalog a ladder could be authored against. See
+    `panem_shared.job_levels` for the shift-count thresholds and the
+    wage multiplier each level grants."""
+
+    APPRENTICE = "apprentice"
+    NOVICE = "novice"
+    JOURNEYMAN = "journeyman"
+    MASTER = "master"
+    EXPERT = "expert"
+
+
+class DistrictClassification(enum.StrEnum):
+    """A district's `DistrictLore.classification` (History tab): the
+    Capitol-favored "inner" districts (traditionally 1-2, sometimes 3-4)
+    versus the poorer, more heavily policed "outlier" districts. Staff-set
+    per district, not derived from anything -- some tables leave it unset."""
+
+    INNER = "inner"
+    OUTLIER = "outlier"

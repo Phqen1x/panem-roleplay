@@ -8,14 +8,14 @@ previous content" (NFR-12).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from panem_shared.content.errors import ContentValidationError
-from panem_shared.content.schemas import District, Good, Job, Route
+from panem_shared.content.schemas import District, Good, Job, NpcContent, Route
 
 
 def _read_yaml(path: Path) -> object:
@@ -90,12 +90,31 @@ def load_routes(data_dir: Path) -> list[Route]:
     return _validate_list(path, Route, raw)
 
 
+def load_npcs(data_dir: Path) -> dict[str, NpcContent]:
+    """`data/npcs/*.yaml` is optional -- a district with no authored file
+    (or a fresh checkout with no `data/npcs/` directory at all) simply has
+    no authored NPCs, and `panem_sim.world.seed_npcs` falls back to its
+    fully-synthetic population for it."""
+    npcs_dir = data_dir / "npcs"
+    if not npcs_dir.exists():
+        return {}
+    by_id: dict[str, NpcContent] = {}
+    for path in sorted(npcs_dir.glob("*.yaml")):
+        raw = _read_yaml(path)
+        for npc in _validate_list(path, NpcContent, raw):
+            if npc.id in by_id:
+                raise ContentValidationError(path.as_posix(), f"duplicate npc id {npc.id!r}")
+            by_id[npc.id] = npc
+    return by_id
+
+
 @dataclass(frozen=True, slots=True)
 class ContentBundle:
     districts: dict[int, District]
     goods: dict[str, Good]
     jobs: dict[str, Job]
     routes: list[Route]
+    npcs: dict[str, NpcContent] = field(default_factory=dict)
 
     def district(self, district_id: int) -> District:
         try:
@@ -107,6 +126,9 @@ class ContentBundle:
 
     def jobs_for_district(self, district_id: int) -> list[Job]:
         return [job for job in self.jobs.values() if job.district == district_id]
+
+    def npcs_for_district(self, district_id: int) -> list[NpcContent]:
+        return [npc for npc in self.npcs.values() if npc.district == district_id]
 
 
 def _cross_validate(bundle: ContentBundle, data_dir: Path, district_paths: dict[int, Path]) -> None:
@@ -161,6 +183,34 @@ def _cross_validate(bundle: ContentBundle, data_dir: Path, district_paths: dict[
                 f"route {route.from_}->{route.to} references undefined good {route.good!r}",
             )
 
+    npcs_dir = (data_dir / "npcs").as_posix()
+    for npc in bundle.npcs.values():
+        district = bundle.districts.get(npc.district)
+        if district is None:
+            raise ContentValidationError(
+                npcs_dir,
+                f"npc {npc.id!r} references district {npc.district}, which has no district file",
+            )
+        location_ids = {loc.id for loc in district.locations}
+        if npc.home_location_id not in location_ids:
+            raise ContentValidationError(
+                npcs_dir,
+                f"npc {npc.id!r} home_location_id {npc.home_location_id!r} is not a location in "
+                f"district {npc.district}",
+            )
+        if npc.job_id is not None:
+            npc_job = bundle.jobs.get(npc.job_id)
+            if npc_job is None:
+                raise ContentValidationError(
+                    npcs_dir, f"npc {npc.id!r} job_id {npc.job_id!r} is not a defined job id"
+                )
+            if npc_job.district != npc.district:
+                raise ContentValidationError(
+                    npcs_dir,
+                    f"npc {npc.id!r} job_id {npc.job_id!r} belongs to district {npc_job.district}, "
+                    f"not {npc.district}",
+                )
+
 
 def load_content(data_dir: Path) -> ContentBundle:
     """Load and validate every content file under `data_dir`.
@@ -175,6 +225,7 @@ def load_content(data_dir: Path) -> ContentBundle:
         goods=load_goods(data_dir),
         jobs=load_jobs(data_dir),
         routes=load_routes(data_dir),
+        npcs=load_npcs(data_dir),
     )
     _cross_validate(bundle, data_dir, district_paths)
     return bundle

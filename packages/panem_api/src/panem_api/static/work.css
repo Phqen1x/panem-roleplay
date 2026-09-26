@@ -1,0 +1,421 @@
+main {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 16px;
+  text-align: center;
+  /* `body` is a flex container (style.css), making this `<main>` a flex
+     item -- flex items default to `min-width: auto`, which refuses to
+     shrink below their content's intrinsic size (the classic flexbox
+     "overflow:auto child doesn't actually scroll, it blows out its
+     ancestor instead" trap). Without this, an oversized child board
+     (e.g. Minesweeper's 16-column grid at max job level) widens `main`
+     itself past the viewport instead of scrolling within `#board`'s own
+     `overflow-x: auto`. */
+  min-width: 0;
+}
+
+#status {
+  color: var(--muted);
+  font-size: 16px;
+}
+
+#result {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+#result.win {
+  color: #7cd992;
+}
+
+#result.lose {
+  color: #e0736b;
+}
+
+.instructions {
+  color: var(--muted);
+  font-size: 15px;
+  font-style: italic;
+  line-height: 1.4;
+  margin: 4px auto 12px;
+  max-width: 420px;
+}
+
+#board {
+  margin: 12px auto;
+  max-width: 100%;
+}
+
+/* -------------------------------------------------------------- Minesweeper */
+
+.board-minesweeper {
+  display: inline-grid;
+  gap: 2px;
+  background: var(--border);
+  padding: 2px;
+  border-radius: 4px;
+}
+
+.cell {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  font-weight: 800;
+  background: var(--panel);
+  color: var(--text);
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+  user-select: none;
+  padding: 0;
+}
+
+.cell.revealed {
+  background: var(--bg);
+  cursor: default;
+}
+
+.cell.mine {
+  background: #5c2a2a;
+}
+
+.cell.flagged {
+  color: var(--accent);
+}
+
+.cell[data-count="1"] {
+  color: #6fa8ff;
+}
+
+.cell[data-count="2"] {
+  color: #7cd992;
+}
+
+.cell[data-count="3"] {
+  color: #e0736b;
+}
+
+.cell[data-count="4"],
+.cell[data-count="5"],
+.cell[data-count="6"] {
+  color: var(--accent);
+}
+
+/* -------------------------------------------------------------------- Snake */
+
+.board-snake {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.board-snake canvas {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  /* The canvas's `width`/`height` attributes (set in games/snake.js) fix
+     its drawing-buffer resolution at 400x400 -- capping its on-screen size
+     here instead lets it shrink to fit a phone-width viewport (which would
+     otherwise force #board's horizontal scroll fallback, fighting the same
+     swipe gesture that's supposed to steer) without touching that
+     resolution or the touch/pointer coordinates games/snake.js reads off
+     it (a swipe reads as a relative delta between two points, not an
+     absolute canvas-space position, so CSS-scaling it doesn't skew steering). */
+  max-width: 100%;
+  height: auto;
+}
+
+.snake-score {
+  margin: 0;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+/* ---------------------------------------------------------------- Connect 4 */
+
+.board-connect4 {
+  display: inline-grid;
+  grid-template-columns: repeat(7, 40px);
+  gap: 4px;
+  background: #1c3a5c;
+  padding: 8px;
+  border-radius: 6px;
+}
+
+.c4-cell {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: var(--bg);
+  cursor: pointer;
+  padding: 0;
+}
+
+.c4-cell:disabled {
+  cursor: default;
+}
+
+.c4-cell.c4-player {
+  background: #e0736b;
+}
+
+.c4-cell.c4-robot {
+  background: var(--accent);
+}
+
+/* -------------------------------------------------------------- Coin flip */
+
+.board-coinflip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.coin {
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 34px;
+  font-weight: 700;
+  border: 3px solid var(--border);
+}
+
+.coin.flipping {
+  animation: coin-spin 0.7s ease-in-out;
+}
+
+.coin.win {
+  border-color: #7cd992;
+}
+
+.coin.lose {
+  border-color: #e0736b;
+}
+
+@keyframes coin-spin {
+  from {
+    transform: rotateY(0deg) scale(1);
+  }
+  50% {
+    transform: rotateY(720deg) scale(1.15);
+  }
+  to {
+    transform: rotateY(1440deg) scale(1);
+  }
+}
+
+.coinflip-buttons {
+  display: flex;
+  gap: 12px;
+}
+
+.choice-btn {
+  padding: 8px 20px;
+  border-radius: 4px;
+  border: 2px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.choice-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* ------------------------------------------------------------ Pick Poison */
+
+.board-poison {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+}
+
+.bottle-btn {
+  width: 70px;
+  height: 90px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  cursor: pointer;
+  font-size: 34px;
+}
+
+.bottle-btn:disabled {
+  cursor: default;
+}
+
+.bottle-btn.chosen.win {
+  background: #234a30;
+  border-color: #7cd992;
+}
+
+.bottle-btn.chosen.lose {
+  background: #5c2a2a;
+  border-color: #e0736b;
+}
+
+.bottle-btn.poisoned {
+  border-color: #e0736b;
+}
+
+/* -------------------------------------------------------------- Solitaire */
+
+.board-solitaire {
+  text-align: left;
+}
+
+.solitaire-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.solitaire-spacer {
+  flex: 1;
+}
+
+.solitaire-tableau {
+  align-items: flex-start;
+}
+
+.pile {
+  position: relative;
+  width: 52px;
+  height: 74px;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  color: var(--muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.pile.red {
+  color: #e0736b;
+}
+
+.pile.black {
+  color: var(--text);
+}
+
+.tableau-column {
+  position: relative;
+  width: 52px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.card {
+  position: absolute;
+  top: 0;
+  width: 50px;
+  height: 72px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.card.red {
+  color: #e0736b;
+}
+
+.card.black {
+  color: var(--text);
+}
+
+.card.facedown {
+  background: #2a3040;
+}
+
+.card.selected {
+  outline: 2px solid var(--accent);
+}
+
+/* Mobile (Android/iOS): several of these boards were sized for a desktop
+   pointer and don't fit a phone-width viewport at their base pixel sizes
+   -- Minesweeper's grid grows with job mastery level (up to 16 columns *
+   34px = well past any phone's width) and Solitaire's tableau is 7 columns
+   wide at 52px each. Shrunk to fit even the worst case (Expert-level
+   Minesweeper's 16-column grid) outright, rather than leaning on `#board`'s
+   own `overflow-x: auto` -- `main` sits inside `body`'s flex column and, in
+   at least one tested engine, an oversized descendant several levels down
+   still grows `main` itself past the viewport rather than staying
+   contained and internally scrollable, so a board that doesn't fit
+   outright ends up with its excess silently clipped (by `html`/`body`'s
+   own `overflow-x: hidden` safety net in style.css) with no way to reach
+   it, not scrollable. `#board`'s own `overflow-x: auto` stays in place as
+   a second-line fallback regardless -- if a board turns out to need more
+   room than expected, it becomes usable in whichever engines *do* honor
+   the nested scroll rather than being invisibly cut off. `.cell`'s size
+   here must stay in sync with `games/minesweeper.js`'s own `cellSizePx()`
+   -- the grid's column width is set inline by that JS (a CSS grid track's
+   size isn't driven by its content's own `width`), this only sizes the
+   cell's content within the track that JS already sized to match. */
+@media (max-width: 700px) {
+  main {
+    padding: 12px;
+  }
+
+  #board {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .cell {
+    width: 18px;
+    height: 18px;
+    font-size: 11px;
+  }
+
+  .pile,
+  .tableau-column {
+    width: 38px;
+  }
+
+  .pile {
+    height: 54px;
+    font-size: 16px;
+  }
+
+  .card {
+    width: 36px;
+    height: 52px;
+    font-size: 12px;
+  }
+
+  .solitaire-row {
+    gap: 5px;
+  }
+}
+
+.give-up-btn {
+  margin-top: 12px;
+  padding: 6px 16px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 15px;
+}

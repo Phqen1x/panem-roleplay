@@ -1,0 +1,16 @@
+#!/bin/sh
+# `sudo panem.setup-guild` -- scripts/setup_guild.py, admin one-off.
+set -eu
+
+: "${DATA_DIR:=$SNAP/data}"
+export DATA_DIR
+
+if [ -f "$SNAP_DATA/env" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$SNAP_DATA/env"
+  set +a
+fi
+
+cd "$SNAP"
+exec "$SNAP/python/bin/python3" "$SNAP/scripts/setup_guild.py" "$@"

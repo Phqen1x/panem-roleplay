@@ -10,6 +10,9 @@ imports:
 - medicine
 - produce
 - textiles
+- transport
+illicit_produces:
+- contraband_weapons
 population_base: 6500
 culture:
   tone:
@@ -60,6 +63,15 @@ locations:
   access_jobs:
   - d5_technician
   - d5_engineer
+- id: black_market
+  name: The Dead Grid
+  kind: market
+  capacity: 30
+  illicit: true
+- id: jail
+  name: District Five Jail
+  kind: jail
+  capacity: 40
 map:
   image: maps/d5.png
   width: 1600
@@ -86,6 +98,12 @@ map:
     outskirts:
     - 1400
     - 800
+    black_market:
+    - 1200
+    - 650
+    jail:
+    - 950
+    - 150
 quota:
   good: power
   amount: 1500

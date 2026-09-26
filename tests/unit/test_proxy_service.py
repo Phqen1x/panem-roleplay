@@ -5,7 +5,7 @@ import pytest
 from panem_bot.services import proxy as proxy_svc
 from panem_shared.constants import PROXY_MESSAGE_MAX_LEN
 from panem_shared.content.schemas import Location
-from panem_shared.db.models import Character
+from panem_shared.db.models import Character, Npc, Scene
 from panem_shared.enums import CharacterStatus
 
 
@@ -18,12 +18,41 @@ def make_character(**overrides) -> Character:
         name="Katniss",
         age=16,
         status=CharacterStatus.APPROVED.value,
-        job_id=None,
-        is_victor=False,
+        job_title=None,
+        positions=[],
         jailed_until_tick=None,
+        location_id=None,
     )
     defaults.update(overrides)
     return Character(**defaults)
+
+
+def make_npc(**overrides) -> Npc:
+    defaults = dict(
+        id="npc-1",
+        district_id=12,
+        name="Old Ferro",
+        age=61,
+        location_id="hob",
+        home_location_id="seam",
+        job_id=None,
+    )
+    defaults.update(overrides)
+    return Npc(**defaults)
+
+
+def make_scene(**overrides) -> Scene:
+    defaults = dict(
+        district_id=12,
+        location_id="sq",
+        thread_id=1,
+        forum_channel_id=1,
+        kind="player",
+        title="A scene",
+        pins_location=True,
+    )
+    defaults.update(overrides)
+    return Scene(**defaults)
 
 
 class TestIsOoc:
@@ -86,26 +115,156 @@ class TestStripTagPrefix:
         assert proxy_svc.strip_tag_prefix("hello there", "md") == "hello there"
 
 
+class TestCanRpInDistrict:
+    def test_home_district_always_allowed(self):
+        char = make_character(district_id=12, current_district_id=12, positions=[])
+        assert proxy_svc.can_rp_in_district(char, 12)
+
+    def test_currently_traveled_to_district_allowed(self):
+        char = make_character(district_id=12, current_district_id=0, positions=[])
+        assert proxy_svc.can_rp_in_district(char, 0)
+
+    def test_a_district_never_home_or_visited_denied(self):
+        char = make_character(district_id=12, current_district_id=12, positions=[])
+        assert not proxy_svc.can_rp_in_district(char, 5)
+
+    def test_gamemaker_allowed_anywhere(self):
+        char = make_character(district_id=12, current_district_id=12, positions=["gamemaker"])
+        assert proxy_svc.can_rp_in_district(char, 5)
+        assert proxy_svc.can_rp_in_district(char, 0)
+
+    def test_victor_gets_no_extra_district_access_by_position_alone(self):
+        # A Victor's Capitol access comes from actually traveling there
+        # (current_district_id) plus a free ticket (travel_svc), not a
+        # standing exception here.
+        char = make_character(district_id=12, current_district_id=12, positions=["victor"])
+        assert not proxy_svc.can_rp_in_district(char, 0)
+        assert not proxy_svc.can_rp_in_district(char, 5)
+
+    def test_governor_gets_no_extra_access(self):
+        char = make_character(district_id=12, current_district_id=12, positions=["governor"])
+        assert not proxy_svc.can_rp_in_district(char, 5)
+        assert not proxy_svc.can_rp_in_district(char, 0)
+
+    def test_story_mode_allowed_anywhere(self):
+        char = make_character(district_id=12, current_district_id=12, positions=[], rp_mode="story")
+        assert proxy_svc.can_rp_in_district(char, 5)
+        assert proxy_svc.can_rp_in_district(char, 0)
+
+
+class TestCanRpAtLocation:
+    def test_at_the_location_allowed(self):
+        char = make_character(location_id="sq")
+        assert proxy_svc.can_rp_at_location(char, "sq")
+
+    def test_elsewhere_denied(self):
+        char = make_character(location_id="hob")
+        assert not proxy_svc.can_rp_at_location(char, "sq")
+
+    def test_never_traveled_anywhere_denied(self):
+        char = make_character(location_id=None)
+        assert not proxy_svc.can_rp_at_location(char, "sq")
+
+    def test_gamemaker_bypasses_it(self):
+        char = make_character(location_id="hob", positions=["gamemaker"])
+        assert proxy_svc.can_rp_at_location(char, "sq")
+
+    def test_story_mode_bypasses_it(self):
+        char = make_character(location_id="hob", positions=[], rp_mode="story")
+        assert proxy_svc.can_rp_at_location(char, "sq")
+
+
+class TestSceneLocationId:
+    def test_none_scene_is_none(self):
+        assert proxy_svc.scene_location_id(None) is None
+
+    def test_player_scene_returns_its_location(self):
+        assert proxy_svc.scene_location_id(make_scene(kind="player", location_id="sq")) == "sq"
+
+    def test_ambient_scene_returns_its_location(self):
+        assert proxy_svc.scene_location_id(make_scene(kind="ambient", location_id="sq")) == "sq"
+
+    def test_pinned_staff_scene_returns_its_location(self):
+        scene = make_scene(kind="staff", location_id="sq", pins_location=True)
+        assert proxy_svc.scene_location_id(scene) == "sq"
+
+    def test_unpinned_staff_scene_returns_none(self):
+        scene = make_scene(kind="staff", location_id="sq", pins_location=False)
+        assert proxy_svc.scene_location_id(scene) is None
+
+
 class TestHasLocationAccess:
     def test_unrestricted_always_true(self):
         loc = Location(id="square", name="The Square", kind="public")
-        assert proxy_svc.has_location_access(job_id=None, is_victor=False, location=loc)
+        assert proxy_svc.has_location_access(job_title=None, has_position=False, location=loc)
 
-    def test_restricted_victor_true(self):
+    def test_restricted_with_a_position_true(self):
         loc = Location(id="village", name="Victor's Village", kind="residential", restricted=True)
-        assert proxy_svc.has_location_access(job_id=None, is_victor=True, location=loc)
+        assert proxy_svc.has_location_access(job_title=None, has_position=True, location=loc)
 
     def test_restricted_job_match_true(self):
         loc = Location(
             id="mine", name="Mine", kind="workplace", restricted=True, access_jobs=["miner"]
         )
-        assert proxy_svc.has_location_access(job_id="miner", is_victor=False, location=loc)
+        assert proxy_svc.has_location_access(job_title="miner", has_position=False, location=loc)
 
     def test_restricted_no_access_false(self):
         loc = Location(
             id="mine", name="Mine", kind="workplace", restricted=True, access_jobs=["miner"]
         )
-        assert not proxy_svc.has_location_access(job_id="baker", is_victor=False, location=loc)
+        assert not proxy_svc.has_location_access(
+            job_title="baker", has_position=False, location=loc
+        )
+
+
+class TestNpcDistrictAccess:
+    def test_own_district_allowed(self):
+        npc = make_npc(district_id=12)
+        assert proxy_svc.npc_district_access(npc, 12)
+
+    def test_other_district_denied(self):
+        npc = make_npc(district_id=12)
+        assert not proxy_svc.npc_district_access(npc, 5)
+
+
+class TestNpcHasLocationAccess:
+    def test_unrestricted_always_true(self):
+        loc = Location(id="square", name="The Square", kind="public")
+        npc = make_npc(job_id=None)
+        assert proxy_svc.npc_has_location_access(npc, loc)
+
+    def test_restricted_job_match_true(self):
+        loc = Location(
+            id="justice",
+            name="Justice Building",
+            kind="workplace",
+            restricted=True,
+            access_jobs=["peacekeeper"],
+        )
+        npc = make_npc(job_id="peacekeeper")
+        assert proxy_svc.npc_has_location_access(npc, loc)
+
+    def test_restricted_no_matching_job_false(self):
+        loc = Location(
+            id="justice",
+            name="Justice Building",
+            kind="workplace",
+            restricted=True,
+            access_jobs=["peacekeeper"],
+        )
+        npc = make_npc(job_id="baker")
+        assert not proxy_svc.npc_has_location_access(npc, loc)
+
+    def test_restricted_no_job_at_all_false(self):
+        loc = Location(
+            id="justice",
+            name="Justice Building",
+            kind="workplace",
+            restricted=True,
+            access_jobs=["peacekeeper"],
+        )
+        npc = make_npc(job_id=None)
+        assert not proxy_svc.npc_has_location_access(npc, loc)
 
 
 class TestCheckCanProxy:
@@ -161,19 +320,113 @@ class TestCheckCanProxy:
         )
         assert refusal is None
 
+    def test_jailed_allowed_in_the_jail_thread_of_their_home_district(self):
+        character = make_character(jailed_until_tick=100, district_id=12, current_district_id=12)
+        district = self.make_district([Location(id="cell", name="The Cell", kind="jail")])
+        refusal = proxy_svc.check_can_proxy(
+            character=character, district=district, location_id="cell", current_tick=10
+        )
+        assert refusal is None
+
+    def test_jailed_allowed_in_the_jail_thread_of_the_district_they_were_caught_in(self):
+        # Home is district 12, but they were caught (and are still jailed)
+        # in district 5 -- either district's cell thread is fair game.
+        character = make_character(jailed_until_tick=100, district_id=12, current_district_id=5)
+        district = self.make_district([Location(id="cell", name="The Cell", kind="jail")])
+        district = district.model_copy(update={"id": 5})
+        refusal = proxy_svc.check_can_proxy(
+            character=character, district=district, location_id="cell", current_tick=10
+        )
+        assert refusal is None
+
+    def test_jailed_still_refused_elsewhere_in_an_allowed_district(self):
+        character = make_character(jailed_until_tick=100, district_id=12, current_district_id=12)
+        district = self.make_district(
+            [
+                Location(id="cell", name="The Cell", kind="jail"),
+                Location(id="sq", name="Square", kind="public"),
+            ]
+        )
+        refusal = proxy_svc.check_can_proxy(
+            character=character, district=district, location_id="sq", current_tick=10
+        )
+        assert refusal is not None and refusal.reason_key == "proxy_character_jailed"
+
+    def test_jailed_refused_in_a_jail_thread_of_an_unrelated_district(self):
+        character = make_character(jailed_until_tick=100, district_id=12, current_district_id=12)
+        district = self.make_district([Location(id="cell", name="The Cell", kind="jail")])
+        district = district.model_copy(update={"id": 7})
+        refusal = proxy_svc.check_can_proxy(
+            character=character, district=district, location_id="cell", current_tick=10
+        )
+        assert refusal is not None and refusal.reason_key == "proxy_character_jailed"
+
+    def test_jailed_refused_when_the_district_has_no_jail_location(self):
+        character = make_character(jailed_until_tick=100, district_id=12, current_district_id=12)
+        district = self.make_district([Location(id="sq", name="Square", kind="public")])
+        refusal = proxy_svc.check_can_proxy(
+            character=character, district=district, location_id="sq", current_tick=10
+        )
+        assert refusal is not None and refusal.reason_key == "proxy_character_jailed"
+
+    def test_wrong_district_refused(self):
+        character = make_character(district_id=5, current_district_id=5)
+        district = self.make_district([Location(id="sq", name="Square", kind="public")])
+        refusal = proxy_svc.check_can_proxy(
+            character=character, district=district, location_id=None, current_tick=0
+        )
+        assert refusal is not None and refusal.reason_key == "proxy_wrong_district"
+
+    def test_currently_traveled_to_district_allowed(self):
+        character = make_character(district_id=5, current_district_id=12, location_id="sq")
+        district = self.make_district([Location(id="sq", name="Square", kind="public")])
+        refusal = proxy_svc.check_can_proxy(
+            character=character, district=district, location_id="sq", current_tick=0
+        )
+        assert refusal is None
+
+    def test_gamemaker_allowed_in_a_district_they_are_not_in(self):
+        character = make_character(
+            district_id=5, current_district_id=5, positions=["gamemaker"], location_id=None
+        )
+        district = self.make_district([Location(id="sq", name="Square", kind="public")])
+        refusal = proxy_svc.check_can_proxy(
+            character=character, district=district, location_id="sq", current_tick=0
+        )
+        assert refusal is None
+
+    def test_not_traveled_to_location_refused(self):
+        character = make_character(location_id="hob")
+        district = self.make_district([Location(id="sq", name="Square", kind="public")])
+        refusal = proxy_svc.check_can_proxy(
+            character=character, district=district, location_id="sq", current_tick=0
+        )
+        assert refusal is not None and refusal.reason_key == "proxy_not_traveled"
+
     def test_restricted_location_refused(self):
-        character = make_character()
         loc = Location(
             id="meadow", name="The Meadow", kind="outskirts", restricted=True, access_jobs=["miner"]
         )
+        character = make_character(location_id="meadow")
         district = self.make_district([loc])
         refusal = proxy_svc.check_can_proxy(
             character=character, district=district, location_id="meadow", current_tick=0
         )
         assert refusal is not None and refusal.reason_key == "proxy_location_restricted"
 
+    def test_story_mode_bypasses_the_restricted_location_gate(self):
+        loc = Location(
+            id="meadow", name="The Meadow", kind="outskirts", restricted=True, access_jobs=["miner"]
+        )
+        character = make_character(location_id=None, rp_mode="story")
+        district = self.make_district([loc])
+        refusal = proxy_svc.check_can_proxy(
+            character=character, district=district, location_id="meadow", current_tick=0
+        )
+        assert refusal is None
+
     def test_ok(self):
-        character = make_character()
+        character = make_character(location_id="sq")
         district = self.make_district([Location(id="sq", name="Square", kind="public")])
         refusal = proxy_svc.check_can_proxy(
             character=character, district=district, location_id="sq", current_tick=0

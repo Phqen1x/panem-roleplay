@@ -2,130 +2,101 @@
 
 `panem_sim.systems.jobs` opens and misses/fires shifts inside the tick
 loop; everything here resolves a shift a player actually did something
-about -- picked an option with `/work`, or earned RP credit by proxying
-in the right scene -- which happens outside the tick loop, on the bot's
-own DB session.
+about -- played `/work`'s minigame (or its no-Activity coin-flip
+fallback), or earned RP credit by proxying in the right scene -- which
+happens outside the tick loop, on the bot's own DB session.
+
+Everything below except `resolve_illicit_heat`/`can_earn_rp_credit_
+anywhere`/`meets_rp_credit` lives in `panem_shared.shifts` now, not here,
+re-exported so every existing call site (`shifts_svc.resolve_shift_game
+(...)`) keeps working unchanged -- `panem_api`'s dashboard Work tab and
+`/work` minigame result endpoint need the same job-eligibility/wage
+logic `panem_bot`'s own `/work` does and can't depend on `panem_bot` to
+get it. The old per-option `resolve_shift`, and the `/job apply|list|
+quit`/`check_can_apply`/`check_promotion_eligible` functions that went
+with the `jobs.yaml` catalog it read, are retired along with that
+catalog -- a player's job is now a free-typed `Character.job_title` +
+`shift_phase`, set at character creation and changed only by staff
+(`/staff give job`), not applied for or quit by the player.
 """
 
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass
-from typing import Any
 
-from panem_bot.errors import NotAllowed
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from panem_shared import constants
-from panem_shared.content.schemas import Job
-from panem_shared.db.models import Character, Shift
-from panem_shared.enums import CharacterStatus, ShiftResult
+from panem_shared.db.models import Character, DistrictState
+from panem_shared.enums import Position
+from panem_shared.jail import (
+    resolve_illicit_heat as _resolve_illicit_heat,
+)
+from panem_shared.shifts import (
+    ShiftOutcome as ShiftOutcome,
+)
+from panem_shared.shifts import (
+    already_worked_this_tick as already_worked_this_tick,
+)
+from panem_shared.shifts import (
+    apply_shift_outcome as apply_shift_outcome,
+)
+from panem_shared.shifts import (
+    can_work_from_current_location as can_work_from_current_location,
+)
+from panem_shared.shifts import (
+    has_job as has_job,
+)
+from panem_shared.shifts import (
+    illicit_shift_output as illicit_shift_output,
+)
+from panem_shared.shifts import (
+    market_multiplier_for_district as market_multiplier_for_district,
+)
+from panem_shared.shifts import (
+    market_wage_multiplier as market_wage_multiplier,
+)
+from panem_shared.shifts import (
+    open_adhoc_shift_override as open_adhoc_shift_override,
+)
+from panem_shared.shifts import (
+    resolve_shift_game as resolve_shift_game,
+)
+from panem_shared.shifts import (
+    start_shift_game as start_shift_game,
+)
 
 
-@dataclass(frozen=True, slots=True)
-class ShiftOutcome:
-    wage: float
-    output: dict[str, float]
-    rep_delta: int
-    risk_triggered: bool
-    risk_effect: dict[str, Any] | None
-
-
-def resolve_shift(
-    job: Job, option_index: int, *, is_player: bool, rng: random.Random
-) -> ShiftOutcome:
-    """FR-JOB-3/4: apply the chosen option's multipliers to the job's base
-    wage/output, and roll its risk independently. `PLAYER_OUTPUT_WEIGHT`
-    scales a player's output down relative to an NPC's (Spec §10) --
-    players get the full wage regardless, output is what feeds the
-    district's production for quotas/exports (Milestone D)."""
-    option = job.options[option_index]
-    wage = job.wage * option.wage_mult
-    weight = constants.PLAYER_OUTPUT_WEIGHT if is_player else 1.0
-    output = {good: qty * option.output_mult * weight for good, qty in job.produces.items()}
-    risk_triggered = option.risk > 0 and rng.random() < option.risk
-    return ShiftOutcome(
-        wage=wage,
-        output=output,
-        rep_delta=option.rep_delta,
-        risk_triggered=risk_triggered,
-        risk_effect=option.risk_effect if risk_triggered else None,
-    )
-
-
-def apply_shift_outcome(
-    shift: Shift, character: Character, outcome: ShiftOutcome, *, tick: int
-) -> None:
-    """Marks `shift` completed and applies its outcome to `character`.
-    Resets `consecutive_missed` -- any completion, however the shift was
-    resolved, breaks the miss streak `jobs.py` tracks."""
-    shift.result = ShiftResult.COMPLETED.value
-    shift.completed_at = tick
-    shift.output = outcome.output
-
-    character.money += round(outcome.wage)
-    character.reputation += outcome.rep_delta
-    character.consecutive_missed = 0
-
-    if outcome.risk_triggered and outcome.risk_effect:
-        _apply_risk_effect(character, outcome.risk_effect)
-
-
-def _apply_risk_effect(character: Character, risk_effect: dict[str, Any]) -> None:
-    """Applies `JobOption.risk_effect` once its risk has triggered. `health`
-    (a delta, e.g. `-20`) is the only key `data/jobs.yaml` actually uses
-    today; `reputation`/`jailed_ticks` are supported as the same free-form
-    dict could carry them later, but aren't exercised by any current job."""
-    if "health" in risk_effect:
-        character.health = max(0.0, min(100.0, character.health + risk_effect["health"]))
-    if "reputation" in risk_effect:
-        character.reputation += risk_effect["reputation"]
-    if "jailed_ticks" in risk_effect:
-        base_tick = character.jailed_until_tick or 0
-        character.jailed_until_tick = base_tick + risk_effect["jailed_ticks"]
+def can_earn_rp_credit_anywhere(character: Character) -> bool:
+    """A Gamemaker's RP-credit shift completion (FR-PRX-7) isn't tied to
+    being physically in a job's workplace scene -- the same "any place"
+    privilege `open_adhoc_shift_override` gives `/work` itself."""
+    return Position.GAMEMAKER.value in character.positions
 
 
 def meets_rp_credit(content: str) -> bool:
     """FR-PRX-7: whether a proxied message is long enough to count as
-    working a shift. Whether the *scene* is the right one (tagged for the
-    job's workplace) is the caller's job -- this only checks length."""
+    working a shift. Whether the *scene* is the right one is the caller's
+    job -- this only checks length."""
     return len(content) >= constants.RP_CREDIT_MIN_CHARS
 
 
-def check_can_apply(character: Character, job: Job) -> None:
-    """FR-JOB-1 (implied): raises `NotAllowed` if `character` can't take
-    `job` right now."""
-    if character.status != CharacterStatus.APPROVED.value:
-        raise NotAllowed("character_not_approved")
-    if character.job_id is not None:
-        raise NotAllowed("already_employed")
-    if job.min_reputation is not None and character.reputation < job.min_reputation:
-        raise NotAllowed("reputation_too_low", min_reputation=job.min_reputation)
-
-
-def check_promotion_eligible(character: Character, job: Job) -> bool:
-    """FR-JOB-9: whether `character` qualifies for `job.ladder_next`.
-    `ladder_requirement`'s exact key schema isn't available in this
-    session's context either -- this only recognizes a `min_reputation`
-    key, the one requirement that reads unambiguously from its name."""
-    if job.ladder_next is None:
-        return False
-    requirement = job.ladder_requirement or {}
-    min_reputation = requirement.get("min_reputation")
-    return min_reputation is None or character.reputation >= min_reputation
-
-
-def apply_for_job(character: Character, job: Job, *, tick: int) -> None:
-    character.job_id = job.id
-    character.job_started_tick = tick
-    character.consecutive_missed = 0
-
-
-def quit_job(character: Character) -> tuple[str, int | None]:
-    """Returns `(job_id, started_tick)` for the caller to record a
-    `JobHistory` row with; raises `NotAllowed` if there's no job to quit."""
-    if character.job_id is None:
-        raise NotAllowed("not_employed")
-    job_id, started_tick = character.job_id, character.job_started_tick
-    character.job_id = None
-    character.job_started_tick = None
-    character.consecutive_missed = 0
-    return job_id, started_tick
+async def resolve_illicit_heat(
+    session: AsyncSession,
+    *,
+    character: Character,
+    district_id: int,
+    current_tick: int,
+    lost: bool,
+    rng: random.Random | None = None,
+) -> bool:
+    """Thin session-fetching wrapper around `panem_shared.jail.
+    resolve_illicit_heat` (the actual heat/arrest logic, shared with
+    `panem_api`'s `/work` minigame result endpoint) -- looks up
+    `district_id`'s `DistrictState` row for the arrest-consequence
+    pressure bump and crackdown check, then delegates. Returns whether
+    an arrest happened, for `/work`'s reply text."""
+    district_row = await session.get(DistrictState, district_id)
+    return _resolve_illicit_heat(
+        character, district_row, lost=lost, current_tick=current_tick, rng=rng
+    )

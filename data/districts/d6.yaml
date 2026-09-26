@@ -12,6 +12,8 @@ imports:
 - power
 - produce
 - textiles
+illicit_produces:
+- counterfeit_papers
 population_base: 6000
 culture:
   tone:
@@ -70,6 +72,10 @@ locations:
   job_ids:
   - d6_hustler
   - d6_black_marketeer
+- id: jail
+  name: District Six Jail
+  kind: jail
+  capacity: 40
 map:
   image: maps/d6.png
   width: 1600
@@ -99,6 +105,9 @@ map:
     underpass:
     - 1100
     - 900
+    jail:
+    - 950
+    - 150
 quota:
   good: transport
   amount: 600

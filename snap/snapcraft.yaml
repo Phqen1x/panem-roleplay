@@ -1,0 +1,200 @@
+name: panem
+base: core24
+version: "0.1.0"
+summary: "Panem -- The Long Year: Discord bot, world-sim, and Activity API"
+description: |
+  Packages this repo's three long-running services -- panem_bot (the
+  discord.py gateway client), panem_sim (the world tick loop), and
+  panem_api (the FastAPI Activity/dashboard bridge) -- as three strictly
+  confined snapd daemons sharing one self-contained Python 3.14 install,
+  plus a `migrate` command for `alembic upgrade head` and a couple of
+  optional admin scripts.
+
+  This snap does not bundle Postgres or Redis -- it expects both reachable
+  the way `panem_shared.settings.Settings`'s own defaults assume
+  (`localhost:5432`/`localhost:6379`), matching a same-LXD-container
+  deployment (see `deploy/lxd/provision.sh`). Point `DATABASE_URL`/
+  `REDIS_URL` at `$SNAP_DATA/env` instead if they live elsewhere.
+
+  See `deploy/snap/README.md` for the full install/configure walkthrough.
+
+confinement: strict
+grade: stable
+
+platforms:
+  amd64:
+
+apps:
+  bot:
+    command: bin/panem-bot
+    daemon: simple
+    restart-condition: on-failure
+    restart-delay: 5s
+    plugs: [network]
+  sim:
+    command: bin/panem-sim
+    daemon: simple
+    restart-condition: on-failure
+    restart-delay: 5s
+    plugs: [network]
+  api:
+    command: bin/panem-api
+    daemon: simple
+    restart-condition: on-failure
+    restart-delay: 5s
+    plugs: [network, network-bind]
+  lemonade:
+    # Embeddable Lemonade (lemonade/README.md) -- the local LLM server
+    # `DIALOGUE_PROVIDER=llm` talks to at LLM_BASE_URL (default
+    # http://127.0.0.1:13305/v1, reachable from the other daemons in this
+    # snap over loopback, same as Postgres/Redis). Only starts `lemond`
+    # itself; the actual model weights still need `sudo panem.lemonade-omni
+    # install` run by hand once, same as panem.migrate.
+    command: bin/panem-lemonade-serve
+    daemon: simple
+    restart-condition: on-failure
+    restart-delay: 5s
+    plugs: [network, network-bind, opengl]
+  migrate:
+    # Not a daemon -- run by hand after install/upgrade: `sudo panem.migrate`.
+    command: bin/panem-migrate
+    plugs: [network]
+  setup-guild:
+    # Admin one-off: `sudo panem.setup-guild` (scripts/setup_guild.py).
+    command: bin/panem-setup-guild
+    plugs: [network]
+  lemonade-omni:
+    # Admin one-off: `sudo panem.lemonade-omni install` (scripts/lemonade_omni.py).
+    command: bin/panem-lemonade-omni
+    plugs: [network, opengl]
+
+parts:
+  app:
+    plugin: nil
+    source: .
+    build-packages:
+      - curl
+      - ca-certificates
+    stage-packages:
+      # lemond (embeddable Lemonade, downloaded into $SNAP_COMMON at
+      # runtime by panem.lemonade -- it's not part of this build) links
+      # against the AMD GPU DRM library unconditionally, even with no GPU
+      # passthrough and --profile lite/CPU-only use. Strict confinement
+      # means a plain `apt install` on the host the snap runs on has no
+      # effect -- the confined mount namespace never sees the host's
+      # /usr/lib at all -- so this has to be staged inside the snap
+      # itself, same as any other strict-snap binary dependency.
+      - libdrm-amdgpu1
+      - libarchive-tools
+      - libgomp1
+      - libvulkan1
+    override-build: |
+      set -eux
+      cd "$CRAFT_PART_BUILD"
+
+      export UV_INSTALL_DIR="$CRAFT_PART_BUILD/.uv-bin"
+      # -4: some LXD build instances have no IPv6 route, and astral.sh
+      # resolves an AAAA record -- curl silently stalls on the IPv6 attempt
+      # for minutes before ever falling back to IPv4 without this. Fail
+      # fast (20s connect timeout, a few retries for transient DNS/network
+      # blips) instead of hanging.
+      curl -4 --connect-timeout 20 --retry 3 --retry-connrefused -LsSf \
+        https://astral.sh/uv/install.sh | sh
+      export PATH="$UV_INSTALL_DIR:$PATH"
+      export UV_PYTHON_INSTALL_DIR="$CRAFT_PART_BUILD/.uv-python"
+      export UV_CACHE_DIR="$CRAFT_PART_BUILD/.uv-cache"
+
+      uv python install 3.14
+      PYBIN="$(uv python find 3.14)"
+      # `uv python install` fetches a python-build-standalone release --
+      # a full, self-contained interpreter tree (bin/ + lib/ + its own
+      # stdlib) that's relocatable *as a whole directory* by design. A
+      # `uv sync`-created .venv is NOT that: its bin/python is a symlink
+      # back to this same standalone install, and its pyvenv.cfg "home"
+      # entry (an absolute path under this build directory) is how the
+      # interpreter finds its stdlib at runtime -- neither survives moving
+      # a copied .venv into /snap/panem/<rev>, however the copy is made.
+      # So: no venv layer here at all. Install straight into the
+      # standalone interpreter's own site-packages as real files, not a
+      # .pth pointing back at this build tree -- see Settings.data_dir's
+      # docstring for why every main.py needed an env override once this
+      # stopped being an editable/dev-mode install -- then stage that
+      # whole interpreter tree -- now self-contained, deps included -- as
+      # one unit.
+      uv export --frozen --no-dev --all-packages --no-editable --no-hashes \
+        -o "$CRAFT_PART_BUILD/requirements.txt"
+      # `uv export --no-editable` does NOT reliably convert every workspace
+      # member's requirements.txt entry to a real install: `uv pip install
+      # -r` has been observed installing one local package (panem-shared,
+      # specifically) as an editable .pth pointing straight back at this
+      # build directory, despite the other three workspace packages on the
+      # same line format installing correctly. That .pth is dead the
+      # moment this directory is gone, so every daemon fails at import
+      # with "No module named 'panem_shared'". Sidestep the ambiguity
+      # entirely: build every workspace member into a real wheel and
+      # install *those* -- a .whl install can never be editable -- keeping
+      # requirements.txt only for pinned third-party versions.
+      grep -v '^\./packages/' "$CRAFT_PART_BUILD/requirements.txt" \
+        > "$CRAFT_PART_BUILD/requirements.thirdparty.txt"
+      uv build --all-packages --out-dir "$CRAFT_PART_BUILD/dist"
+      # --break-system-packages: uv marks its own standalone installs as
+      # PEP-668 externally-managed (protecting the common `pip install`
+      # footgun) -- but installing straight into this interpreter's
+      # site-packages, no venv layer, is exactly the point here (see the
+      # comment above), so the guard needs to be overridden explicitly.
+      uv pip install --python "$PYBIN" --break-system-packages \
+        -r "$CRAFT_PART_BUILD/requirements.thirdparty.txt" \
+        "$CRAFT_PART_BUILD"/dist/*.whl
+
+      PYROOT="$(dirname "$(dirname "$PYBIN")")"
+      mkdir -p "$CRAFT_PART_INSTALL"
+      # -L/--dereference: uv's managed-python install dir can hand back
+      # PYROOT as (or containing) a symlink into its own cache/store rather
+      # than a self-contained tree -- plain `cp -a` preserves symlinks
+      # as-is, which then point into this ephemeral build container and
+      # are dangling on any machine the snap actually runs on. Force real
+      # file contents into the prime instead.
+      cp -aL "$PYROOT" "$CRAFT_PART_INSTALL/python"
+      cp -a "$CRAFT_PART_BUILD/data" "$CRAFT_PART_INSTALL/data"
+      cp -a "$CRAFT_PART_BUILD/lemonade" "$CRAFT_PART_INSTALL/lemonade"
+      cp -a "$CRAFT_PART_BUILD/scripts" "$CRAFT_PART_INSTALL/scripts"
+      cp -a "$CRAFT_PART_BUILD/migrations" "$CRAFT_PART_INSTALL/migrations"
+      cp "$CRAFT_PART_BUILD/alembic.ini" "$CRAFT_PART_INSTALL/alembic.ini"
+      test -e "$CRAFT_PART_INSTALL/python/bin/python3" || {
+        echo "python3 missing from staged interpreter tree" >&2
+        exit 1
+      }
+      "$CRAFT_PART_INSTALL/python/bin/python3" -c \
+        "import panem_shared, panem_bot, panem_sim, panem_api" || {
+        echo "one or more workspace packages failed to import after install" >&2
+        exit 1
+      }
+    stage:
+      - python
+      - data
+      - lemonade
+      - scripts
+      - migrations
+      - alembic.ini
+      - usr/lib/x86_64-linux-gnu
+      - usr/bin/bsdtar
+    override-prime: |
+      craftctl default
+      mkdir -p "$CRAFT_PRIME/bin"
+      ln -sf ../usr/bin/bsdtar "$CRAFT_PRIME/bin/tar"
+    prime:
+      - python
+      - data
+      - lemonade
+      - scripts
+      - migrations
+      - alembic.ini
+      - usr/lib/x86_64-linux-gnu
+      - usr/bin/bsdtar
+
+
+  wrappers:
+    plugin: dump
+    source: snap/local/bin
+    organize:
+      "*": bin/

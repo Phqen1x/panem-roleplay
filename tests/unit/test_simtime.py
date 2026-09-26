@@ -12,6 +12,7 @@ from panem_shared.simtime import (
     phase_time_range,
     seconds_until_next_tick,
     ticks_until_next_phase,
+    year_for,
 )
 
 PHASE_TICKS = constants.TICKS_PER_DAY // 4  # 6
@@ -44,6 +45,27 @@ class TestCurrent:
 
     def test_zero_persisted_tick_is_the_very_start(self):
         assert current(0) == (0, DayPhase.NIGHT, 1, 1)
+
+
+class TestYearFor:
+    def test_starts_at_year_one(self):
+        assert year_for(0) == 1
+
+    def test_stays_in_year_one_through_the_twelfth_month(self):
+        last_tick_of_year_one = constants.TICKS_PER_DAY * constants.DAYS_PER_MONTH * 12 - 1
+        assert year_for(last_tick_of_year_one) == 1
+
+    def test_rolls_over_to_year_two_on_the_thirteenth_month(self):
+        first_tick_of_year_two = constants.TICKS_PER_DAY * constants.DAYS_PER_MONTH * 12
+        assert year_for(first_tick_of_year_two) == 2
+        # month/day themselves wrap back to month 1 -- year_for is what
+        # distinguishes this tick from the very first one.
+        _, _, day, month = current(first_tick_of_year_two)
+        assert (day, month) == (1, 1)
+
+    def test_matches_current_arithmetic_for_an_arbitrary_tick(self):
+        tick = constants.TICKS_PER_DAY * constants.DAYS_PER_MONTH * 12 * 3 + 41
+        assert year_for(tick) == 4
 
 
 class TestPhaseBoundary:

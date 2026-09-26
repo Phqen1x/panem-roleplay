@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 
 import pytest
@@ -22,12 +23,8 @@ from panem_shared.enums import DayPhase
 from panem_sim import tick as tick_module
 from panem_sim.systems import (
     FIXED_ORDER,
-    crisis,
-    economy,
     games,
-    memory,
     schedule,
-    social,
     time,
 )
 
@@ -35,10 +32,15 @@ from panem_sim.systems import (
 class FakeRedis:
     def __init__(self) -> None:
         self.published: list[tuple[str, str]] = []
+        self.store: dict[str, str] = {}
 
     async def publish(self, channel: str, message: str) -> int:
         self.published.append((channel, message))
         return 1
+
+    async def set(self, key: str, value: str) -> bool:
+        self.store[key] = value
+        return True
 
 
 def make_district() -> District:
@@ -88,14 +90,18 @@ class TestFixedOrder:
             "needs",
             "jobs",
             "economy",
+            "shipments",
+            "housing",
             "social",
+            "npc_chatter",
+            "reputation",
             "memory",
             "crisis",
             "games",
         ]
 
     def test_every_remaining_stub_returns_no_events(self):
-        for module in (economy, social, memory, crisis, games):
+        for module in (games,):
             assert module.run(None, None) == []  # type: ignore[arg-type]
 
 
@@ -176,6 +182,11 @@ class TestRunTick:
         assert len(redis_client.published) == 1
         channel, _payload = redis_client.published[0]
         assert channel == "world:events"
+
+        assert "pos:1" in redis_client.store
+        positions = json.loads(redis_client.store["pos:1"])
+        assert {npc["id"] for npc in positions["npcs"]} == {"npc0", "npc1", "npc2"}
+        assert positions["characters"] == []
 
     async def test_failing_system_retries_once_then_raises_and_alerts(
         self,

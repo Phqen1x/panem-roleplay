@@ -50,8 +50,54 @@ class Bulletin(_EventBase):
     text: str
 
 
-WorldEvent = Annotated[NarrationLine | Bulletin, Field(discriminator="kind")]
-AnyWorldEvent = NarrationLine | Bulletin
+class CharacterArrived(_EventBase):
+    """A character's cross-district transit finished (FR-LOC-9). Consumed
+    by the bot to grant the destination district's "visitor" role and
+    drop the origin's, if either isn't the character's home district
+    (`Character.district_id`, never touched here). Arrival narration
+    itself is a separate `NarrationLine` at the destination's station,
+    the same as any other arrival."""
+
+    kind: Literal["CharacterArrived"] = "CharacterArrived"
+    character_id: int
+    district_id: int
+    """Destination district -- where the character just arrived."""
+    origin_district_id: int
+
+
+class NpcChatter(_EventBase):
+    """Two co-located, unengaged NPCs strike up a short conversation on
+    their own (`panem_sim.systems.npc_chatter`), purely as ambient world
+    flavor -- never involving a player. Unlike `NarrationLine`, the sim
+    doesn't write the actual lines here (it never calls the LLM anywhere
+    in this codebase); it just decides *that* and *who*, and the bot's
+    narrator generates and posts the exchange into the location's pinned
+    ambient thread, each line as that NPC (name + avatar), not "The
+    Narrator"."""
+
+    kind: Literal["NpcChatter"] = "NpcChatter"
+    district_id: int
+    location_id: str
+    npc_ids: tuple[str, str]
+
+
+class CharacterDied(_EventBase):
+    """A Simulation-mode character's health bottomed out and
+    `panem_shared.afflictions.apply_auto_death` marked them dead
+    (`panem_sim.systems.needs`). Consumed by the bot to DM the owner
+    explaining what happened -- `character.death_cause` already carries
+    the human-readable cause, so this just carries the ids needed to look
+    the row back up."""
+
+    kind: Literal["CharacterDied"] = "CharacterDied"
+    character_id: int
+
+
+WorldEvent = Annotated[
+    NarrationLine | Bulletin | CharacterArrived | NpcChatter | CharacterDied,
+    Field(discriminator="kind"),
+]
+AnyWorldEvent = NarrationLine | Bulletin | CharacterArrived | NpcChatter | CharacterDied
 
 _event_adapter: TypeAdapter[AnyWorldEvent] = TypeAdapter(WorldEvent)
 

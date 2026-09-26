@@ -14,6 +14,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from panem_bot import autocomplete, redis_keys
 from panem_bot.services import characters as characters_svc
+from panem_bot.services import proxy as proxy_svc
 from panem_bot.services import scenes as scenes_svc
 from panem_bot.strings import t
 from panem_shared.db.models import Character, DiscordChannel, Scene, User
@@ -112,16 +113,22 @@ class SceneCog(commands.Cog):
     async def _caller_character(
         self, session, *, discord_user_id: int, district_id: int, name: str | None
     ) -> Character | None:
+        """Which of this user's characters may start a scene in
+        `district_id`'s forum -- `proxy_svc.can_rp_in_district`: assigned
+        to this district, currently there via `/travel`, or a Gamemaker's
+        (any district, no travel needed). The filter has to happen in
+        Python rather than in the query since it isn't expressible as a
+        single column comparison."""
+        user = await characters_svc.get_or_create_user(session, discord_user_id)
         stmt = select(Character).where(
             Character.status == CharacterStatus.APPROVED.value,
-            Character.district_id == district_id,
+            Character.user_id == user.id,
         )
-        user = await characters_svc.get_or_create_user(session, discord_user_id)
-        stmt = stmt.where(Character.user_id == user.id)
         if name:
             stmt = stmt.where(Character.name == name)
         rows = (await session.execute(stmt)).scalars().all()
-        return rows[0] if len(rows) == 1 else None
+        eligible = [c for c in rows if proxy_svc.can_rp_in_district(c, district_id)]
+        return eligible[0] if len(eligible) == 1 else None
 
     # -------------------------------------------------------------- /scene
 
@@ -175,6 +182,13 @@ class SceneCog(commands.Cog):
                 await interaction.response.send_message(
                     "Specify `character` — you have more than one approved character here, or none.",
                     ephemeral=True,
+                )
+                return
+
+            if not proxy_svc.can_rp_at_location(char, location):
+                loc_name = next(loc.name for loc in district.locations if loc.id == location)
+                await interaction.response.send_message(
+                    t("scene_not_traveled", name=char.name, location=loc_name), ephemeral=True
                 )
                 return
 
@@ -273,14 +287,14 @@ class SceneCog(commands.Cog):
             if district_id is None:
                 return []
             user = await characters_svc.get_or_create_user(session, interaction.user.id)
-            stmt = select(Character.name).where(
+            stmt = select(Character).where(
                 Character.user_id == user.id,
-                Character.district_id == district_id,
                 Character.status == CharacterStatus.APPROVED.value,
             )
             if current:
                 stmt = stmt.where(Character.name.ilike(f"%{current}%"))
-            names = (await session.execute(stmt.limit(25))).scalars().all()
+            rows = (await session.execute(stmt)).scalars().all()
+            names = [c.name for c in rows if proxy_svc.can_rp_in_district(c, district_id)][:25]
         return [app_commands.Choice(name=name, value=name) for name in names]
 
     @group.command(name="close", description="Close this scene")
