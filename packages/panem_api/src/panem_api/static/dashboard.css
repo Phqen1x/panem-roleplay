@@ -1337,6 +1337,69 @@ table.data-table .btn {
   }
 }
 
+.game-card-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(224, 167, 46, 0.18);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  vertical-align: middle;
+}
+
+/* ------------------------------------- Games tab: the Party Room itself */
+
+.party-room {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.party-canvas-wrap {
+  flex: 1 1 640px;
+  min-width: 300px;
+}
+
+.party-canvas {
+  display: block;
+  width: 100%;
+  max-width: 960px;
+  aspect-ratio: 960 / 640;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #1a2e1f;
+}
+
+.party-sidebar {
+  flex: 0 1 300px;
+  min-width: 260px;
+}
+
+.party-station-panel {
+  margin-bottom: 16px;
+}
+
+.party-station-body p {
+  margin: 6px 0;
+}
+
+.party-answer-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+
+@media (max-width: 720px) {
+  .party-answer-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* --------------------------------- Header: donor dashboard theme picker */
 /* `theme_picker.js`'s `mountThemePicker` -- a little color-wheel button
    pinned to the header's top-right corner (last child, after `#character-

@@ -1,17 +1,28 @@
 // The "Games" tab: a staff-only pitch/catalog for the "Panem Party Pack" --
 // a set of very short multiplayer games meant for parties, festivals and
 // homes, plus a list of board/card games that playable tables (in homes,
-// cafes, club rooms) could offer. Nothing here is wired up to real
-// gameplay yet -- see each card's own note. Only offered by `app.js` when
-// `/identify` reports `is_staff` (same gating as `staff.js`), while the
-// concept is reviewed before any of it is built for players.
+// cafes, club rooms) could offer. Three of the nine are wired up for
+// real: `playable: true` cards link into the "Party Room"
+// (`party.js`) -- a shared top-down space you walk a simple character
+// around in and play Quickfire Trivia, Capitol Says, and Pass the Parcel
+// as stations in it (see that file's own docstring). The rest stay a
+// pitch for now. Only offered by `app.js` when `/identify` reports
+// `is_staff` (same gating as `staff.js`), while the concept is reviewed
+// before any of it is built out further for players.
 import { el } from "./_shared.js?v=7";
+
+// Bump whenever party.js changes -- same cache-busting reasoning as
+// app.js's own ASSET_VERSION (see that file's module docstring), just
+// scoped to this one dynamically-imported module since it isn't part of
+// app.js's own tabs/*.js router.
+const PARTY_ASSET_VERSION = "3";
 
 const PARTY_PACK_GAMES = [
   {
     name: "Capitol Says",
     description:
       "A Simon Says-style reaction game. Players select the correct action before time expires.",
+    playable: true,
   },
   {
     name: "District Draw",
@@ -25,11 +36,13 @@ const PARTY_PACK_GAMES = [
   {
     name: "Quickfire Trivia",
     description: "Categories could include district lore, Games history and general trivia.",
+    playable: true,
   },
   {
     name: "Pass the Parcel",
     description:
       "Players pass a package while music plays. It may contain a prize, prank item or challenge.",
+    playable: true,
   },
   {
     name: "Memory Table",
@@ -64,7 +77,7 @@ const BOARD_AND_CARD_GAMES = [
   "Puzzle races",
 ];
 
-function introPanel() {
+function introPanel(onEnterPartyRoom) {
   return el(
     "div",
     { class: "panel" },
@@ -73,8 +86,18 @@ function introPanel() {
       "p",
       { class: "tab-status" },
       "A collection of very short multiplayer games accessible from parties, festivals and homes. " +
-        "Concept catalog only -- staff-visible for now while it's reviewed, with minimal artwork " +
-        "planned so each one can become reusable across dozens of events."
+        "Staff-visible for now while the concept is reviewed, with minimal artwork planned so each " +
+        "one can become reusable across dozens of events. Three are already playable in a shared " +
+        "top-down Party Room -- look for the ▶ Playable badge below."
+    ),
+    el(
+      "div",
+      { class: "field-row" },
+      el(
+        "button",
+        { class: "btn primary", type: "button", onclick: onEnterPartyRoom },
+        "Enter the Party Room"
+      )
     )
   );
 }
@@ -83,7 +106,12 @@ function gameCard(game) {
   return el(
     "div",
     { class: "game-card" },
-    el("h3", { text: game.name }),
+    el(
+      "h3",
+      {},
+      game.name,
+      game.playable ? el("span", { class: "game-card-badge" }, "▶ Playable") : null
+    ),
     el("p", { class: "tab-status" }, game.description)
   );
 }
@@ -115,6 +143,52 @@ function boardAndCardPanel() {
   );
 }
 
-export function mount(root) {
-  root.append(introPanel(), partyPackPanel(), boardAndCardPanel());
+function catalogView(onEnterPartyRoom) {
+  return el(
+    "div",
+    {},
+    introPanel(onEnterPartyRoom),
+    partyPackPanel(),
+    boardAndCardPanel()
+  );
+}
+
+export function mount(root, ctx) {
+  let currentHandle = null;
+
+  function showCatalog() {
+    if (currentHandle && typeof currentHandle.unmount === "function") currentHandle.unmount();
+    currentHandle = null;
+    root.innerHTML = "";
+    root.append(catalogView(showPartyRoom));
+  }
+
+  async function showPartyRoom() {
+    if (currentHandle && typeof currentHandle.unmount === "function") currentHandle.unmount();
+    root.innerHTML = "";
+    root.append(
+      el(
+        "div",
+        { class: "field-row" },
+        el("button", { class: "btn secondary", type: "button", onclick: showCatalog }, "← Back to catalog")
+      )
+    );
+    try {
+      const mod = await import(`./party.js?v=${PARTY_ASSET_VERSION}`);
+      currentHandle = mod.mount(root, ctx) || null;
+    } catch (err) {
+      root.append(
+        el("p", { class: "tab-status error" }, `Could not load the Party Room: ${err.message}`)
+      );
+    }
+  }
+
+  showCatalog();
+
+  return {
+    unmount() {
+      if (currentHandle && typeof currentHandle.unmount === "function") currentHandle.unmount();
+      currentHandle = null;
+    },
+  };
 }
