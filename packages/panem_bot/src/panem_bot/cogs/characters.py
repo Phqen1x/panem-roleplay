@@ -769,6 +769,14 @@ class CharacterCog(commands.Cog):
             row.backstory = backstory
             row.job_title = job_title
             row.shift_phase = shift_phase
+            # `_post_approval_embed` is a no-op once this is set (its
+            # idempotency guard against the poll/Redis-listener race) --
+            # a first-time submission leaves it unset until that initial
+            # post, but a character staff sent back via "Request Changes"
+            # already has it set from *that* post, so without clearing it
+            # here every resubmission after the first one silently
+            # wouldn't repost at all.
+            row.approval_notified_at = None
 
         await interaction.response.send_message(
             f"**{name}** updated and resubmitted for approval.", ephemeral=True

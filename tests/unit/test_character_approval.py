@@ -114,6 +114,40 @@ class TestPostApprovalEmbedIdempotency:
         await cog._post_approval_embed(character.id, applicant_discord_id=42)  # no raise
 
 
+class TestHandleEditSubmit:
+    """`/character edit`'s resubmission -- specifically the "Request
+    Changes" round trip: staff's "Request Changes" button leaves
+    `approval_notified_at` set (from the character's *original* post), so
+    without clearing it here, `_post_approval_embed`'s own idempotency
+    guard (see `TestPostApprovalEmbedIdempotency` above) would silently
+    swallow every resubmission after the first one."""
+
+    async def test_reposts_after_changes_were_requested(
+        self, db_session, bot: FakeBot, cog: CharacterCog
+    ):
+        already = dt.datetime.now(dt.UTC)
+        character = await _seed_character(db_session, approval_notified_at=already)
+        interaction = MagicMock()
+        interaction.user.id = 42
+        interaction.response.send_message = AsyncMock()
+
+        await cog._handle_edit_submit(
+            interaction,
+            character.id,
+            "Wren",
+            21,
+            "Tall.",
+            "A weaver.",
+            "",
+            "morning",
+        )
+
+        bot.channel.send.assert_awaited_once()
+        refreshed = await db_session.get(Character, character.id, populate_existing=True)
+        assert refreshed.approval_notified_at is not None
+        assert refreshed.age == 21
+
+
 class TestTryAnnounce:
     async def test_announces_a_pending_unnotified_character(
         self, db_session, bot: FakeBot, cog: CharacterCog
