@@ -31,7 +31,7 @@ const STEP_TIMEOUT_MS = 8000;
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "33";
+const ASSET_VERSION = "34";
 
 // District names mapping for Capitol and Districts 1-12
 const DISTRICT_NAMES = {
@@ -114,6 +114,15 @@ const TAB_LABELS = {
 // (currently just `currentTabName()`'s fallback below).
 const STAFF_TAB = "staff";
 const STAFF_TAB_LABEL = "Staff";
+
+// The "Panem Party Pack" games catalog -- staff-only for now while the
+// pitch/roadmap is reviewed, same gating as STAFF_TAB above. Once the
+// individual games are actually built and ready for players, this should
+// move into TABS/TAB_LABELS like any other player-facing tab.
+const GAMES_TAB = "games";
+const GAMES_TAB_LABEL = "Games";
+const STAFF_ONLY_TABS = [STAFF_TAB, GAMES_TAB];
+const STAFF_ONLY_TAB_LABELS = { [STAFF_TAB]: STAFF_TAB_LABEL, [GAMES_TAB]: GAMES_TAB_LABEL };
 
 const statusEl = document.getElementById("status");
 const navEl = document.getElementById("tab-nav");
@@ -650,7 +659,7 @@ function buildCtx() {
 }
 
 function visibleTabs() {
-  return state.isStaff ? [...TABS, STAFF_TAB] : TABS;
+  return state.isStaff ? [...TABS, ...STAFF_ONLY_TABS] : TABS;
 }
 
 function currentTabName() {
@@ -700,7 +709,7 @@ function setupNav() {
   const active = currentTabName();
   for (const name of visibleTabs()) {
     const icon = renderTabIcon(name);
-    const label = el("span", {}, name === STAFF_TAB ? STAFF_TAB_LABEL : TAB_LABELS[name]);
+    const label = el("span", {}, STAFF_ONLY_TAB_LABELS[name] || TAB_LABELS[name]);
     navEl.append(
       el(
         "button",
