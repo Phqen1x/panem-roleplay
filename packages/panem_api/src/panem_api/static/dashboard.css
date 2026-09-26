@@ -118,11 +118,29 @@ header {
   color: var(--accent);
 }
 
+/* Anchored from the toggle's *left* edge growing rightward, not its right
+   edge growing leftward -- most of these toggles (crime's target selects,
+   travel's location/district selects, ...) sit mid-row after a label, with
+   free space to their right inside the panel but comparatively little to
+   their left before the viewport edge. A long option label (e.g. "Some
+   Reasonably Long Character Name Here (npc)" in /steal's target list) used
+   to force the menu wider than the toggle while it was still anchored
+   `right: 0`, pushing its *left* edge past `x: 0` and off-screen --
+   "the dropdown gets cut off" was really its own left portion rendering
+   further left than the viewport. `#character-select` below is the one
+   exception (flush to the header's own right edge via `margin-left: auto`)
+   and gets its own override back to right-anchored growth, since for
+   *that* wrapper growing left is the safe direction and growing right
+   would push it off the right edge instead. `max-width` plus wrapping
+   (no `white-space: nowrap` on the buttons) caps how wide either direction
+   can grow in the first place, so even a very long label just wraps onto a
+   second line instead of pushing the menu past either edge. */
 .custom-select-menu {
   position: absolute;
   top: calc(100% + 4px);
-  right: 0;
+  left: 0;
   min-width: 100%;
+  max-width: min(320px, calc(100vw - 24px));
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -135,6 +153,11 @@ header {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
 }
 
+#character-select .custom-select-menu {
+  left: auto;
+  right: 0;
+}
+
 .custom-select-menu button {
   display: block;
   width: 100%;
@@ -145,7 +168,8 @@ header {
   padding: 8px 14px;
   cursor: pointer;
   font-size: 13.5px;
-  white-space: nowrap;
+  white-space: normal;
+  word-break: break-word;
   font-family: var(--font-sans);
 }
 
