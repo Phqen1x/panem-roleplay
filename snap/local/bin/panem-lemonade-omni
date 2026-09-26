@@ -11,4 +11,7 @@ if [ -f "$SNAP_DATA/env" ]; then
 fi
 
 cd "$SNAP"
+
+export PATH="$SNAP/bin:$PATH"
+
 exec "$SNAP/python/bin/python3" "$SNAP/scripts/lemonade_omni.py" "$@"

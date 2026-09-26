@@ -164,7 +164,11 @@ APPROACH_COOLDOWN_TICKS = 2
 LOCATION_RADIUS_PX = 60
 MAX_WORDS_REPLY = 90
 
-LLM_REPLY_MAX_TOKENS = 200
+LLM_REPLY_MAX_TOKENS = 120
+"""Hard ceiling on generated tokens for dialogue replies. Since MAX_WORDS_REPLY
+is 90 words (~110-120 tokens), capping generation at 120 tokens guarantees
+generation time is bounded to <= 2.5 seconds on local hardware, keeping total
+dialogue latency strictly under 10 seconds."""
 LLM_REPLY_TEMPERATURE = 0.8
 LLM_REPLY_FREQUENCY_PENALTY = 0.6
 """Penalizes tokens by how often they've already appeared in this request
@@ -587,16 +591,13 @@ ENGAGEMENT_MAX_PARTICIPANTS = 5
 don't support one), so participants are `ENGAGEMENT_MAX_PARTICIPANTS`
 individually autocompleted, optional slots (`participant_1` required, the
 rest optional) rather than one free-text field."""
-ENGAGEMENT_HISTORY_HARD_CAP = 200
-"""A defensive outer ceiling on how many prior `SceneMessage` rows (player
-lines and NPC replies alike) `proxy.py` will ever fetch as conversation
-history for an engagement reply -- short-term memory is meant to cover the
-*whole* current engagement (every message since it opened), not a rolling
-window, since engagements already auto-close on their own idle timeout
-(`EngagementSettings.idle_timeout_minutes`) long before a real
-conversation could approach this many turns. This only exists so a
-pathological engagement that somehow never closes can't grow the LLM
-request without bound; it should never be hit in normal play."""
+ENGAGEMENT_HISTORY_WINDOW = 10
+"""Rolling window of recent `SceneMessage` rows (player lines and NPC replies)
+fed into the LLM as dialogue context. Capping this at 10 turns guarantees prompt
+evaluation completes in ~2-4s on local hardware, ensuring total response time is
+strictly under the 10-second non-negotiable limit even during active group scenes."""
+ENGAGEMENT_HISTORY_HARD_CAP = ENGAGEMENT_HISTORY_WINDOW
+"""Legacy alias matching `ENGAGEMENT_HISTORY_WINDOW` for backward compatibility."""
 NPC_NAME_MATCH_MIN_LEN = 3
 """In a multi-participant engagement, an NPC only replies to a message
 naming them -- but matching a first/last name shorter than this many

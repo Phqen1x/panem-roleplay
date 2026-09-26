@@ -293,12 +293,15 @@ def _llm_error_detail(exc: Exception) -> str:
     diagnosable from the bot's own log instead of only confirming *that*
     a call failed -- every catch site below logs through this rather than
     a bare `str(exc)`."""
-    detail = str(exc)
     if isinstance(exc, httpx.HTTPStatusError):
         body = exc.response.text.strip()
+        detail = str(exc)
         if body:
             detail = f"{detail} -- body: {body[:500]}"
-    return detail
+        return detail
+    if isinstance(exc, httpx.TimeoutException):
+        return f"{type(exc).__name__} (timed out)"
+    return str(exc) or type(exc).__name__
 
 
 async def generate_llm_reply(
@@ -312,7 +315,10 @@ async def generate_llm_reply(
     earlier in the same conversation -- an engagement thread's
     `SceneMessage` rows, most recently. `/talk`'s always-fresh 1:1 calls
     just pass none, exactly as before this parameter existed."""
+    base_url = settings.llm_base_url or omni.DEFAULT_BASE_URL
     model = settings.llm_model or omni.PROFILES[settings.lemonade_profile].model_name
+    if len(history) > constants.ENGAGEMENT_HISTORY_WINDOW:
+        history = history[-constants.ENGAGEMENT_HISTORY_WINDOW:]
     body: dict[str, object] = {
         "model": model,
         "messages": omni.build_messages(ctx, [*history, {"role": "user", "content": message}]),
@@ -329,14 +335,18 @@ async def generate_llm_reply(
     timeout = settings.llm_timeout_ms / 1000
     async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.post(
-            f"{settings.llm_base_url.rstrip('/')}/chat/completions",
+            f"{base_url.rstrip('/')}/chat/completions",
             json=body,
             headers=headers,
         )
         response.raise_for_status()
         data = response.json()
-    reply: str = data["choices"][0]["message"]["content"]
-    return reply.strip()
+    choice = data["choices"][0]
+    msg = choice["message"]
+    reply: str = (msg.get("content") or msg.get("reasoning_content") or "").strip()
+    if not reply:
+        raise ValueError("LLM returned an empty reply")
+    return reply
 
 
 def _length_matched_max_words(message: str) -> int:
@@ -424,7 +434,7 @@ async def generate_npc_to_npc_reply(
     )
     try:
         return await generate_llm_reply(ctx, message, settings, history=history)
-    except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
+    except (httpx.HTTPError, KeyError, IndexError, ValueError, AttributeError) as exc:
         logger.warning("dialogue_llm_failed", npc_id=npc.id, error=_llm_error_detail(exc))
         return template_reply(npc, "neutral", message)
 
@@ -479,7 +489,7 @@ async def generate_reply(
     )
     try:
         return await generate_llm_reply(ctx, message, settings, history=history)
-    except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
+    except (httpx.HTTPError, KeyError, IndexError, ValueError, AttributeError) as exc:
         logger.warning("dialogue_llm_failed", npc_id=npc.id, error=_llm_error_detail(exc))
         return template_reply(npc, stance, message)
 
@@ -524,7 +534,7 @@ async def summarize_engagement(
     )
     try:
         summary = await generate_llm_reply(ctx, prompt, settings)
-    except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
+    except (httpx.HTTPError, KeyError, IndexError, ValueError, AttributeError) as exc:
         logger.warning("dialogue_summarize_failed", npc_id=npc.id, error=_llm_error_detail(exc))
         return previous_summary
 

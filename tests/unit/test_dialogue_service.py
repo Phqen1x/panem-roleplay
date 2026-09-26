@@ -567,6 +567,10 @@ class TestLlmErrorDetail:
         exc = httpx.ConnectError("no route to host")
         assert dialogue._llm_error_detail(exc) == str(exc)
 
+    def test_timeout_error_reports_timed_out(self):
+        exc = httpx.ReadTimeout("timed out")
+        assert "timed out" in dialogue._llm_error_detail(exc)
+
 
 class TestGenerateReply:
     async def test_template_provider_never_calls_the_llm(self):
@@ -717,6 +721,98 @@ class TestGenerateLlmReply:
         messages = captured["body"]["messages"]  # type: ignore[index]
         assert messages[1:3] == history
         assert messages[-1] == {"role": "user", "content": "Got anything hot?"}
+
+    async def test_truncates_oversized_history_window(self, monkeypatch):
+        captured: dict[str, object] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(200, json={"choices": [{"message": {"content": "reply"}}]})
+
+        real_async_client = httpx.AsyncClient
+
+        def mock_client(*args: object, **kwargs: object) -> httpx.AsyncClient:
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return real_async_client(*args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(dialogue.httpx, "AsyncClient", mock_client)
+
+        ctx = omni.RequestContext(mode=omni.RequestMode.DIALOGUE, speaker={"name": "Kat"})
+        settings = make_settings()
+        oversized = [
+            {"role": "user" if i % 2 == 0 else "assistant", "content": f"Turn {i}"}
+            for i in range(25)
+        ]
+
+        await dialogue.generate_llm_reply(ctx, "Latest turn", settings, history=oversized)
+
+        messages = captured["body"]["messages"]  # type: ignore[index]
+        # System message at 0, then capped history, then latest user message
+        expected_history = oversized[-constants.ENGAGEMENT_HISTORY_WINDOW:]
+        assert messages[1:-1] == expected_history
+        assert len(messages[1:-1]) == constants.ENGAGEMENT_HISTORY_WINDOW
+        assert messages[-1] == {"role": "user", "content": "Latest turn"}
+
+    async def test_falls_back_to_default_base_url_when_setting_is_blank(self, monkeypatch):
+        captured: dict[str, object] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["url"] = str(request.url)
+            return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+        real_async_client = httpx.AsyncClient
+
+        def mock_client(*args: object, **kwargs: object) -> httpx.AsyncClient:
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return real_async_client(*args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(dialogue.httpx, "AsyncClient", mock_client)
+
+        ctx = omni.RequestContext(mode=omni.RequestMode.DIALOGUE, speaker={"name": "Kat"})
+        settings = make_settings(llm_base_url="")
+
+        reply = await dialogue.generate_llm_reply(ctx, "hello", settings)
+        assert reply == "ok"
+        assert captured["url"] == f"{omni.DEFAULT_BASE_URL}/chat/completions"
+
+    async def test_extracts_reasoning_content_when_content_is_none(self, monkeypatch):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": None, "reasoning_content": "thoughts"}}]},
+            )
+
+        real_async_client = httpx.AsyncClient
+
+        def mock_client(*args: object, **kwargs: object) -> httpx.AsyncClient:
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return real_async_client(*args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(dialogue.httpx, "AsyncClient", mock_client)
+
+        ctx = omni.RequestContext(mode=omni.RequestMode.DIALOGUE, speaker={"name": "Kat"})
+        settings = make_settings()
+
+        reply = await dialogue.generate_llm_reply(ctx, "hello", settings)
+        assert reply == "thoughts"
+
+    async def test_raises_value_error_on_empty_content(self, monkeypatch):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"choices": [{"message": {"content": "  "}}]})
+
+        real_async_client = httpx.AsyncClient
+
+        def mock_client(*args: object, **kwargs: object) -> httpx.AsyncClient:
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return real_async_client(*args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(dialogue.httpx, "AsyncClient", mock_client)
+
+        ctx = omni.RequestContext(mode=omni.RequestMode.DIALOGUE, speaker={"name": "Kat"})
+        settings = make_settings()
+
+        with pytest.raises(ValueError, match="empty reply"):
+            await dialogue.generate_llm_reply(ctx, "hello", settings)
 
 
 class TestNpcToNpcReply:

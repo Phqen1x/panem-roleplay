@@ -60,6 +60,11 @@ else
   fi
 fi
 
+if [[ -e /dev/dri ]] && ! lxc config device show "$CONTAINER" | grep -q "^gpu:"; then
+  echo "==> Host /dev/dri detected -- adding GPU passthrough to $CONTAINER"
+  lxc config device add "$CONTAINER" gpu gpu || true
+fi
+
 echo "==> Provisioning Postgres + Redis in $CONTAINER"
 lxc exec "$CONTAINER" -- bash -c "
 set -e

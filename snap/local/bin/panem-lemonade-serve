@@ -27,6 +27,9 @@ export LEMONADE_HOME
 mkdir -p "$LEMONADE_HOME"
 cd "$SNAP"
 
+# Prepend $SNAP/bin so bsdtar ($SNAP/bin/tar) shadows GNU tar
+export PATH="$SNAP/bin:$PATH"
+
 # lemond (downloaded into $LEMONADE_HOME at runtime, not part of this
 # snap's build) links against libdrm_amdgpu.so.1 unconditionally, staged
 # here specifically for it (snap/snapcraft.yaml's stage-packages) since

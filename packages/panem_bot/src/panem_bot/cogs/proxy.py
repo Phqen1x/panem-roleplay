@@ -468,7 +468,7 @@ class ProxyCog(commands.Cog):
                             select(SceneMessage)
                             .where(SceneMessage.scene_id == scene.id)
                             .order_by(SceneMessage.ts.desc())
-                            .limit(constants.ENGAGEMENT_HISTORY_HARD_CAP)
+                            .limit(constants.ENGAGEMENT_HISTORY_WINDOW)
                         )
                     )
                     .scalars()
