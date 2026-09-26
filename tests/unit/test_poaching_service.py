@@ -50,6 +50,13 @@ def make_goods() -> dict[str, Good]:
     return {
         "coal": Good(id="coal", name="Coal", base_price=4.0, category="fuel"),
         "grain": Good(id="grain", name="Grain", base_price=2.0, category="food"),
+        constants.POACH_GOOD_ID: Good(
+            id=constants.POACH_GOOD_ID,
+            name="Wild Game",
+            base_price=20.0,
+            category="food",
+            hunger_value=35.0,
+        ),
     }
 
 
@@ -86,17 +93,26 @@ class TestResolveOutskirts:
 
 
 class TestCheckCanPoach:
-    def test_approved_character_at_outskirts_yields_the_primary_food_good(self):
+    def test_approved_character_at_outskirts_at_night_yields_the_poached_good(self):
         district = make_district()
         character = make_character()
         good = poaching_svc.check_can_poach(character, district, make_goods(), 0)
-        assert good.id == "grain"  # the only food-category good here
+        assert good.id == constants.POACH_GOOD_ID
 
-    def test_prefers_a_food_good_the_district_produces_over_one_it_imports(self):
+    def test_always_yields_the_poached_good_regardless_of_what_the_district_sells(self):
+        # Poaching no longer takes from the district's own supply chain --
+        # it's always the same "Wild Game" good, produced/imported or not.
         district = make_district(produces=["grain"], imports=["coal"])
         character = make_character()
         good = poaching_svc.check_can_poach(character, district, make_goods(), 0)
-        assert good.id == "grain"
+        assert good.id == constants.POACH_GOOD_ID
+
+    def test_refuses_outside_night_even_at_the_outskirts(self):
+        district = make_district()
+        character = make_character()
+        with pytest.raises(NotAllowed) as exc_info:
+            poaching_svc.check_can_poach(character, district, make_goods(), TICKS_PER_PHASE)
+        assert exc_info.value.reason_key == "poach_night_only"
 
     def test_non_approved_character_refused(self):
         district = make_district()
@@ -122,8 +138,12 @@ class TestCheckCanPoach:
     def test_allowed_once_a_new_phase_starts(self):
         district = make_district()
         character = make_character(last_poach_tick=0)
+        # Not just a new phase -- one that's also night, the only phase
+        # poaching is ever allowed in: a full day later lands back at night
+        # (tick % TICKS_PER_DAY == 0) while still being a different phase
+        # bucket than tick 0 for the cooldown's own math.
         # no raise
-        poaching_svc.check_can_poach(character, district, make_goods(), TICKS_PER_PHASE)
+        poaching_svc.check_can_poach(character, district, make_goods(), constants.TICKS_PER_DAY)
 
     def test_raises_when_jailed(self):
         district = make_district()
@@ -141,9 +161,9 @@ class TestCheckCanPoach:
 
     def test_allowed_once_jail_has_expired(self):
         district = make_district()
-        character = make_character(jailed_until_tick=5)
-        # no raise
-        poaching_svc.check_can_poach(character, district, make_goods(), 10)
+        character = make_character(jailed_until_tick=2)
+        # no raise -- tick 3 is still within night (0..5) and past the jail term
+        poaching_svc.check_can_poach(character, district, make_goods(), 3)
 
 
 class TestPoachDifficulty:
@@ -343,16 +363,18 @@ class TestResolvePoach:
             character=character,
             district=district,
             goods=make_goods(),
-            current_tick=7,
+            current_tick=3,  # night
             rng=SequenceRng([0.0, 0.99]),  # archery hit, not caught
         )
 
         assert result.caught is False
         assert result.good is not None
-        assert result.good.id == "grain"
+        assert result.good.id == constants.POACH_GOOD_ID
         assert character.money == 100
-        assert character.last_poach_tick == 7
-        inv = await db_session.get(Inventory, (OwnerKind.CHARACTER.value, "1", "grain"))
+        assert character.last_poach_tick == 3
+        inv = await db_session.get(
+            Inventory, (OwnerKind.CHARACTER.value, "1", constants.POACH_GOOD_ID)
+        )
         assert inv.qty == constants.POACH_YIELD_QTY
 
     async def test_caught_applies_consequences(self, db_session):

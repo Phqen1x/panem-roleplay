@@ -164,7 +164,11 @@ APPROACH_COOLDOWN_TICKS = 2
 LOCATION_RADIUS_PX = 60
 MAX_WORDS_REPLY = 90
 
-LLM_REPLY_MAX_TOKENS = 200
+LLM_REPLY_MAX_TOKENS = 120
+"""Hard ceiling on generated tokens for dialogue replies. Since MAX_WORDS_REPLY
+is 90 words (~110-120 tokens), capping generation at 120 tokens guarantees
+generation time is bounded to <= 2.5 seconds on local hardware, keeping total
+dialogue latency strictly under 10 seconds."""
 LLM_REPLY_TEMPERATURE = 0.8
 LLM_REPLY_FREQUENCY_PENALTY = 0.6
 """Penalizes tokens by how often they've already appeared in this request
@@ -184,6 +188,20 @@ for the `/resident profile` embed it's normally shown in), but every
 dialogue reply resends the whole request header -- so the LLM's `[NPC]
 ... background` line gets only this many characters of it (truncated with
 an ellipsis), enough to color a reply without dominating the prompt."""
+
+MAX_HISTORY_ENTRIES_PER_REPLY = 3
+"""`panem_shared.lore.match_history_entries` caps how many staff-authored
+`PanemHistoryEntry` rows ride in a single dialogue request's `[HISTORY]`
+block, even when more of them match the line being replied to -- keeps a
+busy history table from crowding out `[MEMORIES]`/`[SPEAKER]` the way
+`RETRIEVAL_K` already caps memories for the same reason."""
+
+DISTRICT_LORE_PROMPT_MAX_LEN = 280
+"""Same truncate-with-ellipsis budget as `NPC_BACKGROUND_PROMPT_MAX_LEN`,
+for `district_lore.prompt_summary`'s `[SCENE] ... lore` line -- staff can
+write as much district history/context as they like in the History tab,
+but only this many characters of a condensed summary ever ride in a single
+dialogue request, so it colors a reply without becoming the reply."""
 
 MIN_WORDS_REPLY = 6
 """The floor `dialogue.generate_reply`'s length-matching clamps to -- a
@@ -573,16 +591,13 @@ ENGAGEMENT_MAX_PARTICIPANTS = 5
 don't support one), so participants are `ENGAGEMENT_MAX_PARTICIPANTS`
 individually autocompleted, optional slots (`participant_1` required, the
 rest optional) rather than one free-text field."""
-ENGAGEMENT_HISTORY_HARD_CAP = 200
-"""A defensive outer ceiling on how many prior `SceneMessage` rows (player
-lines and NPC replies alike) `proxy.py` will ever fetch as conversation
-history for an engagement reply -- short-term memory is meant to cover the
-*whole* current engagement (every message since it opened), not a rolling
-window, since engagements already auto-close on their own idle timeout
-(`EngagementSettings.idle_timeout_minutes`) long before a real
-conversation could approach this many turns. This only exists so a
-pathological engagement that somehow never closes can't grow the LLM
-request without bound; it should never be hit in normal play."""
+ENGAGEMENT_HISTORY_WINDOW = 10
+"""Rolling window of recent `SceneMessage` rows (player lines and NPC replies)
+fed into the LLM as dialogue context. Capping this at 10 turns guarantees prompt
+evaluation completes in ~2-4s on local hardware, ensuring total response time is
+strictly under the 10-second non-negotiable limit even during active group scenes."""
+ENGAGEMENT_HISTORY_HARD_CAP = ENGAGEMENT_HISTORY_WINDOW
+"""Legacy alias matching `ENGAGEMENT_HISTORY_WINDOW` for backward compatibility."""
 NPC_NAME_MATCH_MIN_LEN = 3
 """In a multi-participant engagement, an NPC only replies to a message
 naming them -- but matching a first/last name shorter than this many
@@ -610,10 +625,19 @@ PROB`/`MARKET_ILLICIT_FINE`/`MARKET_ILLICIT_JAIL_TICKS`/`REP_ILLICIT_
 CAUGHT_PENALTY` exactly -- getting caught poaching is no better or worse
 than getting caught at an illicit market stall."""
 POACH_YIELD_QTY = 1
-"""Units of the district's primary food good a successful, uncaught
-attempt yields -- deliberately modest (an /work shift's `PLAYER_SHIFT_
-OUTPUT_QTY` is the same order of magnitude), so poaching supplements a
-short market allocation rather than replacing it outright."""
+"""Units of `POACH_GOOD_ID` a successful, uncaught attempt yields --
+deliberately modest (an /work shift's `PLAYER_SHIFT_OUTPUT_QTY` is the
+same order of magnitude), so poaching supplements a short market
+allocation rather than replacing it outright."""
+POACH_GOOD_ID = "wild_game"
+"""What a poaching attempt actually brings home -- a single good, not
+whichever legal good the district happens to produce/import, since
+poaching game at the outskirts (at night, the only time the outskirts
+can be reached at all -- `panem_shared.travel.check_can_travel`) is a
+different thing from working a district's own supply chain. `goods.yaml`
+gives it a higher `hunger_value` than any good sold in an ordinary
+district market -- the whole point of risking a poaching run over just
+buying dinner."""
 POACH_ARCHERY_BASE_SUCCESS = 0.6
 """The RNG-fallback stand-in for the archery minigame's own "3+ hits out
 of 5 arrows in 30 seconds" win condition -- used when no Activity is
@@ -676,7 +700,13 @@ STEAL_ALERT_PROB = 0.5
 rest of the time it's a clean, consequence-free miss."""
 STEAL_ESCAPE_BASE_PROB = 0.5
 """Once alerted, the odds of getting away before peacekeepers catch up."""
-STEAL_YIELD_MONEY_RANGE = (5, 25)
+STEAL_LOOT_GOOD_IDS = ("pilfered_valuables", "stolen_jewelry")
+"""What a successful `/steal` lifts off the mark -- a random pick from
+here, `STEAL_LOOT_QTY` units, `category: "stolen"` in `goods.yaml` so it
+only ever trades at a fence (`blackmarket.resolve_good`), never the
+legal market. Pickpocketing a person yields smaller personal items than
+breaking into their house does (`BURGLE_LOOT_GOOD_IDS`)."""
+STEAL_LOOT_QTY = 1
 STEAL_FINE = 25
 STEAL_JAIL_TICKS = 14
 REP_STEAL_CAUGHT_GENERAL_PENALTY = 10
@@ -692,11 +722,68 @@ BURGLE_BASE_SUCCESS = 0.35
 """A flat harder tier than either `/steal` target -- there's no owner
 physically present to read a "same location" precision off, so
 difficulty stands in for that missing signal instead."""
-BURGLE_YIELD_FRACTION = 0.05
-BURGLE_YIELD_CAP = 50
-"""A successful burglary nets `BURGLE_YIELD_FRACTION` of the property's
-`suggested_price`, capped at `BURGLE_YIELD_CAP` -- a rich house is a
-better mark, but never a jackpot."""
+BURGLE_LOOT_GOOD_IDS = ("stolen_furniture", "stolen_jewelry", "stolen_silverware", "stolen_heirlooms")
+"""What a successful `/burgle` carries out of the house -- a random pick
+from here, `BURGLE_LOOT_QTY_RANGE` units, same `category: "stolen"`
+fence-only sale restriction as `STEAL_LOOT_GOOD_IDS`. Pricier goods on
+average than the pickpocket pool (`stolen_heirlooms` alone outvalues
+anything `/steal` can turn up) -- breaking into a house is a bigger risk
+than lifting a wallet, so it pays out in kind."""
+BURGLE_LOOT_QTY_RANGE = (1, 2)
+
+SHIPMENT_SPAWN_CHANCE_PER_TICK = 0.03
+"""Per district with a `LocationKind.STATION` location and no shipment
+currently sitting there, the per-tick odds `panem_sim.systems.shipments`
+rolls to spawn one -- a bit more often than `NPC_CHATTER_CHANCE_PER_TICK`
+since this is meant to be a noticeable, semi-regular opportunity ("various
+shipments... throughout the days"), not backdrop flavor."""
+SHIPMENT_WINDOW_TICKS = 8
+"""How long a spawned shipment sits before peacekeepers clear it
+untouched -- a bit longer than `simtime.TICKS_PER_PHASE` (6), so a
+shipment that arrives late in a phase is still catchable early in the
+next one."""
+SHIPMENT_LOOT_GOOD_IDS = (
+    "contraband_weapons",
+    "forbidden_literature",
+    "smuggled_luxuries",
+    "counterfeit_papers",
+    "stolen_jewelry",
+    "stolen_furniture",
+    "stolen_silverware",
+    "stolen_heirlooms",
+    "pilfered_valuables",
+)
+"""What a spawned shipment is carrying -- a random pick, `SHIPMENT_LOOT_
+QTY_RANGE` units. Blends the four real `category: "contraband"` goods
+(the same ones any district's `illicit_produces` might already trade,
+here just as cargo passing through -- sellable at a fence only where that
+good is actually listed, not everywhere) with the `category: "stolen"`
+loot pool `STEAL_LOOT_GOOD_IDS`/`BURGLE_LOOT_GOOD_IDS` already draw from
+(always fence-sellable anywhere, per `blackmarket.resolve_good`). A
+contraband-good shipment hit somewhere that good isn't locally traded is
+by design: you got something, now go find the right fence for it."""
+SHIPMENT_LOOT_QTY_RANGE = (1, 3)
+SHIPMENT_BASE_SUCCESS = 0.45
+"""Between `BURGLE_BASE_SUCCESS` (0.35) and pickpocketing an NPC (0.6) --
+a guarded shipment is a harder mark than a random pocket, but a more
+exposed one than a locked, empty house."""
+SHIPMENT_ALERT_PROB = 0.6
+"""Higher than `STEAL_ALERT_PROB` (0.5) -- peacekeepers are actively
+watching the cargo, not just a bystander who might notice."""
+SHIPMENT_ESCAPE_BASE_PROB = 0.45
+"""Lower than `STEAL_ESCAPE_BASE_PROB` (0.5) -- guards posted on a
+shipment react faster than a lone mark giving chase."""
+SHIPMENT_FINE = 40
+SHIPMENT_JAIL_TICKS = 18
+SHIPMENT_HEALTH_PENALTY = 15.0
+"""Getting caught here means getting roughed up by the guards, not just
+fined and marched off -- `Character.health` takes this hit on top of the
+usual fine/jail/reputation consequence, floored at 0 like every other
+`health` write in this codebase."""
+REP_SHIPMENT_CAUGHT_PENALTY = 15
+SHIPMENT_PRESSURE_DELTA = 0.05
+"""Mirrors `stealing.STEAL_PRESSURE_DELTA`/`poaching.PEACEKEEPER_PRESSURE_
+DELTA` exactly -- same placeholder-weighting caveat those already carry."""
 
 CRACKDOWN_DEFAULT_DURATION_TICKS = 48
 CRACKDOWN_PRESSURE_DELTA = 0.3

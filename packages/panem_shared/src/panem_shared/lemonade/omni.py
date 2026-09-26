@@ -41,6 +41,7 @@ from panem_shared.enums import LocationKind
 
 COLLECTION_RECIPE = "collection.omni"
 ALIAS = "panem-omni"
+DEFAULT_BASE_URL = "http://127.0.0.1:13305/v1"
 
 # Expanded by lemond at request time (see Lemonade's collection_orchestrator).
 TOOL_LIST_PLACEHOLDER = "{tool_list}"
@@ -419,14 +420,28 @@ class RequestContext:
     scene: Mapping[str, str] = field(default_factory=dict)
     speaker: Mapping[str, str] = field(default_factory=dict)
     memories: tuple[str, ...] = ()
+    world_notes: str | None = None
+    """`WorldLoreSettings.alternate_universe_notes` -- staff-authored,
+    free-form background every NPC in the nation should know and keep in
+    mind, unconditionally included (never filtered) whenever a caller has
+    one to give, unlike `history` below."""
+    history: tuple[str, ...] = ()
+    """Matched `PanemHistoryEntry` rows (`panem_shared.lore.
+    match_history_entries`) -- keyword-relevant Panem-wide history facts,
+    not this NPC's own personal recollections (`memories`, above)."""
     constraints: Mapping[str, str] = field(default_factory=dict)
 
 
 def render_request_header(ctx: RequestContext) -> str:
     lines = [f"[MODE: {ctx.mode.value}]"]
+    if ctx.world_notes:
+        lines.append(f"[WORLD] {ctx.world_notes}")
     for tag, block in (("NPC", ctx.npc), ("SCENE", ctx.scene), ("SPEAKER", ctx.speaker)):
         if block:
             lines.append(f"[{tag}] " + "; ".join(f"{k}: {v}" for k, v in block.items()))
+    if ctx.history:
+        lines.append("[HISTORY]")
+        lines.extend(f"- {entry}" for entry in ctx.history)
     if ctx.memories:
         lines.append("[MEMORIES]")
         lines.extend(f"- {memory}" for memory in ctx.memories)

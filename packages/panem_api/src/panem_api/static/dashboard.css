@@ -118,11 +118,29 @@ header {
   color: var(--accent);
 }
 
+/* Anchored from the toggle's *left* edge growing rightward, not its right
+   edge growing leftward -- most of these toggles (crime's target selects,
+   travel's location/district selects, ...) sit mid-row after a label, with
+   free space to their right inside the panel but comparatively little to
+   their left before the viewport edge. A long option label (e.g. "Some
+   Reasonably Long Character Name Here (npc)" in /steal's target list) used
+   to force the menu wider than the toggle while it was still anchored
+   `right: 0`, pushing its *left* edge past `x: 0` and off-screen --
+   "the dropdown gets cut off" was really its own left portion rendering
+   further left than the viewport. `#character-select` below is the one
+   exception (flush to the header's own right edge via `margin-left: auto`)
+   and gets its own override back to right-anchored growth, since for
+   *that* wrapper growing left is the safe direction and growing right
+   would push it off the right edge instead. `max-width` plus wrapping
+   (no `white-space: nowrap` on the buttons) caps how wide either direction
+   can grow in the first place, so even a very long label just wraps onto a
+   second line instead of pushing the menu past either edge. */
 .custom-select-menu {
   position: absolute;
   top: calc(100% + 4px);
-  right: 0;
+  left: 0;
   min-width: 100%;
+  max-width: min(320px, calc(100vw - 24px));
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -135,6 +153,11 @@ header {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
 }
 
+#character-select .custom-select-menu {
+  left: auto;
+  right: 0;
+}
+
 .custom-select-menu button {
   display: block;
   width: 100%;
@@ -145,7 +168,8 @@ header {
   padding: 8px 14px;
   cursor: pointer;
   font-size: 13.5px;
-  white-space: nowrap;
+  white-space: normal;
+  word-break: break-word;
   font-family: var(--font-sans);
 }
 
@@ -202,6 +226,20 @@ header {
   padding: 4px;
   border-radius: 8px;
   border: 1px solid var(--border);
+  /* Staff sees enough extra tabs (Staff, History, ...) that this nav's
+     natural width can outgrow the header -- without `min-width: 0` a flex
+     item never shrinks past its content's own intrinsic width (the same
+     flexbox trap work.css's own `main` rule documents), so `header`'s
+     `flex-wrap: wrap` (style.css) had nowhere to reclaim space from except
+     wrapping everything *after* this nav -- world clock, character select,
+     and the theme picker last of all -- onto a second line, left-aligned
+     under the brand instead of staying pinned to the header's right edge.
+     Letting this nav scroll horizontally instead keeps every later header
+     item on the first line regardless of how many tabs are showing. */
+  min-width: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
 }
 
 #tab-nav button {
@@ -276,6 +314,36 @@ header {
 .tab-status {
   color: var(--muted);
   font-size: 15px;
+}
+
+/* A genuine failure sharing a `.tab-status` element with that same
+   element's ordinary loading/empty-state text (`tabs/_shared.js`'s
+   `setStatusText(el, text, { error: true })`) -- recolored to the same
+   `--danger` ink `.result-line.lose` uses and marked with a small glyph,
+   so "couldn't load the market" reads as a problem at a glance instead of
+   sitting in the same muted gray as "Loading…". Lighter-weight than
+   `.result-line`'s bordered banner on purpose: this text often lives
+   inline in a tab's header row, not as its own block. */
+.tab-status.error {
+  color: color-mix(in srgb, var(--danger) 88%, var(--text));
+}
+
+.tab-status.error::before {
+  content: "⚠ ";
+}
+
+/* The whole-tab failure `app.js`'s `showTab()` renders when a tab module
+   itself fails to import/mount -- rare (a real bug, a bad network
+   response for the module file), but when it happens it's the entire
+   tab's content, so it gets a full `.panel` treatment rather than a bare
+   line of text, with the same crimson top edge `.panel::before` normally
+   draws in gold. */
+.tab-load-error::before {
+  background: linear-gradient(90deg, transparent 0%, var(--danger) 50%, transparent 100%);
+}
+
+.tab-load-error h2 {
+  color: color-mix(in srgb, var(--danger) 85%, var(--text));
 }
 
 .tab-placeholder {
@@ -457,6 +525,15 @@ table.data-table td.lose {
   box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
+/* History tab (tabs/history.js): every textarea there grows to fit
+   whatever staff type into it instead of scrolling within a tiny fixed
+   box -- `resize: none` since a manual drag-handle would just fight the
+   JS-driven `height` it sets on every `input` event. */
+.auto-textarea {
+  resize: none;
+  overflow: hidden;
+}
+
 /* A checkbox (e.g. character creation's "Illicit job?", housing's
    "Financed?", the staff affliction-type editor's "Permanent?") was
    falling into the text-input rule above -- `flex: 1; min-width: 120px;`
@@ -559,17 +636,71 @@ table.data-table td.lose {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
+/* An action's outcome (a bail paid, a trade rejected, a validation
+   complaint) -- read through `err.message`/`humanize()`
+   (`tabs/_shared.js`), so the text itself is already a full sentence;
+   this is the neoclassical chrome around it: a small serif verdict chip
+   ("Confirmed"/"Denied", read like an official notice) plus a tinted,
+   bordered strip instead of the old bare colored text, so a result reads
+   as clearly as a `.panel` heading does rather than blending into
+   whatever's above it. Elements exist in the DOM from the moment their
+   tab mounts (built once, then `.textContent`/`.className` toggled per
+   attempt) -- `:empty` keeps an untouched or just-cleared one collapsed
+   instead of showing a label-less, message-less bar. */
 .result-line {
-  font-size: 14px;
-  margin-top: 8px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 9px 14px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.result-line:empty {
+  display: none;
+  margin-top: 0;
+  padding: 0;
+  border: none;
+}
+
+.result-line::before {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  font-family: var(--font-serif);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 4px;
+  line-height: 1.4;
 }
 
 .result-line.win {
-  color: #7cd992;
+  color: color-mix(in srgb, var(--success) 82%, var(--text));
+  background: color-mix(in srgb, var(--success) 12%, var(--panel));
+  border-color: color-mix(in srgb, var(--success) 42%, var(--border));
+}
+
+.result-line.win::before {
+  content: "Confirmed";
+  color: #08150c;
+  background: var(--success);
 }
 
 .result-line.lose {
-  color: #e0736b;
+  color: color-mix(in srgb, var(--danger) 88%, var(--text));
+  background: color-mix(in srgb, var(--danger) 12%, var(--panel));
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+
+.result-line.lose::before {
+  content: "Denied";
+  color: #1c0908;
+  background: var(--danger);
 }
 
 table.data-table {
@@ -611,6 +742,14 @@ table.data-table .qty-input {
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 4px 6px;
+}
+
+/* Market tab's Stock column (tabs/market.js) -- flags a good that's
+   genuinely sold out today (MarketPrice.supply == 0) rather than just
+   "not tracked yet" (shown as a plain "—" with no color at all). */
+table.data-table .stock-empty {
+  color: color-mix(in srgb, var(--danger) 85%, var(--text));
+  font-weight: 600;
 }
 
 /* Badges & Monogram Initial Avatars */
@@ -659,11 +798,95 @@ table.data-table .qty-input {
   color: var(--status-busy-text);
 }
 
+/* Other players' characters (Residents directory, `kind: "user"` rows) --
+   see style.css's `--status-sleep-*`/`--status-engaged-*`/`--status-idle-*`
+   for why each gets its own color family instead of reusing an NPC's. */
+.status-pill.sleeping {
+  background: var(--status-sleep-bg);
+  border: 1px solid var(--status-sleep-border);
+  color: var(--status-sleep-text);
+}
+
+.status-pill.engaged {
+  background: var(--status-engaged-bg);
+  border: 1px solid var(--status-engaged-border);
+  color: var(--status-engaged-text);
+}
+
+.status-pill.idle {
+  background: var(--status-idle-bg);
+  border: 1px solid var(--status-idle-border);
+  color: var(--status-idle-text);
+}
+
 .status-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: currentColor;
+}
+
+/* NPC vs. USER label (Residents directory) -- the same small serif chip
+   language `.result-line`'s Confirmed/Denied verdicts use, so "who's a
+   citizen of this district and who's another player's character" reads
+   at a glance without needing its own color-coded row style. */
+.kind-badge {
+  display: inline-block;
+  font-family: var(--font-serif);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.kind-badge.npc {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+  border: 1px solid var(--border);
+}
+
+.kind-badge.user {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+/* An NPC's opinion of the viewing character (Residents directory's
+   sortable Opinion column, tabs/social.js) -- `panem_shared.enums.Stance`'s
+   five buckets (plus "stranger" for no relationship yet) collapse to the
+   same three-color success/neutral/danger language `.result-line`'s own
+   win/lose already uses, rather than inventing six new colors for what's
+   ultimately just "good/neutral/bad". */
+.opinion-pill {
+  display: inline-block;
+  font-family: var(--font-serif);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.opinion-pill.likes,
+.opinion-pill.loves {
+  color: color-mix(in srgb, var(--success) 85%, var(--text));
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--success) 42%, var(--border));
+}
+
+.opinion-pill.dislikes,
+.opinion-pill.hates {
+  color: color-mix(in srgb, var(--danger) 88%, var(--text));
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+
+.opinion-pill.neutral,
+.opinion-pill.stranger {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+  border: 1px solid var(--border);
 }
 
 /* Social Tab Layout & Cards */
@@ -891,6 +1114,18 @@ table.data-table .qty-input {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* The dossier's real avatar image, for a "user" row whose character has
+   one set -- same size/shape as the monogram fallback above, which stays
+   in the DOM and hidden rather than replaced, so a row with no avatar_url
+   (or an NPC, which never has one) still shows the monogram unchanged. */
+.dossier-avatar-img {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  object-fit: cover;
 }
 
 .dossier-name {
@@ -1125,11 +1360,21 @@ table.data-table .btn {
 }
 
 .theme-picker-popup {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
+  /* `position: fixed` rather than `absolute` -- theme_picker.js's own
+     `positionPopup()` sets `top`/`left`/`width`/`max-height` from the
+     toggle button's actual `getBoundingClientRect()` (viewport
+     coordinates) every time the popup opens or the window resizes, and
+     clamps them to stay fully on-screen. That replaced anchoring this via
+     CSS `right: 0` to `.theme-picker` (the nearest positioned ancestor),
+     which put the popup off-screen whenever the toggle itself wasn't
+     pinned to the header's true right edge -- the failure mode
+     `min-width: 0` on #tab-nav above was meant to prevent but didn't
+     cover every case. These are just sane initial/fallback values before
+     JS runs its first `positionPopup()` call. */
+  position: fixed;
   z-index: 200;
   width: 280px;
+  max-width: calc(100vw - 32px);
   max-height: calc(100vh - 70px);
   overflow-y: auto;
   padding: 14px;

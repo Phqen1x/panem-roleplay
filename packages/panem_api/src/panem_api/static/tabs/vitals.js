@@ -18,7 +18,7 @@
 // on top, computed from the Vitals status endpoint's `has_bed`/
 // `max_sleep_ticks`/`fatigue_restore_per_tick` so no round trip is needed
 // per keystroke.
-import { el } from "./_shared.js?v=5";
+import { el, watchIframeResize } from "./_shared.js?v=7";
 
 const RESULT_DISPLAY_MS = 4000;
 
@@ -60,10 +60,15 @@ export function mount(root, ctx) {
 
   let messageListener = null;
   let closeResultTimer = null;
+  let stopResizeWatch = null;
 
   function stopListening() {
     if (messageListener) window.removeEventListener("message", messageListener);
     messageListener = null;
+    if (stopResizeWatch) {
+      stopResizeWatch();
+      stopResizeWatch = null;
+    }
   }
 
   function clearCloseTimer() {
@@ -78,7 +83,13 @@ export function mount(root, ctx) {
     iframeHost.innerHTML = "";
     const iframe = el("iframe", { class: "minigame-frame", src: `/vitals.html?${query}` });
     iframeHost.append(iframe);
+    // Brings the newly-mounted game into view instead of leaving the
+    // player to scroll down and find it themselves -- vitals.html's own
+    // `reportSize` then keeps this iframe grown to fit whichever minigame
+    // it mounts (see watchIframeResize's own comment).
+    iframe.scrollIntoView({ behavior: "smooth", block: "start" });
     stopListening();
+    stopResizeWatch = watchIframeResize(iframe);
     messageListener = (event) => {
       if (event.data && event.data.source === "panem-activity" && event.data.type === "vitals-result") {
         stopListening();

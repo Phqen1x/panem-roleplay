@@ -50,10 +50,10 @@ class Settings(BaseSettings):
     tick_interval_seconds: int = 600
 
     dialogue_provider: str = "template"
-    llm_base_url: str = ""
-    llm_model: str = ""
+    llm_base_url: str = "http://127.0.0.1:13305/v1"
+    llm_model: str = "panem-omni"
     llm_api_key: str = ""
-    llm_timeout_ms: int = 8000
+    llm_timeout_ms: int = 10000
     llm_max_concurrent: int = 4
     llm_min_importance: int = 2
     llm_json_mode: bool = False
@@ -103,6 +103,30 @@ class Settings(BaseSettings):
 
     games_api_key: str = ""
 
+    # Every `main.py` (bot/sim/api) defaults `DATA_DIR` to `data/` found by
+    # walking up from its own installed location, which only lines up with
+    # the real content dir when the process runs from an editable/dev-mode
+    # checkout (true for `uv run` and the Docker image's `uv sync`, both of
+    # which install this workspace editable). A packaged, non-editable
+    # install (e.g. the snap's `uv sync --no-editable` venv, whose
+    # `panem_*` modules land in `site-packages` with no relation to the
+    # original checkout) has no such directory to walk up to, so it must
+    # set this explicitly instead (the snap wrapper scripts do, to
+    # `$SNAP/data`). Empty keeps every existing deployment's behavior
+    # unchanged.
+    data_dir: str = ""
+
+    # Same story as `data_dir`, for `panem_api`'s `static/` tree specifically
+    # -- but for a different reason: `static/` *is* package data (shipped
+    # inside `panem_api`'s own wheel, so it resolves fine even from
+    # `site-packages`), the problem is that it isn't writable there. Staff
+    # layer-image uploads and `district_mottos.json` need a real writable
+    # directory (`build_staff_router`'s `static_dir` param), which a
+    # read-only install location (a strict-confinement snap's squashfs
+    # `$SNAP`) can never be. Empty keeps writing into the bundled `static/`
+    # tree itself, as every non-snap deployment already does.
+    static_uploads_dir: str = ""
+
     # panem_api (Phase 5, Plan §8): the REST/WebSocket bridge for the
     # Activity's live map, plus a static frontend and the OAuth token
     # exchange it needs (`GET /activity/config`, `POST /activity/token`).
@@ -122,6 +146,19 @@ class Settings(BaseSettings):
     # to keep `/work`'s classic option-select flow instead (no minigame,
     # no dependency on panem_api being reachable from Discord clients).
     activity_public_url: str = ""
+
+    # Where `panem_bot` reaches `panem_api` server-to-server (persisting an
+    # uploaded `/character avatar` attachment's bytes, `panem_shared.
+    # avatars`) -- deliberately separate from `activity_public_url`, which
+    # is what a Discord *client* needs and may be a tunnel/CDN domain this
+    # container can't necessarily reach itself. `deploy/docker-compose.yml`
+    # sets this to "http://api:8000" (the compose service name); left
+    # unset, `resolved_api_internal_url()` assumes every process is on the
+    # same host and falls back to `api_port` on localhost.
+    api_internal_url: str = ""
+
+    def resolved_api_internal_url(self) -> str:
+        return self.api_internal_url or f"http://localhost:{self.api_port}"
 
     def role_id_override_for_district(self, district_id: int) -> int:
         """0 means unset (auto-manage by name); see `*_role_id` fields above."""

@@ -231,6 +231,24 @@ class TestApplyAutoDeath:
         )
         assert afflictions.apply_auto_death(character) is False
 
+    def test_attributes_death_to_dehydration_when_thirst_crossed_its_threshold(self):
+        character = make_character(rp_mode=RpMode.SIMULATION.value, health=0.0, thirst=95.0)
+        assert afflictions.apply_auto_death(character) is True
+        assert "dehydration" in character.death_cause.lower()
+
+    def test_attributes_death_to_starvation_when_hunger_crossed_its_threshold(self):
+        character = make_character(rp_mode=RpMode.SIMULATION.value, health=0.0, hunger=95.0)
+        assert afflictions.apply_auto_death(character) is True
+        assert "starvation" in character.death_cause.lower()
+
+    def test_attributes_death_to_the_most_severe_of_several_crossed_thresholds(self):
+        # thirst just over its threshold (70), hunger deep past its own (100 -- maxed out)
+        character = make_character(
+            rp_mode=RpMode.SIMULATION.value, health=0.0, thirst=71.0, hunger=100.0
+        )
+        assert afflictions.apply_auto_death(character) is True
+        assert "starvation" in character.death_cause.lower()
+
 
 class TestCheckAndCureSync:
     """The DB-free core `panem_sim.systems.needs` calls directly against

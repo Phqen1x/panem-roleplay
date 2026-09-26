@@ -14,7 +14,7 @@ from panem_shared.content.schemas import (
     DistrictMap,
     Location,
 )
-from panem_shared.db.models import Character, DistrictState, Memory, Npc
+from panem_shared.db.models import Character, DistrictState, Memory, Npc, PanemHistoryEntry
 from panem_shared.enums import CharacterStatus, RpMode
 from panem_shared.lemonade import omni
 from panem_shared.settings import Settings
@@ -96,6 +96,16 @@ def make_memory(**overrides: object) -> Memory:
     )
     defaults.update(overrides)
     return Memory(**defaults)  # type: ignore[arg-type]
+
+
+def make_history_entry(**overrides: object) -> PanemHistoryEntry:
+    defaults: dict[str, object] = dict(
+        keywords=["dark days", "district thirteen"],
+        text="District Thirteen was destroyed in the rebellion.",
+        created_by_staff_discord_id=1,
+    )
+    defaults.update(overrides)
+    return PanemHistoryEntry(**defaults)  # type: ignore[arg-type]
 
 
 def make_settings(**overrides: object) -> Settings:
@@ -268,6 +278,40 @@ class TestBuildRequestContext:
         assert "job" not in ctx.npc
         assert "background" not in ctx.npc
 
+    def test_npc_pronouns_are_included_when_gender_is_set(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(gender="female"),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[],
+        )
+        assert ctx.npc["pronouns"] == "she/her"
+
+    def test_speaker_pronouns_are_included_when_character_gender_is_set(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(gender="nonbinary"),
+            stance="likes",
+            memories=[],
+        )
+        assert ctx.speaker["pronouns"] == "they/them"
+
+    def test_pronouns_omitted_when_gender_is_unset(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[],
+        )
+        assert "pronouns" not in ctx.npc
+        assert "pronouns" not in ctx.speaker
+
     def test_district_state_folds_crisis_and_mood_into_scene(self):
         ctx = dialogue.build_request_context(
             npc=make_npc(),
@@ -356,6 +400,56 @@ class TestBuildRequestContext:
         )
         assert "known" not in ctx.speaker
 
+    def test_standing_reflects_a_power_position(self):
+        character = make_character(positions=["gamemaker"])
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=character,
+            stance="stranger",
+            memories=[],
+        )
+        assert ctx.speaker["standing"] == "a Gamemaker"
+
+    def test_standing_omitted_for_an_ordinary_character(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="stranger",
+            memories=[],
+        )
+        assert "standing" not in ctx.speaker
+
+    def test_district_lore_folds_a_summary_into_scene(self):
+        from panem_shared.db.models import DistrictLore
+
+        lore = DistrictLore(district_id=1, classification="outlier", adjectives=["Dreary"])
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="stranger",
+            memories=[],
+            district_lore=lore,
+        )
+        assert "outlier district" in ctx.scene["lore"]
+        assert "Dreary" in ctx.scene["lore"]
+
+    def test_district_lore_omitted_when_not_given(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="stranger",
+            memories=[],
+        )
+        assert "lore" not in ctx.scene
+
     def test_constraints_default_to_empty(self):
         ctx = dialogue.build_request_context(
             npc=make_npc(),
@@ -379,6 +473,59 @@ class TestBuildRequestContext:
         )
         assert ctx.constraints == {"max_words": "12"}
 
+    def test_world_notes_passed_through_when_given(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[],
+            world_notes="The Games were abolished a decade early in this Panem.",
+        )
+        assert ctx.world_notes == "The Games were abolished a decade early in this Panem."
+
+    def test_world_notes_none_by_default(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[],
+        )
+        assert ctx.world_notes is None
+
+    def test_history_entries_matching_the_message_are_included(self):
+        matching = make_history_entry(text="District Thirteen fell in the Dark Days.")
+        non_matching = make_history_entry(
+            keywords=["victors village"], text="Victors live in the Village."
+        )
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[],
+            message="What really happened to district thirteen?",
+            history_entries=[matching, non_matching],
+        )
+        assert ctx.history == ("District Thirteen fell in the Dark Days.",)
+
+    def test_history_entries_empty_when_nothing_matches(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[],
+            message="Nice weather today.",
+            history_entries=[make_history_entry()],
+        )
+        assert ctx.history == ()
+
 
 class TestTemplateReply:
     def test_mentions_the_npc_and_is_non_empty(self):
@@ -390,6 +537,39 @@ class TestTemplateReply:
         first = dialogue.template_reply(make_npc(), "likes", "hello there")
         second = dialogue.template_reply(make_npc(), "likes", "hello there")
         assert first == second
+
+
+class TestLlmErrorDetail:
+    """`str(exc)` alone for an `httpx.HTTPStatusError` is just "Server
+    error '500 ...' for url '...'" -- no reason. Regression coverage for
+    the real-world case that prompted this: Lemonade 500s with no detail
+    in the bot's own log, making it undiagnosable without also having the
+    LLM server's own log open."""
+
+    def test_appends_the_response_body_for_an_http_status_error(self):
+        request = httpx.Request("POST", "http://127.0.0.1:13305/v1/chat/completions")
+        response = httpx.Response(500, text="CUDA error: out of memory", request=request)
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            detail = dialogue._llm_error_detail(exc)
+        assert "500" in detail
+        assert "CUDA error: out of memory" in detail
+
+    def test_omits_the_body_suffix_when_the_response_has_none(self):
+        request = httpx.Request("POST", "http://127.0.0.1:13305/v1/chat/completions")
+        response = httpx.Response(500, text="", request=request)
+        exc = httpx.HTTPStatusError("Server error", request=request, response=response)
+        detail = dialogue._llm_error_detail(exc)
+        assert "body:" not in detail
+
+    def test_non_http_errors_pass_through_unchanged(self):
+        exc = httpx.ConnectError("no route to host")
+        assert dialogue._llm_error_detail(exc) == str(exc)
+
+    def test_timeout_error_reports_timed_out(self):
+        exc = httpx.ReadTimeout("timed out")
+        assert "timed out" in dialogue._llm_error_detail(exc)
 
 
 class TestGenerateReply:
@@ -542,6 +722,98 @@ class TestGenerateLlmReply:
         assert messages[1:3] == history
         assert messages[-1] == {"role": "user", "content": "Got anything hot?"}
 
+    async def test_truncates_oversized_history_window(self, monkeypatch):
+        captured: dict[str, object] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(200, json={"choices": [{"message": {"content": "reply"}}]})
+
+        real_async_client = httpx.AsyncClient
+
+        def mock_client(*args: object, **kwargs: object) -> httpx.AsyncClient:
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return real_async_client(*args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(dialogue.httpx, "AsyncClient", mock_client)
+
+        ctx = omni.RequestContext(mode=omni.RequestMode.DIALOGUE, speaker={"name": "Kat"})
+        settings = make_settings()
+        oversized = [
+            {"role": "user" if i % 2 == 0 else "assistant", "content": f"Turn {i}"}
+            for i in range(25)
+        ]
+
+        await dialogue.generate_llm_reply(ctx, "Latest turn", settings, history=oversized)
+
+        messages = captured["body"]["messages"]  # type: ignore[index]
+        # System message at 0, then capped history, then latest user message
+        expected_history = oversized[-constants.ENGAGEMENT_HISTORY_WINDOW:]
+        assert messages[1:-1] == expected_history
+        assert len(messages[1:-1]) == constants.ENGAGEMENT_HISTORY_WINDOW
+        assert messages[-1] == {"role": "user", "content": "Latest turn"}
+
+    async def test_falls_back_to_default_base_url_when_setting_is_blank(self, monkeypatch):
+        captured: dict[str, object] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["url"] = str(request.url)
+            return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+        real_async_client = httpx.AsyncClient
+
+        def mock_client(*args: object, **kwargs: object) -> httpx.AsyncClient:
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return real_async_client(*args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(dialogue.httpx, "AsyncClient", mock_client)
+
+        ctx = omni.RequestContext(mode=omni.RequestMode.DIALOGUE, speaker={"name": "Kat"})
+        settings = make_settings(llm_base_url="")
+
+        reply = await dialogue.generate_llm_reply(ctx, "hello", settings)
+        assert reply == "ok"
+        assert captured["url"] == f"{omni.DEFAULT_BASE_URL}/chat/completions"
+
+    async def test_extracts_reasoning_content_when_content_is_none(self, monkeypatch):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": None, "reasoning_content": "thoughts"}}]},
+            )
+
+        real_async_client = httpx.AsyncClient
+
+        def mock_client(*args: object, **kwargs: object) -> httpx.AsyncClient:
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return real_async_client(*args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(dialogue.httpx, "AsyncClient", mock_client)
+
+        ctx = omni.RequestContext(mode=omni.RequestMode.DIALOGUE, speaker={"name": "Kat"})
+        settings = make_settings()
+
+        reply = await dialogue.generate_llm_reply(ctx, "hello", settings)
+        assert reply == "thoughts"
+
+    async def test_raises_value_error_on_empty_content(self, monkeypatch):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"choices": [{"message": {"content": "  "}}]})
+
+        real_async_client = httpx.AsyncClient
+
+        def mock_client(*args: object, **kwargs: object) -> httpx.AsyncClient:
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return real_async_client(*args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(dialogue.httpx, "AsyncClient", mock_client)
+
+        ctx = omni.RequestContext(mode=omni.RequestMode.DIALOGUE, speaker={"name": "Kat"})
+        settings = make_settings()
+
+        with pytest.raises(ValueError, match="empty reply"):
+            await dialogue.generate_llm_reply(ctx, "hello", settings)
+
 
 class TestNpcToNpcReply:
     def test_context_uses_the_other_npc_as_speaker(self):
@@ -567,6 +839,31 @@ class TestNpcToNpcReply:
             message="hi",
         )
         assert ctx.constraints == {"max_words": str(constants.MIN_WORDS_REPLY)}
+
+    def test_world_notes_and_matching_history_are_included(self):
+        ctx = dialogue.build_npc_to_npc_context(
+            npc=make_npc(),
+            other_npc=make_npc(id="npc2", name="Greasy Sae"),
+            district=make_district(),
+            location=make_district().locations[-1],
+            message="Did you hear about district thirteen?",
+            history_entries=[make_history_entry()],
+            world_notes="Alternate Universe: peace came a decade early.",
+        )
+        assert ctx.world_notes == "Alternate Universe: peace came a decade early."
+        assert ctx.history == ("District Thirteen was destroyed in the rebellion.",)
+
+    def test_pronouns_are_included_for_both_npcs_when_gender_is_set(self):
+        ferro = make_npc(id="npc1", name="Old Ferro", gender="male")
+        sae = make_npc(id="npc2", name="Greasy Sae", gender="female")
+        ctx = dialogue.build_npc_to_npc_context(
+            npc=ferro,
+            other_npc=sae,
+            district=make_district(),
+            location=make_district().locations[-1],
+        )
+        assert ctx.npc["pronouns"] == "he/him"
+        assert ctx.speaker["pronouns"] == "she/her"
 
     async def test_template_provider_never_calls_the_llm(self):
         ferro = make_npc()

@@ -3,7 +3,7 @@
 // unchanged from that original version: a schematic layout drawn from each
 // location's map coordinates (no real district map art yet -- see the
 // README), NPCs/characters pushed over a polling WebSocket.
-import { fetchJson, el, dropdown } from "./_shared.js?v=5";
+import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=7";
 
 function wsUrlFor(districtId) {
   const scheme = location.protocol === "https:" ? "wss:" : "ws:";
@@ -95,7 +95,9 @@ export function mount(root, ctx) {
     socket = new WebSocket(wsUrlFor(districtId));
     socket.onmessage = (event) => render(JSON.parse(event.data));
     socket.onerror = () => {
-      statusEl.textContent = "Lost connection to the district feed -- retrying on reconnect.";
+      setStatusText(statusEl, "Lost connection to the district feed -- retrying on reconnect.", {
+        error: true,
+      });
     };
   }
 
@@ -103,10 +105,10 @@ export function mount(root, ctx) {
     try {
       districts = await fetchJson("/districts");
     } catch (err) {
-      statusEl.textContent = `Could not load districts: ${err}`;
+      setStatusText(statusEl, `Could not load districts: ${err}`, { error: true });
       return;
     }
-    statusEl.textContent = "";
+    setStatusText(statusEl, "");
     districtSelect.setOptions(districts.map((d) => ({ value: d.id, label: d.name })));
     districtSelect.addEventListener("change", () => connectToDistrict(Number(districtSelect.value)));
     if (districts.length > 0) {

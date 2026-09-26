@@ -69,6 +69,18 @@
   category: food
   hunger_value: 25.0
   cook_method: stove
+- id: wild_game
+  name: Wild Game
+  base_price: 20.0
+  perishable: true
+  category: food
+  hunger_value: 35.0
+  cook_method: stove
+  # Never listed in any district's produces/imports/quota -- the only way
+  # to get this is poaching at the outskirts (panem_shared.poaching,
+  # constants.POACH_GOOD_ID), which is deliberately never sold in the
+  # legal market. Its hunger_value is the highest of any food good on
+  # purpose: poaching is supposed to reward better food than buying does.
 - id: produce
   name: Fruits/Drinks
   base_price: 3.0
@@ -106,3 +118,34 @@
   base_price: 25.0
   perishable: false
   category: contraband
+# `category: stolen` (not `contraband`) -- these are /steal's and /burgle's
+# loot, never a district's own produced/smuggled goods, so they're not
+# listed in any district's `illicit_produces`. `blackmarket.resolve_good`
+# lets a `stolen` good through at *any* district's fence on that category
+# alone, unlike a `contraband` good which only trades where that
+# district's own `illicit_produces` names it.
+- id: stolen_jewelry
+  name: Stolen Jewelry
+  base_price: 30.0
+  perishable: false
+  category: stolen
+- id: stolen_furniture
+  name: Stolen Furniture
+  base_price: 22.0
+  perishable: false
+  category: stolen
+- id: stolen_silverware
+  name: Stolen Silverware
+  base_price: 16.0
+  perishable: false
+  category: stolen
+- id: pilfered_valuables
+  name: Pilfered Valuables
+  base_price: 10.0
+  perishable: false
+  category: stolen
+- id: stolen_heirlooms
+  name: Stolen Heirlooms
+  base_price: 38.0
+  perishable: false
+  category: stolen

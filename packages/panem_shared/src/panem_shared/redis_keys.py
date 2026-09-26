@@ -103,3 +103,13 @@ CHARACTER_APPROVAL_POLL_INTERVAL_MINUTES`) to notice it on its next pass.
 That poll stays in place as a fallback for the case this publish is lost
 (e.g. the bot process was down at the moment of publish -- Redis pub/sub
 has no replay/durability, unlike a DB row)."""
+
+
+CHARACTER_MODE_SWITCH_PENDING_CHANNEL = "character:mode_switch_pending"
+"""Same shape as `CHARACTER_PENDING_CHANNEL` (payload: the `Character.id`
+whose mode-switch request needs announcing), published by
+`panem_api.dashboard_routes`'s mode-switch endpoint when staging a switch
+that needs fresh job info -- kept as its own channel rather than reusing
+`CHARACTER_PENDING_CHANNEL` since the two announce different things
+(`CharacterCog._announce_pending_mode_switches`'s poll is likewise separate
+from `_announce_pending_characters`'s)."""

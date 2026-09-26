@@ -37,7 +37,7 @@ def make_district() -> District:
     locations = [
         Location(id="square", name="The Square", kind="public"),
         Location(id="station", name="Rail Station", kind="station"),
-        Location(id="black_market", name="The Underground Exchange", kind="market", illicit=True),
+        Location(id="outskirts", name="The Outskirts", kind="outskirts"),
     ]
     coords = {loc.id: (0, 0) for loc in locations}
     return District(
@@ -93,7 +93,7 @@ def make_character(**overrides: object) -> Character:
         status=CharacterStatus.APPROVED.value,
         money=100,
         reputation=0.0,
-        location_id="black_market",
+        location_id="outskirts",
         jail_count=0,
         jailed_until_tick=None,
     )
@@ -129,17 +129,38 @@ class TestResolveFence:
 
 
 class TestResolveBlackMarketLocation:
-    def test_at_the_illicit_location_succeeds(self):
+    def test_at_the_outskirts_at_night_succeeds(self):
         district = make_district()
-        character = make_character(location_id="black_market")
-        blackmarket_svc.resolve_black_market_location(character, district)  # no raise
+        character = make_character(location_id="outskirts")
+        blackmarket_svc.resolve_black_market_location(character, district, 0)  # no raise
 
     def test_elsewhere_refuses(self):
         district = make_district()
         character = make_character(location_id="square")
         with pytest.raises(NotAllowed) as exc_info:
-            blackmarket_svc.resolve_black_market_location(character, district)
+            blackmarket_svc.resolve_black_market_location(character, district, 0)
         assert exc_info.value.reason_key == "blackmarket_not_at_market"
+
+    def test_outside_night_refuses_even_at_the_outskirts(self):
+        district = make_district()
+        character = make_character(location_id="outskirts")
+        with pytest.raises(NotAllowed) as exc_info:
+            blackmarket_svc.resolve_black_market_location(character, district, 6)  # morning
+        assert exc_info.value.reason_key == "blackmarket_night_only"
+
+
+class TestGetSupply:
+    async def test_none_with_no_row(self, db_session):
+        supply = await blackmarket_svc.get_supply(db_session, 1, "contraband_weapons")
+        assert supply is None
+
+    async def test_uses_existing_supply_row(self, db_session):
+        db_session.add(
+            MarketPrice(district_id=1, good_id="contraband_weapons", price=35.0, supply=6.0, tick=0)
+        )
+        await db_session.flush()
+        supply = await blackmarket_svc.get_supply(db_session, 1, "contraband_weapons")
+        assert supply == 6.0
 
 
 class TestCheckCanTrade:
@@ -201,7 +222,7 @@ class TestBuy:
             npcs=make_npcs(fence),
             good_id="contraband_weapons",
             qty=2,
-            tick=10,
+            tick=3,
             rng=FixedRng(0.99),
         )
 
@@ -236,7 +257,7 @@ class TestBuy:
                 npcs=make_npcs(fence),
                 good_id="contraband_weapons",
                 qty=1,
-                tick=10,
+                tick=3,
                 rng=FixedRng(0.99),
             )
         assert exc_info.value.reason_key == "blackmarket_not_trusted"
@@ -257,7 +278,7 @@ class TestBuy:
                 npcs=make_npcs(fence),
                 good_id="contraband_weapons",
                 qty=1,
-                tick=10,
+                tick=3,
                 rng=FixedRng(0.99),
             )
         assert exc_info.value.reason_key == "blackmarket_insufficient_stock"
@@ -284,14 +305,14 @@ class TestBuy:
             npcs=make_npcs(fence),
             good_id="contraband_weapons",
             qty=1,
-            tick=10,
+            tick=3,
             rng=FixedRng(0.0),
         )
 
         assert result.caught is True
-        # Sentence runs from the current tick (10), not from absolute
+        # Sentence runs from the current tick (3), not from absolute
         # tick 0 -- see test_market_service.py's identical regression note.
-        assert character.jailed_until_tick == 10 + constants.MARKET_ILLICIT_JAIL_TICKS
+        assert character.jailed_until_tick == 3 + constants.MARKET_ILLICIT_JAIL_TICKS
         district_row = await db_session.get(DistrictState, 1)
         assert district_row.peacekeeper_pressure == 0.3 + blackmarket_svc.BLACKMARKET_PRESSURE_DELTA
 
@@ -322,7 +343,7 @@ class TestBuy:
             npcs=make_npcs(fence),
             good_id="contraband_weapons",
             qty=1,
-            tick=10,
+            tick=3,
             rng=FixedRng(roll),
         )
         assert result.caught is True
@@ -355,7 +376,7 @@ class TestSell:
             npcs=make_npcs(fence),
             good_id="contraband_weapons",
             qty=2,
-            tick=10,
+            tick=3,
             rng=FixedRng(0.99),
         )
 

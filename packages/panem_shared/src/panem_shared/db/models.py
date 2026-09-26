@@ -127,6 +127,11 @@ class Character(TimestampMixin, Base):
 
     name: Mapped[str] = mapped_column(String(32), nullable=False)
     age: Mapped[int] = mapped_column(Integer, nullable=False)
+    gender: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    """`Gender` -- chosen at creation (`GenderSelectView`), changeable any
+    time via `/character gender`. `None` for a character that never set one
+    (an older row, or the player skipped it) -- NPC dialogue
+    (`panem_bot.services.dialogue`) falls back to "they/their" pronouns."""
     appearance: Mapped[str] = mapped_column(String(400), nullable=False, default="")
     backstory: Mapped[str] = mapped_column(String(1500), nullable=False, default="")
     status: Mapped[str] = mapped_column(
@@ -334,6 +339,40 @@ class Character(TimestampMixin, Base):
     background task polls for `status == PENDING AND approval_notified_at
     IS NULL` and posts the same embed those get, then stamps this."""
 
+    pending_rp_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    """Set by `rp_modes.stage_mode_switch` when a mode switch needs staff
+    sign-off before it takes effect -- specifically, switching into
+    Life/Simulation for the first time (`job_title is None`, i.e. this
+    character has never had job info on file) reopens the same job-title/
+    shift-phase/illicit prompts character creation uses and requires
+    re-approval, same as a fresh application. `None` means no switch is
+    awaiting approval. `rp_mode`/`job_title`/`shift_phase`/`job_is_illicit`
+    are left completely untouched while this is set -- the character keeps
+    playing in their current mode, with whatever job info they already had
+    (which is exactly what lets a character who *was* Life/Simulation in
+    the past, and so already has `job_title` set, switch back and forth
+    with Story instantly, no re-approval, per `rp_modes.mode_switch_needs_
+    job_info`). `rp_modes.apply_staged_mode_switch` copies the staged
+    fields below over the real ones (and clears all of them) on staff
+    approval; `discard_staged_mode_switch` just clears them on decline.
+    Unlike rejecting a fresh application, declining a staged switch must
+    never delete the character -- it already exists and is playing -- so
+    this can't reuse `CharacterStatus.PENDING`/`ApprovalView`'s reject-
+    deletes-the-row shape at all."""
+    pending_job_title: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    pending_shift_phase: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    pending_job_is_illicit: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    pending_mode_switch_notified_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    """Same idempotency purpose as `approval_notified_at` above, kept as its
+    own column rather than shared: a mode-switch request and a fresh
+    application are always mutually exclusive (switching modes requires
+    already being `APPROVED`), but the two "has this been posted to staff
+    yet" facts are conceptually different and gate different background
+    tasks (`_announce_pending_characters` vs. `_announce_pending_mode_
+    switches`)."""
+
     in_transit_until_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
     transit_destination_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     away_since_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -366,6 +405,12 @@ class Npc(TimestampMixin, Base):
     district_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     age: Mapped[int] = mapped_column(Integer, nullable=False)
+    gender: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    """`Gender` -- every NPC `panem_sim.world.seed_npcs` creates gets one
+    assigned (from `NpcContent.gender` if authored, otherwise randomly);
+    nullable only so a pre-existing row or a manually-inserted one doesn't
+    need a backfill. `None` falls back to "they/their" the same as an
+    unset `Character.gender` does."""
     job_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     traits: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
@@ -562,6 +607,49 @@ class EngagementSettings(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     idle_timeout_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class PanemHistoryEntry(TimestampMixin, Base):
+    """One staff-authored fact of Panem-wide history/canon, tagged with
+    comma-separated keywords a staff member typed in (`/staff lore
+    history-add`) -- mirrors `Memory.tags`' `ARRAY(String)` shape, not a
+    single delimited string, so matching (`panem_shared.lore.
+    match_history_entries`) is a plain membership check per keyword.
+    Multi-row, growing over time via add/remove, the same shape
+    `WorldEvent` already uses for a table of discrete global facts --
+    unlike that table this one is staff-written, not sim-written (closer
+    in spirit to `StaffAction`'s staff-authored-content role).
+
+    Read fresh on every dialogue request (`panem_bot.services.dialogue.
+    build_request_context`/`build_npc_to_npc_context`), keyword-filtered
+    against the line being replied to, so every NPC can draw on the same
+    shared canon without needing a Lemonade collection rebuild -- unlike
+    `lemonade/system_prompt.md`'s own hand-written `## Panem` section,
+    which *is* baked into the registered collection and only changes on
+    a redeploy."""
+
+    __tablename__ = "panem_history_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    keywords: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, default=list)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by_staff_discord_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+
+class WorldLoreSettings(Base):
+    """Single-row staff-tunable "Alternate Universe" notes, mirroring
+    `EngagementSettings`'/`WorldClock`'s singleton shape -- free-form prose
+    every NPC in the nation should know and keep in mind (how this
+    version of Panem's canon diverges from anyone's expectations, ongoing
+    world-shaping facts, etc.), unlike `PanemHistoryEntry`'s keyword-gated
+    rows this is always included in a dialogue request rather than
+    matched against what's being said, since "anyone in the nation" means
+    unconditional background, not a fact recalled on cue."""
+
+    __tablename__ = "world_lore_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    alternate_universe_notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
 
 class Shift(Base):
@@ -812,13 +900,36 @@ class StaffAction(TimestampMixin, Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
 
+class Shipment(Base):
+    """A contraband shipment sitting at a district's Rail Station
+    (`LocationKind.STATION`), spawned by `panem_sim.systems.shipments` and
+    a one-shot opportunity: `panem_shared.shipments.apply_shipment_outcome`
+    deletes the row the moment anyone attempts it, win or lose, the same
+    way `expires_tick` (peacekeepers clearing it untouched) does. Mirrors
+    `PropertyAuction`'s "exists in a district for a window of ticks, then
+    the sim itself removes it" shape -- there's no `status` column the
+    way that table has one, since there's no "closed but still on the
+    books" state here to distinguish; gone is gone."""
+
+    __tablename__ = "shipments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    district_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    location_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    good_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    qty: Mapped[int] = mapped_column(Integer, nullable=False)
+    spawned_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+    expires_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
 class CrimeLog(TimestampMixin, Base):
-    """One resolved `/steal`, `/burgle`, or `/poach` attempt -- written by
-    `panem_shared.stealing.apply_steal_outcome`/`apply_burgle_outcome` and
-    `panem_shared.poaching.apply_poach_outcome` (the one funnel every
-    attempt passes through either way: the RNG-fallback roll or the
-    Activity minigame's own result), so both paths log identically and no
-    cog/endpoint has to remember to call this separately.
+    """One resolved `/steal`, `/burgle`, `/poach`, or `/shipment` attempt --
+    written by `panem_shared.stealing.apply_steal_outcome`/`apply_burgle_
+    outcome`, `panem_shared.poaching.apply_poach_outcome`, and `panem_shared.
+    shipments.apply_shipment_outcome` (the one funnel every attempt passes
+    through either way: the RNG-fallback roll or the Activity minigame's
+    own result), so every path logs identically and no cog/endpoint has to
+    remember to call this separately.
 
     `target_name`/`good_name` are plain snapshot strings, not foreign
     keys -- the same choice `StaffAction.target` already made -- so a log
@@ -978,3 +1089,74 @@ class Trade(TimestampMixin, Base):
         String(16), nullable=False, default=TradeStatus.PENDING.value, index=True
     )
     resolved_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DistrictLore(TimestampMixin, Base):
+    """Staff-authored district context/history (the Activity's staff-only
+    History tab) that NPC dialogue draws on -- see `panem_shared.
+    district_lore` for the CRUD/validation layer and `dialogue.
+    build_request_context`'s `district_lore` field for how it reaches the
+    model. One row per district, created lazily on first edit (there's no
+    seed data, same posture as `LayerCategory`/`AfflictionType`).
+
+    Free-text fields are staff prose, not structured data -- `games_history`
+    in particular is meant to be a natural-language summary of the
+    district's tributes/Games performance over time rather than a
+    game-by-game ledger, per the feature's own ask. Only a short, capped
+    excerpt of any of this (`panem_shared.district_lore.prompt_summary`)
+    ever reaches an NPC's prompt at once, by design -- this is reference
+    material staff can richly maintain, not something every reply should
+    lean on."""
+
+    __tablename__ = "district_lore"
+
+    district_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    classification: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    """`DistrictClassification.INNER`/`OUTLIER`, or `None` if unset."""
+    adjectives: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    accent_notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    urban_rural_notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    academy_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    """A staff-chosen name for the district's career academy (Career
+    districts train tributes through one; other districts can leave this
+    blank)."""
+    academy_notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    games_history: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    regime_notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    """Free-text notes on gamemakers/the current regime as this district
+    experiences them. Identifying a *specific* character as a gamemaker,
+    president, vice president, etc. is instead done with `Character.
+    positions` (`Position.GAMEMAKER`/`PRESIDENT`/`VICE_PRESIDENT`) via
+    `/staff give position` -- this field is scene-setting prose, not an
+    identity registry."""
+    opinions: Mapped[dict[str, str]] = mapped_column(JSONB, nullable=False, default=dict)
+    """Keyed by the *other* district's id as a string (e.g. `"4"`) --
+    JSONB object keys are always strings, so this matches rather than
+    fighting that."""
+    misc_notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    updated_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    """The Discord id of whichever staff member last saved this row, for
+    an audit trail -- same idea as `StaffAction.staff_discord_id`."""
+
+
+class DistrictLorePerson(TimestampMixin, Base):
+    """One victor or mentor entry for a district, part of the History tab's
+    lore (`DistrictLore`). `character_id` links to an actual `Character`
+    when one exists in the roster; `name` alone covers a historical
+    victor/mentor staff want on record with no character behind them
+    (retired, deceased, or simply never played)."""
+
+    __tablename__ = "district_lore_people"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    district_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    """`"victor"` or `"mentor"`."""
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    character_id: Mapped[int | None] = mapped_column(
+        ForeignKey("characters.id"), nullable=True
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    character: Mapped[Character | None] = relationship()

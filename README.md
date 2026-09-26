@@ -74,7 +74,7 @@ packages/
 data/             districts, goods, jobs, routes (content YAML, validated at boot)
 migrations/       Alembic migrations
 scripts/          setup_guild.py (Phase 0), calibrate.py (Phase 2), plus stubs for later-phase scripts
-deploy/           docker-compose, Dockerfile, systemd unit
+deploy/           docker-compose, Dockerfile, systemd unit, snap packaging + LXD provisioning (deploy/snap/README.md)
 tests/            pytest (service-layer unit tests; no live Discord needed)
 ```
 
@@ -3851,3 +3851,165 @@ Entertain all round-tripping correctly against a mocked backend, the sleep previ
 and -- driving `vitals.html`'s cook minigame directly against its actual real-time sweep, no clock
 mocking needed -- confirming all three outcomes: taking the food off mid-sweep lands the bonus, while too
 early and too late both miss it.
+
+## Panem-wide staff lore: keyword-tagged history facts, and Alternate Universe notes NPCs always keep in mind
+
+NPC dialogue (`/talk`, `/engage` replies, and ambient NPC-to-NPC chatter -- everywhere
+`panem_bot.services.dialogue` calls the LLM) can now draw on two kinds of staff-authored, Panem-wide
+canon, on top of an NPC's own personal memories and relationship history:
+
+- **History facts** -- short, staff-written statements of Panem canon, each tagged with one or more
+  comma-separated keywords (e.g. `dark days, district thirteen`). A fact only rides into a given dialogue
+  request when one of its keywords actually appears in the line being replied to
+  (`panem_shared.lore.match_history_entries`, a plain case-insensitive substring check, capped at
+  `constants.MAX_HISTORY_ENTRIES_PER_REPLY` so a busy table can't crowd out the rest of the prompt) --
+  the request header's new `[HISTORY]` block.
+- **Alternate Universe notes** -- one free-form block of prose every NPC in the nation is assumed to
+  know, unconditionally included whenever set (no keyword matching), for describing how this particular
+  Panem's canon diverges from anyone's default expectations, or any other standing fact staff want every
+  resident to act on. Rendered as the request header's `[WORLD]` block, right after `[MODE]`.
+
+### Why this is a database, not a content-YAML edit
+
+Every other "world knowledge" an NPC draws on already lives in one of two places, and this feature
+deliberately sits in the one that changes fast: `lemonade/system_prompt.md`'s own hand-written `## Panem`
+section is *static* canon, baked into the registered Lemonade collection at build time
+(`scripts/lemonade_omni.py build`) -- editing it needs a rebuild-and-reregister step, appropriate for
+slow-changing world design, not for "staff wants to add a fact mid-session." History entries and AU notes
+instead live in two new tables (`PanemHistoryEntry`, multi-row and keyword-tagged; `WorldLoreSettings`, a
+single-row staff-tunable settings row mirroring `EngagementSettings`'/`WorldClock`'s own singleton shape),
+fetched fresh on every dialogue request (`dialogue.build_request_context`/`build_npc_to_npc_context`) the
+same way `EngagementCog`'s idle-close task already reads `EngagementSettings` fresh every pass -- a staff
+edit takes effect on the very next line an NPC speaks, no redeploy.
+
+### `/staff lore` commands
+
+- `/staff lore history-add keywords:<comma-separated> text:<fact>` -- add a new history entry.
+- `/staff lore history-remove entry_id:<id>` -- remove one, by the id shown in `history-list`.
+- `/staff lore history-list` -- list every entry with its id and keywords.
+- `/staff lore au-set text:<notes>` -- replace the Alternate Universe notes.
+- `/staff lore au-show` -- show the current Alternate Universe notes.
+
+All five follow the existing `/staff` group's conventions: staff-only (`_is_staff`), every write logged
+via `log_staff_action` (audit row + a one-line post to the staff log channel), direct DB writes with no
+intermediate cache to invalidate.
+
+### Verification
+
+`ruff check .`: clean. `mypy` across all four packages: unchanged pre-existing baseline (159 -> 162
+errors, the +3 all the same pre-existing `self.bot.db()`/`self.bot.redis`-style `"Bot" has no attribute`
+category every other cog already carries, none a new category). `alembic upgrade head` /
+`alembic downgrade -1` / `alembic upgrade head` round-trips cleanly to a single new head; no existing
+table changed. `uv run python scripts/lemonade_omni.py build --check` passes -- the committed
+`lemonade/Panem-Omni-*.json` collection files were rebuilt after `system_prompt.md`'s new `[WORLD]`/
+`[HISTORY]` header-block documentation, so CI's own staleness check stays green. New unit coverage:
+`tests/unit/test_lore.py` (keyword matching: case-insensitivity, no-match, an entry with no keywords never
+matching, the `MAX_HISTORY_ENTRIES_PER_REPLY` cap, match order), extended `test_dialogue_service.py` and
+`test_lemonade_omni.py` for the new `RequestContext` fields and header rendering. Full suite:
+**1257 passed**.
+
+## Notes on snap packaging (strict confinement) + LXD deploy
+
+A third deploy path alongside `deploy/docker-compose.yml`/`deploy/systemd/`: `snap/snapcraft.yaml`
+packages `panem_bot`/`panem_sim`/`panem_api` as one strictly confined snap (`panem`, three daemons plus a
+`migrate` command), and `deploy/lxd/provision.sh` stands up an LXD container on an external server running
+that snap alongside Postgres/Redis (apt-installed in the same container, bound to `127.0.0.1` -- nothing
+outside the container needs to reach either). Full walkthrough: `deploy/snap/README.md`.
+
+The one real wrinkle: `snap/snapcraft.yaml`'s build does **not** use `uv sync`'s normal `.venv` the way
+`deploy/Dockerfile` does. A uv-managed venv's `bin/python` is a symlink back to a shared, absolute-path
+standalone Python install, and its `pyvenv.cfg` records that same absolute build-time path as where to
+find the standard library at runtime -- neither survives being copied from the snapcraft build environment
+into `/snap/panem/<rev>`, whether the copy dereferences symlinks or not (dereferencing only fixes the
+interpreter binary itself, not the venv's separate, still-external stdlib lookup). Instead the build
+installs every dependency (including this workspace's own four packages, non-editable) straight into the
+standalone interpreter's own site-packages via `uv pip install --python`, then ships that whole interpreter
+tree -- genuinely relocatable by design, which is what `python-build-standalone` (what `uv python install`
+fetches) is *for* -- as `$SNAP/python`.
+
+Because that install is non-editable, `packages/*/src/*/main.py` can no longer assume it's running from
+inside a full checkout to find `data/` the way it always has (`REPO_ROOT = Path(__file__).resolve().
+parents[4]`, which only lines up with a real `data/` dir under an editable/dev-mode install -- true for
+both `uv run` and `deploy/Dockerfile`'s `uv sync`, coincidentally, since both install this workspace
+editable). Added `Settings.data_dir`/`Settings.static_uploads_dir`
+(`packages/panem_shared/src/panem_shared/settings.py`) so a packaged install can override both explicitly;
+every `main.py` falls back to the old parents[4] trick when they're unset, so `uv run`/Docker/systemd
+behavior is completely unchanged. `static_uploads_dir` exists because `panem_api`'s staff layer-image
+uploads and `district_mottos.json` need a real writable directory, and a strict-confinement snap's `$SNAP`
+is a read-only squashfs -- `panem_api.app.create_app` already took a `static_dir` override for tests
+(writing into the checked-out `static/` tree there too), but the app's actual static-file *mount* always
+served the real bundled `STATIC_DIR` regardless, meaning uploads written elsewhere were saved but 404'd
+when fetched back; fixed by mounting a second, more specific `/uploads` route ahead of the catch-all `/`
+mount whenever the override differs from `STATIC_DIR` (harmless no-op when it doesn't). The snap's wrapper
+scripts (`snap/local/bin/panem-*`) point both settings at `$SNAP/data`/`$SNAP_DATA/uploads`.
+
+Running snapd itself inside an LXD container needs `security.nesting=true` on the container (for snapd's
+own mount namespace) -- `deploy/lxd/provision.sh` sets it on launch and fixes it up (with a restart) on an
+existing container missing it, since `snap install` either fails outright or installs but never actually
+starts the daemons without it.
+
+Not independently verified end-to-end (no snapcraft/LXD build environment available in this session --
+building a real `.snap` needs network access to fetch `uv`+Python 3.14+PyPI packages during
+`snapcraft`'s build step, and installing/running it needs a real LXD host); reviewed line-by-line against
+documented `uv`/`snapcraft`/LXD behavior instead. Sanity-checked here: every edited/new Python file
+(`ast.parse`), every new shell script (`bash -n`/`sh -n`), and `tests/unit/test_api_app.py`'s existing
+`staff_app_with_uploads` fixture (which passes `static_dir=tmp_path`, i.e. already exercises the "override
+differs from STATIC_DIR" branch) confirmed by inspection to still pass -- it only asserted the uploaded
+file landed on disk before, never that `image_url` was actually fetchable, which is exactly the gap the new
+`/uploads` mount closes rather than a behavior it could have broken.
+
+## Switching from Story into Life/Simulation for the first time re-opens the job-info application
+
+`switch_mode` (`panem_shared.rp_modes`) never touched `job_title`/`shift_phase` -- fine for a character
+that had already been Life/Simulation at some point (that info just sits there across a switch, which is
+why picking Story and then coming back has always "remembered" it), but a character that started and
+stayed in Story has no job on file at all, and nothing collected one or told staff about the switch before
+it took effect.
+
+Added `Character.pending_rp_mode`/`pending_job_title`/`pending_shift_phase`/`pending_job_is_illicit`/
+`pending_mode_switch_notified_at` (migration `c6b8f2a4d1e9`) and three new `panem_shared.rp_modes`
+functions: `mode_switch_needs_job_info` (`new_mode != story and job_title is None`), `stage_mode_switch`,
+and `apply_staged_mode_switch`/`discard_staged_mode_switch`. Staging writes only the `pending_*` columns --
+`rp_mode`/`job_title`/`shift_phase` stay exactly as they were the whole time a switch is awaiting approval,
+so the character keeps playing in their current mode (this also matters functionally: `panem_sim.systems.
+jobs._open_shifts_for_due_characters` opens a shift purely off `job_title`/`shift_phase` being set, with no
+`rp_mode` check of its own -- writing those columns immediately, before approval, would have let a still-
+Story character start working shifts).
+
+Declining a staged switch must never delete the character -- unlike rejecting a fresh application (which
+never became a real character), this one already exists and is playing. That ruled out reusing `Character
+Status.PENDING`/`ApprovalView`'s "Reject" button at all, so this got a deliberately separate,
+non-destructive `ModeSwitchApprovalView` (Approve/Decline only, `panem_bot/views.py`) with its own handlers
+(`_handle_mode_switch_approve`/`_decline`, `panem_bot/cogs/characters.py`) -- approve calls `apply_staged_
+mode_switch`, decline just calls `discard_staged_mode_switch`.
+
+- **`/character mode`**: unchanged for switching to Story, or to Life/Simulation with `job_title` already
+  set -- still the instant `ConfirmView`-then-`switch_mode` flow. Needing job info instead reopens the same
+  job-title/shift-phase/illicit-declare prompts `/character create` uses (`JobInfoModal` in `modals.py`,
+  reusing `ShiftPhaseSelectView`/`IllicitDeclareView`), stages the switch, and posts a staff embed (mirrors
+  `_post_approval_embed`'s idempotency-via-timestamp shape, on its own `pending_mode_switch_notified_at`
+  column and its own poll/pubsub pair -- `_announce_pending_mode_switches`/`_listen_for_pending_mode_
+  switches`/`CHARACTER_MODE_SWITCH_PENDING_CHANNEL` -- since a mode-switch post and a fresh-application post
+  are different facts and shouldn't share one "already posted?" guard).
+- **Dashboard mode-switch panel** (`tabs/home.js`): `RpModeStatusResponse` gained `has_job_info`/
+  `pending_mode`; picking a non-Story mode without `has_job_info` reveals job-title/shift-phase/illicit
+  fields before "Confirm switch" is enabled, and a pending switch replaces the panel with a plain status
+  line until staff resolve it. `/activity/dashboard/mode/{id}/switch` stages instead of applying when job
+  info is needed and publishes on the new channel for the bot to pick up, same duty `panem_api` already has
+  for a dashboard-created character with no bot token of its own.
+
+Verified: new `panem_shared.rp_modes` tests (`mode_switch_needs_job_info`, stage/apply/discard, the
+already-pending guard on `check_can_switch_mode`); new `CharacterCog` tests for the approval-embed
+idempotency and the approve/decline handlers, including one asserting decline leaves the character row
+intact; new dashboard-route tests for the staged-switch and switching-to-story-never-needs-job-info paths;
+fixed `TestDashboardRpMode.test_switch_moves_to_the_new_mode`'s fixture (it seeded a Simulation-mode
+character with no `job_title` at all, a state `create_character` itself would never produce). `ruff check`/
+`ruff format --check` clean on every touched file (both already carried unrelated pre-existing drift
+elsewhere in the repo, confirmed via `git stash`). `mypy packages/panem_shared/src packages/panem_sim/src`
+(the CI-gated pair) clean; the `panem_bot`/`panem_api` baseline (not CI-gated, NFR-11 only covers the first
+two) grew from 165 to 183 errors, entirely the same three pre-existing categories every other cog method
+already carries (`"Bot" has no attribute "db"`, missing generic type args on `discord.ui.Button`/`Select`,
+missing `var-annotated` on a modal's own `TextInput` fields) applied to the new code, none a new category.
+Full suite: **1441 passed**, 1 pre-existing unrelated failure (`test_serves_the_vendored_discord_sdk_not_a_
+cdn_url`, confirmed failing identically on a clean checkout via `git stash`). Migration verified
+up/down/up.

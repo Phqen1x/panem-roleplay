@@ -189,3 +189,28 @@ class TestRequestContract:
         assert messages[0]["role"] == "system"
         assert messages[0]["content"].startswith("[MODE: narrate]")
         assert messages[1] == {"role": "user", "content": "hi"}
+
+    def test_world_notes_render_right_after_mode(self):
+        ctx = omni.RequestContext(
+            mode=omni.RequestMode.DIALOGUE, world_notes="Peace came a decade early here."
+        )
+        header = omni.render_request_header(ctx)
+        lines = header.splitlines()
+        assert lines[0] == "[MODE: dialogue]"
+        assert lines[1] == "[WORLD] Peace came a decade early here."
+
+    def test_world_notes_omitted_when_none(self):
+        ctx = omni.RequestContext(mode=omni.RequestMode.DIALOGUE)
+        assert "[WORLD]" not in omni.render_request_header(ctx)
+
+    def test_history_block_lists_each_entry(self):
+        ctx = omni.RequestContext(
+            mode=omni.RequestMode.DIALOGUE,
+            history=("Fact one.", "Fact two."),
+        )
+        header = omni.render_request_header(ctx)
+        assert "[HISTORY]\n- Fact one.\n- Fact two." in header
+
+    def test_history_omitted_when_empty(self):
+        ctx = omni.RequestContext(mode=omni.RequestMode.DIALOGUE)
+        assert "[HISTORY]" not in omni.render_request_header(ctx)

@@ -57,7 +57,7 @@
 // own status without the player having to reload anything. A no-op when
 // there's no parent to hear it (the normal Discord-launched/plain-link
 // case).
-const ASSET_VERSION = "13";
+const ASSET_VERSION = "15";
 
 // Donor dashboard theme (`static/theme_picker.js`'s popup, saved via the
 // profile endpoints under `/activity/dashboard/theme/profiles`): `app.js`
@@ -78,6 +78,31 @@ try {
   if (text) document.documentElement.style.setProperty("--text", text);
 } catch {
   // Private browsing / blocked storage -- falls back to the default theme.
+}
+
+// Reports this page's actual rendered height to whatever parent embedded
+// it (the dashboard's Work tab, in an iframe -- see static/tabs/_shared.js's
+// `watchIframeResize`) so that iframe can grow to fit instead of clipping
+// or scrolling internally. Different minigames need very different amounts
+// of room (Minesweeper's grid grows with job level, Solitaire's tableau is
+// several rows tall) -- a single fixed iframe height can't fit all of
+// them, which is what made starting some shifts require scrolling just to
+// see the board. A no-op outside an iframe, same posture as `notifyParent`
+// below.
+function reportSize() {
+  if (window.parent === window) return;
+  try {
+    window.parent.postMessage(
+      { source: "panem-activity", type: "resize", height: document.documentElement.scrollHeight },
+      "*"
+    );
+  } catch {
+    // Embedded in a cross-origin frame this can't reach -- nothing to do.
+  }
+}
+if (window.parent !== window) {
+  new ResizeObserver(reportSize).observe(document.documentElement);
+  window.addEventListener("load", reportSize);
 }
 
 const [coinflip, connect4, minesweeper, poison, snake, solitaire] = await Promise.all([
@@ -174,10 +199,18 @@ async function finish(won, { neutral = false } = {}) {
       resultEl.textContent += " Peacekeepers catch up with them -- fined and jailed.";
     }
     notifyParent({ shiftId, game: currentGameLabel, ...body });
+    // The result text lands below whatever board the game mounted (a
+    // full Solitaire tableau or Minesweeper's grid can already fill the
+    // screen), so simply unhiding it left it off-screen until the player
+    // scrolled to find it -- `reportSize`'s resize keeps the enclosing
+    // panel (or dashboard iframe) tall enough to fit it, but doesn't move
+    // anyone's scroll position to it.
+    resultEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
   } catch (err) {
     resultEl.hidden = false;
     resultEl.className = "lose";
     resultEl.textContent = `Couldn't report the result: ${err.message}`;
+    resultEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 }
 

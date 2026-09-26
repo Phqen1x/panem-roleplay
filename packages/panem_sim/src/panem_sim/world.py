@@ -29,7 +29,7 @@ from panem_shared.content.names import sample_names
 from panem_shared.content.schemas import District, Job, Location, NpcContent
 from panem_shared.content.traits import sample_traits, speech_tone
 from panem_shared.db.models import DistrictState, Npc, NpcSchedule, Property
-from panem_shared.enums import DayPhase, JobLevel, LocationKind, OwnerKind, PropertyKind
+from panem_shared.enums import DayPhase, Gender, JobLevel, LocationKind, OwnerKind, PropertyKind
 from panem_sim.rng import seed_rng
 from panem_sim.systems.economy import is_shopkeeper_job
 
@@ -208,6 +208,7 @@ def _add_npc_with_schedule(
     npc_id: str,
     name: str,
     age: int,
+    gender: str,
     job_id: str | None,
     job: Job | None,
     home_location_id: str,
@@ -218,6 +219,7 @@ def _add_npc_with_schedule(
         district_id=district.id,
         name=name,
         age=age,
+        gender=gender,
         job_id=job_id,
         home_location_id=home_location_id,
         location_id=home_location_id,
@@ -240,19 +242,26 @@ def _add_npc_with_schedule(
 
 
 def _seed_authored_npcs(
-    session: AsyncSession, content: ContentBundle, district: District, authored: list[NpcContent]
+    session: AsyncSession,
+    content: ContentBundle,
+    district: District,
+    authored: list[NpcContent],
+    world_seed: str,
 ) -> None:
     """Real, content-authored residents (`data/npcs/*.yaml`, either
     hand-edited or written by `scripts/npc_generate.py`) -- preferred
     over `_seed_synthetic_npcs` whenever a district has any."""
+    rng = seed_rng(world_seed, f"npc-gender:{district.id}")
     for entry in authored:
         job = content.jobs.get(entry.job_id) if entry.job_id else None
+        gender = entry.gender.value if entry.gender is not None else rng.choice(list(Gender)).value
         _add_npc_with_schedule(
             session,
             district,
             npc_id=entry.id,
             name=entry.name,
             age=entry.age,
+            gender=gender,
             job_id=entry.job_id,
             job=job,
             home_location_id=entry.home_location_id,
@@ -271,6 +280,7 @@ def _seed_synthetic_npcs(
     for n in range(1, constants.SYNTHETIC_NPCS_PER_DISTRICT + 1):
         home = _home_location(district, rng)
         age = rng.randint(18, 65)
+        gender = rng.choice(list(Gender)).value
         job_id = _assign_job(rng, district_jobs)
         job = next((j for j in district_jobs if j.id == job_id), None)
         traits = sample_traits(rng)
@@ -280,6 +290,7 @@ def _seed_synthetic_npcs(
             npc_id=f"d{district.id}_npc_{n:03d}",
             name=names[n - 1],
             age=age,
+            gender=gender,
             job_id=job_id,
             job=job,
             home_location_id=home.id,
@@ -296,7 +307,7 @@ async def seed_npcs(session: AsyncSession, content: ContentBundle, world_seed: s
             continue
         authored = content.npcs_for_district(district.id)
         if authored:
-            _seed_authored_npcs(session, content, district, authored)
+            _seed_authored_npcs(session, content, district, authored, world_seed)
         else:
             _seed_synthetic_npcs(session, content, district, world_seed)
 

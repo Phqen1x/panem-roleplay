@@ -8,6 +8,14 @@ trade (a probability roll, then a fine, jail time, a reputation hit, and
 a district `peacekeeper_pressure` bump) -- getting caught poaching is no
 better or worse than getting caught buying off the books.
 
+Only ever possible at night: the outskirts (`resolve_outskirts`) can't be
+reached any other time (`panem_shared.travel.check_can_travel`), and
+`check_can_poach` re-checks the phase itself besides. A successful,
+uncaught attempt always yields `constants.POACH_GOOD_ID` ("Wild Game"),
+never whatever the district's own legal market sells -- it has the
+highest `hunger_value` of any food good in `goods.yaml` on purpose, so
+risking the trip is worth more than just buying dinner.
+
 Re-exported from `panem_bot.services.poaching` for every existing call
 site -- moved here (same reasoning as every other `panem_shared` move
 this session) because the web dashboard's Crime tab needs this too and
@@ -26,10 +34,11 @@ from panem_shared import constants
 from panem_shared.content.schemas import District, Good, Location
 from panem_shared.crime_log import record_crime_log
 from panem_shared.db.models import Character, DistrictState, Inventory
-from panem_shared.enums import CharacterStatus, LocationKind, OwnerKind, RpMode
+from panem_shared.enums import CharacterStatus, DayPhase, LocationKind, OwnerKind, RpMode
 from panem_shared.errors import NotAllowed, NotFound
 from panem_shared.jail import check_not_jailed, commit_to_jail
 from panem_shared.simtime import TICKS_PER_PHASE
+from panem_shared.simtime import current as current_time
 
 PEACEKEEPER_PRESSURE_DELTA = 0.05
 """Mirrors `panem_bot.services.market.ILLICIT_PRESSURE_DELTA` exactly --
@@ -45,18 +54,15 @@ class PoachResult:
     taken home."""
 
 
-def _primary_food_good(district: District, goods: dict[str, Good]) -> Good | None:
-    """The one food-category good a successful attempt yields -- whatever
-    the district itself produces, falling back to whatever food it
-    imports (a non-agricultural district still has hungry people). `None`
-    only for a district with no food-category good at all in either list,
-    which no real district content ships (every district produces or
-    imports at least one food good)."""
-    for good_id in (*district.produces, *district.imports):
-        good = goods.get(good_id)
-        if good is not None and good.category == "food":
-            return good
-    return None
+def _poached_good(goods: dict[str, Good]) -> Good | None:
+    """`constants.POACH_GOOD_ID` ("Wild Game") -- the same good regardless
+    of district, deliberately never one a district itself produces/imports
+    (see that constant's own docstring): poaching at the outskirts is
+    supposed to bring home something better than the market carries, not
+    just a free unit of whatever the district already sells. `None` only
+    if a content bundle's `goods.yaml` doesn't define it at all, which no
+    shipped content does."""
+    return goods.get(constants.POACH_GOOD_ID)
 
 
 def resolve_outskirts(district: District) -> Location:
@@ -80,7 +86,14 @@ def check_can_poach(
     better market allocation instead of the occasional coping mechanism
     it's meant to be. Story mode has no crime access at all -- "no ...
     crime" -- since poaching has no player victim, only the actor's own
-    mode matters here."""
+    mode matters here.
+
+    Also only ever available at night -- redundant with `panem_shared.
+    travel.check_can_travel` already refusing to send anyone to the
+    outskirts outside `DayPhase.NIGHT` in the first place, but checked
+    again here in case a character is still standing there from a night
+    that's since ended (nothing moves them away automatically once the
+    phase turns)."""
     if character.status != CharacterStatus.APPROVED.value:
         raise NotAllowed("character_not_approved")
     if character.rp_mode == RpMode.STORY.value:
@@ -89,13 +102,16 @@ def check_can_poach(
     location = resolve_outskirts(district)
     if character.location_id != location.id:
         raise NotAllowed("poach_not_at_outskirts", name=character.name, location=location.name)
+    _, phase, _, _ = current_time(current_tick)
+    if phase != DayPhase.NIGHT:
+        raise NotAllowed("poach_night_only", name=character.name)
     if (
         character.last_poach_tick is not None
         and character.last_poach_tick // TICKS_PER_PHASE == current_tick // TICKS_PER_PHASE
     ):
         raise NotAllowed("poach_on_cooldown", name=character.name)
-    good = _primary_food_good(district, goods)
-    if good is None:  # pragma: no cover -- no shipped district lacks a food good
+    good = _poached_good(goods)
+    if good is None:  # pragma: no cover -- no shipped content lacks POACH_GOOD_ID
         raise NotFound("poach_nothing_to_poach")
     return good
 

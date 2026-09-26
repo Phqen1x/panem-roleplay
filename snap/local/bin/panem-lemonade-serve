@@ -1,0 +1,55 @@
+#!/bin/sh
+# snapd daemon wrapper for Embeddable Lemonade -- see deploy/snap/README.md.
+#
+# $SNAP_COMMON (not $SNAP_DATA): the embeddable download + its models are
+# multi-GB and revision-independent -- $SNAP_DATA gets copied forward into
+# every new revision's own directory on refresh, which would mean
+# re-copying gigabytes of model weights on every snap upgrade for no
+# reason. $SNAP_COMMON is never versioned per-revision, so it's the right
+# place for this.
+set -eu
+
+if [ -f "$SNAP_DATA/env" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$SNAP_DATA/env"
+  set +a
+fi
+
+# Applied *after* sourcing env, not before: an env file carrying a blank
+# `LEMONADE_HOME=` line (e.g. copied over from the local-dev .env.example,
+# which lists it blank too) would otherwise stomp this default right back
+# to empty -- `:=` re-defaults on empty as well as unset, so this wins
+# either way.
+: "${LEMONADE_HOME:=$SNAP_COMMON/lemonade}"
+export LEMONADE_HOME
+
+mkdir -p "$LEMONADE_HOME"
+cd "$SNAP"
+
+# Prepend $SNAP/bin so bsdtar ($SNAP/bin/tar) shadows GNU tar
+export PATH="$SNAP/bin:$PATH"
+
+# lemond (downloaded into $LEMONADE_HOME at runtime, not part of this
+# snap's build) links against libdrm_amdgpu.so.1 unconditionally, staged
+# here specifically for it (snap/snapcraft.yaml's stage-packages) since
+# strict confinement means it can never see this container's own
+# /usr/lib, no matter what's apt-installed there.
+export LD_LIBRARY_PATH="$SNAP/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+# lemond also wants a writable XDG-style runtime directory
+# (XDG_RUNTIME_DIR or systemd's own RUNTIME_DIRECTORY), neither of which
+# snapd sets for a root-owned system daemon -- that only gets populated
+# for session/login-bound services (e.g. /run/user/<uid>), which this
+# isn't. Point it at a subdirectory of $LEMONADE_HOME instead, which is
+# already writable inside confinement.
+export XDG_RUNTIME_DIR="$LEMONADE_HOME/runtime"
+mkdir -p "$XDG_RUNTIME_DIR"
+
+# Same `:=` re-default-on-blank as LEMONADE_HOME above. Matches
+# lemonade_omni.py serve's own --port default (13305) -- set LEMONADE_PORT
+# here *and* point LLM_BASE_URL at the same port in $SNAP_DATA/env if you
+# need lemond to bind somewhere else.
+: "${LEMONADE_PORT:=13305}"
+
+exec "$SNAP/python/bin/python3" "$SNAP/scripts/lemonade_omni.py" serve --port "$LEMONADE_PORT"

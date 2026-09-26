@@ -42,6 +42,7 @@ from panem_shared.db.models import (
     PropertyAuction,
     RelationshipRow,
     Shift,
+    Shipment,
     WorldClock,
 )
 from panem_shared.db.models import WorldEvent as WorldEventRow
@@ -106,6 +107,12 @@ async def _load_state(session: AsyncSession) -> tuple[WorldState, WorldClock]:
             await session.execute(select(PropertyAuction).where(PropertyAuction.status == "open"))
         ).scalars()
     }
+    shipments = {
+        row.id: row
+        for row in (
+            await session.execute(select(Shipment).where(Shipment.expires_tick > clock.tick))
+        ).scalars()
+    }
     affliction_types = list((await session.execute(select(AfflictionType))).scalars())
     active_afflictions: dict[int, list[CharacterAffliction]] = {}
     for affliction_row in (
@@ -130,6 +137,7 @@ async def _load_state(session: AsyncSession) -> tuple[WorldState, WorldClock]:
         properties=properties,
         apartment_leases=apartment_leases,
         property_auctions=property_auctions,
+        shipments=shipments,
         affliction_types=affliction_types,
         active_afflictions=active_afflictions,
     )
@@ -185,10 +193,16 @@ async def _run_tick_once(
             session.add(memory_row)
         for auction_row in state.new_property_auctions:
             session.add(auction_row)
+        for shipment_row in state.new_shipments:
+            session.add(shipment_row)
         for affliction_row in state.new_character_afflictions:
             session.add(affliction_row)
         if state.deleted_memory_ids:
             await session.execute(delete(Memory).where(Memory.id.in_(state.deleted_memory_ids)))
+        if state.deleted_shipment_ids:
+            await session.execute(
+                delete(Shipment).where(Shipment.id.in_(state.deleted_shipment_ids))
+            )
         if state.deleted_apartment_lease_ids:
             await session.execute(
                 delete(ApartmentLease).where(

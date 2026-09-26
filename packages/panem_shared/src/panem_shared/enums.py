@@ -13,6 +13,16 @@ class CharacterStatus(enum.StrEnum):
     DEAD = "dead"
 
 
+class Gender(enum.StrEnum):
+    """`Character.gender`/`Npc.gender` -- both nullable (an unset/older row
+    reads as `None`, "their"/"they" pronouns everywhere gender feeds into
+    NPC dialogue, `panem_bot.services.dialogue`)."""
+
+    MALE = "male"
+    FEMALE = "female"
+    NONBINARY = "nonbinary"
+
+
 class SceneKind(enum.StrEnum):
     AMBIENT = "ambient"
     PLAYER = "player"
@@ -96,6 +106,8 @@ class Position(enum.StrEnum):
     VICTOR = "victor"
     GAMEMAKER = "gamemaker"
     GOVERNOR = "governor"
+    PRESIDENT = "president"
+    VICE_PRESIDENT = "vice_president"
 
 
 class PropertyKind(enum.StrEnum):
@@ -159,3 +171,13 @@ class JobLevel(enum.StrEnum):
     JOURNEYMAN = "journeyman"
     MASTER = "master"
     EXPERT = "expert"
+
+
+class DistrictClassification(enum.StrEnum):
+    """A district's `DistrictLore.classification` (History tab): the
+    Capitol-favored "inner" districts (traditionally 1-2, sometimes 3-4)
+    versus the poorer, more heavily policed "outlier" districts. Staff-set
+    per district, not derived from anything -- some tables leave it unset."""
+
+    INNER = "inner"
+    OUTLIER = "outlier"

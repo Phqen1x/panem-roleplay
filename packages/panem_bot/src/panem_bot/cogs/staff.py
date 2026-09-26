@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
+import random
 import re
 import uuid
 
@@ -20,7 +21,9 @@ from panem_bot.services import jail as jail_svc
 from panem_bot.services import jobs as jobs_svc
 from panem_bot.services.staff import log_staff_action
 from panem_bot.strings import t
+from panem_bot.views import GENDER_LABELS
 from panem_shared import constants, job_levels
+from panem_shared import lore as lore_svc
 from panem_shared.content.traits import speech_tone
 from panem_shared.db.models import (
     Character,
@@ -33,7 +36,15 @@ from panem_shared.db.models import (
     User,
     WorldClock,
 )
-from panem_shared.enums import CharacterStatus, DayPhase, JobLevel, OwnerKind, Position, SceneStatus
+from panem_shared.enums import (
+    CharacterStatus,
+    DayPhase,
+    Gender,
+    JobLevel,
+    OwnerKind,
+    Position,
+    SceneStatus,
+)
 
 MESSAGE_LINK_RE = re.compile(r"/channels/(\d+)/(\d+)/(\d+)$")
 
@@ -70,6 +81,11 @@ class StaffCog(commands.Cog):
     )
     npc_group = app_commands.Group(
         name="npc", description="Add NPCs and edit their identity retroactively", parent=group
+    )
+    lore_group = app_commands.Group(
+        name="lore",
+        description="Panem-wide history and Alternate Universe notes NPCs draw on",
+        parent=group,
     )
 
     @group.command(name="whois", description="Look up who a proxied message belongs to")
@@ -233,10 +249,12 @@ class StaffCog(commands.Cog):
             )
 
     @group.command(name="kill", description="Kill a character")
-    @app_commands.describe(character="Character name")
+    @app_commands.describe(character="Character name", reason="Cause of death, sent to the owner")
     @app_commands.autocomplete(character=autocomplete.any_approved)
     @app_commands.check(_is_staff)
-    async def kill(self, interaction: discord.Interaction, character: str) -> None:
+    async def kill(
+        self, interaction: discord.Interaction, character: str, reason: str | None = None
+    ) -> None:
         async with self.bot.db() as session:
             row = (
                 await session.execute(select(Character).where(Character.name == character))
@@ -245,14 +263,28 @@ class StaffCog(commands.Cog):
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
             row.status = CharacterStatus.DEAD.value
+            row.death_cause = reason.strip() if reason and reason.strip() else None
+            discord_id = (await session.get(User, row.user_id)).discord_id
             await log_staff_action(
                 session,
                 bot=self.bot,
                 staff_discord_id=interaction.user.id,
                 action="kill",
                 target=str(row.id),
+                payload={"reason": reason},
             )
         await interaction.response.send_message(f"**{character}** has died.", ephemeral=True)
+
+        member = interaction.guild.get_member(discord_id) if interaction.guild else None
+        if member:
+            with contextlib.suppress(discord.Forbidden):
+                await member.send(
+                    t(
+                        "character_death_dm",
+                        name=character,
+                        cause=reason or "Killed by order of the Capitol.",
+                    )
+                )
 
     @group.command(name="jail", description="Forcibly jail a character for a set number of ticks")
     @app_commands.describe(
@@ -921,11 +953,17 @@ class StaffCog(commands.Cog):
         age="Age in years",
         home_location="Where they live (also where they start)",
         traits="Comma-separated personality traits",
+        gender="Feeds pronouns into their dialogue (random if omitted)",
         job="Catalog job id (optional -- /staff job list to see options)",
         backstory="Backstory text (optional)",
         appearance="Appearance text (optional)",
     )
     @app_commands.autocomplete(district=autocomplete.districts)
+    @app_commands.choices(
+        gender=[
+            app_commands.Choice(name=label, value=value) for value, label in GENDER_LABELS.items()
+        ]
+    )
     @app_commands.check(_is_staff)
     async def npc_add(
         self,
@@ -935,6 +973,7 @@ class StaffCog(commands.Cog):
         age: app_commands.Range[int, 1, 120],
         home_location: str,
         traits: str,
+        gender: app_commands.Choice[str] | None = None,
         job: str | None = None,
         backstory: app_commands.Range[str, 0, 1500] | None = None,
         appearance: app_commands.Range[str, 0, 400] | None = None,
@@ -966,12 +1005,14 @@ class StaffCog(commands.Cog):
             return
 
         npc_id = f"staff_{district}_{uuid.uuid4().hex[:8]}"
+        npc_gender = gender.value if gender is not None else random.choice(list(Gender)).value
         async with self.bot.db() as session:
             row = Npc(
                 id=npc_id,
                 district_id=district,
                 name=name,
                 age=age,
+                gender=npc_gender,
                 job_id=job_row.id if job_row is not None else None,
                 home_location_id=home_location,
                 location_id=home_location,
@@ -1031,6 +1072,122 @@ class StaffCog(commands.Cog):
             j for j in jobs if current_lower in j.id.lower() or current_lower in j.title.lower()
         ]
         return [app_commands.Choice(name=f"{j.title} ({j.id})", value=j.id) for j in matches[:25]]
+
+    # ------------------------------------------------------------- lore
+
+    @lore_group.command(
+        name="history-add",
+        description="Add a Panem-wide history fact NPCs can draw on when it's relevant",
+    )
+    @app_commands.describe(
+        keywords="Comma-separated keywords that bring this fact up (e.g. 'dark days, district 13')",
+        text="The history fact itself, as an NPC should understand it",
+    )
+    @app_commands.check(_is_staff)
+    async def lore_history_add(
+        self, interaction: discord.Interaction, keywords: str, text: str
+    ) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            try:
+                entry = await lore_svc.add_history_entry(
+                    session,
+                    keywords=keywords.split(","),
+                    text=text,
+                    created_by_staff_discord_id=interaction.user.id,
+                )
+            except ServiceError as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+            entry_id, parsed_keywords = entry.id, entry.keywords
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="lore_history_add",
+                target=str(entry_id),
+                payload={"keywords": parsed_keywords, "text": text},
+            )
+        await interaction.response.send_message(
+            f"Added history entry **#{entry_id}** (keywords: {', '.join(parsed_keywords)}).",
+            ephemeral=True,
+        )
+
+    @lore_group.command(name="history-remove", description="Remove a Panem-wide history entry")
+    @app_commands.describe(entry_id="The entry's id, shown by /staff lore history-list")
+    @app_commands.check(_is_staff)
+    async def lore_history_remove(self, interaction: discord.Interaction, entry_id: int) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            try:
+                entry = await lore_svc.delete_history_entry(session, entry_id)
+            except ServiceError:
+                await interaction.response.send_message(
+                    f"No history entry `#{entry_id}`.", ephemeral=True
+                )
+                return
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="lore_history_remove",
+                target=str(entry_id),
+                payload={"keywords": entry.keywords, "text": entry.text},
+            )
+        await interaction.response.send_message(
+            f"Removed history entry **#{entry_id}**.", ephemeral=True
+        )
+
+    @lore_group.command(name="history-list", description="List Panem-wide history entries")
+    @app_commands.check(_is_staff)
+    async def lore_history_list(self, interaction: discord.Interaction) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            entries = await lore_svc.list_history_entries(session)
+        if not entries:
+            await interaction.response.send_message("No history entries yet.", ephemeral=True)
+            return
+        lines = []
+        for entry in entries[:25]:
+            text = entry.text if len(entry.text) <= 200 else entry.text[:200] + "…"
+            lines.append(f"**#{entry.id}** [{', '.join(entry.keywords)}] {text}")
+        body = "\n".join(lines)
+        if len(entries) > 25:
+            body += f"\n… and {len(entries) - 25} more."
+        await interaction.response.send_message(body[:1900], ephemeral=True)
+
+    @lore_group.command(
+        name="au-set", description="Set the Alternate Universe notes every NPC keeps in mind"
+    )
+    @app_commands.describe(text="Free-form notes; replaces whatever was set before")
+    @app_commands.check(_is_staff)
+    async def lore_au_set(self, interaction: discord.Interaction, text: str) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            try:
+                await lore_svc.set_world_lore(session, alternate_universe_notes=text)
+            except ServiceError as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="lore_au_set",
+                target="world_lore_settings",
+                payload={"text": text},
+            )
+        await interaction.response.send_message("Alternate Universe notes updated.", ephemeral=True)
+
+    @lore_group.command(name="au-show", description="Show the current Alternate Universe notes")
+    @app_commands.check(_is_staff)
+    async def lore_au_show(self, interaction: discord.Interaction) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            settings_row = await lore_svc.get_world_lore(session)
+        notes = settings_row.alternate_universe_notes if settings_row is not None else ""
+        await interaction.response.send_message(
+            notes[:1900] or "No Alternate Universe notes set.", ephemeral=True
+        )
 
 
 async def setup(bot: commands.Bot) -> None:

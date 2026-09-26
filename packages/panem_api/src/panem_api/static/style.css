@@ -24,6 +24,31 @@
   --status-busy-border: rgba(239, 68, 68, 0.35);
   --status-busy-text: #f87171;
 
+  /* Other players' characters (Social tab's Residents directory) get their
+     own three statuses -- sleeping/talking to residents/idle -- distinct
+     from an NPC resident's available/working/busy above. "Engaged" reuses
+     the gold accent family (a conversation is the Capitol-social event
+     this whole tab is about); "sleeping" gets a calm indigo; "idle" stays
+     a plain muted gray, the same non-color the rest of the dashboard uses
+     for "nothing going on." */
+  --status-sleep-bg: rgba(129, 140, 248, 0.12);
+  --status-sleep-border: rgba(129, 140, 248, 0.35);
+  --status-sleep-text: #a5b4fc;
+  --status-engaged-bg: color-mix(in srgb, var(--accent) 14%, transparent);
+  --status-engaged-border: color-mix(in srgb, var(--accent) 40%, transparent);
+  --status-engaged-text: var(--accent);
+  --status-idle-bg: color-mix(in srgb, var(--muted) 14%, transparent);
+  --status-idle-border: color-mix(in srgb, var(--muted) 32%, transparent);
+  --status-idle-text: var(--muted);
+
+  /* Shared success/failure ink -- the same values `.result-line`/`.tab-
+     status.error` (dashboard.css) and the standalone minigame pages
+     (crime.css/vitals.css/work.css) already used as bare hex codes;
+     named here so new rules can reference one source instead of another
+     copy of the same two colors. */
+  --success: #7cd992;
+  --danger: #e0736b;
+
   /* Real device safe areas (notch/home-indicator/gesture-bar cutouts) --
      resolve to 0px on anything without a cutout, so applying these
      unconditionally is always safe. Requires `viewport-fit=cover` on the
@@ -233,6 +258,38 @@ select {
 #status:empty,
 #status[hidden] {
   display: none !important;
+}
+
+/* The Activity shell's own connection/auth notices (`app.js`'s
+   `setStatus`) -- always a preview-mode fallback or a failed Discord
+   handshake, never a benign "all good" note (those clear to empty
+   instead), so this always reads as a formal notice rather than blending
+   into ordinary muted status text: a gold left rule and tinted panel
+   background, same family as `.panel`'s own gold top edge, with a small
+   serif label so it reads as an official notice rather than an alarm. */
+#status.is-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border-left: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+  color: var(--text);
+}
+
+#status.is-notice::before {
+  flex: 0 0 auto;
+  content: "Notice";
+  font-family: var(--font-serif);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 4px;
+  color: #1a1406;
+  background: var(--accent);
 }
 
 canvas {

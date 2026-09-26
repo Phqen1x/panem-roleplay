@@ -6,6 +6,14 @@ gated behind good relations with that district's fence NPC. Mirrors
 local illicit work (`panem_sim.systems.economy`'s module docstring
 point 8), never the national legal market.
 
+Only reachable at the district's outskirts, at night --
+`resolve_black_market_location` checks both, the same two-part gate
+`panem_shared.poaching` puts on poaching itself (which happens at the
+very same location). The outskirts can't physically be reached any
+other time anyway (`panem_shared.travel.check_can_travel`); this is the
+defense-in-depth re-check for a character already standing there from a
+night that's since ended.
+
 Re-exported from `panem_bot.services.blackmarket` for every existing
 call site -- moved here (same reasoning as every other `panem_shared`
 move this session) because the web dashboard's Market tab needs this
@@ -31,10 +39,11 @@ from panem_shared.db.models import (
     MarketPrice,
     RelationshipRow,
 )
-from panem_shared.enums import CharacterStatus, LocationKind, OwnerKind, RpMode, Stance
+from panem_shared.enums import CharacterStatus, DayPhase, LocationKind, OwnerKind, RpMode, Stance
 from panem_shared.errors import NotAllowed, NotFound
 from panem_shared.jail import commit_to_jail, crackdown_bad_odds
 from panem_shared.relationships import relationship_key
+from panem_shared.simtime import current as current_time
 
 BLACKMARKET_PRESSURE_DELTA = 0.05
 """Mirrors `panem_shared.market.ILLICIT_PRESSURE_DELTA` exactly -- same
@@ -64,16 +73,26 @@ def resolve_fence(district_id: int, npcs: dict[str, NpcContent]) -> NpcContent:
     return fence
 
 
-def resolve_black_market_location(character: Character, district: District) -> Location:
-    """A character must be physically at one of their district's illicit
-    market locations to trade -- the same physical-presence requirement
-    `market.py`'s legal trading has, narrowed to only the illicit ones."""
+def resolve_black_market_location(
+    character: Character, district: District, current_tick: int
+) -> Location:
+    """A character must be physically at the district's outskirts to
+    trade -- the same location poaching happens at
+    (`panem_shared.poaching`), and the *only* place the black market can
+    be reached at all, at night only: the one time the outskirts can be
+    reached in the first place (`panem_shared.travel.check_can_travel`),
+    checked again here the same defense-in-depth way `poaching.check_can_
+    poach` re-checks it, in case a character is still standing there from
+    a night that's since ended."""
     location = next(
         (loc for loc in district.locations if loc.id == character.location_id),
         None,
     )
-    if location is None or location.kind != LocationKind.MARKET or not location.illicit:
+    if location is None or location.kind != LocationKind.OUTSKIRTS:
         raise NotAllowed("blackmarket_not_at_market", name=character.name)
+    _, phase, _, _ = current_time(current_tick)
+    if phase != DayPhase.NIGHT:
+        raise NotAllowed("blackmarket_night_only", name=character.name)
     return location
 
 
@@ -95,10 +114,18 @@ async def check_can_trade(session: AsyncSession, character: Character, fence: Np
 
 
 def resolve_good(district: District, goods: dict[str, Good], good_id: str) -> Good:
-    if good_id not in district.illicit_produces:
-        raise NotFound("blackmarket_good_not_traded")
+    """A district's own illicit produce trades only at that district's
+    fence (`good_id in district.illicit_produces`) -- but loot from
+    `/steal`/`/burgle` (`panem_shared.stealing`'s `category: "stolen"`
+    goods) was never produced anywhere in particular, so it trades at
+    *any* fence on that category alone, regardless of district. This is
+    the actual enforcement of "the only way to sell stolen goods is the
+    black market": nothing else (the legal market's own `resolve_good`)
+    ever accepts a `stolen`-category good at all."""
     good = goods.get(good_id)
     if good is None:
+        raise NotFound("blackmarket_good_not_traded")
+    if good_id not in district.illicit_produces and good.category != "stolen":
         raise NotFound("blackmarket_good_not_traded")
     return good
 
@@ -106,6 +133,15 @@ def resolve_good(district: District, goods: dict[str, Good], good_id: str) -> Go
 async def get_price(session: AsyncSession, district_id: int, good: Good) -> float:
     row = await session.get(MarketPrice, (district_id, good.id))
     return row.price if row is not None else good.base_price
+
+
+async def get_supply(session: AsyncSession, district_id: int, good_id: str) -> float | None:
+    """Mirrors `panem_shared.market.get_supply` exactly, for the Market
+    tab's black-market stock display -- `None` (not `0.0`) when no illicit
+    supply has been produced yet today rather than manufacturing a "sold
+    out" figure that was never actually allocated."""
+    row = await session.get(MarketPrice, (district_id, good_id))
+    return row.supply if row is not None else None
 
 
 async def _reserve_stock(session: AsyncSession, district_id: int, good: Good, qty: int) -> None:
@@ -181,7 +217,7 @@ async def buy(
     tick: int,
     rng: random.Random,
 ) -> BlackMarketTradeResult:
-    resolve_black_market_location(character, district)
+    resolve_black_market_location(character, district, tick)
     fence = resolve_fence(district.id, npcs)
     await check_can_trade(session, character, fence)
     good = resolve_good(district, goods, good_id)
@@ -225,7 +261,7 @@ async def sell(
     tick: int,
     rng: random.Random,
 ) -> BlackMarketTradeResult:
-    resolve_black_market_location(character, district)
+    resolve_black_market_location(character, district, tick)
     fence = resolve_fence(district.id, npcs)
     await check_can_trade(session, character, fence)
     good = resolve_good(district, goods, good_id)

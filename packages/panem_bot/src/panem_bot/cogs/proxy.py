@@ -27,15 +27,18 @@ from panem_shared.db.models import (
     Character,
     DialogueLog,
     DiscordChannel,
+    DistrictLore,
     DistrictState,
     Memory,
     Npc,
+    PanemHistoryEntry,
     RelationshipRow,
     Scene,
     SceneMessage,
     Shift,
     User,
     WorldClock,
+    WorldLoreSettings,
 )
 from panem_shared.enums import ChannelKind, CharacterStatus, OwnerKind, RpMode
 from panem_shared.relationships import relationship_key
@@ -199,6 +202,17 @@ class ProxyCog(commands.Cog):
         if open_shift is None:
             return
         if not qualifies:
+            return
+        if not shifts_svc.can_earn_rp_credit_anywhere(
+            character
+        ) and not shifts_svc.can_work_from_current_location(character, current_tick):
+            # FR-LOC: proxying is allowed from either the character's home
+            # district or wherever they've actually traveled to
+            # (`can_rp_in_district`) -- but crediting a *shift* still
+            # requires actually being home, the same gate `/work` itself
+            # enforces. A character RPing away from home still gets the
+            # fatigue/sanity credit above; their open shift just isn't
+            # silently completed by it.
             return
 
         bot_content = self.bot.content  # type: ignore[attr-defined]
@@ -454,7 +468,7 @@ class ProxyCog(commands.Cog):
                             select(SceneMessage)
                             .where(SceneMessage.scene_id == scene.id)
                             .order_by(SceneMessage.ts.desc())
-                            .limit(constants.ENGAGEMENT_HISTORY_HARD_CAP)
+                            .limit(constants.ENGAGEMENT_HISTORY_WINDOW)
                         )
                     )
                     .scalars()
@@ -478,8 +492,19 @@ class ProxyCog(commands.Cog):
             # message rather than per NPC, since none of it changes
             # between the NPCs replying to the same line.
             district_state = await session.get(DistrictState, scene.district_id)
+            district_lore = await session.get(DistrictLore, scene.district_id)
             character_job_title = speaker.job_title
             character_home_district = content_bundle.district(speaker.district_id)
+
+            # Panem-wide staff lore (`/staff lore ...`) -- fetched once per
+            # message, same as `district_state` above, since it doesn't
+            # vary between the NPCs replying to the same line. Keyword
+            # matching against `message_content` happens per-NPC inside
+            # `dialogue_svc.build_request_context` (mirrors how `memories`
+            # is likewise fetched once and filtered per-NPC there).
+            history_entries = (await session.execute(select(PanemHistoryEntry))).scalars().all()
+            world_lore = await session.get(WorldLoreSettings, 1)
+            world_notes = world_lore.alternate_universe_notes if world_lore is not None else None
 
             for npc in speaking:
                 try:
@@ -549,6 +574,8 @@ class ProxyCog(commands.Cog):
                     message=message_content,
                     settings=self.bot.settings,  # type: ignore[attr-defined]
                     history=history,
+                    history_entries=history_entries,
+                    world_notes=world_notes,
                     present=present,
                     npc_job_title=npc_job.title if npc_job is not None else None,
                     npc_background=npc_background,
@@ -557,6 +584,7 @@ class ProxyCog(commands.Cog):
                     character_home_district=character_home_district,
                     known=known,
                     district_on_edge=jail_svc.is_crackdown_active(district_state, current_tick),
+                    district_lore=district_lore,
                 )
 
                 sent = await webhook.send(

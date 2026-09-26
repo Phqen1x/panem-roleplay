@@ -6,10 +6,12 @@ from sqlalchemy import select
 from panem_bot.errors import NotAllowed
 from panem_bot.services import stealing as stealing_svc
 from panem_shared import constants
+from panem_shared.content.schemas import Good
 from panem_shared.db.models import (
     Character,
     CrimeLog,
     DistrictState,
+    Inventory,
     Npc,
     Property,
     RelationshipRow,
@@ -32,6 +34,25 @@ class SequenceRng:
 
     def randint(self, a: int, b: int) -> int:
         return a
+
+    def choice(self, seq):  # noqa: ANN001, ANN201 -- matches random.Random's own loose typing
+        """Deterministic stand-in for `rng.choice(STEAL_LOOT_GOOD_IDS)`/
+        `rng.choice(BURGLE_LOOT_GOOD_IDS)` -- always the first entry, the
+        same "always the low end" determinism `randint` above already
+        gives every other roll in this fake."""
+        return seq[0]
+
+
+def make_goods() -> dict[str, Good]:
+    """A minimal, self-contained goods catalog covering every id
+    `STEAL_LOOT_GOOD_IDS`/`BURGLE_LOOT_GOOD_IDS` can pick -- these tests
+    build their own content the same way `test_api_app.py`'s `make_content`
+    does, rather than depending on `data/goods.yaml`."""
+    good_ids = set(constants.STEAL_LOOT_GOOD_IDS) | set(constants.BURGLE_LOOT_GOOD_IDS)
+    return {
+        good_id: Good(id=good_id, name=good_id.replace("_", " ").title(), base_price=10.0, category="stolen")
+        for good_id in good_ids
+    }
 
 
 def make_character(**overrides: object) -> Character:
@@ -156,8 +177,8 @@ class TestCheckCanSteal:
 
 
 class TestResolveSteal:
-    async def test_success_moves_money_with_no_consequence(self, db_session):
-        character = make_character(money=0)
+    async def test_success_grants_a_random_loot_good_not_money(self, db_session):
+        character = make_character(money=50)
         victim = make_npc(money=50.0)
         result = await stealing_svc.resolve_steal(
             db_session,
@@ -166,26 +187,20 @@ class TestResolveSteal:
             district_id=1,
             current_tick=10,
             rng=SequenceRng([0.0]),
+            goods=make_goods(),
         )
         assert result.success is True
-        assert result.amount == constants.STEAL_YIELD_MONEY_RANGE[0]
-        assert character.money == result.amount
-        assert victim.money == 50.0 - result.amount
+        assert result.amount == constants.STEAL_LOOT_QTY
+        assert result.good_name is not None
+        # Neither wallet moves -- the payout is a good, never cash.
+        assert character.money == 50
+        assert victim.money == 50.0
         assert character.jailed_until_tick is None
 
-    async def test_success_capped_by_what_the_victim_has(self, db_session):
-        character = make_character(money=0)
-        victim = make_npc(money=2.0)
-        result = await stealing_svc.resolve_steal(
-            db_session,
-            character=character,
-            victim=victim,
-            district_id=1,
-            current_tick=10,
-            rng=SequenceRng([0.0]),
-        )
-        assert result.amount == 2
-        assert victim.money == 0.0
+        good_id = constants.STEAL_LOOT_GOOD_IDS[0]  # SequenceRng.choice always picks the first
+        row = await db_session.get(Inventory, (OwnerKind.CHARACTER.value, "1", good_id))
+        assert row is not None
+        assert row.qty == constants.STEAL_LOOT_QTY
 
     async def test_clean_miss_changes_nothing(self, db_session):
         character = make_character(money=100)
@@ -197,6 +212,7 @@ class TestResolveSteal:
             district_id=1,
             current_tick=10,
             rng=SequenceRng([0.99, 0.99]),
+            goods=make_goods(),
         )
         assert result.success is False
         assert result.alerted is False
@@ -214,6 +230,7 @@ class TestResolveSteal:
             district_id=1,
             current_tick=10,
             rng=SequenceRng([0.99, 0.0, 0.0]),
+            goods=make_goods(),
         )
         assert result.success is False
         assert result.alerted is True
@@ -234,6 +251,7 @@ class TestResolveSteal:
             district_id=1,
             current_tick=10,
             rng=SequenceRng([0.99, 0.0, 0.99]),
+            goods=make_goods(),
         )
 
         assert result.caught is True
@@ -264,6 +282,7 @@ class TestResolveSteal:
             district_id=1,
             current_tick=10,
             rng=SequenceRng([0.99, 0.0, 0.99]),
+            goods=make_goods(),
         )
 
         assert result.caught is True
@@ -289,6 +308,7 @@ class TestResolveSteal:
             district_id=1,
             current_tick=10,
             rng=SequenceRng([roll, 0.99]),
+            goods=make_goods(),
         )
         assert result.success is False
 
@@ -302,6 +322,7 @@ class TestResolveSteal:
             district_id=1,
             current_tick=42,
             rng=SequenceRng([0.99, 0.99]),
+            goods=make_goods(),
         )
         assert character.last_steal_tick == 42
 
@@ -412,25 +433,29 @@ class TestCheckCanBurgle:
 
 
 class TestResolveBurgle:
-    async def test_success_pays_a_fraction_of_the_house_value(self, db_session):
+    async def test_success_grants_a_random_loot_good_not_money(self, db_session):
         character = make_character(current_district_id=1, money=0)
         character.id = 1
         house = make_house(district_id=1, owner_id=2, suggested_price=1000.0)
         result = await stealing_svc.resolve_burgle(
-            db_session, character=character, house=house, current_tick=10, rng=SequenceRng([0.0])
+            db_session,
+            character=character,
+            house=house,
+            current_tick=10,
+            rng=SequenceRng([0.0]),
+            goods=make_goods(),
         )
         assert result.success is True
-        assert result.amount == round(1000.0 * constants.BURGLE_YIELD_FRACTION)
-        assert character.money == result.amount
-
-    async def test_payout_is_capped(self, db_session):
-        character = make_character(current_district_id=1, money=0)
-        character.id = 1
-        house = make_house(district_id=1, owner_id=2, suggested_price=1_000_000.0)
-        result = await stealing_svc.resolve_burgle(
-            db_session, character=character, house=house, current_tick=10, rng=SequenceRng([0.0])
+        assert result.amount in range(
+            constants.BURGLE_LOOT_QTY_RANGE[0], constants.BURGLE_LOOT_QTY_RANGE[1] + 1
         )
-        assert result.amount == constants.BURGLE_YIELD_CAP
+        assert result.good_name is not None
+        assert character.money == 0  # never touched -- the payout is a good, not cash
+
+        good_id = constants.BURGLE_LOOT_GOOD_IDS[0]  # SequenceRng.choice always picks the first
+        row = await db_session.get(Inventory, (OwnerKind.CHARACTER.value, "1", good_id))
+        assert row is not None
+        assert row.qty == result.amount
 
     async def test_caught_applies_the_same_consequence_as_stealing(self, db_session):
         character = make_character(current_district_id=1, money=100, jailed_until_tick=None)
@@ -445,6 +470,7 @@ class TestResolveBurgle:
             house=house,
             current_tick=10,
             rng=SequenceRng([0.99, 0.0, 0.99]),
+            goods=make_goods(),
         )
 
         assert result.caught is True
@@ -471,10 +497,11 @@ class TestRollAndApplySteal:
             district_row=None,
             current_tick=42,
             rng=SequenceRng([0.0]),
+            goods=make_goods(),
         )
         assert character.last_steal_tick == 42
 
-    async def test_success_moves_money(self, db_session):
+    async def test_success_grants_loot_not_money(self, db_session):
         character = make_character(money=0)
         victim = make_npc(money=50.0)
         result = await stealing_svc.roll_and_apply_steal(
@@ -484,9 +511,11 @@ class TestRollAndApplySteal:
             district_row=None,
             current_tick=10,
             rng=SequenceRng([0.0]),
+            goods=make_goods(),
         )
         assert result.success is True
-        assert character.money == result.amount
+        assert character.money == 0
+        assert result.good_name is not None
 
     async def test_logs_the_attempt(self, db_session):
         character = make_character(money=0)
@@ -498,6 +527,7 @@ class TestRollAndApplySteal:
             district_row=None,
             current_tick=10,
             rng=SequenceRng([0.0]),
+            goods=make_goods(),
         )
         row = (await db_session.execute(select(CrimeLog))).scalar_one()
         assert row.character_id == character.id
@@ -506,6 +536,7 @@ class TestRollAndApplySteal:
         assert row.success is True
         assert row.caught is False
         assert row.target_name == "Mark"
+        assert row.good_name is not None
         assert row.amount > 0
 
 
@@ -519,10 +550,11 @@ class TestRollAndApplyBurgle:
             district_row=None,
             current_tick=42,
             rng=SequenceRng([0.0]),
+            goods=make_goods(),
         )
         assert character.last_steal_tick == 42
 
-    async def test_success_pays_a_fraction_of_the_house_value(self, db_session):
+    async def test_success_grants_loot_not_money(self, db_session):
         character = make_character(money=0)
         result = await stealing_svc.roll_and_apply_burgle(
             db_session,
@@ -531,10 +563,11 @@ class TestRollAndApplyBurgle:
             district_row=None,
             current_tick=10,
             rng=SequenceRng([0.0]),
+            goods=make_goods(),
         )
         assert result.success is True
-        assert result.amount == round(1000.0 * constants.BURGLE_YIELD_FRACTION)
-        assert character.money == result.amount
+        assert character.money == 0
+        assert result.good_name is not None
 
     async def test_logs_the_attempt_with_the_owner_s_name(self, db_session):
         db_session.add(User(id=1, discord_id=1))
@@ -553,6 +586,7 @@ class TestRollAndApplyBurgle:
             district_row=None,
             current_tick=10,
             rng=SequenceRng([0.0]),
+            goods=make_goods(),
         )
         row = (await db_session.execute(select(CrimeLog))).scalar_one()
         assert row.kind == "burgle"
@@ -568,6 +602,7 @@ class TestRollAndApplyBurgle:
             district_row=None,
             current_tick=10,
             rng=SequenceRng([0.0]),
+            goods=make_goods(),
         )
         row = (await db_session.execute(select(CrimeLog))).scalar_one()
         assert row.target_name is None

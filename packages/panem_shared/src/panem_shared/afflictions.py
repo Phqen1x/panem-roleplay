@@ -163,6 +163,45 @@ async def apply_auto_afflictions(
     return applied
 
 
+def _auto_death_cause(character: Character) -> str:
+    """`apply_auto_death` only sees the final `health` value, not which
+    meter actually drove it to zero -- this ranks whichever of hunger/
+    thirst/fatigue/sanity is furthest past its own `HEALTH_DECAY_*`
+    threshold at the moment of death (the strongest signal available
+    without tracking history) and returns a human cause for it. Falls
+    back to `AUTO_DEATH_MESSAGE` if none crossed a threshold (health can
+    also be zeroed by accumulated small decays with nothing currently
+    over the line)."""
+    candidates: list[tuple[float, str]] = []
+    if character.thirst >= constants.HEALTH_DECAY_THIRST_THRESHOLD:
+        span = constants.THIRST_MAX - constants.HEALTH_DECAY_THIRST_THRESHOLD
+        severity = (
+            (character.thirst - constants.HEALTH_DECAY_THIRST_THRESHOLD) / span if span else 1.0
+        )
+        candidates.append((severity, "Died of dehydration, having gone too long without water."))
+    if character.hunger >= constants.HEALTH_DECAY_HUNGER_THRESHOLD:
+        span = constants.HUNGER_MAX - constants.HEALTH_DECAY_HUNGER_THRESHOLD
+        severity = (
+            (character.hunger - constants.HEALTH_DECAY_HUNGER_THRESHOLD) / span if span else 1.0
+        )
+        candidates.append((severity, "Died of starvation, having gone too long without food."))
+    if character.sanity <= constants.HEALTH_DECAY_SANITY_THRESHOLD:
+        span = constants.HEALTH_DECAY_SANITY_THRESHOLD - constants.SANITY_MIN
+        severity = (
+            (constants.HEALTH_DECAY_SANITY_THRESHOLD - character.sanity) / span if span else 1.0
+        )
+        candidates.append((severity, "Succumbed after a complete mental breakdown."))
+    if character.fatigue <= constants.FATIGUE_EXHAUSTION_THRESHOLD:
+        span = constants.FATIGUE_EXHAUSTION_THRESHOLD - constants.FATIGUE_MIN
+        severity = (
+            (constants.FATIGUE_EXHAUSTION_THRESHOLD - character.fatigue) / span if span else 1.0
+        )
+        candidates.append((severity, "Collapsed from sheer exhaustion, having gone without sleep."))
+    if not candidates:
+        return AUTO_DEATH_MESSAGE
+    return max(candidates, key=lambda pair: pair[0])[1]
+
+
 def apply_auto_death(character: Character) -> bool:
     """Simulation mode only -- marks `character` dead once `health` bottoms
     out at `constants.HEALTH_MIN`. Returns whether it happened (so the
@@ -175,5 +214,5 @@ def apply_auto_death(character: Character) -> bool:
     if character.health > constants.HEALTH_MIN:
         return False
     character.status = CharacterStatus.DEAD.value
-    character.death_cause = AUTO_DEATH_MESSAGE
+    character.death_cause = _auto_death_cause(character)
     return True

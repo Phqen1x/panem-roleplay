@@ -26,16 +26,41 @@ from redis.asyncio import Redis
 
 from panem_bot.errors import NotAllowed
 from panem_shared import constants
+from panem_shared import district_lore as district_lore_svc
 from panem_shared.content.schemas import District, Location
-from panem_shared.db.models import Character, DistrictState, Memory, Npc
-from panem_shared.enums import CharacterStatus, RpMode
+from panem_shared.db.models import (
+    Character,
+    DistrictLore,
+    DistrictState,
+    Memory,
+    Npc,
+    PanemHistoryEntry,
+)
+from panem_shared.enums import CharacterStatus, Gender, Position, RpMode
 from panem_shared.lemonade import omni
+from panem_shared.lore import match_history_entries
 from panem_shared.memory import retrieve as retrieve_memories
 from panem_shared.settings import Settings
 
 logger = structlog.get_logger()
 
 STAMINA_KEY_PREFIX = "talk:stamina"
+
+# Surfaced in `build_request_context`'s `[SPEAKER] ... standing` line when
+# the character an NPC is talking to holds one of these `Position`s
+# (`/staff give position`) -- so the NPC treats them as the entity of
+# power they are rather than an ordinary local, without needing the
+# actual President/Gamemaker/etc. physically present. Doesn't cover every
+# `Position` (e.g. Victor already shapes a reply plenty via `known`/
+# memories/reputation on its own); this is specifically for the "you
+# outrank ordinary district life" positions the History tab's own ask
+# calls out.
+_POWER_STANDING: dict[str, str] = {
+    Position.PRESIDENT.value: "the President of Panem",
+    Position.VICE_PRESIDENT.value: "the Vice President of Panem",
+    Position.GAMEMAKER.value: "a Gamemaker",
+    Position.GOVERNOR.value: "this district's Governor",
+}
 
 
 def check_can_talk(character: Character) -> None:
@@ -69,6 +94,20 @@ def resolve_provider(npc: Npc, settings: Settings) -> str:
     return npc.provider_override or settings.dialogue_provider
 
 
+_PRONOUNS: dict[str, str] = {
+    Gender.MALE.value: "he/him",
+    Gender.FEMALE.value: "she/her",
+    Gender.NONBINARY.value: "they/them",
+}
+
+
+def _pronouns(gender: str | None) -> str | None:
+    """`None` (an unset `Character.gender`/`Npc.gender`) means "they/them"
+    -- the system prompt's default absent a `pronouns` line at all, so
+    this just omits the line rather than spelling it out."""
+    return _PRONOUNS.get(gender) if gender else None
+
+
 def build_request_context(
     *,
     npc: Npc,
@@ -77,6 +116,9 @@ def build_request_context(
     character: Character,
     stance: str,
     memories: list[Memory],
+    message: str = "",
+    history_entries: Sequence[PanemHistoryEntry] = (),
+    world_notes: str | None = None,
     present: Sequence[str] = (),
     npc_job_title: str | None = None,
     npc_background: str | None = None,
@@ -86,6 +128,7 @@ def build_request_context(
     known: str | None = None,
     constraints: Mapping[str, str] | None = None,
     district_on_edge: bool = False,
+    district_lore: DistrictLore | None = None,
 ) -> omni.RequestContext:
     """`present` lists everyone else in the scene besides `character`
     (other engaged NPCs, other joined characters) -- the system prompt
@@ -113,14 +156,36 @@ def build_request_context(
     without the model needing to infer it from crisis/unrest numbers
     alone.
 
+    `district_lore` (the Activity's staff-only History tab, `panem_shared.
+    district_lore.DistrictLore`) folds a short, capped summary into the
+    scene block via `district_lore_svc.prompt_summary` -- deliberately
+    just a tone-setting line (classification, adjectives, urban/rural
+    feel, academy name), not a dump of everything staff have written.
+    `character.positions` (`Position.PRESIDENT`/`VICE_PRESIDENT`/
+    `GAMEMAKER`/`GOVERNOR`) adds a `[SPEAKER] ... standing` line so the
+    NPC recognizes them as an entity of power even without any of that
+    coming from `stance`/`known`.
+
     `known` is `RelationshipRow.summary` for this NPC-character pair -- a
     running recap of every past engagement between them, already trimmed
     to `RELATIONSHIP_SUMMARY_MAX_WORDS` by `summarize_engagement`. It fills
     the `[SPEAKER] ... what the NPC knows of them` line the system prompt
     has always documented but nothing populated before this. `constraints`
     lets a caller override `render_request_header`'s default `max_words`
-    (see `_length_matched_max_words`) without touching anything else."""
+    (see `_length_matched_max_words`) without touching anything else.
+
+    `history_entries` is every staff-authored `PanemHistoryEntry` the
+    caller fetched (the whole table, not pre-filtered) -- mirrors
+    `memories` above, which is likewise the NPC's full memory set filtered
+    here rather than by the caller; `panem_shared.lore.
+    match_history_entries` does the keyword match against `message` and
+    the result rides the `[HISTORY]` block. `world_notes` is
+    `WorldLoreSettings.alternate_universe_notes`, included unconditionally
+    (see `omni.RequestContext.world_notes`) rather than matched -- a
+    caller with nothing to give either one simply omits it, same as every
+    other optional field here."""
     relevant = retrieve_memories(memories, "npc", npc.id)
+    history = tuple(match_history_entries(history_entries, message))
     tone = (npc.speech_style or {}).get("tone", "plain")
 
     npc_block: dict[str, str] = {
@@ -129,6 +194,9 @@ def build_request_context(
         "stance": stance,
         "tone": tone,
     }
+    npc_pronouns = _pronouns(npc.gender)
+    if npc_pronouns:
+        npc_block["pronouns"] = npc_pronouns
     if npc_job_title:
         npc_block["job"] = npc_job_title
     if npc.traits:
@@ -151,8 +219,14 @@ def build_request_context(
         scene["peacekeeper_crackdown"] = (
             "active -- peacekeepers are cracking down, people are visibly on edge"
         )
+    lore_summary = district_lore_svc.prompt_summary(district_lore)
+    if lore_summary:
+        scene["lore"] = lore_summary
 
     speaker: dict[str, str] = {"name": character.name}
+    speaker_pronouns = _pronouns(character.gender)
+    if speaker_pronouns:
+        speaker["pronouns"] = speaker_pronouns
     if character_job_title:
         speaker["job"] = character_job_title
     if character_home_district is not None:
@@ -160,6 +234,9 @@ def build_request_context(
     speaker["reputation"] = f"{character.reputation or 0.0:.1f}"
     if known:
         speaker["known"] = known
+    standings = [_POWER_STANDING[p] for p in character.positions or [] if p in _POWER_STANDING]
+    if standings:
+        speaker["standing"] = ", ".join(standings)
 
     return omni.RequestContext(
         mode=omni.RequestMode.DIALOGUE,
@@ -167,6 +244,8 @@ def build_request_context(
         scene=scene,
         speaker=speaker,
         memories=tuple(m.text for m in relevant),
+        world_notes=world_notes,
+        history=history,
         constraints=constraints or {},
     )
 
@@ -203,6 +282,28 @@ def template_reply(npc: Npc, stance: str, message: str) -> str:
     return f"*{npc.name} {opener},* {line}"
 
 
+def _llm_error_detail(exc: Exception) -> str:
+    """`str(exc)` alone, for the `httpx.HTTPStatusError` a non-2xx
+    `response.raise_for_status()` raises, is just something like "Server
+    error '500 Internal Server Error' for url '...'" -- the actual reason
+    the LLM server errored (a stack trace, an out-of-memory or
+    context-length message) rides in the response body, which
+    `raise_for_status()` never surfaces on its own. Folding it in here is
+    what makes `dialogue_llm_failed`/`dialogue_summarize_failed` actually
+    diagnosable from the bot's own log instead of only confirming *that*
+    a call failed -- every catch site below logs through this rather than
+    a bare `str(exc)`."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        body = exc.response.text.strip()
+        detail = str(exc)
+        if body:
+            detail = f"{detail} -- body: {body[:500]}"
+        return detail
+    if isinstance(exc, httpx.TimeoutException):
+        return f"{type(exc).__name__} (timed out)"
+    return str(exc) or type(exc).__name__
+
+
 async def generate_llm_reply(
     ctx: omni.RequestContext,
     message: str,
@@ -214,7 +315,10 @@ async def generate_llm_reply(
     earlier in the same conversation -- an engagement thread's
     `SceneMessage` rows, most recently. `/talk`'s always-fresh 1:1 calls
     just pass none, exactly as before this parameter existed."""
+    base_url = settings.llm_base_url or omni.DEFAULT_BASE_URL
     model = settings.llm_model or omni.PROFILES[settings.lemonade_profile].model_name
+    if len(history) > constants.ENGAGEMENT_HISTORY_WINDOW:
+        history = history[-constants.ENGAGEMENT_HISTORY_WINDOW:]
     body: dict[str, object] = {
         "model": model,
         "messages": omni.build_messages(ctx, [*history, {"role": "user", "content": message}]),
@@ -231,14 +335,18 @@ async def generate_llm_reply(
     timeout = settings.llm_timeout_ms / 1000
     async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.post(
-            f"{settings.llm_base_url.rstrip('/')}/chat/completions",
+            f"{base_url.rstrip('/')}/chat/completions",
             json=body,
             headers=headers,
         )
         response.raise_for_status()
         data = response.json()
-    reply: str = data["choices"][0]["message"]["content"]
-    return reply.strip()
+    choice = data["choices"][0]
+    msg = choice["message"]
+    reply: str = (msg.get("content") or msg.get("reasoning_content") or "").strip()
+    if not reply:
+        raise ValueError("LLM returned an empty reply")
+    return reply
 
 
 def _length_matched_max_words(message: str) -> int:
@@ -254,21 +362,41 @@ def _length_matched_max_words(message: str) -> int:
 
 
 def build_npc_to_npc_context(
-    *, npc: Npc, other_npc: Npc, district: District, location: Location, message: str = ""
+    *,
+    npc: Npc,
+    other_npc: Npc,
+    district: District,
+    location: Location,
+    message: str = "",
+    history_entries: Sequence[PanemHistoryEntry] = (),
+    world_notes: str | None = None,
 ) -> omni.RequestContext:
     """The NPC-to-NPC counterpart of `build_request_context`: `speaker`
     is another NPC rather than a player `Character` (no reputation/job
     block one of those would carry), and there's no stance/memories
     lookup -- unprompted ambient chatter (`panem_sim.systems.
     npc_chatter`) is pure world flavor, not a tracked relationship the
-    way `/talk`'s stance and memories are."""
+    way `/talk`'s stance and memories are. `history_entries`/`world_notes`
+    are the same Panem-wide lore inputs `build_request_context` takes --
+    two NPCs gossiping still share the same national canon a player
+    conversation would draw on."""
     tone = (npc.speech_style or {}).get("tone", "plain")
     constraints = {"max_words": str(_length_matched_max_words(message))} if message else {}
+    npc_block = {"name": npc.name, "stance": "neutral", "tone": tone}
+    npc_pronouns = _pronouns(npc.gender)
+    if npc_pronouns:
+        npc_block["pronouns"] = npc_pronouns
+    speaker = {"name": other_npc.name}
+    speaker_pronouns = _pronouns(other_npc.gender)
+    if speaker_pronouns:
+        speaker["pronouns"] = speaker_pronouns
     return omni.RequestContext(
         mode=omni.RequestMode.DIALOGUE,
-        npc={"name": npc.name, "stance": "neutral", "tone": tone},
+        npc=npc_block,
         scene={"location": location.name, "district": district.name},
-        speaker={"name": other_npc.name},
+        speaker=speaker,
+        world_notes=world_notes,
+        history=tuple(match_history_entries(history_entries, message)),
         constraints=constraints,
     )
 
@@ -282,6 +410,8 @@ async def generate_npc_to_npc_reply(
     message: str,
     settings: Settings,
     history: Sequence[dict[str, str]] = (),
+    history_entries: Sequence[PanemHistoryEntry] = (),
+    world_notes: str | None = None,
 ) -> str:
     """`npc` is who's about to speak next; `other_npc` is who they're
     replying to. `message` is the other NPC's last line -- or, for the
@@ -294,12 +424,18 @@ async def generate_npc_to_npc_reply(
         return template_reply(npc, "neutral", message)
 
     ctx = build_npc_to_npc_context(
-        npc=npc, other_npc=other_npc, district=district, location=location, message=message
+        npc=npc,
+        other_npc=other_npc,
+        district=district,
+        location=location,
+        message=message,
+        history_entries=history_entries,
+        world_notes=world_notes,
     )
     try:
         return await generate_llm_reply(ctx, message, settings, history=history)
-    except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
-        logger.warning("dialogue_llm_failed", npc_id=npc.id, error=str(exc))
+    except (httpx.HTTPError, KeyError, IndexError, ValueError, AttributeError) as exc:
+        logger.warning("dialogue_llm_failed", npc_id=npc.id, error=_llm_error_detail(exc))
         return template_reply(npc, "neutral", message)
 
 
@@ -314,6 +450,8 @@ async def generate_reply(
     message: str,
     settings: Settings,
     history: Sequence[dict[str, str]] = (),
+    history_entries: Sequence[PanemHistoryEntry] = (),
+    world_notes: str | None = None,
     present: Sequence[str] = (),
     npc_job_title: str | None = None,
     npc_background: str | None = None,
@@ -322,6 +460,7 @@ async def generate_reply(
     character_home_district: District | None = None,
     known: str | None = None,
     district_on_edge: bool = False,
+    district_lore: DistrictLore | None = None,
 ) -> str:
     provider = resolve_provider(npc, settings)
     if provider == "template":
@@ -334,6 +473,9 @@ async def generate_reply(
         character=character,
         stance=stance,
         memories=memories,
+        message=message,
+        history_entries=history_entries,
+        world_notes=world_notes,
         present=present,
         npc_job_title=npc_job_title,
         district_on_edge=district_on_edge,
@@ -342,12 +484,13 @@ async def generate_reply(
         character_job_title=character_job_title,
         character_home_district=character_home_district,
         known=known,
+        district_lore=district_lore,
         constraints={"max_words": str(_length_matched_max_words(message))},
     )
     try:
         return await generate_llm_reply(ctx, message, settings, history=history)
-    except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
-        logger.warning("dialogue_llm_failed", npc_id=npc.id, error=str(exc))
+    except (httpx.HTTPError, KeyError, IndexError, ValueError, AttributeError) as exc:
+        logger.warning("dialogue_llm_failed", npc_id=npc.id, error=_llm_error_detail(exc))
         return template_reply(npc, stance, message)
 
 
@@ -391,8 +534,8 @@ async def summarize_engagement(
     )
     try:
         summary = await generate_llm_reply(ctx, prompt, settings)
-    except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
-        logger.warning("dialogue_summarize_failed", npc_id=npc.id, error=str(exc))
+    except (httpx.HTTPError, KeyError, IndexError, ValueError, AttributeError) as exc:
+        logger.warning("dialogue_summarize_failed", npc_id=npc.id, error=_llm_error_detail(exc))
         return previous_summary
 
     words = summary.split()

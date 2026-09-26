@@ -15,7 +15,7 @@
 // a browser profile would share it -- an acceptable tradeoff for a
 // convenience log, not a source of truth (the DB's `money`/`shifts_completed`
 // columns are that).
-import { fetchJson, el } from "./_shared.js?v=5";
+import { fetchJson, el, setStatusText, watchIframeResize } from "./_shared.js?v=7";
 
 const WORK_LOG_LIMIT = 20;
 // How long the minigame's own result screen (posted via postMessage, see
@@ -108,11 +108,16 @@ export function mount(root, ctx) {
   let currentShiftId = null;
   let messageListener = null;
   let closeResultTimer = null;
+  let stopResizeWatch = null;
 
   function stopListening() {
     if (messageListener) {
       window.removeEventListener("message", messageListener);
       messageListener = null;
+    }
+    if (stopResizeWatch) {
+      stopResizeWatch();
+      stopResizeWatch = null;
     }
   }
 
@@ -129,7 +134,7 @@ export function mount(root, ctx) {
     actionsEl.hidden = true;
     renderWorkLog(logListEl, characterId);
     if (!characterId || !discordId) {
-      statusEl.textContent = "Pick a character above first.";
+      setStatusText(statusEl, "Pick a character above first.");
       return;
     }
     try {
@@ -137,14 +142,14 @@ export function mount(root, ctx) {
         `/activity/dashboard/work/${characterId}?discord_id=${encodeURIComponent(discordId)}`
       );
       if (!status.has_job) {
-        statusEl.textContent = "This character has no job set.";
+        setStatusText(statusEl, "This character has no job set.");
         return;
       }
-      statusEl.textContent = `${status.job_title} -- ${status.shift_phase} shift (${status.level})`;
+      setStatusText(statusEl, `${status.job_title} -- ${status.shift_phase} shift (${status.level})`);
       detailEl.textContent = "";
       actionsEl.hidden = false;
     } catch (err) {
-      statusEl.textContent = `Could not load work status: ${err.message}`;
+      setStatusText(statusEl, `Could not load work status: ${err.message}`, { error: true });
     }
   }
 
@@ -184,7 +189,26 @@ export function mount(root, ctx) {
         src: `/work.html?shift_id=${encodeURIComponent(currentShiftId)}`,
       });
       iframeHost.append(iframe);
+      // Brings the newly-mounted game into view instead of leaving the
+      // player to scroll down and find it themselves -- work.html's own
+      // `reportSize` then keeps this iframe grown to fit whatever board it
+      // ends up mounting (see watchIframeResize's own comment).
+      iframe.scrollIntoView({ behavior: "smooth", block: "start" });
+      // A freshly inserted iframe doesn't hold keyboard focus just for
+      // being on screen -- this dashboard's own document does, so a game
+      // like Snake that steers off `keydown` would never see a keystroke
+      // until the player clicked into the frame first. Handing focus over
+      // once work.html has actually loaded (and can focus its own board)
+      // is what makes WASD/arrow keys work the instant the game mounts.
+      iframe.addEventListener("load", () => {
+        try {
+          iframe.contentWindow.focus();
+        } catch {
+          // Cross-origin or already torn down -- nothing to do.
+        }
+      });
       stopListening();
+      stopResizeWatch = watchIframeResize(iframe);
       messageListener = (event) => {
         if (event.data && event.data.source === "panem-activity" && event.data.type === "work-result") {
           stopListening();

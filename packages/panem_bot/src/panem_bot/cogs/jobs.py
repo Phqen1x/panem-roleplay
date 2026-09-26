@@ -27,6 +27,7 @@ from panem_bot.services import shifts as shifts_svc
 from panem_bot.strings import t
 from panem_shared import constants, job_levels, redis_keys
 from panem_shared.db.models import Character, Shift, WorldClock
+from panem_shared.enums import Position
 from panem_shared.errors import NotAllowed
 from panem_shared.jail import check_not_jailed
 from panem_shared.logging import get_logger
@@ -195,16 +196,18 @@ class JobsCog(commands.Cog):
                 )
                 return
 
+            member = interaction.user
+            is_staff = isinstance(member, discord.Member) and await self.bot.is_staff(  # type: ignore[attr-defined]
+                member
+            )
+            can_bypass_location = is_staff or Position.GAMEMAKER.value in char.positions
+
             open_shift = (
                 await session.execute(
                     select(Shift).where(Shift.character_id == char.id, Shift.result.is_(None))
                 )
             ).scalar_one_or_none()
             if open_shift is None:
-                member = interaction.user
-                is_staff = isinstance(member, discord.Member) and await self.bot.is_staff(  # type: ignore[attr-defined]
-                    member
-                )
                 open_shift = shifts_svc.open_adhoc_shift_override(
                     char, await self._current_tick(session), is_staff=is_staff
                 )
@@ -217,6 +220,13 @@ class JobsCog(commands.Cog):
                 await session.flush()
 
             current_tick = await self._current_tick(session)
+            if not can_bypass_location and not shifts_svc.can_work_from_current_location(
+                char, current_tick
+            ):
+                await interaction.response.send_message(
+                    t("job_wrong_district", name=char.name), ephemeral=True
+                )
+                return
             if shifts_svc.already_worked_this_tick(open_shift, current_tick):
                 await interaction.response.send_message(
                     t("shift_already_worked_this_tick", name=char.name), ephemeral=True
@@ -280,8 +290,19 @@ class JobsCog(commands.Cog):
         no-Activity coin-flip path and the minigame-launch message's Skip
         button above -- both call this straight from `/work`, so the
         once-per-tick check lives here rather than duplicated in each
-        caller."""
+        caller.
+
+        Re-checks the character's current location even though `/work`
+        already gated launching the minigame on it -- the Skip button
+        (and the time spent actually playing a launched minigame) can
+        land well after that first check, long enough for the character
+        to have started traveling away in between."""
         current_tick = await self._current_tick(session)
+        if (
+            Position.GAMEMAKER.value not in char.positions
+            and not shifts_svc.can_work_from_current_location(char, current_tick)
+        ):
+            return t("job_wrong_district", name=char.name)
         if shifts_svc.already_worked_this_tick(shift, current_tick):
             return t("shift_already_worked_this_tick", name=char.name)
         content = self.bot.content  # type: ignore[attr-defined]

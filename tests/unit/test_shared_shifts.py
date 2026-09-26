@@ -498,3 +498,21 @@ class TestAlreadyWorkedThisTick:
         shift = Shift(character_id=1, job_id="Miner", tick_opened=1, tick_due=7)
         shift.last_worked_tick = 3
         assert shared_shifts.already_worked_this_tick(shift, 4) is False
+
+
+class TestCanWorkFromCurrentLocation:
+    def test_true_at_home_and_not_in_transit(self):
+        character = make_character(district_id=12, current_district_id=12)
+        assert shared_shifts.can_work_from_current_location(character, 10) is True
+
+    def test_false_once_arrived_in_another_district(self):
+        character = make_character(district_id=12, current_district_id=4)
+        assert shared_shifts.can_work_from_current_location(character, 10) is False
+
+    def test_false_while_still_mid_transit_even_if_current_district_reads_home(self):
+        character = make_character(district_id=12, current_district_id=12, in_transit_until_tick=15)
+        assert shared_shifts.can_work_from_current_location(character, 10) is False
+
+    def test_true_once_transit_has_actually_elapsed(self):
+        character = make_character(district_id=12, current_district_id=12, in_transit_until_tick=10)
+        assert shared_shifts.can_work_from_current_location(character, 10) is True

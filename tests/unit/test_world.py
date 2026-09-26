@@ -19,7 +19,7 @@ from panem_shared.content.schemas import (
 )
 from panem_shared.content.traits import TRAITS_PER_NPC
 from panem_shared.db.models import DistrictState, Npc, NpcSchedule, Property
-from panem_shared.enums import DayPhase, OwnerKind, PropertyKind
+from panem_shared.enums import DayPhase, Gender, OwnerKind, PropertyKind
 from panem_sim import world
 
 
@@ -280,6 +280,16 @@ class TestSeedNpcs:
             assert len(set(npc.traits)) == len(npc.traits)
             assert npc.speech_style.get("tone") in {"warm", "blunt", "reserved", "plain"}
 
+    async def test_npcs_are_assigned_a_real_gender(self, db_session):
+        content = make_content(make_district(1))
+
+        await world.seed_npcs(db_session, content, "test-seed")
+        await db_session.flush()
+
+        npcs = (await db_session.execute(select(Npc))).scalars().all()
+        assert npcs
+        assert all(npc.gender in {g.value for g in Gender} for npc in npcs)
+
     async def test_employed_npc_schedule_favors_workplace_during_shift_phase(self, db_session):
         job = make_job(id="only_job", district=1, workplace="market", shift_phase="morning")
         content = make_content(make_district(1), jobs=(job,))
@@ -327,6 +337,28 @@ class TestSeedNpcsFromAuthoredContent:
 
         row = (await db_session.execute(select(Npc))).scalar_one()
         assert row.traits == ["witty", "shy"]
+
+    async def test_authored_npc_keeps_its_own_gender(self, db_session):
+        npc = make_npc_content(
+            id="d1_hero", district=1, home_location_id="home", gender=Gender.FEMALE
+        )
+        content = make_content(make_district(1), npcs=(npc,))
+
+        await world.seed_npcs(db_session, content, "test-seed")
+        await db_session.flush()
+
+        row = (await db_session.execute(select(Npc))).scalar_one()
+        assert row.gender == Gender.FEMALE.value
+
+    async def test_authored_npc_with_no_gender_gets_one_assigned(self, db_session):
+        npc = make_npc_content(id="d1_hero", district=1, home_location_id="home")
+        content = make_content(make_district(1), npcs=(npc,))
+
+        await world.seed_npcs(db_session, content, "test-seed")
+        await db_session.flush()
+
+        row = (await db_session.execute(select(Npc))).scalar_one()
+        assert row.gender in {g.value for g in Gender}
 
     async def test_authored_npc_gets_a_schedule_summing_to_one(self, db_session):
         npc = make_npc_content(id="d1_hero", district=1, home_location_id="home")

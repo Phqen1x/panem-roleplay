@@ -42,6 +42,9 @@ from panem_shared.shifts import (
     apply_shift_outcome as apply_shift_outcome,
 )
 from panem_shared.shifts import (
+    can_work_from_current_location as can_work_from_current_location,
+)
+from panem_shared.shifts import (
     has_job as has_job,
 )
 from panem_shared.shifts import (

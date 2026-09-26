@@ -18,10 +18,11 @@ from panem_shared import constants
 from panem_shared.constants import CAPITOL_DISTRICT_ID
 from panem_shared.content.schemas import District, Location
 from panem_shared.db.models import Character, Inventory
-from panem_shared.enums import CharacterStatus, LocationKind, OwnerKind, Position, RpMode
+from panem_shared.enums import CharacterStatus, DayPhase, LocationKind, OwnerKind, Position, RpMode
 from panem_shared.errors import NotAllowed, NotFound
 from panem_shared.jail import check_not_jailed
 from panem_shared.location_access import has_location_access
+from panem_shared.simtime import current as current_time
 
 
 def resolve_location(district: District, location_id: str) -> Location:
@@ -37,12 +38,19 @@ def check_can_travel(*, character: Character, location: Location, current_tick: 
     need to travel to different locations in their district to RP in
     them") -- the within-district `/travel` call this backs is optional
     scenery for them anyway, not a requirement to physically be somewhere
-    before RPing there (that's `proxy.check_can_proxy`'s job)."""
+    before RPing there (that's `proxy.check_can_proxy`'s job). They still
+    can't reach the outskirts outside night, though -- unlike the job/
+    position gate, that one isn't about who a character is, it's about
+    when it is, so it applies to every mode alike."""
     if character.status == CharacterStatus.DEAD.value:
         raise NotAllowed("character_dead")
     if character.status != CharacterStatus.APPROVED.value:
         raise NotAllowed("character_not_approved")
     check_not_jailed(character, current_tick, "travel_jailed")
+    if location.kind == LocationKind.OUTSKIRTS:
+        _, phase, _, _ = current_time(current_tick)
+        if phase != DayPhase.NIGHT:
+            raise NotAllowed("outskirts_night_only", name=character.name)
     if character.rp_mode == RpMode.STORY.value:
         return
     if not has_location_access(

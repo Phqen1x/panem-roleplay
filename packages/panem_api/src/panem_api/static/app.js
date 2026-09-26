@@ -23,15 +23,44 @@
 // every other dashboard endpoint re-validating discord_id+character_id
 // together) -- there's still no cryptographic auth here, same documented
 // gap as the rest of this process.
-import { fetchJson, el, renderTabIcon } from "./tabs/_shared.js?v=5";
-import { mountThemePicker } from "./theme_picker.js?v=3";
+import { fetchJson, el, renderTabIcon } from "./tabs/_shared.js?v=7";
+import { mountThemePicker } from "./theme_picker.js?v=4";
 
-const DISCORD_SDK_URL = "/vendor/discord-embedded-app-sdk.js";
+// `?v=N`, same cache-busting convention as every other asset this page
+// loads (see the `tabs/_shared.js`/`theme_picker.js` imports above) --
+// this one never had it, so a 502 Discord's Activity proxy cached for
+// this exact bare URL during an outage has no way to get invalidated
+// short of the proxy's own cache expiring on its own.
+const DISCORD_SDK_URL = "/vendor/discord-embedded-app-sdk.js?v=1";
 const STEP_TIMEOUT_MS = 8000;
+
+// Set once `authenticateWithDiscord()` gets past `discordSdk.ready()` --
+// null outside a real Discord Activity (plain browser preview mode),
+// which `openExternalLink()` below falls back around.
+let discordSdk = null;
+
+// Deep links (e.g. "Continue in Discord" -> a specific channel/thread)
+// can't just be a plain `<a target="_blank">`: the Activity iframe is
+// sandboxed and silently swallows that navigation instead of opening
+// anything (Discord's own embedded-app-sdk exists specifically to route
+// this kind of thing back out to the real client). Falls back to a plain
+// new-tab open outside a real Activity, where there's no sandbox to route
+// around and no `discordSdk` to route through.
+async function openExternalLink(url) {
+  if (discordSdk && discordSdk.commands && discordSdk.commands.openExternalLink) {
+    try {
+      await discordSdk.commands.openExternalLink({ url });
+      return;
+    } catch (err) {
+      console.warn("discordSdk.commands.openExternalLink failed, falling back:", err);
+    }
+  }
+  window.open(url, "_blank", "noopener");
+}
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "34";
+const ASSET_VERSION = "49";
 
 // District names mapping for Capitol and Districts 1-12
 const DISTRICT_NAMES = {
@@ -114,6 +143,12 @@ const TAB_LABELS = {
 // (currently just `currentTabName()`'s fallback below).
 const STAFF_TAB = "staff";
 const STAFF_TAB_LABEL = "Staff";
+// The District History tab -- staff-only district lore/context NPC
+// dialogue draws a short summary from (`panem_shared.district_lore`).
+// Kept separate from STAFF_TAB rather than folded into it: it's its own
+// large, district-scoped editor, not another admin-panel panel.
+const HISTORY_TAB = "history";
+const HISTORY_TAB_LABEL = "History";
 
 // The "Panem Party Pack" games catalog -- staff-only for now while the
 // pitch/roadmap is reviewed, same gating as STAFF_TAB above. Once the
@@ -121,8 +156,12 @@ const STAFF_TAB_LABEL = "Staff";
 // move into TABS/TAB_LABELS like any other player-facing tab.
 const GAMES_TAB = "games";
 const GAMES_TAB_LABEL = "Games";
-const STAFF_ONLY_TABS = [STAFF_TAB, GAMES_TAB];
-const STAFF_ONLY_TAB_LABELS = { [STAFF_TAB]: STAFF_TAB_LABEL, [GAMES_TAB]: GAMES_TAB_LABEL };
+const STAFF_ONLY_TABS = [STAFF_TAB, HISTORY_TAB, GAMES_TAB];
+const STAFF_ONLY_TAB_LABELS = {
+  [STAFF_TAB]: STAFF_TAB_LABEL,
+  [HISTORY_TAB]: HISTORY_TAB_LABEL,
+  [GAMES_TAB]: GAMES_TAB_LABEL,
+};
 
 const statusEl = document.getElementById("status");
 const navEl = document.getElementById("tab-nav");
@@ -133,6 +172,7 @@ const characterMenuEl = document.getElementById("character-select-menu");
 const themePickerEl = document.getElementById("theme-picker");
 const worldClockTimeEl = document.getElementById("world-clock-time");
 const worldClockDateEl = document.getElementById("world-clock-date");
+const worldClockShiftEl = document.getElementById("world-clock-shift");
 
 const state = {
   discordUser: null,
@@ -165,10 +205,17 @@ function setStatus(text) {
   if (!text || text.toLowerCase().startsWith("connected")) {
     statusEl.textContent = "";
     statusEl.hidden = true;
+    statusEl.classList.remove("is-notice");
     return;
   }
+  // Every message this ever shows is a connection/auth problem the player
+  // can work around (preview mode, a failed Discord handshake) -- never a
+  // benign "all good" note, since those clear to empty above instead.
+  // `.is-notice` (style.css) marks it as a formal notice instead of
+  // leaving it looking like ordinary muted status text.
   statusEl.textContent = text;
   statusEl.hidden = false;
+  statusEl.classList.add("is-notice");
 }
 
 function getDiscordId() {
@@ -434,7 +481,7 @@ async function authenticateWithDiscord() {
   STEP.current = "loading embedded-app-sdk";
   try {
     const { DiscordSDK } = await import(DISCORD_SDK_URL);
-    const discordSdk = new DiscordSDK(clientId);
+    discordSdk = new DiscordSDK(clientId);
 
     STEP.current = "discordSdk.ready()";
     await withTimeout(discordSdk.ready(), STEP.current);
@@ -507,6 +554,7 @@ async function authenticateWithDiscord() {
         `(${describeError(err)}). Enter a Discord ID below to try the ` +
         "dashboard anyway; check the panem_api server log for details."
     );
+    discordSdk = null; // handshake didn't complete -- openExternalLink() falls back to window.open
     return null;
   }
 }
@@ -655,6 +703,7 @@ function buildCtx() {
     districtName: (id) => DISTRICT_NAMES[id] || `District ${id}`,
     apiFetch: fetchJson,
     refreshIdentity,
+    openExternalLink,
   };
 }
 
@@ -698,7 +747,19 @@ async function showTab(name) {
   } catch (err) {
     if (generation !== tabGeneration) return;
     console.error(`Failed to load tab "${name}":`, err);
-    tabRootEl.append(el("p", { class: "tab-status" }, `Could not load this tab: ${err.message}`));
+    tabRootEl.append(
+      el(
+        "div",
+        { class: "panel tab-load-error" },
+        el("h2", { text: "This tab couldn't load" }),
+        el("p", { class: "tab-status error" }, err.message),
+        el(
+          "p",
+          { class: "tab-status" },
+          "Try switching tabs again, or reload the Activity if it keeps happening."
+        )
+      )
+    );
   }
 }
 
@@ -783,15 +844,71 @@ async function loadDistrictMottos() {
 
 // The world clock is global sim state, not per-player -- `/world/time`
 // needs no discord_id and is polled on a plain interval rather than
-// re-fetched alongside identity/character refreshes.
+// re-fetched alongside identity/character refreshes. The poll just
+// re-syncs a baseline (tick + when it was persisted); `renderWorldClock`
+// below runs far more often than that to interpolate the displayed
+// time/shift smoothly in between polls, mirroring `panem_shared.simtime`'s
+// own tick -> hour/day/month/phase math client-side (see that module for
+// the server version this must stay in sync with).
 const WORLD_TIME_POLL_INTERVAL_MS = 60_000;
+const WORLD_CLOCK_RENDER_INTERVAL_MS = 1000;
+const PHASE_ORDER = ["night", "morning", "afternoon", "evening"];
+
+let worldTimeBaseline = null; // { tick, updatedAtMs, tickIntervalSeconds, ticksPerDay, daysPerMonth }
+
+function capitalize(word) {
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+function renderWorldClock() {
+  if (!worldTimeBaseline) return;
+  const { tick, updatedAtMs, tickIntervalSeconds, ticksPerDay, daysPerMonth } = worldTimeBaseline;
+
+  const elapsedSeconds = (Date.now() - updatedAtMs) / 1000;
+  // Clamped below 1 full tick's worth of progress: if the sim has
+  // stalled (or is just running behind), this holds the display just
+  // shy of the next hour instead of sprinting arbitrarily far into a
+  // "future" the sim never actually reached.
+  const elapsedTicks = Math.max(0, Math.min(elapsedSeconds / tickIntervalSeconds, 0.999999));
+  const fractionalTick = tick + elapsedTicks;
+
+  const hourOfDay = fractionalTick % ticksPerDay;
+  const dayIndex = Math.floor(fractionalTick / ticksPerDay);
+  const day = (dayIndex % daysPerMonth) + 1;
+  const month = (Math.floor(dayIndex / daysPerMonth) % 12) + 1;
+  const year = Math.floor(dayIndex / (daysPerMonth * 12)) + 1;
+
+  const totalMinutes = (hourOfDay * 24 * 60) / ticksPerDay;
+  const hour24 = Math.floor(totalMinutes / 60) % 24;
+  const minute = Math.floor(totalMinutes % 60);
+  const period = hour24 < 12 ? "AM" : "PM";
+  const hour12 = hour24 % 12 || 12;
+  const timeStr = `${hour12}:${String(minute).padStart(2, "0")} ${period}`;
+
+  const ticksPerPhase = ticksPerDay / PHASE_ORDER.length;
+  const phaseIndex = Math.min(
+    PHASE_ORDER.length - 1,
+    Math.floor(hourOfDay / ticksPerPhase)
+  );
+  const phase = PHASE_ORDER[phaseIndex];
+
+  worldClockTimeEl.innerHTML = `Simulation Time: <strong>${timeStr}</strong>`;
+  worldClockDateEl.innerHTML =
+    `Simulation Date: <strong>Month ${month}, Day ${day}, Year ${year}</strong>`;
+  worldClockShiftEl.innerHTML = `Current Shift: <strong>${capitalize(phase)}</strong>`;
+}
 
 async function refreshWorldTime() {
   try {
     const time = await fetchJson("/world/time");
-    worldClockTimeEl.innerHTML = `Simulation Time: <strong>${time.time}</strong>`;
-    worldClockDateEl.innerHTML =
-      `Simulation Date: <strong>Month ${time.month}, Day ${time.day}, Year ${time.year}</strong>`;
+    worldTimeBaseline = {
+      tick: time.tick,
+      updatedAtMs: Date.parse(time.updated_at),
+      tickIntervalSeconds: time.tick_interval_seconds,
+      ticksPerDay: time.ticks_per_day,
+      daysPerMonth: time.days_per_month,
+    };
+    renderWorldClock();
   } catch (err) {
     console.warn("Could not load world time:", err);
   }
@@ -810,6 +927,7 @@ async function main() {
   loadDistrictMottos();
   refreshWorldTime();
   setInterval(refreshWorldTime, WORLD_TIME_POLL_INTERVAL_MS);
+  setInterval(renderWorldClock, WORLD_CLOCK_RENDER_INTERVAL_MS);
 
   state.discordUser = await authenticateWithDiscord();
   if (!state.discordUser) {

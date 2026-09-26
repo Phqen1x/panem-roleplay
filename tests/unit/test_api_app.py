@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from panem_api import discord_staff
 from panem_api.app import create_app
-from panem_shared import simtime
+from panem_shared import constants, simtime
 from panem_shared.constants import TRANSIT_TICKS
 from panem_shared.content.loader import ContentBundle
 from panem_shared.content.schemas import (
@@ -28,6 +28,8 @@ from panem_shared.db.models import (
     AfflictionType,
     ApartmentLease,
     Character,
+    DistrictState,
+    EngagementSettings,
     Inventory,
     LayerCategory,
     LayerOption,
@@ -45,7 +47,9 @@ from panem_shared.db.models import (
 from panem_shared.enums import (
     CharacterStatus,
     DayPhase,
+    JobLevel,
     OwnerKind,
+    Position,
     PropertyKind,
     SceneKind,
     SceneStatus,
@@ -129,10 +133,27 @@ def make_job() -> Job:
     )
 
 
+def make_stolen_goods() -> dict[str, Good]:
+    """Every id `STEAL_LOOT_GOOD_IDS`/`BURGLE_LOOT_GOOD_IDS`/`SHIPMENT_
+    LOOT_GOOD_IDS` can pick -- `apply_steal_outcome`/`apply_burgle_outcome`/
+    `apply_shipment_outcome` look these up by id on a successful attempt,
+    so any content fixture a steal/burgle/shipment test uses needs them
+    present (mirrors `test_stealing_service.py`'s own `make_goods()`)."""
+    good_ids = (
+        set(constants.STEAL_LOOT_GOOD_IDS)
+        | set(constants.BURGLE_LOOT_GOOD_IDS)
+        | set(constants.SHIPMENT_LOOT_GOOD_IDS)
+    )
+    return {
+        good_id: Good(id=good_id, name=good_id.replace("_", " ").title(), base_price=10.0, category="stolen")
+        for good_id in good_ids
+    }
+
+
 def make_content_with_job() -> ContentBundle:
     return ContentBundle(
         districts={0: make_district(0, "The Capitol"), 1: make_district(1, "District 1")},
-        goods={},
+        goods=make_stolen_goods(),
         jobs={"miner": make_job()},
         routes=[],
     )
@@ -162,8 +183,49 @@ def make_content_with_outskirts() -> ContentBundle:
     )
     return ContentBundle(
         districts={0: make_district(0, "The Capitol"), 1: district_1},
-        goods={"grain": Good(id="grain", name="Grain", base_price=1.0, category="food")},
+        goods={
+            "grain": Good(id="grain", name="Grain", base_price=1.0, category="food"),
+            constants.POACH_GOOD_ID: Good(
+                id=constants.POACH_GOOD_ID,
+                name="Wild Game",
+                base_price=20.0,
+                category="food",
+                hunger_value=35.0,
+            ),
+        },
         jobs={"miner": make_job()},
+        routes=[],
+    )
+
+
+def make_content_with_residence() -> ContentBundle:
+    """Same shape as `make_content_with_outskirts`, plus a district-1
+    `home` location of kind `residential` -- for the Residents directory's
+    "sleeping" status inference (`dashboard_routes._character_status`),
+    which reads a character's current location's `kind` rather than any
+    dedicated "is asleep" flag (`/sleep` has none; see that function's own
+    docstring)."""
+    locations = [
+        Location(id="square", name="The Square", kind="public"),
+        Location(id="station", name="Rail Station", kind="station"),
+        Location(id="home", name="Victors' Village", kind="residential"),
+    ]
+    coords = {loc.id: (0, 0) for loc in locations}
+    district_1 = District(
+        id=1,
+        name="District 1",
+        industry="x",
+        produces=[],
+        imports=[],
+        population_base=1000,
+        culture=DistrictCulture(),
+        locations=locations,
+        map=DistrictMap(image="x.png", width=100, height=100, location_coords=coords),
+    )
+    return ContentBundle(
+        districts={0: make_district(0, "The Capitol"), 1: district_1},
+        goods={},
+        jobs={},
         routes=[],
     )
 
@@ -278,6 +340,25 @@ async def seed_house(session_factory, *, owner_id: int, **overrides: object) -> 
         return house.id
 
 
+async def seed_shipment(session_factory, **overrides: object) -> int:
+    from panem_shared.db.models import Shipment
+
+    async with session_factory() as session, session.begin():
+        kwargs: dict[str, object] = dict(
+            district_id=1,
+            location_id="station",
+            good_id=constants.SHIPMENT_LOOT_GOOD_IDS[0],
+            qty=2,
+            spawned_tick=0,
+            expires_tick=100,
+        )
+        kwargs.update(overrides)
+        shipment = Shipment(**kwargs)  # type: ignore[arg-type]
+        session.add(shipment)
+        await session.flush()
+        return shipment.id
+
+
 async def seed_property(session_factory, **overrides: object) -> int:
     """An NPC-owned, for-sale house by default -- unlike `seed_house`
     (a character's own property), this is what a dashboard housing test
@@ -333,6 +414,25 @@ def work_app(db_session_factory):
 
 
 @pytest.fixture
+def work_app_with_avatar_uploads(db_session_factory, tmp_path):
+    """Same as `work_app`, but with `static_dir`/`activity_public_url` set
+    up the same way `staff_app_with_uploads` is for the layer-catalog
+    uploads -- the avatar-upload endpoint writes a real file to disk and
+    needs a public base URL to build the stored `avatar_url` from."""
+    content = make_content_with_job()
+    redis_client = FakeRedis()
+    app = create_app(
+        content=content,
+        redis_client=redis_client,
+        session_factory=db_session_factory,
+        static_dir=tmp_path,
+        activity_public_url="https://example.com",
+    )
+    app.state.fake_redis = redis_client  # type: ignore[attr-defined]
+    return app
+
+
+@pytest.fixture
 def poach_app(db_session_factory):
     content = make_content_with_outskirts()
     redis_client = FakeRedis()
@@ -344,19 +444,23 @@ def poach_app(db_session_factory):
 def make_content_with_market() -> ContentBundle:
     """District 1 trades `grain` (imported) legally and `contraband` on
     the black market, with `fence` as its fence NPC -- for `/activity/
-    dashboard/market` and `.../blackmarket` tests. Two separate
-    `kind="market"` locations: `legal_market` (not `illicit`) for the
-    legal-market tests, and `market` (`illicit=True`, required by
-    `resolve_black_market_location`) for the black-market ones -- sharing
-    one location between them would expose the legal tests to `buy`/
-    `sell`'s own illicit-detection roll (`market.py::_roll_illicit_
-    detection` fires for *any* `illicit` location, not just illicit
-    goods), flaking a fine onto an otherwise-deterministic legal trade."""
+    dashboard/market` and `.../blackmarket` tests. `legal_market` (not
+    `illicit`) is for the legal-market tests; `market` (`illicit=True`)
+    stays only so `market.py`'s own illicit-detection-at-a-flagged-legal-
+    location tests have somewhere separate from `legal_market` to use
+    (sharing one location between them would expose the legal tests to
+    `buy`/`sell`'s own illicit-detection roll -- `market.py::_roll_
+    illicit_detection` fires for *any* `illicit` location, not just
+    illicit goods -- flaking a fine onto an otherwise-deterministic legal
+    trade). The dedicated black-market tests below use `outskirts`
+    instead -- `resolve_black_market_location` requires it, and it's the
+    only place `/blackmarket` can be reached from at all now."""
     locations = [
         Location(id="square", name="The Square", kind="public"),
         Location(id="station", name="Rail Station", kind="station"),
         Location(id="legal_market", name="The Market", kind="market"),
         Location(id="market", name="The Underground Market", kind="market", illicit=True),
+        Location(id="outskirts", name="The Outskirts", kind="outskirts"),
     ]
     coords = {loc.id: (0, 0) for loc in locations}
     district_1 = District(
@@ -527,6 +631,27 @@ def staff_app(db_session_factory):
     return app
 
 
+@pytest.fixture
+def staff_market_app(db_session_factory):
+    """Same shape as `staff_app`, but with `make_content_with_market()`'s
+    goods/districts -- for staff endpoints (`add-stock`) that need a real
+    good/district to act on, which `staff_app`'s own empty-goods content
+    doesn't provide."""
+    content = make_content_with_market()
+    redis_client = FakeRedis()
+    app = create_app(
+        content=content,
+        redis_client=redis_client,
+        session_factory=db_session_factory,
+        discord_guild_id=999,
+        discord_token="test-bot-token",
+        staff_role_id=777,
+        log_channel_id=0,
+    )
+    app.state.fake_redis = redis_client  # type: ignore[attr-defined]
+    return app
+
+
 def _fake_member_response(role_ids: list[int]) -> httpx.Response:
     return httpx.Response(200, json={"roles": [str(r) for r in role_ids]})
 
@@ -597,32 +722,50 @@ class TestListDistricts:
 
 class TestWorldTime:
     def test_defaults_to_tick_zero_when_no_db_configured(self, client: TestClient):
+        before = dt.datetime.now(dt.UTC)
         response = client.get("/world/time")
         assert response.status_code == 200
-        assert response.json() == {
+        body = response.json()
+        updated_at = body.pop("updated_at")
+        assert body == {
             "day": 1,
             "month": 1,
             "year": 1,
             "time": simtime.clock_string(0),
             "phase": DayPhase.NIGHT.value,
+            "tick": 0,
+            "tick_interval_seconds": 600,
+            "ticks_per_day": constants.TICKS_PER_DAY,
+            "days_per_month": constants.DAYS_PER_MONTH,
         }
+        # No `WorldClock` row exists, so this falls back to "now" rather
+        # than some fixed/stale value -- just check it's a real recent
+        # timestamp, not an exact one.
+        assert dt.datetime.fromisoformat(updated_at) >= before
 
     async def test_reflects_the_persisted_world_clock(self, work_app, db_session_factory):
         from panem_shared.db.models import WorldClock
 
+        clock_updated_at = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
         async with db_session_factory() as session, session.begin():
-            session.add(WorldClock(id=1, tick=1000))
+            session.add(WorldClock(id=1, tick=1000, updated_at=clock_updated_at))
         transport = httpx.ASGITransport(app=work_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get("/world/time")
         assert response.status_code == 200
         _tick, phase, day, month = simtime.current(1000)
-        assert response.json() == {
+        body = response.json()
+        assert dt.datetime.fromisoformat(body.pop("updated_at")) == clock_updated_at
+        assert body == {
             "day": day,
             "month": month,
             "year": simtime.year_for(1000),
             "time": simtime.clock_string(1000),
             "phase": phase.value,
+            "tick": 1000,
+            "tick_interval_seconds": 600,
+            "ticks_per_day": constants.TICKS_PER_DAY,
+            "days_per_month": constants.DAYS_PER_MONTH,
         }
 
 
@@ -853,6 +996,32 @@ class TestWorkShiftResult:
             "arrested": False,
         }
 
+    async def test_refuses_while_away_from_home_district(self, work_app, db_session_factory):
+        shift_id = await seed_shift(
+            db_session_factory,
+            character_overrides={"district_id": 1, "current_district_id": 2},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(f"/activity/work/{shift_id}/result", json={"won": True})
+        assert response.status_code == 400
+
+    async def test_allows_a_gamemaker_resolving_a_shift_away_from_home(
+        self, work_app, db_session_factory
+    ):
+        shift_id = await seed_shift(
+            db_session_factory,
+            character_overrides={
+                "district_id": 1,
+                "current_district_id": 2,
+                "positions": ["gamemaker"],
+            },
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(f"/activity/work/{shift_id}/result", json={"won": True})
+        assert response.status_code == 200
+
     async def test_does_not_call_discord_when_no_launch_message_was_stashed(
         self, work_app, db_session_factory
     ):
@@ -1081,6 +1250,48 @@ class TestCrimeAttemptStatus:
         assert body["target_name"] is None
         assert 0.0 <= body["difficulty"] <= 1.0
 
+    async def test_shipment_status(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, character_overrides={"location_id": "station"})
+        shipment_id = await seed_shipment(db_session_factory)
+        redis_client = work_app.state.fake_redis
+        redis_client.store[crime_attempt_key("a1")] = json.dumps(
+            {
+                "kind": "shipment",
+                "character_id": char_id,
+                "shipment_id": shipment_id,
+                "district_id": 1,
+                "current_tick": 0,
+            }
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/activity/crime/a1")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["kind"] == "shipment"
+        assert body["character_name"] == "Wren"
+        assert body["target_name"] is None
+        assert 0.0 <= body["difficulty"] <= 1.0
+
+    async def test_shipment_status_404s_once_the_shipment_is_gone(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, character_overrides={"location_id": "station"})
+        redis_client = work_app.state.fake_redis
+        redis_client.store[crime_attempt_key("a1")] = json.dumps(
+            {
+                "kind": "shipment",
+                "character_id": char_id,
+                "shipment_id": 999,
+                "district_id": 1,
+                "current_tick": 0,
+            }
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/activity/crime/a1")
+        assert response.status_code == 404
+
 
 class TestCrimeAttemptResult:
     async def test_503s_when_not_configured(self):
@@ -1139,7 +1350,7 @@ class TestCrimeAttemptResult:
             character = await session.get(Character, char_id)
             assert character.jailed_until_tick == 50
 
-    async def test_steal_win_moves_money(self, work_app, db_session_factory):
+    async def test_steal_win_grants_loot_not_money(self, work_app, db_session_factory):
         char_id = await seed_character(db_session_factory, character_overrides={"money": 0})
         npc_id = await seed_npc(db_session_factory, money=50.0)
         redis_client = work_app.state.fake_redis
@@ -1159,16 +1370,13 @@ class TestCrimeAttemptResult:
         assert response.status_code == 200
         body = response.json()
         assert body["success"] is True
-        assert body["amount"] > 0
+        assert body["good_name"] is not None
+        assert body["qty"] == constants.STEAL_LOOT_QTY
         async with db_session_factory() as session:
             character = await session.get(Character, char_id)
-            assert character.money == body["amount"]
+            assert character.money == 0  # never touched -- the payout is a good, not cash
 
-    async def test_burgle_win_pays_a_fraction_of_the_house_value(
-        self, work_app, db_session_factory
-    ):
-        from panem_shared import constants
-
+    async def test_burgle_win_grants_loot_not_money(self, work_app, db_session_factory):
         char_id = await seed_character(db_session_factory, character_overrides={"money": 0})
         other_id = await seed_character(
             db_session_factory, discord_id=99, character_overrides={"name": "Owner"}
@@ -1189,7 +1397,14 @@ class TestCrimeAttemptResult:
             response = await client.post("/activity/crime/a1/result", json={"won": True})
         assert response.status_code == 200
         body = response.json()
-        assert body["amount"] == round(1000.0 * constants.BURGLE_YIELD_FRACTION)
+        assert body["success"] is True
+        assert body["good_name"] is not None
+        assert body["qty"] in range(
+            constants.BURGLE_LOOT_QTY_RANGE[0], constants.BURGLE_LOOT_QTY_RANGE[1] + 1
+        )
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.money == 0
 
     async def test_poach_win_grants_the_good(self, poach_app, db_session_factory):
         char_id = await seed_character(db_session_factory, character_overrides={"money": 100})
@@ -1265,6 +1480,70 @@ class TestCrimeAttemptResult:
         assert body["success"] is False
         assert body["good_name"] is None
         assert body["fine"] > 0
+
+    async def test_shipment_win_grants_the_shipment_s_own_loot(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, character_overrides={"money": 0})
+        shipment_id = await seed_shipment(
+            db_session_factory, good_id=constants.SHIPMENT_LOOT_GOOD_IDS[0], qty=3
+        )
+        redis_client = work_app.state.fake_redis
+        redis_client.store[crime_attempt_key("a1")] = json.dumps(
+            {
+                "kind": "shipment",
+                "character_id": char_id,
+                "shipment_id": shipment_id,
+                "district_id": 1,
+                "current_tick": 0,
+            }
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/activity/crime/a1/result", json={"won": True})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is True
+        assert body["good_name"] is not None
+        assert body["qty"] == 3
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.money == 0  # never touched -- the payout is a good, not cash
+            from panem_shared.db.models import Shipment
+
+            assert await session.get(Shipment, shipment_id) is None  # one-shot: gone either way
+
+    async def test_shipment_caught_applies_the_fine_and_health_penalty(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(
+            db_session_factory, character_overrides={"money": 100, "health": 100.0}
+        )
+        shipment_id = await seed_shipment(db_session_factory)
+        redis_client = work_app.state.fake_redis
+        redis_client.store[crime_attempt_key("a1")] = json.dumps(
+            {
+                "kind": "shipment",
+                "character_id": char_id,
+                "shipment_id": shipment_id,
+                "district_id": 1,
+                "current_tick": 0,
+            }
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            # A value under SHIPMENT_ALERT_PROB (0.6) but not under
+            # SHIPMENT_ESCAPE_BASE_PROB (0.45) clears the "alerted" roll
+            # without clearing the "escapes" roll -- i.e. caught.
+            with patch("random.Random.random", return_value=0.5):
+                response = await client.post("/activity/crime/a1/result", json={"won": False})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["caught"] is True
+        assert body["success"] is False
+        assert body["fine"] == constants.SHIPMENT_FINE
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.money == 100 - constants.SHIPMENT_FINE
+            assert character.health == 100.0 - constants.SHIPMENT_HEALTH_PENALTY
 
     async def test_one_shot_a_second_post_404s(self, work_app, db_session_factory):
         char_id = await seed_character(
@@ -2202,6 +2481,63 @@ class TestDashboardCharacters:
             )
         assert response.status_code == 400
 
+    async def test_avatar_upload_saves_the_file_and_sets_an_absolute_url(
+        self, work_app_with_avatar_uploads, db_session_factory, tmp_path
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=work_app_with_avatar_uploads)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/characters/{char_id}/avatar-upload",
+                data={"discord_id": "5"},
+                files={"file": ("portrait.png", b"fake-png-bytes", "image/png")},
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["avatar_url"].startswith("https://example.com/uploads/avatars/")
+        saved_path = tmp_path / body["avatar_url"].removeprefix("https://example.com/")
+        assert saved_path.exists()
+        assert saved_path.read_bytes() == b"fake-png-bytes"
+
+    async def test_avatar_upload_rejects_a_non_owner(
+        self, work_app_with_avatar_uploads, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=work_app_with_avatar_uploads)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/characters/{char_id}/avatar-upload",
+                data={"discord_id": "6"},
+                files={"file": ("portrait.png", b"fake-png-bytes", "image/png")},
+            )
+        assert response.status_code == 404
+
+    async def test_avatar_upload_rejects_a_disallowed_content_type(
+        self, work_app_with_avatar_uploads, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=work_app_with_avatar_uploads)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/characters/{char_id}/avatar-upload",
+                data={"discord_id": "5"},
+                files={"file": ("portrait.svg", b"<svg></svg>", "image/svg+xml")},
+            )
+        assert response.status_code == 400
+
+    async def test_avatar_upload_refused_when_no_public_url_is_configured(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/characters/{char_id}/avatar-upload",
+                data={"discord_id": "5"},
+                files={"file": ("portrait.png", b"fake-png-bytes", "image/png")},
+            )
+        assert response.status_code == 400
+
     async def test_create_stores_a_valid_appearance_layers_submission(
         self, work_app, db_session_factory
     ):
@@ -2711,7 +3047,7 @@ class TestDashboardCrime:
             "kind": "poach",
             "character_id": char_id,
             "district_id": 1,
-            "good_id": "grain",
+            "good_id": constants.POACH_GOOD_ID,
             "current_tick": 0,
         }
 
@@ -2798,6 +3134,89 @@ class TestDashboardCrime:
                 f"/activity/dashboard/crime/{char_id}/log", params={"discord_id": 999}
             )
         assert response.status_code == 404
+
+    async def test_shipment_status_reports_presence(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"location_id": "station"}
+        )
+        await seed_shipment(db_session_factory, good_id=constants.SHIPMENT_LOOT_GOOD_IDS[0], qty=3)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/crime/{char_id}/shipment", params={"discord_id": 5}
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["present"] is True
+        assert body["qty"] == 3
+        assert body["good_name"] is not None
+
+    async def test_shipment_status_reports_absence(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"location_id": "station"}
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/crime/{char_id}/shipment", params={"discord_id": 5}
+            )
+        assert response.status_code == 200
+        assert response.json() == {
+            "present": False,
+            "good_name": None,
+            "qty": None,
+            "expires_tick": None,
+        }
+
+    async def test_shipment_start_mints_an_attempt(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"location_id": "station"}
+        )
+        shipment_id = await seed_shipment(db_session_factory)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/crime/{char_id}/shipment/start",
+                json={"discord_id": 5},
+            )
+        assert response.status_code == 200
+        body = response.json()
+        redis_client = work_app.state.fake_redis
+        raw = json.loads(redis_client.store[crime_attempt_key(body["attempt_id"])])
+        assert raw == {
+            "kind": "shipment",
+            "character_id": char_id,
+            "shipment_id": shipment_id,
+            "district_id": 1,
+            "current_tick": 0,
+        }
+
+    async def test_shipment_start_404s_when_none_is_here(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"location_id": "station"}
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/crime/{char_id}/shipment/start",
+                json={"discord_id": 5},
+            )
+        assert response.status_code == 404
+
+    async def test_shipment_start_refuses_on_cooldown(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"location_id": "station", "last_steal_tick": 0},
+        )
+        await seed_shipment(db_session_factory)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/crime/{char_id}/shipment/start",
+                json={"discord_id": 5},
+            )
+        assert response.status_code == 400
 
 
 class TestDashboardWork:
@@ -2888,6 +3307,45 @@ class TestDashboardWork:
             )
         assert response.status_code == 400
 
+    async def test_start_refuses_while_away_from_home_district(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={
+                "job_title": "Miner",
+                "shift_phase": "morning",
+                "district_id": 1,
+                "current_district_id": 2,
+            },
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/work/{char_id}/start", json={"discord_id": 5}
+            )
+        assert response.status_code == 400
+
+    async def test_start_allows_a_gamemaker_working_away_from_home(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={
+                "job_title": "Miner",
+                "shift_phase": "morning",
+                "district_id": 1,
+                "current_district_id": 2,
+                "positions": ["gamemaker"],
+            },
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/work/{char_id}/start", json={"discord_id": 5}
+            )
+        assert response.status_code == 200
+
     async def test_start_opens_an_adhoc_shift_for_a_gamemaker(self, work_app, db_session_factory):
         char_id = await seed_character(
             db_session_factory,
@@ -2927,7 +3385,21 @@ class TestDashboardMarket:
         assert [p["good_id"] for p in body["prices"]] == ["grain"]
         assert body["prices"][0]["hunger_value"] == 15.0
         assert body["prices"][0]["cook_method"] == "oven"
+        assert body["prices"][0]["stock"] is None
         assert body["inventory"] == []
+
+    async def test_status_reports_current_stock(self, market_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"location_id": "legal_market"}
+        )
+        async with db_session_factory() as session, session.begin():
+            session.add(MarketPrice(district_id=1, good_id="grain", price=2.0, supply=42.0, tick=0))
+        transport = httpx.ASGITransport(app=market_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/market/{char_id}", params={"discord_id": 5}
+            )
+        assert response.json()["prices"][0]["stock"] == 42.0
 
     async def test_buy_happy_path(self, market_app, db_session_factory):
         char_id = await seed_character(
@@ -3040,7 +3512,7 @@ class TestDashboardBlackMarket:
         char_id = await seed_character(
             db_session_factory,
             discord_id=5,
-            character_overrides={"location_id": "market", "money": 1000},
+            character_overrides={"location_id": "outskirts", "money": 1000},
         )
         transport = httpx.ASGITransport(app=market_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -3049,12 +3521,43 @@ class TestDashboardBlackMarket:
                 json={"discord_id": 5, "good_id": "contraband", "qty": 1},
             )
         assert response.status_code == 400
+        assert response.json()["detail"] == "blackmarket_not_trusted"
+
+    async def test_buy_refuses_away_from_the_outskirts(self, market_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"location_id": "market", "money": 1000},
+        )
+        async with db_session_factory() as session, session.begin():
+            key = relationship_key(
+                (OwnerKind.CHARACTER.value, str(char_id)), (OwnerKind.NPC.value, "fence")
+            )
+            session.add(
+                RelationshipRow(
+                    subject_kind=key[0],
+                    subject_id=key[1],
+                    object_kind=key[2],
+                    object_id=key[3],
+                    affinity=0,
+                    trust=0.0,
+                    stance=Stance.LOVES.value,
+                )
+            )
+        transport = httpx.ASGITransport(app=market_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/blackmarket/{char_id}/buy",
+                json={"discord_id": 5, "good_id": "contraband", "qty": 1},
+            )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "blackmarket_not_at_market"
 
     async def test_buy_succeeds_when_trusted(self, market_app, db_session_factory):
         char_id = await seed_character(
             db_session_factory,
             discord_id=5,
-            character_overrides={"location_id": "market", "money": 1000},
+            character_overrides={"location_id": "outskirts", "money": 1000},
         )
         async with db_session_factory() as session, session.begin():
             key = relationship_key(
@@ -3219,8 +3722,135 @@ class TestDashboardResidents:
                 "job_title": "Miner",
                 "location_id": "square",
                 "location_name": "The Square",
+                "kind": "npc",
+                "status": None,
+                "opinion_label": "stranger",
+                "opinion_score": 0,
             }
         ]
+
+    async def test_list_reports_the_viewing_characters_relationship_with_each_npc(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_npc(db_session_factory, job_id="miner")
+        async with db_session_factory() as session, session.begin():
+            session.add(
+                RelationshipRow(
+                    subject_kind=OwnerKind.CHARACTER.value,
+                    subject_id=str(char_id),
+                    object_kind=OwnerKind.NPC.value,
+                    object_id="d1_npc_1",
+                    affinity=12,
+                    stance="likes",
+                )
+            )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}", params={"discord_id": 42}
+            )
+        resident = response.json()["residents"][0]
+        assert resident["opinion_label"] == "likes"
+        assert resident["opinion_score"] == 12
+
+    async def test_list_leaves_opinion_unset_for_other_characters(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_character(
+            db_session_factory,
+            discord_id=43,
+            character_overrides={"name": "Other", "location_id": "station"},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}", params={"discord_id": 42}
+            )
+        other = next(r for r in response.json()["residents"] if r["name"] == "Other")
+        assert other["opinion_label"] is None
+        assert other["opinion_score"] is None
+
+    async def test_list_includes_other_characters_labeled_user_and_idle(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_character(
+            db_session_factory,
+            discord_id=43,
+            character_overrides={"name": "Other", "location_id": "station"},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}", params={"discord_id": 42}
+            )
+        assert response.status_code == 200
+        residents = response.json()["residents"]
+        other = next(r for r in residents if r["name"] == "Other")
+        assert other["kind"] == "user"
+        assert other["status"] == "idle"
+        assert other["location_name"] == "Rail Station"
+        # The viewer's own character never lists itself.
+        assert all(r["name"] != "Wren" for r in residents)
+
+    async def test_list_excludes_other_characters_not_approved(self, work_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_character(
+            db_session_factory,
+            discord_id=43,
+            character_overrides={"name": "Pending", "status": CharacterStatus.PENDING.value},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}", params={"discord_id": 42}
+            )
+        residents = response.json()["residents"]
+        assert all(r["name"] != "Pending" for r in residents)
+
+    async def test_list_reports_engaged_over_location_for_a_character_in_a_scene(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        other_id = await seed_character(
+            db_session_factory,
+            discord_id=43,
+            character_overrides={"name": "Other"},
+        )
+        await seed_scene(db_session_factory, participants={"characters": [other_id], "npcs": []})
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}", params={"discord_id": 42}
+            )
+        residents = response.json()["residents"]
+        other = next(r for r in residents if r["name"] == "Other")
+        assert other["status"] == "engaged"
+
+    async def test_list_reports_sleeping_for_a_character_in_a_residential_location(
+        self, db_session_factory
+    ):
+        content = make_content_with_residence()
+        redis_client = FakeRedis()
+        app = create_app(
+            content=content, redis_client=redis_client, session_factory=db_session_factory
+        )
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_character(
+            db_session_factory,
+            discord_id=43,
+            character_overrides={"name": "Other", "location_id": "home"},
+        )
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}", params={"discord_id": 42}
+            )
+        residents = response.json()["residents"]
+        other = next(r for r in residents if r["name"] == "Other")
+        assert other["status"] == "sleeping"
 
     async def test_profile_returns_details_for_a_stranger(self, work_app, db_session_factory):
         char_id = await seed_character(db_session_factory, discord_id=42)
@@ -3249,6 +3879,75 @@ class TestDashboardResidents:
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get(
                 f"/activity/dashboard/residents/{char_id}/Nobody", params={"discord_id": 42}
+            )
+        assert response.status_code == 404
+
+    async def test_character_profile_returns_what_they_submitted_at_creation(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_character(
+            db_session_factory,
+            discord_id=43,
+            character_overrides={
+                "name": "Other",
+                "age": 22,
+                "gender": "female",
+                "appearance": "Tall, dark-haired.",
+                "backstory": "Grew up in the Seam.",
+                "avatar_url": "https://example.com/a.png",
+                "appearance_layers": {"1": 5},
+                "job_title": "Baker",
+                "shift_phase": "morning",
+                "location_id": "station",
+            },
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}/character/Other",
+                params={"discord_id": 42},
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["name"] == "Other"
+        assert body["age"] == 22
+        assert body["gender"] == "female"
+        assert body["appearance"] == "Tall, dark-haired."
+        assert body["backstory"] == "Grew up in the Seam."
+        assert body["avatar_url"] == "https://example.com/a.png"
+        assert body["appearance_layers"] == {"1": 5}
+        assert body["job_title"] == "Baker"
+        assert body["shift_phase"] == "morning"
+        assert body["district_name"] == "District 1"
+        assert body["location_name"] == "Rail Station"
+
+    async def test_character_profile_404s_for_an_unapproved_character(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_character(
+            db_session_factory,
+            discord_id=43,
+            character_overrides={"name": "Pending", "status": CharacterStatus.PENDING.value},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}/character/Pending",
+                params={"discord_id": 42},
+            )
+        assert response.status_code == 404
+
+    async def test_character_profile_404s_for_an_unknown_character(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}/character/Nobody",
+                params={"discord_id": 42},
             )
         assert response.status_code == 404
 
@@ -3336,7 +4035,15 @@ class TestDashboardRpMode:
         assert body["afflictions"] == []
 
     async def test_switch_moves_to_the_new_mode(self, work_app, db_session_factory):
-        char_id = await seed_character(db_session_factory, discord_id=5)
+        # `job_title` set -- a real Simulation-mode character always has one
+        # (`characters_svc.create_character` requires it for any non-Story
+        # mode), so this switch needs no fresh job info and applies
+        # immediately; `TestSwitchNeedingJobInfo` below covers the other case.
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"job_title": "Baker", "shift_phase": "morning"},
+        )
         transport = httpx.ASGITransport(app=work_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(
@@ -3347,6 +4054,7 @@ class TestDashboardRpMode:
         body = response.json()
         assert body["mode"] == "life"
         assert body["next_mode_switch_eligible_at"] is not None
+        assert body["pending_mode"] is None
 
     async def test_switch_refuses_within_the_cooldown_window(self, work_app, db_session_factory):
         char_id = await seed_character(
@@ -3412,6 +4120,80 @@ class TestDashboardRpMode:
             )
         assert response.status_code == 400
         assert response.json()["detail"] == "crime_toggle_on_cooldown"
+
+    async def test_status_reports_has_job_info(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"rp_mode": "story"}
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/mode/{char_id}/status", params={"discord_id": 5}
+            )
+        assert response.status_code == 200
+        assert response.json()["has_job_info"] is False
+
+
+class TestSwitchNeedingJobInfo:
+    """Switching a character that's never had `job_title` on file (i.e.
+    never been Life/Simulation) into a working mode -- the scenario the
+    request "switching from story mode to sim mode needs to reopen the
+    character creation application" describes. `/switch` must not apply
+    the mode change immediately here; it stages it (`rp_modes.stage_mode_
+    switch`) for staff approval instead, same as `/character mode`'s bot
+    side."""
+
+    async def test_switch_without_job_info_is_refused(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"rp_mode": "story"}
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/mode/{char_id}/switch",
+                json={"discord_id": 5, "new_mode": "simulation"},
+            )
+        assert response.status_code == 400
+
+    async def test_switch_with_job_info_stages_instead_of_applying(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"rp_mode": "story"}
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/mode/{char_id}/switch",
+                json={
+                    "discord_id": 5,
+                    "new_mode": "simulation",
+                    "job_title": "Baker",
+                    "shift_phase": "morning",
+                    "job_is_illicit": False,
+                },
+            )
+        assert response.status_code == 200
+        body = response.json()
+        # Stays in Story mode -- the switch is only staged, awaiting staff
+        # approval, not applied.
+        assert body["mode"] == "story"
+        assert body["pending_mode"] == "simulation"
+
+    async def test_switching_to_story_never_needs_job_info(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"rp_mode": "life"}
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/mode/{char_id}/switch",
+                json={"discord_id": 5, "new_mode": "story"},
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["mode"] == "story"
+        assert body["pending_mode"] is None
 
 
 class TestDashboardHousing:
@@ -3966,6 +4748,576 @@ class TestDashboardStaff:
             )  # no raise
 
 
+class TestDashboardStaffExtras:
+    """The rest of `/staff ...`'s subcommands, consolidated into the same
+    Staff tab (see `dashboard_routes.build_staff_router`'s own comment for
+    which two stayed bot-only). One 403-without-the-role check plus one
+    happy path per endpoint is enough here -- the role check itself
+    (`_require_staff`) is already covered exhaustively by `TestDashboardStaff`
+    above, and it's the exact same helper on every route in this class."""
+
+    async def test_give_money_refuses_without_the_staff_role(self, staff_app, db_session_factory):
+        await seed_character(db_session_factory, character_overrides={"name": "Wren"})
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([1]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/give/money",
+                    json={"discord_id": 42, "character_name": "Wren", "amount": 50},
+                )
+        assert response.status_code == 403
+
+    async def test_give_money_happy_path(self, staff_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, character_overrides={"name": "Wren", "money": 100}
+        )
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/give/money",
+                    json={"discord_id": 42, "character_name": "Wren", "amount": 50},
+                )
+        assert response.status_code == 200
+        assert response.json()["new_balance"] == 150
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.money == 150
+            actions = (
+                await session.execute(
+                    select(StaffAction).where(StaffAction.action == "give_money")
+                )
+            ).scalars().all()
+        assert len(actions) == 1 and actions[0].payload == {"amount": 50}
+
+    async def test_give_money_never_takes_a_character_below_zero(
+        self, staff_app, db_session_factory
+    ):
+        char_id = await seed_character(
+            db_session_factory, character_overrides={"name": "Wren", "money": 20}
+        )
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/give/money",
+                    json={"discord_id": 42, "character_name": "Wren", "amount": -1000},
+                )
+        assert response.status_code == 200
+        assert response.json()["new_balance"] == 0
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.money == 0
+
+    async def test_give_item_happy_path(self, staff_market_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, character_overrides={"name": "Wren"})
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_market_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/give/item",
+                    json={
+                        "discord_id": 42,
+                        "character_name": "Wren",
+                        "good_id": "grain",
+                        "qty": 3,
+                    },
+                )
+        assert response.status_code == 200
+        assert response.json() == {
+            "character_name": "Wren",
+            "good_id": "grain",
+            "good_name": "Grain",
+            "new_qty": 3,
+        }
+        async with db_session_factory() as session:
+            inv = await session.get(Inventory, (OwnerKind.CHARACTER.value, str(char_id), "grain"))
+            assert inv is not None and inv.qty == 3
+
+    async def test_give_item_refuses_an_unknown_good(self, staff_market_app, db_session_factory):
+        await seed_character(db_session_factory, character_overrides={"name": "Wren"})
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_market_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/give/item",
+                    json={
+                        "discord_id": 42,
+                        "character_name": "Wren",
+                        "good_id": "nonexistent",
+                        "qty": 1,
+                    },
+                )
+        assert response.status_code == 404
+
+    async def test_give_position_grants_then_revokes(self, staff_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, character_overrides={"name": "Wren"})
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                grant = await client.post(
+                    "/activity/dashboard/staff/give/position",
+                    json={
+                        "discord_id": 42,
+                        "character_name": "Wren",
+                        "position": Position.VICTOR.value,
+                        "grant": True,
+                    },
+                )
+                revoke = await client.post(
+                    "/activity/dashboard/staff/give/position",
+                    json={
+                        "discord_id": 42,
+                        "character_name": "Wren",
+                        "position": Position.VICTOR.value,
+                        "grant": False,
+                    },
+                )
+        assert grant.status_code == 200
+        assert grant.json()["positions"] == [Position.VICTOR.value]
+        assert revoke.status_code == 200
+        assert revoke.json()["positions"] == []
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.positions == []
+
+    async def test_give_job_sets_title_and_shift(self, staff_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, character_overrides={"name": "Wren"})
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/give/job",
+                    json={
+                        "discord_id": 42,
+                        "character_name": "Wren",
+                        "job_title": "Baker",
+                        "shift_phase": DayPhase.MORNING.value,
+                        "illicit": False,
+                    },
+                )
+        assert response.status_code == 200
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.job_title == "Baker"
+            assert character.shift_phase == DayPhase.MORNING.value
+            assert character.job_is_illicit is False
+
+    async def test_give_mastery_sets_shifts_completed_directly(
+        self, staff_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, character_overrides={"name": "Wren"})
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/give/mastery",
+                    json={"discord_id": 42, "character_name": "Wren", "shifts_completed": 40},
+                )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["shifts_completed"] == 40
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.shifts_completed == 40
+
+    async def test_give_mastery_jumps_to_a_levels_threshold(self, staff_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, character_overrides={"name": "Wren"})
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/give/mastery",
+                    json={"discord_id": 42, "character_name": "Wren", "level": JobLevel.EXPERT.value},
+                )
+        assert response.status_code == 200
+        assert response.json()["level"] == JobLevel.EXPERT.value
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.shifts_completed == constants.JOB_LEVEL_SHIFT_THRESHOLDS["expert"]
+
+    async def test_give_mastery_needs_a_value(self, staff_app, db_session_factory):
+        await seed_character(db_session_factory, character_overrides={"name": "Wren"})
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/give/mastery",
+                    json={"discord_id": 42, "character_name": "Wren"},
+                )
+        assert response.status_code == 400
+
+    async def test_kill_character_sets_status_and_cause(self, staff_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, character_overrides={"name": "Wren"})
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/character/kill",
+                    json={"discord_id": 42, "character_name": "Wren", "reason": "Fell in the arena"},
+                )
+        assert response.status_code == 200
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.status == CharacterStatus.DEAD.value
+            assert character.death_cause == "Fell in the arena"
+
+    async def test_note_logs_a_staff_action_without_changing_the_character(
+        self, staff_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, character_overrides={"name": "Wren"})
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/character/note",
+                    json={"discord_id": 42, "character_name": "Wren", "text": "Watching this one."},
+                )
+        assert response.status_code == 200
+        async with db_session_factory() as session:
+            actions = (
+                await session.execute(select(StaffAction).where(StaffAction.action == "note"))
+            ).scalars().all()
+        assert len(actions) == 1
+        assert actions[0].target == str(char_id)
+        assert actions[0].payload == {"text": "Watching this one."}
+
+    async def test_delete_pending_removes_a_pending_application(
+        self, staff_app, db_session_factory
+    ):
+        char_id = await seed_character(
+            db_session_factory,
+            character_overrides={"name": "Hopeful", "status": CharacterStatus.PENDING.value},
+        )
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/character/delete-pending",
+                    json={"discord_id": 42, "character_name": "Hopeful"},
+                )
+        assert response.status_code == 200
+        async with db_session_factory() as session:
+            assert await session.get(Character, char_id) is None
+
+    async def test_delete_pending_refuses_an_approved_character(
+        self, staff_app, db_session_factory
+    ):
+        await seed_character(
+            db_session_factory,
+            character_overrides={"name": "Wren", "status": CharacterStatus.APPROVED.value},
+        )
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/character/delete-pending",
+                    json={"discord_id": 42, "character_name": "Wren"},
+                )
+        assert response.status_code == 400
+
+    async def test_character_limit_override_and_reset(self, staff_app, db_session_factory):
+        await seed_character(db_session_factory, discord_id=99)
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                set_resp = await client.post(
+                    "/activity/dashboard/staff/character/limit",
+                    json={"discord_id": 42, "target_discord_id": 99, "limit": 7},
+                )
+                reset_resp = await client.post(
+                    "/activity/dashboard/staff/character/limit",
+                    json={"discord_id": 42, "target_discord_id": 99, "limit": None},
+                )
+        assert set_resp.status_code == 200 and set_resp.json()["limit"] == 7
+        assert reset_resp.status_code == 200 and reset_resp.json()["limit"] is None
+        async with db_session_factory() as session:
+            user = (
+                await session.execute(select(User).where(User.discord_id == 99))
+            ).scalar_one()
+            assert user.max_characters_override is None
+
+    async def test_ban_sets_banned_at(self, staff_app, db_session_factory):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/ban",
+                    json={"discord_id": 42, "target_discord_id": 12345},
+                )
+        assert response.status_code == 200
+        async with db_session_factory() as session:
+            user = (
+                await session.execute(select(User).where(User.discord_id == 12345))
+            ).scalar_one()
+            assert user.banned_at is not None
+
+    async def test_housing_set_price_overrides_and_clears(self, staff_app, db_session_factory):
+        property_id = await seed_property(db_session_factory, suggested_price=1000.0)
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                set_resp = await client.post(
+                    "/activity/dashboard/staff/housing/set-price",
+                    json={"discord_id": 42, "property_id": property_id, "price": 2500.0},
+                )
+                clear_resp = await client.post(
+                    "/activity/dashboard/staff/housing/set-price",
+                    json={"discord_id": 42, "property_id": property_id, "price": None},
+                )
+        assert set_resp.status_code == 200 and set_resp.json()["price"] == 2500.0
+        assert clear_resp.status_code == 200 and clear_resp.json()["price"] is None
+        async with db_session_factory() as session:
+            property_ = await session.get(Property, property_id)
+            assert property_.asking_price is None
+
+    async def test_engagement_timeout_creates_then_updates_the_singleton_row(
+        self, staff_app, db_session_factory
+    ):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                first = await client.post(
+                    "/activity/dashboard/staff/engagement/timeout",
+                    json={"discord_id": 42, "minutes": 15},
+                )
+                second = await client.post(
+                    "/activity/dashboard/staff/engagement/timeout",
+                    json={"discord_id": 42, "minutes": 30},
+                )
+        assert first.status_code == 200 and first.json()["minutes"] == 15
+        assert second.status_code == 200 and second.json()["minutes"] == 30
+        async with db_session_factory() as session:
+            settings_row = await session.get(EngagementSettings, 1)
+            assert settings_row.idle_timeout_minutes == 30
+
+    async def test_district_state_view_and_crackdown(self, staff_app, db_session_factory):
+        async with db_session_factory() as session, session.begin():
+            session.add(
+                DistrictState(
+                    district_id=1,
+                    crisis_level=2,
+                    crisis_kind="unrest",
+                    unrest=0.5,
+                    peacekeeper_pressure=0.3,
+                )
+            )
+        # `fetch_is_staff` (not `httpx.AsyncClient.get`) is what's patched
+        # here -- this test issues its own GET through the same client
+        # class the app uses to reach Discord's API, and patching that
+        # globally would intercept the outer test request too (see
+        # `post_staff_log`'s own tests below for the identical trap on the
+        # POST side).
+        with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=True)):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                view = await client.get(
+                    "/activity/dashboard/staff/district/1", params={"discord_id": 42}
+                )
+                crackdown = await client.post(
+                    "/activity/dashboard/staff/district/crackdown",
+                    json={"discord_id": 42, "district_id": 1, "duration_ticks": 10},
+                )
+        assert view.status_code == 200
+        assert view.json()["crisis_level"] == 2
+        assert crackdown.status_code == 200
+        assert crackdown.json()["until_tick"] == 10
+        async with db_session_factory() as session:
+            row = await session.get(DistrictState, 1)
+            assert row.crackdown_until_tick == 10
+            assert row.peacekeeper_pressure > 0.3
+
+    async def test_npc_add_then_rename_background_appearance_traits_speech(
+        self, staff_app, db_session_factory
+    ):
+        # Same reasoning as the district-state test above: this test issues
+        # its own GET (the NPC listing), so `fetch_is_staff` is patched
+        # directly rather than `httpx.AsyncClient.get`.
+        with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=True)):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                add_resp = await client.post(
+                    "/activity/dashboard/staff/npcs/add",
+                    json={
+                        "discord_id": 42,
+                        "name": "Cato",
+                        "district_id": 1,
+                        "age": 18,
+                        "home_location_id": "square",
+                        "traits": "brash, proud",
+                        "gender": "male",
+                    },
+                )
+                assert add_resp.status_code == 200
+                npc_id = add_resp.json()["id"]
+
+                listing = await client.get(
+                    "/activity/dashboard/staff/npcs",
+                    params={"district_id": 1, "discord_id": 42},
+                )
+                assert any(row["id"] == npc_id for row in listing.json())
+
+                rename = await client.post(
+                    "/activity/dashboard/staff/npcs/rename",
+                    json={"discord_id": 42, "npc_id": npc_id, "new_name": "Cato Ludara"},
+                )
+                background = await client.post(
+                    "/activity/dashboard/staff/npcs/background",
+                    json={"discord_id": 42, "npc_id": npc_id, "backstory": "A career from D2."},
+                )
+                appearance = await client.post(
+                    "/activity/dashboard/staff/npcs/appearance",
+                    json={"discord_id": 42, "npc_id": npc_id, "appearance": "Tall, scarred."},
+                )
+                traits = await client.post(
+                    "/activity/dashboard/staff/npcs/traits",
+                    json={"discord_id": 42, "npc_id": npc_id, "traits": "ruthless, loyal"},
+                )
+                speech = await client.post(
+                    "/activity/dashboard/staff/npcs/speech",
+                    json={"discord_id": 42, "npc_id": npc_id, "tone": "blunt"},
+                )
+        assert rename.status_code == 200 and rename.json()["name"] == "Cato Ludara"
+        assert background.status_code == 200
+        assert appearance.status_code == 200
+        assert traits.status_code == 200
+        assert speech.status_code == 200
+        async with db_session_factory() as session:
+            npc = await session.get(Npc, npc_id)
+            assert npc.name == "Cato Ludara"
+            assert npc.backstory_override == "A career from D2."
+            assert npc.appearance_override == "Tall, scarred."
+            assert npc.traits == ["ruthless", "loyal"]
+            assert npc.speech_style["tone"] == "blunt"
+
+    async def test_npc_add_refuses_an_unknown_location(self, staff_app, db_session_factory):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/npcs/add",
+                    json={
+                        "discord_id": 42,
+                        "name": "Cato",
+                        "district_id": 1,
+                        "age": 18,
+                        "home_location_id": "nonexistent",
+                        "traits": "brash",
+                    },
+                )
+        assert response.status_code == 404
+
+
+class TestDashboardStaffMarket:
+    async def test_add_stock_refuses_without_the_staff_role(self, staff_market_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([1, 2]))
+        ):
+            transport = httpx.ASGITransport(app=staff_market_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/market/add-stock",
+                    json={"discord_id": 42, "district_id": 1, "good_id": "grain", "qty": 10},
+                )
+        assert response.status_code == 403
+
+    async def test_add_stock_creates_a_row_when_none_exists(self, staff_market_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_market_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/market/add-stock",
+                    json={"discord_id": 42, "district_id": 1, "good_id": "grain", "qty": 10},
+                )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["good_name"] == "Grain"
+        assert body["new_supply"] == 10.0
+
+    async def test_add_stock_tops_up_existing_supply(
+        self, staff_market_app, db_session_factory
+    ):
+        async with db_session_factory() as session, session.begin():
+            session.add(MarketPrice(district_id=1, good_id="grain", price=2.0, supply=5.0, tick=0))
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_market_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/market/add-stock",
+                    json={"discord_id": 42, "district_id": 1, "good_id": "grain", "qty": 3},
+                )
+        assert response.status_code == 200
+        assert response.json()["new_supply"] == 8.0
+
+    async def test_add_stock_404s_for_an_unknown_good(self, staff_market_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_market_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/market/add-stock",
+                    json={"discord_id": 42, "district_id": 1, "good_id": "nonexistent", "qty": 1},
+                )
+        assert response.status_code == 404
+        assert response.json()["detail"] == "staff_good_not_found"
+
+    async def test_add_stock_rejects_a_non_positive_qty(self, staff_market_app):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_market_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/market/add-stock",
+                    json={"discord_id": 42, "district_id": 1, "good_id": "grain", "qty": 0},
+                )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "market_stock_qty_must_be_positive"
+
+
 class TestDashboardStaffLayers:
     async def test_create_category_refuses_without_the_staff_role(self, staff_app):
         with patch.object(
@@ -4146,6 +5498,128 @@ class TestDashboardStaffLayers:
         assert not image_path.exists()
         async with db_session_factory() as session:
             assert await session.get(LayerOption, option_id) is None
+
+
+class TestDashboardPanemHistory:
+    # `discord_staff.fetch_is_staff` (rather than `httpx.AsyncClient.get`)
+    # is what's mocked below -- these routes are read via `client.get`
+    # itself, so patching the same method Discord's own role lookup uses
+    # would intercept the outer test request too (see `test_post_staff_
+    # log_posts_to_the_configured_channel`'s own comment on this exact
+    # trap, right above `TestDashboardAfflictionTypes`).
+    async def test_list_refuses_without_the_staff_role(self, staff_app):
+        with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=False)):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.get(
+                    "/activity/dashboard/history/panem-history", params={"discord_id": 42}
+                )
+        assert response.status_code == 403
+        assert response.json()["detail"] == "staff_only"
+
+    async def test_create_then_list_round_trips(self, staff_app):
+        with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=True)):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                create_response = await client.post(
+                    "/activity/dashboard/history/panem-history",
+                    json={
+                        "discord_id": 42,
+                        "keywords": [" Dark Days ", "", "district 13"],
+                        "text": "  The Dark Days ended with the Treaty of Treason.  ",
+                    },
+                )
+                assert create_response.status_code == 200
+                created = create_response.json()
+                assert created["keywords"] == ["Dark Days", "district 13"]
+                assert created["text"] == "The Dark Days ended with the Treaty of Treason."
+                assert created["created_by_staff_discord_id"] == 42
+
+                list_response = await client.get(
+                    "/activity/dashboard/history/panem-history", params={"discord_id": 42}
+                )
+        assert list_response.status_code == 200
+        entries = list_response.json()["entries"]
+        assert len(entries) == 1
+        assert entries[0]["id"] == created["id"]
+
+    async def test_create_rejects_no_real_keywords(self, staff_app):
+        with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=True)):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/history/panem-history",
+                    json={"discord_id": 42, "keywords": ["  "], "text": "Some fact."},
+                )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "panem_history_needs_a_keyword"
+
+    async def test_delete_removes_the_entry(self, staff_app):
+        with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=True)):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                created = (
+                    await client.post(
+                        "/activity/dashboard/history/panem-history",
+                        json={"discord_id": 42, "keywords": ["a"], "text": "fact"},
+                    )
+                ).json()
+                delete_response = await client.post(
+                    f"/activity/dashboard/history/panem-history/{created['id']}/delete",
+                    json={"discord_id": 42},
+                )
+                assert delete_response.status_code == 200
+                list_response = await client.get(
+                    "/activity/dashboard/history/panem-history", params={"discord_id": 42}
+                )
+        assert list_response.json()["entries"] == []
+
+    async def test_delete_404s_for_an_unknown_entry(self, staff_app):
+        with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=True)):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/history/panem-history/999999/delete",
+                    json={"discord_id": 42},
+                )
+        assert response.status_code == 404
+
+
+class TestDashboardWorldLore:
+    async def test_get_refuses_without_the_staff_role(self, staff_app):
+        with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=False)):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.get(
+                    "/activity/dashboard/history/world-lore", params={"discord_id": 42}
+                )
+        assert response.status_code == 403
+
+    async def test_get_defaults_to_empty_notes(self, staff_app):
+        with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=True)):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.get(
+                    "/activity/dashboard/history/world-lore", params={"discord_id": 42}
+                )
+        assert response.status_code == 200
+        assert response.json()["alternate_universe_notes"] == ""
+
+    async def test_save_then_get_round_trips(self, staff_app):
+        with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=True)):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                save_response = await client.put(
+                    "/activity/dashboard/history/world-lore",
+                    json={"discord_id": 42, "alternate_universe_notes": "  A new canon note.  "},
+                )
+                assert save_response.status_code == 200
+                assert save_response.json()["alternate_universe_notes"] == "A new canon note."
+
+                get_response = await client.get(
+                    "/activity/dashboard/history/world-lore", params={"discord_id": 42}
+                )
+        assert get_response.json()["alternate_universe_notes"] == "A new canon note."
 
 
 async def seed_affliction_type(session_factory, **overrides: object) -> int:

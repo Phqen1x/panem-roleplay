@@ -37,6 +37,7 @@ STRINGS: dict[str, str] = {
     "character_rejected_dm": "Your character **{name}** was rejected: {note}",
     "character_changes_dm": "Staff requested changes to **{name}**: {note}\nUse `/character edit` to resubmit.",
     "character_retired": "**{name}** has been retired.",
+    "character_death_dm": "Your character **{name}** has died.\n\nCause of death: {cause}",
     # Sessions / proxying (FR-PRX)
     "rp_needs_thread": "Use this inside a scene.",
     "rp_session_set": "You're now playing **{name}** in this scene.",
@@ -59,6 +60,7 @@ STRINGS: dict[str, str] = {
     "npc_not_here": "{name} isn't at this location right now.",
     # Travel/locations (FR-LOC)
     "location_restricted": "You don't have access to that location.",
+    "outskirts_night_only": "**{name}** can't reach the outskirts except at night.",
     "location_not_found": "Not a valid location for that district.",
     "travel_ok": "**{name}** travels to **{location}**.",
     "no_location_set": "**{name}** hasn't traveled anywhere yet -- use `/travel`.",
@@ -83,6 +85,8 @@ STRINGS: dict[str, str] = {
     "`/staff give job`.",
     "work_jailed": "**{name}** is locked up and can't work a shift.",
     "job_no_open_shift": "**{name}** doesn't have a shift open right now.",
+    "job_wrong_district": "**{name}** isn't in their home district right now and can't work "
+    "this shift -- come back once you've returned home.",
     "shift_no_longer_open": "That shift is no longer open.",
     "shift_already_worked_this_tick": (
         "**{name}** already worked this shift this tick -- try again next tick."
@@ -127,6 +131,8 @@ STRINGS: dict[str, str] = {
     "inventory_empty": "**{name}** isn't carrying anything.",
     "poach_no_outskirts": "There's nowhere to poach in this district.",
     "poach_not_at_outskirts": "**{name}** needs to be at **{location}** to try poaching.",
+    "poach_night_only": "**{name}** can only poach at night -- the outskirts are watched too "
+    "closely by day.",
     "poach_nothing_to_poach": "There's nothing worth poaching here.",
     "poach_on_cooldown": "**{name}** already tried poaching this phase of the day.",
     "poach_jailed": "**{name}** is locked up and can't go poaching.",
@@ -148,7 +154,9 @@ STRINGS: dict[str, str] = {
     "lockpick_already_tried": "This lock has already been tried!",
     # Black market (contraband system: /blackmarket)
     "blackmarket_no_fence": "This district has no black market contact.",
-    "blackmarket_not_at_market": "**{name}** needs to be at the district's black market to trade.",
+    "blackmarket_not_at_market": "**{name}** needs to be at the district's outskirts to trade "
+    "on the black market.",
+    "blackmarket_night_only": "**{name}** can only reach the black market at night.",
     "blackmarket_not_trusted": (
         "**{name}** isn't on good enough terms with {fence} to be shown the black market."
     ),
@@ -172,6 +180,14 @@ STRINGS: dict[str, str] = {
     "mode_switch_on_cooldown": (
         "This character switched modes too recently -- {hours} hour(s) left before they can "
         "switch again."
+    ),
+    "mode_switch_already_pending": (
+        "This character already has a mode switch awaiting staff approval."
+    ),
+    "mode_switch_approved_dm": "Your **{name}**'s switch to **{mode}** mode has been approved!",
+    "mode_switch_declined_dm": (
+        "Staff declined **{name}**'s switch to **{mode}** mode: {note}\n"
+        "Use `/character mode` to try again."
     ),
     "crime_toggle_wrong_mode": "Only Life-mode characters can toggle crime on/off for themselves.",
     "crime_toggle_already_set": "This character's crime setting is already {enabled}.",
@@ -219,7 +235,7 @@ STRINGS: dict[str, str] = {
     "steal_not_here": "**{name}** needs to be at the same location as the mark to try this.",
     "steal_on_cooldown": "**{name}** already tried to steal something this phase of the day.",
     "steal_jailed": "**{name}** is locked up and can't try that.",
-    "steal_ok": "**{name}** lifts {amount} money off {target}, unnoticed.",
+    "steal_ok": "**{name}** lifts {amount}x {good} off {target}, unnoticed.",
     "steal_miss": "**{name}** comes up empty-handed -- and, as far as they can tell, unnoticed.",
     "steal_alerted_escape": "**{name}** is spotted going for {target}'s pocket -- and bolts clear.",
     "steal_caught": (
@@ -234,7 +250,7 @@ STRINGS: dict[str, str] = {
     "burgle_wrong_district": "**{name}** needs to be in the house's district to break in.",
     "burgle_own_house": "**{name}** can't burgle their own house.",
     "burgle_owner_home": "{owner} is home right now -- **{name}** can't break in undetected.",
-    "burgle_ok": "**{name}** slips out of {owner}'s house with {amount} money.",
+    "burgle_ok": "**{name}** slips out of {owner}'s house with {amount}x {good}.",
     "burgle_miss": "**{name}** finds nothing worth taking -- and slips out unnoticed.",
     "burgle_alerted_escape": "**{name}** is spotted breaking into {owner}'s house -- and bolts.",
     "burgle_caught": (
@@ -243,6 +259,20 @@ STRINGS: dict[str, str] = {
     ),
     "burgle_game_ready": "**{name}** kneels at {owner}'s door, pick in hand -- go pick the lock!",
     "burgle_already_tried": "This break-in has already been tried!",
+    # Shipment heists (contraband system: /shipment)
+    "shipment_none_here": "There's no shipment sitting here right now.",
+    "shipment_jailed": "**{name}** is locked up and can't try that.",
+    "shipment_not_here": "**{name}** needs to be at the shipment's location to try this.",
+    "shipment_gone": "The peacekeepers already cleared that shipment out.",
+    "shipment_ok": "**{name}** slips {amount}x {good} off the shipment before anyone notices.",
+    "shipment_miss": "**{name}** can't get near the shipment -- and slips away unnoticed.",
+    "shipment_alerted_escape": "**{name}** is spotted going for the shipment -- and bolts clear.",
+    "shipment_caught": (
+        "**{name}** is caught robbing the shipment -- roughed up, fined {fine} money and held "
+        "for {jail_ticks} ticks."
+    ),
+    "shipment_game_ready": "**{name}** eyes the shipment's guards -- go make the grab!",
+    "shipment_already_tried": "This shipment has already been tried!",
     "crimelog_header": "**{name}**'s recent crime log:",
     "crimelog_empty": "**{name}** hasn't attempted any crimes yet.",
     # Housing (buying/renting houses/apartments/inns, fatigue, sleep)
@@ -336,6 +366,11 @@ STRINGS: dict[str, str] = {
     "generator samples names per district, so that happens), pick one from the "
     "autocomplete suggestions to tell them apart.",
     "staff_good_not_found": "Not a valid good id.",
+    # Panem-wide history/lore (`/staff lore ...`, `panem_shared.lore`)
+    "panem_history_needs_a_keyword": "Give at least one keyword, comma-separated.",
+    "panem_history_text_required": "The history fact can't be empty.",
+    "panem_history_text_too_long": "That history fact is too long (4000 characters max).",
+    "panem_history_au_notes_too_long": "Those notes are too long (4000 characters max).",
 }
 
 

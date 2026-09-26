@@ -5,7 +5,7 @@
 // gameplay yet -- see each card's own note. Only offered by `app.js` when
 // `/identify` reports `is_staff` (same gating as `staff.js`), while the
 // concept is reviewed before any of it is built for players.
-import { el } from "./_shared.js?v=5";
+import { el } from "./_shared.js?v=7";
 
 const PARTY_PACK_GAMES = [
   {

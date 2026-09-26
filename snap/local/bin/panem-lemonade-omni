@@ -1,0 +1,17 @@
+#!/bin/sh
+# `sudo panem.lemonade-omni <args>` -- scripts/lemonade_omni.py, admin one-off
+# (see lemonade/README.md; optional -- only needed for DIALOGUE_PROVIDER=llm).
+set -eu
+
+if [ -f "$SNAP_DATA/env" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$SNAP_DATA/env"
+  set +a
+fi
+
+cd "$SNAP"
+
+export PATH="$SNAP/bin:$PATH"
+
+exec "$SNAP/python/bin/python3" "$SNAP/scripts/lemonade_omni.py" "$@"

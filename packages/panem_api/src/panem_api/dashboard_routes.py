@@ -30,6 +30,7 @@ import datetime as dt
 import json
 import random
 import secrets
+import uuid
 from pathlib import Path
 
 import redis.asyncio as redis
@@ -40,31 +41,43 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from panem_api import discord_staff
 from panem_shared import affliction_types as affliction_types_svc
+from panem_shared import avatars as avatars_svc
 from panem_shared import blackmarket as blackmarket_svc
 from panem_shared import characters as characters_svc
 from panem_shared import constants, job_levels, simtime
 from panem_shared import crime_log as crime_log_svc
+from panem_shared import district_lore as district_lore_svc
 from panem_shared import housing as housing_svc
 from panem_shared import jail as jail_svc
 from panem_shared import jobs as jobs_svc
 from panem_shared import layers as layers_svc
+from panem_shared import lore as lore_svc
 from panem_shared import market as market_svc
 from panem_shared import pay as pay_svc
 from panem_shared import poaching as poaching_svc
 from panem_shared import rp_modes as rp_modes_svc
+from panem_shared import shipments as shipments_svc
 from panem_shared import stealing as stealing_svc
 from panem_shared import sustenance as sustenance_svc
 from panem_shared import theme as theme_svc
 from panem_shared import trades as trades_svc
 from panem_shared import travel as travel_svc
 from panem_shared.content.loader import ContentBundle
+from panem_shared.content.schemas import Location
+from panem_shared.content.traits import speech_tone
 from panem_shared.db.models import (
     AfflictionType,
     ApartmentLease,
     Character,
     CharacterAffliction,
+    DistrictLore,
+    DistrictLorePerson,
+    DistrictState,
+    EngagementSettings,
+    Inventory,
     LayerCategory,
     Npc,
+    PanemHistoryEntry,
     Property,
     PropertyAuction,
     RelationshipRow,
@@ -80,15 +93,20 @@ from panem_shared.db.session import session_scope
 from panem_shared.enums import (
     CharacterStatus,
     DayPhase,
+    Gender,
+    JobLevel,
+    LocationKind,
     OwnerKind,
     Position,
     PropertyKind,
     RpMode,
     SceneStatus,
+    Stance,
     TradeStatus,
 )
 from panem_shared.errors import NotAllowed, NotFound, ServiceError
 from panem_shared.redis_keys import (
+    CHARACTER_MODE_SWITCH_PENDING_CHANNEL,
     CHARACTER_PENDING_CHANNEL,
     CRIME_ATTEMPT_TTL_S,
     crime_attempt_key,
@@ -96,6 +114,7 @@ from panem_shared.redis_keys import (
 from panem_shared.relationships import relationship_key
 from panem_shared.shifts import (
     already_worked_this_tick,
+    can_work_from_current_location,
     has_job,
     open_adhoc_shift_override,
     start_shift_game,
@@ -669,6 +688,7 @@ class CharacterDetail(BaseModel):
     name: str
     status: str
     age: int
+    gender: str | None = None
     appearance: str
     appearance_layers: dict[str, int]
     backstory: str
@@ -696,6 +716,7 @@ def _character_detail(
         name=character.name,
         status=character.status,
         age=character.age,
+        gender=character.gender,
         appearance=character.appearance,
         appearance_layers=layers_svc.sanitize_stored_selection(character.appearance_layers),
         backstory=character.backstory,
@@ -727,6 +748,7 @@ class CreateCharacterRequest(BaseModel):
     district_id: int
     name: str
     age: int
+    gender: str | None = None
     appearance: str = ""
     backstory: str = ""
     avatar_url: str | None = None
@@ -746,6 +768,7 @@ class UpdateCharacterRequest(BaseModel):
     avatar_url: str | None = None
     proxy_tag: str | None = None
     appearance_layers: dict[str, int] | None = None
+    gender: str | None = None
 
 
 def build_characters_router(
@@ -754,6 +777,8 @@ def build_characters_router(
     session_factory: async_sessionmaker[AsyncSession] | None,
     max_characters_per_user: int,
     redis_client: redis.Redis,
+    static_dir: Path,
+    activity_public_url: str,
 ) -> APIRouter:
     """The Character tab's REST surface: list/create/edit/retire, mirroring
     `/character list|create|avatar|tag|retire`. Unlike Discord's `/character
@@ -816,6 +841,8 @@ def build_characters_router(
             raise HTTPException(status_code=400, detail="No such district")
         if body.rp_mode not in {mode.value for mode in RpMode}:
             raise HTTPException(status_code=400, detail="Invalid RP mode")
+        if body.gender is not None and body.gender not in {g.value for g in Gender}:
+            raise HTTPException(status_code=400, detail="Invalid gender")
         is_story = body.rp_mode == RpMode.STORY.value
         if not is_story and body.shift_phase not in {phase.value for phase in DayPhase}:
             raise HTTPException(status_code=400, detail="Invalid shift phase")
@@ -836,6 +863,7 @@ def build_characters_router(
                     district_id=body.district_id,
                     name=body.name,
                     age=body.age,
+                    gender=body.gender,
                     appearance=body.appearance,
                     backstory=body.backstory,
                     avatar_url=body.avatar_url,
@@ -873,8 +901,48 @@ def build_characters_router(
                     character.appearance_layers = await layers_svc.validate_layer_selection(
                         session, body.appearance_layers
                     )
+                if body.gender is not None:
+                    if body.gender not in {g.value for g in Gender}:
+                        raise HTTPException(status_code=400, detail="Invalid gender")
+                    character.gender = body.gender
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
+            current_tick = await _current_tick(session)
+            return _character_detail(character, content=content, current_tick=current_tick)
+
+    @router.post("/{character_id}/avatar-upload", response_model=CharacterDetail)
+    async def upload_my_character_avatar(
+        character_id: int,
+        discord_id: int = Form(...),
+        file: UploadFile = File(...),  # noqa: B008 -- FastAPI's own sentinel-default idiom
+    ) -> CharacterDetail:
+        """The file-upload alternative to `PATCH .../avatar_url`'s plain
+        text field -- typing/finding a hosted image URL is the whole
+        friction this exists to remove. Persists the bytes under
+        `static_dir` (`avatars_svc.save_avatar_image`, same validation and
+        on-disk layout `panem_shared.layers` uses for staff-uploaded
+        artwork) rather than only storing a URL, so it survives independent
+        of wherever the image originally came from -- unlike `/character
+        avatar`'s Discord-attachment option, which just took the CDN's own
+        ~24h-expiring URL."""
+        if not activity_public_url:
+            raise HTTPException(
+                status_code=400,
+                detail="Avatar uploads aren't configured on this server (no public URL set).",
+            )
+        data = await file.read()
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            try:
+                relative_path = avatars_svc.save_avatar_image(
+                    content_type=file.content_type or "", data=data, static_dir=static_dir
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            character.avatar_url = f"{activity_public_url.rstrip('/')}/{relative_path}"
             current_tick = await _current_tick(session)
             return _character_detail(character, content=content, current_tick=current_tick)
 
@@ -1145,6 +1213,17 @@ class PoachStartRequest(BaseModel):
     discord_id: int
 
 
+class ShipmentStatusResponse(BaseModel):
+    present: bool
+    good_name: str | None = None
+    qty: int | None = None
+    expires_tick: int | None = None
+
+
+class ShipmentStartRequest(BaseModel):
+    discord_id: int
+
+
 class CrimeLogEntry(BaseModel):
     kind: str
     tick: int
@@ -1166,10 +1245,10 @@ def build_crime_router(
     session_factory: async_sessionmaker[AsyncSession] | None,
     redis_client: redis.Redis,
 ) -> APIRouter:
-    """The Crime tab's REST surface: mirrors `/steal`, `/burgle`, `/poach`.
-    All three `*-start` routes mint a crime attempt exactly like their
-    Discord commands do (same Redis shape `/activity/crime/{id}` reads) for
-    the dashboard to embed in an iframe."""
+    """The Crime tab's REST surface: mirrors `/steal`, `/burgle`, `/poach`,
+    `/shipment`. Every `*-start` route mints a crime attempt exactly like
+    its Discord command does (same Redis shape `/activity/crime/{id}`
+    reads) for the dashboard to embed in an iframe."""
     router = APIRouter(prefix="/activity/dashboard/crime", tags=["dashboard"])
 
     @router.get("/{character_id}/steal-targets", response_model=StealTargetsResponse)
@@ -1414,6 +1493,63 @@ def build_crime_router(
         )
         return CrimeStartResponse(attempt_id=attempt_id, difficulty=difficulty)
 
+    @router.get("/{character_id}/shipment", response_model=ShipmentStatusResponse)
+    async def shipment_status(character_id: int, discord_id: int) -> ShipmentStatusResponse:
+        """Whether a shipment is currently sitting at `character_id`'s
+        exact district+location -- what the Crime tab's Shipment panel
+        polls before offering the attempt button."""
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            current_tick = await _current_tick(session)
+            found = await shipments_svc.find_shipment_here(session, character, current_tick)
+            if found is None:
+                return ShipmentStatusResponse(present=False)
+            good = content.goods.get(found.good_id)
+            return ShipmentStatusResponse(
+                present=True,
+                good_name=good.name if good is not None else found.good_id,
+                qty=found.qty,
+                expires_tick=found.expires_tick,
+            )
+
+    @router.post("/{character_id}/shipment/start", response_model=CrimeStartResponse)
+    async def start_shipment(character_id: int, body: ShipmentStartRequest) -> CrimeStartResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            current_tick = await _current_tick(session)
+            found = await shipments_svc.find_shipment_here(session, character, current_tick)
+            if found is None:
+                raise HTTPException(status_code=404, detail="shipment_none_here")
+            try:
+                shipments_svc.check_can_steal_shipment(character, found, current_tick)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            character.last_steal_tick = current_tick
+            shipment_id, district_id = found.id, found.district_id
+            difficulty = shipments_svc.shipment_difficulty()
+
+        attempt_id = secrets.token_urlsafe(16)
+        await redis_client.set(
+            crime_attempt_key(attempt_id),
+            json.dumps(
+                {
+                    "kind": "shipment",
+                    "character_id": character_id,
+                    "shipment_id": shipment_id,
+                    "district_id": district_id,
+                    "current_tick": current_tick,
+                }
+            ),
+            ex=CRIME_ATTEMPT_TTL_S,
+        )
+        return CrimeStartResponse(attempt_id=attempt_id, difficulty=difficulty)
+
     @router.get("/{character_id}/log", response_model=CrimeLogResponse)
     async def crime_log(character_id: int, discord_id: int) -> CrimeLogResponse:
         """The character's own recent `/steal`/`/burgle`/`/poach` history,
@@ -1506,13 +1642,13 @@ def build_work_router(*, session_factory: async_sessionmaker[AsyncSession] | Non
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
 
+            is_gamemaker = Position.GAMEMAKER.value in character.positions
             open_shift = (
                 await session.execute(
                     select(Shift).where(Shift.character_id == character.id, Shift.result.is_(None))
                 )
             ).scalar_one_or_none()
             if open_shift is None:
-                is_gamemaker = Position.GAMEMAKER.value in character.positions
                 current_tick = await _current_tick(session)
                 open_shift = open_adhoc_shift_override(
                     character, current_tick, is_staff=is_gamemaker
@@ -1523,6 +1659,12 @@ def build_work_router(*, session_factory: async_sessionmaker[AsyncSession] | Non
                 await session.flush()
 
             current_tick = await _current_tick(session)
+            if not is_gamemaker and not can_work_from_current_location(character, current_tick):
+                raise HTTPException(
+                    status_code=400,
+                    detail="This character isn't in their home district right now and can't "
+                    "work this shift -- come back once they've returned home.",
+                )
             already_worked = already_worked_this_tick(open_shift, current_tick)
             if not already_worked:
                 start_shift_game(open_shift, current_tick)
@@ -1548,6 +1690,10 @@ class GoodPrice(BaseModel):
     hunger_value: float = 0.0
     thirst_value: float = 0.0
     cook_method: str | None = None
+    stock: float | None = None
+    """Today's remaining purchasable stock (`MarketPrice.supply`) --
+    `None` when it hasn't been priced yet this run (not the same as `0`,
+    genuinely sold out). See `market_svc.get_supply`."""
 
 
 class InventoryItem(BaseModel):
@@ -1608,6 +1754,7 @@ def build_market_router(
                 if good is None:
                     continue
                 price = await market_svc.get_price(session, district.id, good)
+                stock = await market_svc.get_supply(session, district.id, good_id)
                 prices.append(
                     GoodPrice(
                         good_id=good_id,
@@ -1616,6 +1763,7 @@ def build_market_router(
                         hunger_value=good.hunger_value,
                         thirst_value=good.thirst_value,
                         cook_method=good.cook_method,
+                        stock=stock,
                     )
                 )
             inventory = await _inventory_items(session, content, character_id)
@@ -1694,7 +1842,10 @@ def build_blackmarket_router(
                 if good is None:
                     continue
                 price = await blackmarket_svc.get_price(session, district.id, good)
-                prices.append(GoodPrice(good_id=good_id, name=good.name, price=price))
+                stock = await blackmarket_svc.get_supply(session, district.id, good_id)
+                prices.append(
+                    GoodPrice(good_id=good_id, name=good.name, price=price, stock=stock)
+                )
             trusted = False
             try:
                 fence = blackmarket_svc.resolve_fence(district.id, content.npcs)
@@ -1911,6 +2062,28 @@ class ResidentSummary(BaseModel):
     job_title: str
     location_id: str | None = None
     location_name: str | None = None
+    kind: str = "npc"
+    """`"npc"` or `"user"` -- the Residents directory's own citizens versus
+    other players' characters currently in this district. The frontend's
+    `determineStatus()` already prefers an explicit `status` over its own
+    location-name heuristic, so `status` below is populated for `"user"`
+    rows (computed from real state) and left `None` for `"npc"` rows
+    (unchanged: still inferred client-side from location/job)."""
+    status: str | None = None
+    """`"sleeping"`/`"engaged"`/`"idle"` for a `"user"` row -- see
+    `resident_list`'s `_character_status` for how each is decided."""
+    opinion_label: str | None = None
+    """The viewing character's `RelationshipRow.stance` toward this NPC --
+    `"stranger"` (never `None`) when no row exists yet, same default
+    `resident_profile`'s own "Opinion of You" already uses. `None` (not
+    "stranger") for a `"user"` row -- character-to-character relationships
+    aren't tracked the same way, so there's nothing real to show."""
+    opinion_score: int | None = None
+    """The same relationship's raw `affinity`, for sorting the Social tab's
+    table numerically -- `stance` alone is a bucketed label (`hates` ..
+    `loves`), not itself an orderable scale a client should try to sort
+    alphabetically. `0` (not `None`) alongside a `"stranger"` label when no
+    row exists, `None` for a `"user"` row same as `opinion_label`."""
 
 
 class ResidentsResponse(BaseModel):
@@ -1927,6 +2100,26 @@ class ResidentProfileResponse(BaseModel):
     stance: str
     appearance: str
     backstory: str
+
+
+class CharacterProfileResponse(BaseModel):
+    """Another player's character, as submitted at creation
+    (`CreateCharacterRequest`) -- everything here is the same kind of
+    public, in-fiction flavor text an NPC's own dossier
+    (`ResidentProfileResponse`) already shows anyone who clicks it, just
+    for a player's character instead of a district's."""
+
+    name: str
+    age: int
+    gender: str | None = None
+    appearance: str
+    backstory: str
+    avatar_url: str | None = None
+    appearance_layers: dict[str, int] = Field(default_factory=dict)
+    job_title: str | None = None
+    shift_phase: str | None = None
+    district_name: str
+    location_name: str | None = None
 
 
 def build_residents_router(
@@ -1951,6 +2144,43 @@ def build_residents_router(
             raise HTTPException(status_code=404, detail="resident_not_found")
         return npc
 
+    async def _resolve_other_character(session: AsyncSession, name: str) -> Character:
+        """Character names are globally unique (a case-insensitive unique
+        index -- see the migration adding it), so this needs no district
+        scoping the way `_resolve_npc` does to disambiguate; the Residents
+        list only ever offers a name that's both approved and currently in
+        the viewer's own district, but this route re-checks approval itself
+        rather than trusting that a stale client-side row still holds."""
+        other = (
+            await session.execute(
+                select(Character).where(
+                    Character.name == name,
+                    Character.status == CharacterStatus.APPROVED.value,
+                )
+            )
+        ).scalar_one_or_none()
+        if other is None:
+            raise HTTPException(status_code=404, detail="resident_not_found")
+        return other
+
+    def _character_status(
+        char: Character, *, engaged_character_ids: set[int], locations_by_id: dict[str, Location]
+    ) -> str:
+        """`"engaged"` wins over location -- a character mid-conversation in
+        their own home still reads as talking, not sleeping. Otherwise,
+        `"sleeping"` is inferred from standing in a `RESIDENTIAL` location
+        (home, an inn) rather than a real "currently asleep" flag: `/sleep`
+        is a one-shot fatigue-restoring action with no lasting state of its
+        own (see `panem_shared.housing`), so this is the closest real signal
+        to "probably resting" the data actually offers. Anyone else is
+        `"idle"` -- present in the district, not doing anything trackable."""
+        if char.id in engaged_character_ids:
+            return "engaged"
+        location = locations_by_id.get(char.location_id) if char.location_id else None
+        if location is not None and location.kind == LocationKind.RESIDENTIAL:
+            return "sleeping"
+        return "idle"
+
     @router.get("/{character_id}", response_model=ResidentsResponse)
     async def resident_list(character_id: int, discord_id: int) -> ResidentsResponse:
         factory = _require_session_factory(session_factory)
@@ -1970,20 +2200,79 @@ def build_residents_router(
                 .scalars()
                 .all()
             )
+            other_characters = (
+                (
+                    await session.execute(
+                        select(Character)
+                        .where(
+                            Character.current_district_id == character.current_district_id,
+                            Character.status == CharacterStatus.APPROVED.value,
+                            Character.id != character.id,
+                        )
+                        .order_by(Character.name)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            open_scenes = (
+                (await session.execute(select(Scene).where(Scene.status == SceneStatus.OPEN.value)))
+                .scalars()
+                .all()
+            )
+            engaged_character_ids = {
+                cid for scene in open_scenes for cid in scene.participants.get("characters", [])
+            }
             all_jobs = await jobs_svc.get_all_jobs(session, content)
-            locations_by_id = {loc.id: loc.name for loc in district.locations}
+            locations_by_id = {loc.id: loc for loc in district.locations}
+            # One query for every NPC's relationship with `character`, not
+            # one per row -- `relationship_key` always puts the character
+            # side first here (`"character" < "npc"` lexicographically, for
+            # any ids), so this direct filter is equivalent to looking each
+            # one up individually via that key.
+            relationship_by_npc_id = {
+                row.object_id: row
+                for row in (
+                    await session.execute(
+                        select(RelationshipRow).where(
+                            RelationshipRow.subject_kind == OwnerKind.CHARACTER.value,
+                            RelationshipRow.subject_id == str(character.id),
+                            RelationshipRow.object_kind == OwnerKind.NPC.value,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            }
             residents = []
             for npc in npcs:
                 job = all_jobs.get(npc.job_id) if npc.job_id else None
+                location = locations_by_id.get(npc.location_id) if npc.location_id else None
+                relationship = relationship_by_npc_id.get(npc.id)
                 residents.append(
                     ResidentSummary(
                         name=npc.name,
                         job_title=job.title if job else "Unemployed",
                         location_id=npc.location_id,
-                        location_name=(
-                            locations_by_id.get(npc.location_id)
-                            if npc.location_id is not None
-                            else None
+                        location_name=location.name if location is not None else None,
+                        kind="npc",
+                        opinion_label=relationship.stance if relationship else Stance.STRANGER.value,
+                        opinion_score=relationship.affinity if relationship else 0,
+                    )
+                )
+            for other in other_characters:
+                location = locations_by_id.get(other.location_id) if other.location_id else None
+                residents.append(
+                    ResidentSummary(
+                        name=other.name,
+                        job_title=other.job_title or "Unemployed",
+                        location_id=other.location_id,
+                        location_name=location.name if location is not None else None,
+                        kind="user",
+                        status=_character_status(
+                            other,
+                            engaged_character_ids=engaged_character_ids,
+                            locations_by_id=locations_by_id,
                         ),
                     )
                 )
@@ -2023,6 +2312,38 @@ def build_residents_router(
             stance=stance,
             appearance=appearance,
             backstory=backstory,
+        )
+
+    @router.get("/{character_id}/character/{other_name}", response_model=CharacterProfileResponse)
+    async def character_profile(
+        character_id: int, other_name: str, discord_id: int
+    ) -> CharacterProfileResponse:
+        """The player-character counterpart to `resident_profile` above --
+        everything a player submitted about their character at creation,
+        for the Social tab's dossier modal to show when a "user" row (not
+        an NPC) is clicked."""
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            other = await _resolve_other_character(session, other_name)
+            other_district = content.district(other.current_district_id)
+            location = next(
+                (loc for loc in other_district.locations if loc.id == other.location_id), None
+            )
+        return CharacterProfileResponse(
+            name=other.name,
+            age=other.age,
+            gender=other.gender,
+            appearance=other.appearance,
+            backstory=other.backstory,
+            avatar_url=other.avatar_url,
+            appearance_layers=layers_svc.sanitize_stored_selection(other.appearance_layers),
+            job_title=other.job_title,
+            shift_phase=other.shift_phase,
+            district_name=other_district.name,
+            location_name=location.name if location is not None else None,
         )
 
     return router
@@ -2394,7 +2715,20 @@ class HousingOwnedProperty(BaseModel):
     asking_price: float | None = None
     mortgage_principal: float
     mortgage_payment: float
+    mortgage_missed_payments: int
     has_open_auction: bool
+
+
+class HousingMortgageTerms(BaseModel):
+    """The constants behind `panem_shared.housing.financed_purchase_terms`/
+    `apply_refinance`, sent down so the Housing tab can explain the real
+    numbers instead of the client hardcoding a copy that could drift."""
+
+    down_payment_pct: float
+    interest_rate: float
+    term_days: int
+    max_ltv: float
+    misses_to_foreclose: int
 
 
 class HousingStatusResponse(BaseModel):
@@ -2406,6 +2740,7 @@ class HousingStatusResponse(BaseModel):
     home_district_name: str | None = None
     owned: list[HousingOwnedProperty]
     listings: list[HousingListing]
+    mortgage_terms: HousingMortgageTerms
 
 
 class HousingBuyRequest(BaseModel):
@@ -2605,6 +2940,7 @@ def build_housing_router(
                     asking_price=p.asking_price,
                     mortgage_principal=round(p.mortgage_principal, 2),
                     mortgage_payment=round(p.mortgage_payment, 2),
+                    mortgage_missed_payments=p.mortgage_missed_payments,
                     has_open_auction=p.id in open_auction_property_ids,
                 )
                 for p in sorted(owned_rows, key=lambda p: p.id)
@@ -2646,6 +2982,14 @@ def build_housing_router(
                 ),
                 owned=owned,
                 listings=listings,
+                mortgage_terms=HousingMortgageTerms(
+                    down_payment_pct=constants.MORTGAGE_DOWN_PAYMENT_PCT,
+                    interest_rate=constants.MORTGAGE_INTEREST_RATE,
+                    term_days=constants.MORTGAGE_TERM_TICKS_DEFAULT
+                    // constants.TICKS_PER_DAY,
+                    max_ltv=constants.MORTGAGE_MAX_LTV,
+                    misses_to_foreclose=constants.MORTGAGE_MISSES_TO_FORECLOSE,
+                ),
             )
 
     @router.post("/{character_id}/{property_id}/buy", response_model=HousingBuyResponse)
@@ -3217,6 +3561,21 @@ class StaffJailResponse(BaseModel):
     jailed_until_tick: int
 
 
+class StaffAddStockRequest(BaseModel):
+    discord_id: int
+    district_id: int
+    good_id: str
+    qty: float
+
+
+class StaffAddStockResponse(BaseModel):
+    district_id: int
+    good_id: str
+    good_name: str
+    qty_added: float
+    new_supply: float
+
+
 class CreateLayerCategoryRequest(BaseModel):
     discord_id: int
     name: str
@@ -3274,6 +3633,237 @@ class DeleteAfflictionTypeRequest(BaseModel):
     discord_id: int
 
 
+# ---- The rest of `/staff ...`'s subcommands, consolidated into this same
+# tab -- every one of these mirrors a `panem_bot.cogs.staff.StaffCog`
+# subcommand exactly (same service calls, same validation, same
+# `StaffAction` logging where the original logged one), so staff no longer
+# need to leave the Activity for anything that isn't tied to a specific
+# Discord channel/thread (`/staff scene ...`) or a raw message link
+# (`/staff whois`) -- those two stay Discord-only since there's no
+# meaningful web equivalent of "this channel" or "that message" here.
+
+
+class StaffGiveMoneyRequest(BaseModel):
+    discord_id: int
+    character_name: str
+    amount: int
+
+
+class StaffGiveMoneyResponse(BaseModel):
+    character_name: str
+    new_balance: int
+
+
+class StaffGiveItemRequest(BaseModel):
+    discord_id: int
+    character_name: str
+    good_id: str
+    qty: int
+
+
+class StaffGiveItemResponse(BaseModel):
+    character_name: str
+    good_id: str
+    good_name: str
+    new_qty: int
+
+
+class StaffGoodOption(BaseModel):
+    id: str
+    name: str
+
+
+class StaffGivePositionRequest(BaseModel):
+    discord_id: int
+    character_name: str
+    position: Position
+    grant: bool = True
+
+
+class StaffGivePositionResponse(BaseModel):
+    character_name: str
+    positions: list[str]
+
+
+class StaffGiveJobRequest(BaseModel):
+    discord_id: int
+    character_name: str
+    job_title: str
+    shift_phase: DayPhase
+    illicit: bool | None = None
+
+
+class StaffGiveJobResponse(BaseModel):
+    character_name: str
+    job_title: str
+    shift_phase: str
+
+
+class StaffGiveMasteryRequest(BaseModel):
+    discord_id: int
+    character_name: str
+    shifts_completed: int | None = None
+    level: JobLevel | None = None
+
+
+class StaffGiveMasteryResponse(BaseModel):
+    character_name: str
+    shifts_completed: int
+    level: str
+
+
+class StaffKillRequest(BaseModel):
+    discord_id: int
+    character_name: str
+    reason: str | None = None
+
+
+class StaffKillResponse(BaseModel):
+    character_name: str
+
+
+class StaffNoteRequest(BaseModel):
+    discord_id: int
+    character_name: str
+    text: str
+
+
+class StaffDeletePendingRequest(BaseModel):
+    discord_id: int
+    character_name: str
+    reason: str | None = None
+
+
+class StaffDeletePendingResponse(BaseModel):
+    character_name: str
+
+
+class StaffCharacterLimitRequest(BaseModel):
+    discord_id: int
+    target_discord_id: int
+    limit: int | None = None
+
+
+class StaffCharacterLimitResponse(BaseModel):
+    target_discord_id: int
+    limit: int | None
+
+
+class StaffBanRequest(BaseModel):
+    discord_id: int
+    target_discord_id: int
+
+
+class StaffHousingSetPriceRequest(BaseModel):
+    discord_id: int
+    property_id: int
+    price: float | None = None
+
+
+class StaffHousingSetPriceResponse(BaseModel):
+    property_id: int
+    price: float | None
+
+
+class StaffEngagementTimeoutRequest(BaseModel):
+    discord_id: int
+    minutes: int
+
+
+class StaffEngagementTimeoutResponse(BaseModel):
+    minutes: int
+
+
+class StaffCrackdownRequest(BaseModel):
+    discord_id: int
+    district_id: int
+    duration_ticks: int | None = None
+
+
+class StaffCrackdownResponse(BaseModel):
+    district_id: int
+    duration_ticks: int
+    until_tick: int
+
+
+class StaffDistrictStateResponse(BaseModel):
+    district_id: int
+    district_name: str
+    crisis_level: int
+    crisis_kind: str | None
+    unrest: float
+    peacekeeper_pressure: float
+    morale: float
+    capitol_favor: float
+    quota_progress: float
+    quota_target: float
+    treasury: float
+    crackdown_until_tick: int | None
+
+
+class StaffNpcOption(BaseModel):
+    id: str
+    name: str
+
+
+class StaffLocationOption(BaseModel):
+    id: str
+    name: str
+
+
+class StaffJobOption(BaseModel):
+    id: str
+    title: str
+
+
+class StaffNpcRenameRequest(BaseModel):
+    discord_id: int
+    npc_id: str
+    new_name: str
+
+
+class StaffNpcBackgroundRequest(BaseModel):
+    discord_id: int
+    npc_id: str
+    backstory: str
+
+
+class StaffNpcAppearanceRequest(BaseModel):
+    discord_id: int
+    npc_id: str
+    appearance: str
+
+
+class StaffNpcTraitsRequest(BaseModel):
+    discord_id: int
+    npc_id: str
+    traits: str
+
+
+class StaffNpcSpeechRequest(BaseModel):
+    discord_id: int
+    npc_id: str
+    tone: str
+
+
+class StaffNpcSummary(BaseModel):
+    id: str
+    name: str
+
+
+class StaffNpcAddRequest(BaseModel):
+    discord_id: int
+    name: str
+    district_id: int
+    age: int
+    home_location_id: str
+    traits: str
+    gender: str | None = None
+    job_id: str | None = None
+    backstory: str | None = None
+    appearance: str | None = None
+
+
 class ActiveAfflictionSummary(BaseModel):
     id: int
     name: str
@@ -3304,11 +3894,31 @@ class RpModeStatusResponse(BaseModel):
     fatigue: float
     sanity: float
     afflictions: list[ActiveAfflictionSummary]
+    has_job_info: bool = False
+    """Whether `job_title` is already on file -- i.e. this character was
+    Life/Simulation at some point in the past, however long ago. The
+    frontend uses this to decide whether picking a non-Story `new_mode`
+    needs the job-title/shift-phase/illicit fields shown before `/switch`
+    can be called (`rp_modes.mode_switch_needs_job_info`); switching to
+    Story never needs them regardless."""
+    pending_mode: str | None = None
+    """Set while a switch that needed fresh job info is awaiting staff
+    approval (`Character.pending_rp_mode`) -- the frontend shows this
+    instead of the switch panel until it's resolved."""
 
 
 class RpModeSwitchRequest(BaseModel):
     discord_id: int
     new_mode: RpMode
+    job_title: str | None = None
+    shift_phase: str | None = None
+    job_is_illicit: bool = False
+    """Only used when `rp_modes.mode_switch_needs_job_info` says this
+    switch needs fresh job info -- mirrors the bot's `/character mode`
+    job-title/shift-phase/illicit prompts, collected by the frontend
+    instead of a chained modal/select. Ignored (the switch applies
+    immediately, same as before this field existed) when job info isn't
+    needed."""
 
 
 class RpModeCrimeToggleRequest(BaseModel):
@@ -3319,6 +3929,7 @@ class RpModeCrimeToggleRequest(BaseModel):
 def build_rp_mode_router(
     *,
     session_factory: async_sessionmaker[AsyncSession] | None,
+    redis_client: redis.Redis,
 ) -> APIRouter:
     """The home page's mode-switch panel (Milestone 11) -- `/character
     mode`/`/character crime`'s dashboard equivalent, mirroring the bot
@@ -3364,6 +3975,8 @@ def build_rp_mode_router(
             fatigue=character.fatigue,
             sanity=character.sanity,
             afflictions=afflictions,
+            has_job_info=character.job_title is not None,
+            pending_mode=character.pending_rp_mode,
         )
 
     @router.get("/{character_id}/status", response_model=RpModeStatusResponse)
@@ -3377,16 +3990,51 @@ def build_rp_mode_router(
 
     @router.post("/{character_id}/switch", response_model=RpModeStatusResponse)
     async def switch(character_id: int, body: RpModeSwitchRequest) -> RpModeStatusResponse:
+        """Switching straight to Story, or into Life/Simulation when
+        `job_title` is already on file, applies immediately -- unchanged
+        from before this field existed. Switching into Life/Simulation for
+        the *first* time (`rp_modes.mode_switch_needs_job_info`) instead
+        needs `body.job_title`/`shift_phase` (mirroring `/character mode`'s
+        job-title/shift-phase/illicit prompts) and stages the switch for
+        staff approval rather than applying it -- `panem_api` has no bot
+        token to post that approval embed itself, so it publishes on
+        `CHARACTER_MODE_SWITCH_PENDING_CHANNEL` the same way character
+        creation does on `CHARACTER_PENDING_CHANNEL`."""
         factory = _require_session_factory(session_factory)
+        needs_announce = False
         async with session_scope(factory) as session:
             character = await _resolve_owned_character(
                 session, discord_id=body.discord_id, character_id=character_id
             )
             try:
-                rp_modes_svc.switch_mode(character, body.new_mode, dt.datetime.now(dt.UTC))
+                rp_modes_svc.check_can_switch_mode(character, body.new_mode, dt.datetime.now(dt.UTC))
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
-            return await _status_response(session, character)
+            if rp_modes_svc.mode_switch_needs_job_info(character, body.new_mode):
+                if not body.job_title or not body.shift_phase:
+                    raise HTTPException(
+                        status_code=400, detail="job_title and shift_phase are required"
+                    )
+                if body.shift_phase not in {phase.value for phase in DayPhase}:
+                    raise HTTPException(status_code=400, detail="Invalid shift phase")
+                try:
+                    characters_svc.validate_job_title(body.job_title)
+                except ServiceError as exc:
+                    raise _http_from_service_error(exc) from exc
+                rp_modes_svc.stage_mode_switch(
+                    character,
+                    body.new_mode,
+                    job_title=body.job_title,
+                    shift_phase=body.shift_phase,
+                    job_is_illicit=body.job_is_illicit,
+                )
+                needs_announce = True
+            else:
+                rp_modes_svc.switch_mode(character, body.new_mode, dt.datetime.now(dt.UTC))
+            response = await _status_response(session, character)
+        if needs_announce:
+            await redis_client.publish(CHARACTER_MODE_SWITCH_PENDING_CHANNEL, str(character_id))
+        return response
 
     @router.post("/{character_id}/crime-toggle", response_model=RpModeStatusResponse)
     async def crime_toggle(
@@ -3408,6 +4056,7 @@ def build_rp_mode_router(
 
 def build_staff_router(
     *,
+    content: ContentBundle,
     session_factory: async_sessionmaker[AsyncSession] | None,
     static_dir: Path,
     discord_token: str = "",
@@ -3476,6 +4125,59 @@ def build_staff_router(
             content=(
                 f"**Staff action:** <@{body.discord_id}> `jail` -> `{response.character_name}` "
                 f"(ticks={body.ticks}, applied={applied}, reason={body.reason!r})"
+            ),
+        )
+        return response
+
+    @router.post("/market/add-stock", response_model=StaffAddStockResponse)
+    async def add_market_stock(body: StaffAddStockRequest) -> StaffAddStockResponse:
+        """Directly tops up a district's market stock (`MarketPrice.
+        supply`) -- for correcting a shortage without waiting on `panem_sim.
+        systems.economy`'s own daily update. Works for any good staff name,
+        legal or illicit alike (whether it's actually tradeable there is
+        `market_svc.resolve_good`/`blackmarket_svc.resolve_good`'s concern
+        at buy/sell time, not this one's)."""
+        await _require_staff(body.discord_id)
+        good = content.goods.get(body.good_id)
+        if good is None:
+            raise HTTPException(status_code=404, detail="staff_good_not_found")
+        if body.district_id not in content.districts:
+            raise HTTPException(status_code=404, detail="invalid_district")
+        district = content.district(body.district_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            current_tick = await _current_tick(session)
+            try:
+                row = await market_svc.add_stock(
+                    session,
+                    district_id=district.id,
+                    good=good,
+                    qty=body.qty,
+                    current_tick=current_tick,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="add_stock",
+                    target=f"{district.id}:{good.id}",
+                    payload={"qty": body.qty, "new_supply": row.supply},
+                )
+            )
+            response = StaffAddStockResponse(
+                district_id=district.id,
+                good_id=good.id,
+                good_name=good.name,
+                qty_added=body.qty,
+                new_supply=row.supply,
+            )
+        await discord_staff.post_staff_log(
+            channel_id=log_channel_id,
+            bot_token=discord_token,
+            content=(
+                f"**Staff action:** <@{body.discord_id}> `add_stock` -> district {district.id} "
+                f"`{good.name}` (+{body.qty}, now {response.new_supply})"
             ),
         )
         return response
@@ -3683,5 +4385,909 @@ def build_staff_router(
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
         return {"deleted": True}
+
+    # ---- Everything else `/staff ...` could do, consolidated here -------
+    # Mirrors `panem_bot.cogs.staff.StaffCog` subcommand-for-subcommand
+    # (see that file for the Discord-side originals); `/staff scene ...`
+    # and `/staff whois` are the only two left bot-only, since both need a
+    # specific Discord channel/thread or message link that has no web
+    # equivalent here.
+
+    async def _find_character_by_name(session: AsyncSession, name: str) -> Character:
+        row = (
+            await session.execute(select(Character).where(Character.name == name))
+        ).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(status_code=404, detail="character_not_found")
+        return row
+
+    @router.get("/goods", response_model=list[StaffGoodOption])
+    async def list_goods() -> list[StaffGoodOption]:
+        return [
+            StaffGoodOption(id=good.id, name=good.name)
+            for good in sorted(content.goods.values(), key=lambda g: g.name)
+        ]
+
+    @router.post("/give/money", response_model=StaffGiveMoneyResponse)
+    async def give_money(body: StaffGiveMoneyRequest) -> StaffGiveMoneyResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _find_character_by_name(session, body.character_name)
+            character.money = max(0, character.money + body.amount)
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="give_money",
+                    target=str(character.id),
+                    payload={"amount": body.amount},
+                )
+            )
+            new_balance = character.money
+        return StaffGiveMoneyResponse(character_name=body.character_name, new_balance=new_balance)
+
+    @router.post("/give/item", response_model=StaffGiveItemResponse)
+    async def give_item(body: StaffGiveItemRequest) -> StaffGiveItemResponse:
+        await _require_staff(body.discord_id)
+        good = content.goods.get(body.good_id)
+        if good is None:
+            raise HTTPException(status_code=404, detail="staff_good_not_found")
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _find_character_by_name(session, body.character_name)
+            owner_id = str(character.id)
+            inv = await session.get(Inventory, (OwnerKind.CHARACTER.value, owner_id, good.id))
+            current = inv.qty if inv is not None else 0
+            new_qty = max(0, current + body.qty)
+            if inv is None:
+                inv = Inventory(
+                    owner_kind=OwnerKind.CHARACTER.value,
+                    owner_id=owner_id,
+                    good_id=good.id,
+                    qty=new_qty,
+                )
+                session.add(inv)
+            else:
+                inv.qty = new_qty
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="give_item",
+                    target=str(character.id),
+                    payload={"good": good.id, "qty": body.qty},
+                )
+            )
+        return StaffGiveItemResponse(
+            character_name=body.character_name, good_id=good.id, good_name=good.name, new_qty=new_qty
+        )
+
+    @router.post("/give/position", response_model=StaffGivePositionResponse)
+    async def give_position(body: StaffGivePositionRequest) -> StaffGivePositionResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _find_character_by_name(session, body.character_name)
+            held = set(character.positions)
+            if body.grant:
+                held.add(body.position.value)
+            else:
+                held.discard(body.position.value)
+            character.positions = sorted(held)
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="give_position",
+                    target=str(character.id),
+                    payload={"position": body.position.value, "grant": body.grant},
+                )
+            )
+            positions = character.positions
+        return StaffGivePositionResponse(character_name=body.character_name, positions=positions)
+
+    @router.post("/give/job", response_model=StaffGiveJobResponse)
+    async def give_job(body: StaffGiveJobRequest) -> StaffGiveJobResponse:
+        await _require_staff(body.discord_id)
+        try:
+            characters_svc.validate_job_title(body.job_title)
+        except ServiceError as exc:
+            raise _http_from_service_error(exc) from exc
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _find_character_by_name(session, body.character_name)
+            character.job_title = body.job_title
+            character.shift_phase = body.shift_phase.value
+            if body.illicit is not None:
+                character.job_is_illicit = body.illicit
+            character.job_started_tick = None
+            character.consecutive_missed = 0
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="give_job",
+                    target=str(character.id),
+                    payload={
+                        "job_title": body.job_title,
+                        "shift_phase": body.shift_phase.value,
+                        "illicit": body.illicit,
+                    },
+                )
+            )
+        return StaffGiveJobResponse(
+            character_name=body.character_name,
+            job_title=body.job_title,
+            shift_phase=body.shift_phase.value,
+        )
+
+    @router.post("/give/mastery", response_model=StaffGiveMasteryResponse)
+    async def give_mastery(body: StaffGiveMasteryRequest) -> StaffGiveMasteryResponse:
+        await _require_staff(body.discord_id)
+        if body.shifts_completed is None and body.level is None:
+            raise HTTPException(status_code=400, detail="mastery_needs_value")
+        if body.shifts_completed is not None and body.shifts_completed < 0:
+            raise HTTPException(status_code=400, detail="invalid_shifts_completed")
+        new_shifts = (
+            body.shifts_completed
+            if body.shifts_completed is not None
+            else constants.JOB_LEVEL_SHIFT_THRESHOLDS[body.level.value]  # type: ignore[union-attr]
+        )
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _find_character_by_name(session, body.character_name)
+            character.shifts_completed = new_shifts
+            new_level = job_levels.job_level_for_shifts(new_shifts)
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="give_mastery",
+                    target=str(character.id),
+                    payload={"shifts_completed": new_shifts, "level": new_level.value},
+                )
+            )
+        return StaffGiveMasteryResponse(
+            character_name=body.character_name, shifts_completed=new_shifts, level=new_level.value
+        )
+
+    @router.post("/character/kill", response_model=StaffKillResponse)
+    async def kill_character(body: StaffKillRequest) -> StaffKillResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _find_character_by_name(session, body.character_name)
+            character.status = CharacterStatus.DEAD.value
+            reason = body.reason.strip() if body.reason and body.reason.strip() else None
+            character.death_cause = reason
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="kill",
+                    target=str(character.id),
+                    payload={"reason": reason},
+                )
+            )
+        return StaffKillResponse(character_name=body.character_name)
+
+    @router.post("/character/note")
+    async def note_character(body: StaffNoteRequest) -> dict[str, bool]:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _find_character_by_name(session, body.character_name)
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="note",
+                    target=str(character.id),
+                    payload={"text": body.text},
+                )
+            )
+        return {"logged": True}
+
+    @router.post("/character/delete-pending", response_model=StaffDeletePendingResponse)
+    async def delete_pending_character(body: StaffDeletePendingRequest) -> StaffDeletePendingResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _find_character_by_name(session, body.character_name)
+            if character.status != CharacterStatus.PENDING.value:
+                raise HTTPException(status_code=400, detail="not_pending")
+            char_id = character.id
+            await session.delete(character)
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="delete_pending",
+                    target=str(char_id),
+                    payload={"name": body.character_name, "reason": body.reason},
+                )
+            )
+        return StaffDeletePendingResponse(character_name=body.character_name)
+
+    @router.post("/character/limit", response_model=StaffCharacterLimitResponse)
+    async def set_character_limit(body: StaffCharacterLimitRequest) -> StaffCharacterLimitResponse:
+        await _require_staff(body.discord_id)
+        if body.limit is not None and body.limit < 0:
+            raise HTTPException(status_code=400, detail="invalid_limit")
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            user = await characters_svc.get_or_create_user(session, body.target_discord_id)
+            user.max_characters_override = body.limit
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="character_limit",
+                    target=str(body.target_discord_id),
+                    payload={"limit": body.limit},
+                )
+            )
+        return StaffCharacterLimitResponse(
+            target_discord_id=body.target_discord_id, limit=body.limit
+        )
+
+    @router.post("/ban")
+    async def ban_user(body: StaffBanRequest) -> dict[str, bool]:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            row = (
+                await session.execute(
+                    select(User).where(User.discord_id == body.target_discord_id)
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                row = User(discord_id=body.target_discord_id)
+                session.add(row)
+                await session.flush()
+            row.banned_at = dt.datetime.now(dt.UTC)
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="ban",
+                    target=str(body.target_discord_id),
+                )
+            )
+        return {"banned": True}
+
+    @router.post("/housing/set-price", response_model=StaffHousingSetPriceResponse)
+    async def set_housing_price(body: StaffHousingSetPriceRequest) -> StaffHousingSetPriceResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            property_ = await session.get(Property, body.property_id)
+            if property_ is None:
+                raise HTTPException(status_code=404, detail="housing_not_found")
+            property_.asking_price = body.price
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="housing_set_price",
+                    target=str(body.property_id),
+                    payload={"price": body.price},
+                )
+            )
+        return StaffHousingSetPriceResponse(property_id=body.property_id, price=body.price)
+
+    @router.post("/engagement/timeout", response_model=StaffEngagementTimeoutResponse)
+    async def set_engagement_timeout(
+        body: StaffEngagementTimeoutRequest,
+    ) -> StaffEngagementTimeoutResponse:
+        await _require_staff(body.discord_id)
+        if body.minutes < 1:
+            raise HTTPException(status_code=400, detail="invalid_minutes")
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            settings_row = await session.get(EngagementSettings, 1)
+            if settings_row is None:
+                settings_row = EngagementSettings(id=1, idle_timeout_minutes=body.minutes)
+                session.add(settings_row)
+            else:
+                settings_row.idle_timeout_minutes = body.minutes
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="engagement_set_timeout",
+                    target="engagement_settings",
+                    payload={"minutes": body.minutes},
+                )
+            )
+        return StaffEngagementTimeoutResponse(minutes=body.minutes)
+
+    @router.get("/district/{district_id}", response_model=StaffDistrictStateResponse)
+    async def district_state(district_id: int, discord_id: int) -> StaffDistrictStateResponse:
+        await _require_staff(discord_id)
+        if district_id not in content.districts:
+            raise HTTPException(status_code=404, detail="invalid_district")
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            row = await session.get(DistrictState, district_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="district_state_not_seeded")
+            return StaffDistrictStateResponse(
+                district_id=district_id,
+                district_name=content.district(district_id).name,
+                crisis_level=row.crisis_level,
+                crisis_kind=row.crisis_kind,
+                unrest=row.unrest,
+                peacekeeper_pressure=row.peacekeeper_pressure,
+                morale=row.morale,
+                capitol_favor=row.capitol_favor,
+                quota_progress=row.quota_progress,
+                quota_target=row.quota_target,
+                treasury=row.treasury,
+                crackdown_until_tick=row.crackdown_until_tick,
+            )
+
+    @router.post("/district/crackdown", response_model=StaffCrackdownResponse)
+    async def trigger_crackdown(body: StaffCrackdownRequest) -> StaffCrackdownResponse:
+        await _require_staff(body.discord_id)
+        if body.district_id not in content.districts:
+            raise HTTPException(status_code=404, detail="invalid_district")
+        duration = body.duration_ticks or constants.CRACKDOWN_DEFAULT_DURATION_TICKS
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            current_tick = await _current_tick(session)
+            row = await session.get(DistrictState, body.district_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="district_state_not_seeded")
+            row.crackdown_until_tick = current_tick + duration
+            row.peacekeeper_pressure = min(
+                1.0, row.peacekeeper_pressure + constants.CRACKDOWN_PRESSURE_DELTA
+            )
+            until_tick = row.crackdown_until_tick
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="crackdown",
+                    target=str(body.district_id),
+                    payload={"duration_ticks": duration, "until_tick": until_tick},
+                )
+            )
+        return StaffCrackdownResponse(
+            district_id=body.district_id, duration_ticks=duration, until_tick=until_tick
+        )
+
+    # ---- NPC management (`/staff npc ...`) ------------------------------
+
+    @router.get("/npcs", response_model=list[StaffNpcSummary])
+    async def list_district_npcs(district_id: int, discord_id: int) -> list[StaffNpcSummary]:
+        await _require_staff(discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            rows = (
+                await session.execute(
+                    select(Npc).where(Npc.district_id == district_id).order_by(Npc.name)
+                )
+            ).scalars()
+            return [StaffNpcSummary(id=row.id, name=row.name) for row in rows]
+
+    @router.get("/npcs/locations", response_model=list[StaffLocationOption])
+    async def list_district_locations(
+        district_id: int, discord_id: int
+    ) -> list[StaffLocationOption]:
+        await _require_staff(discord_id)
+        if district_id not in content.districts:
+            raise HTTPException(status_code=404, detail="invalid_district")
+        return [
+            StaffLocationOption(id=loc.id, name=loc.name)
+            for loc in content.district(district_id).locations
+        ]
+
+    @router.get("/npcs/jobs", response_model=list[StaffJobOption])
+    async def list_district_jobs(district_id: int, discord_id: int) -> list[StaffJobOption]:
+        await _require_staff(discord_id)
+        return [
+            StaffJobOption(id=job.id, title=job.title)
+            for job in content.jobs.values()
+            if job.district == district_id
+        ]
+
+    async def _find_npc_by_id(session: AsyncSession, npc_id: str) -> Npc:
+        row = await session.get(Npc, npc_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="staff_npc_not_found")
+        return row
+
+    @router.post("/npcs/rename", response_model=StaffNpcSummary)
+    async def rename_npc(body: StaffNpcRenameRequest) -> StaffNpcSummary:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            npc = await _find_npc_by_id(session, body.npc_id)
+            old_name = npc.name
+            npc.name = body.new_name
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="npc_rename",
+                    target=npc.id,
+                    payload={"old_name": old_name, "new_name": body.new_name},
+                )
+            )
+        return StaffNpcSummary(id=body.npc_id, name=body.new_name)
+
+    @router.post("/npcs/background")
+    async def set_npc_background(body: StaffNpcBackgroundRequest) -> dict[str, bool]:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            npc = await _find_npc_by_id(session, body.npc_id)
+            npc.backstory_override = body.backstory
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="npc_set_background",
+                    target=npc.id,
+                    payload={"backstory": body.backstory},
+                )
+            )
+        return {"updated": True}
+
+    @router.post("/npcs/appearance")
+    async def set_npc_appearance(body: StaffNpcAppearanceRequest) -> dict[str, bool]:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            npc = await _find_npc_by_id(session, body.npc_id)
+            npc.appearance_override = body.appearance
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="npc_set_appearance",
+                    target=npc.id,
+                    payload={"appearance": body.appearance},
+                )
+            )
+        return {"updated": True}
+
+    @router.post("/npcs/traits")
+    async def set_npc_traits(body: StaffNpcTraitsRequest) -> dict[str, bool]:
+        await _require_staff(body.discord_id)
+        trait_list = [t_.strip() for t_ in body.traits.split(",") if t_.strip()]
+        if not trait_list:
+            raise HTTPException(status_code=400, detail="npc_needs_trait")
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            npc = await _find_npc_by_id(session, body.npc_id)
+            npc.traits = trait_list
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="npc_set_traits",
+                    target=npc.id,
+                    payload={"traits": trait_list},
+                )
+            )
+        return {"updated": True}
+
+    @router.post("/npcs/speech")
+    async def set_npc_speech(body: StaffNpcSpeechRequest) -> dict[str, bool]:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            npc = await _find_npc_by_id(session, body.npc_id)
+            npc.speech_style = {**npc.speech_style, "tone": body.tone}
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="npc_set_speech",
+                    target=npc.id,
+                    payload={"tone": body.tone},
+                )
+            )
+        return {"updated": True}
+
+    @router.post("/npcs/add", response_model=StaffNpcSummary)
+    async def add_npc(body: StaffNpcAddRequest) -> StaffNpcSummary:
+        await _require_staff(body.discord_id)
+        if body.district_id not in content.districts:
+            raise HTTPException(status_code=404, detail="invalid_district")
+        district_content = content.district(body.district_id)
+        location = next(
+            (loc for loc in district_content.locations if loc.id == body.home_location_id), None
+        )
+        if location is None:
+            raise HTTPException(status_code=404, detail="invalid_location")
+        trait_list = [t_.strip() for t_ in body.traits.split(",") if t_.strip()]
+        if not trait_list:
+            raise HTTPException(status_code=400, detail="npc_needs_trait")
+        job_row = content.jobs.get(body.job_id) if body.job_id else None
+        if body.job_id and (job_row is None or job_row.district != body.district_id):
+            raise HTTPException(status_code=404, detail="invalid_job")
+        npc_gender = body.gender if body.gender else random.choice(list(Gender)).value
+        npc_id = f"staff_{body.district_id}_{uuid.uuid4().hex[:8]}"
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            row = Npc(
+                id=npc_id,
+                district_id=body.district_id,
+                name=body.name,
+                age=body.age,
+                gender=npc_gender,
+                job_id=job_row.id if job_row is not None else None,
+                home_location_id=body.home_location_id,
+                location_id=body.home_location_id,
+                traits=trait_list,
+                speech_style={"tone": speech_tone(trait_list)},
+                backstory_override=body.backstory,
+                appearance_override=body.appearance,
+            )
+            session.add(row)
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="npc_add",
+                    target=npc_id,
+                    payload={
+                        "name": body.name,
+                        "district": body.district_id,
+                        "home_location": body.home_location_id,
+                    },
+                )
+            )
+        return StaffNpcSummary(id=npc_id, name=body.name)
+
+    return router
+
+
+class DistrictLorePersonResponse(BaseModel):
+    id: int
+    district_id: int
+    role: str
+    name: str
+    character_id: int | None = None
+    character_name: str | None = None
+    is_active: bool
+    notes: str
+
+
+class DistrictLoreResponse(BaseModel):
+    district_id: int
+    classification: str | None = None
+    adjectives: list[str] = Field(default_factory=list)
+    accent_notes: str = ""
+    urban_rural_notes: str = ""
+    academy_name: str | None = None
+    academy_notes: str = ""
+    games_history: str = ""
+    regime_notes: str = ""
+    opinions: dict[str, str] = Field(default_factory=dict)
+    misc_notes: str = ""
+    updated_by: int | None = None
+    people: list[DistrictLorePersonResponse] = Field(default_factory=list)
+
+
+class DistrictLoreCatalogResponse(BaseModel):
+    districts: list[DistrictLoreResponse]
+
+
+class UpsertDistrictLoreRequest(BaseModel):
+    discord_id: int
+    classification: str | None = None
+    adjectives: list[str] = Field(default_factory=list)
+    accent_notes: str = ""
+    urban_rural_notes: str = ""
+    academy_name: str | None = None
+    academy_notes: str = ""
+    games_history: str = ""
+    regime_notes: str = ""
+    opinions: dict[str, str] = Field(default_factory=dict)
+    misc_notes: str = ""
+
+
+class CreateDistrictLorePersonRequest(BaseModel):
+    discord_id: int
+    role: str
+    name: str
+    character_id: int | None = None
+    is_active: bool = True
+    notes: str = ""
+
+
+class UpdateDistrictLorePersonRequest(BaseModel):
+    discord_id: int
+    role: str | None = None
+    name: str | None = None
+    character_id: int | None = None
+    character_id_set: bool = False
+    is_active: bool | None = None
+    notes: str | None = None
+
+
+class DeleteDistrictLorePersonRequest(BaseModel):
+    discord_id: int
+
+
+class PanemHistoryEntryResponse(BaseModel):
+    id: int
+    keywords: list[str]
+    text: str
+    created_by_staff_discord_id: int
+
+
+class PanemHistoryCatalogResponse(BaseModel):
+    entries: list[PanemHistoryEntryResponse]
+
+
+class CreatePanemHistoryEntryRequest(BaseModel):
+    discord_id: int
+    keywords: list[str] = Field(default_factory=list)
+    text: str = ""
+
+
+class DeletePanemHistoryEntryRequest(BaseModel):
+    discord_id: int
+
+
+class WorldLoreResponse(BaseModel):
+    alternate_universe_notes: str = ""
+
+
+class UpdateWorldLoreRequest(BaseModel):
+    discord_id: int
+    alternate_universe_notes: str = ""
+
+
+def _panem_history_entry_response(row: PanemHistoryEntry) -> PanemHistoryEntryResponse:
+    return PanemHistoryEntryResponse(
+        id=row.id,
+        keywords=list(row.keywords),
+        text=row.text,
+        created_by_staff_discord_id=row.created_by_staff_discord_id,
+    )
+
+
+def _district_lore_person_response(row: DistrictLorePerson) -> DistrictLorePersonResponse:
+    return DistrictLorePersonResponse(
+        id=row.id,
+        district_id=row.district_id,
+        role=row.role,
+        name=row.name,
+        character_id=row.character_id,
+        character_name=row.character.name if row.character is not None else None,
+        is_active=row.is_active,
+        notes=row.notes,
+    )
+
+
+def _district_lore_response(
+    district_id: int, lore: DistrictLore | None, people: list[DistrictLorePerson]
+) -> DistrictLoreResponse:
+    base = DistrictLoreResponse(district_id=district_id)
+    if lore is not None:
+        base = DistrictLoreResponse(
+            district_id=district_id,
+            classification=lore.classification,
+            adjectives=list(lore.adjectives),
+            accent_notes=lore.accent_notes,
+            urban_rural_notes=lore.urban_rural_notes,
+            academy_name=lore.academy_name,
+            academy_notes=lore.academy_notes,
+            games_history=lore.games_history,
+            regime_notes=lore.regime_notes,
+            opinions=dict(lore.opinions),
+            misc_notes=lore.misc_notes,
+            updated_by=lore.updated_by,
+        )
+    base.people = [_district_lore_person_response(p) for p in people]
+    return base
+
+
+def build_district_lore_router(
+    *,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    discord_token: str = "",
+    discord_guild_id: int = 0,
+    staff_role_id: int = 0,
+) -> APIRouter:
+    """The Activity's staff-only History tab: staff-authored district
+    context (adjectives, accent notes, urban/rural feel, career academy
+    naming, a natural-language Games-performance summary, opinions of other
+    districts, inner/outlier classification, and victor/mentor rosters)
+    that `panem_bot.services.dialogue` folds a short, capped excerpt of
+    into an NPC's prompt (see `panem_shared.district_lore.prompt_summary`).
+
+    Every route here re-checks `discord_staff.fetch_is_staff` itself, same
+    posture as `build_staff_router` -- this is staff-only content (district
+    opinions, regime notes) that a player's own dashboard session should
+    never be able to read or write just by knowing the URL, not only a
+    write-time check."""
+    router = APIRouter(prefix="/activity/dashboard/history", tags=["dashboard"])
+
+    async def _require_staff(discord_id: int) -> None:
+        ok = await discord_staff.fetch_is_staff(
+            discord_id,
+            bot_token=discord_token,
+            guild_id=discord_guild_id,
+            staff_role_id=staff_role_id,
+        )
+        if not ok:
+            raise HTTPException(status_code=403, detail="staff_only")
+
+    @router.get("/districts", response_model=DistrictLoreCatalogResponse)
+    async def all_district_lore(discord_id: int) -> DistrictLoreCatalogResponse:
+        await _require_staff(discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            lore_by_district = {
+                row.district_id: row for row in await district_lore_svc.list_lore(session)
+            }
+            people_by_district: dict[int, list[DistrictLorePerson]] = {}
+            for person in await district_lore_svc.list_people_all(session):
+                people_by_district.setdefault(person.district_id, []).append(person)
+            districts = [
+                _district_lore_response(
+                    did, lore_by_district.get(did), people_by_district.get(did, [])
+                )
+                for did in range(13)
+            ]
+            return DistrictLoreCatalogResponse(districts=districts)
+
+    @router.get("/districts/{district_id}", response_model=DistrictLoreResponse)
+    async def one_district_lore(district_id: int, discord_id: int) -> DistrictLoreResponse:
+        await _require_staff(discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            lore = await district_lore_svc.get_lore(session, district_id)
+            people = await district_lore_svc.list_people(session, district_id)
+            return _district_lore_response(district_id, lore, people)
+
+    @router.put("/districts/{district_id}", response_model=DistrictLoreResponse)
+    async def save_district_lore(
+        district_id: int, body: UpsertDistrictLoreRequest
+    ) -> DistrictLoreResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                lore = await district_lore_svc.upsert_lore(
+                    session,
+                    district_id,
+                    classification=body.classification,
+                    adjectives=body.adjectives,
+                    accent_notes=body.accent_notes,
+                    urban_rural_notes=body.urban_rural_notes,
+                    academy_name=body.academy_name,
+                    academy_notes=body.academy_notes,
+                    games_history=body.games_history,
+                    regime_notes=body.regime_notes,
+                    opinions=body.opinions,
+                    misc_notes=body.misc_notes,
+                    updated_by=body.discord_id,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            people = await district_lore_svc.list_people(session, district_id)
+            return _district_lore_response(district_id, lore, people)
+
+    @router.post("/districts/{district_id}/people", response_model=DistrictLorePersonResponse)
+    async def create_district_lore_person(
+        district_id: int, body: CreateDistrictLorePersonRequest
+    ) -> DistrictLorePersonResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                row = await district_lore_svc.create_person(
+                    session,
+                    district_id=district_id,
+                    role=body.role,
+                    name=body.name,
+                    character_id=body.character_id,
+                    is_active=body.is_active,
+                    notes=body.notes,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            if row.character_id is not None:
+                await session.refresh(row, attribute_names=["character"])
+            return _district_lore_person_response(row)
+
+    @router.patch("/people/{person_id}", response_model=DistrictLorePersonResponse)
+    async def update_district_lore_person(
+        person_id: int, body: UpdateDistrictLorePersonRequest
+    ) -> DistrictLorePersonResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                row = await district_lore_svc.update_person(
+                    session,
+                    person_id,
+                    role=body.role,
+                    name=body.name,
+                    character_id=body.character_id,
+                    character_id_set=body.character_id_set,
+                    is_active=body.is_active,
+                    notes=body.notes,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            await session.refresh(row, attribute_names=["character"])
+            return _district_lore_person_response(row)
+
+    @router.post("/people/{person_id}/delete")
+    async def delete_district_lore_person(
+        person_id: int, body: DeleteDistrictLorePersonRequest
+    ) -> dict[str, bool]:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                await district_lore_svc.delete_person(session, person_id)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"deleted": True}
+
+    # ---------------------------------------------------- Panem-wide history
+
+    @router.get("/panem-history", response_model=PanemHistoryCatalogResponse)
+    async def list_panem_history(discord_id: int) -> PanemHistoryCatalogResponse:
+        """The nation-wide counterpart to the per-district sections above --
+        `panem_shared.lore.PanemHistoryEntry` rows every NPC in every
+        district can draw on when a proxied line matches one of an entry's
+        keywords (`panem_bot.services.dialogue`), previously only
+        manageable via `/staff lore history-add|remove|list`."""
+        await _require_staff(discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            entries = await lore_svc.list_history_entries(session)
+            return PanemHistoryCatalogResponse(
+                entries=[_panem_history_entry_response(e) for e in entries]
+            )
+
+    @router.post("/panem-history", response_model=PanemHistoryEntryResponse)
+    async def create_panem_history(body: CreatePanemHistoryEntryRequest) -> PanemHistoryEntryResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                entry = await lore_svc.add_history_entry(
+                    session,
+                    keywords=body.keywords,
+                    text=body.text,
+                    created_by_staff_discord_id=body.discord_id,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            return _panem_history_entry_response(entry)
+
+    @router.post("/panem-history/{entry_id}/delete")
+    async def delete_panem_history(
+        entry_id: int, body: DeletePanemHistoryEntryRequest
+    ) -> dict[str, bool]:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                await lore_svc.delete_history_entry(session, entry_id)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"deleted": True}
+
+    @router.get("/world-lore", response_model=WorldLoreResponse)
+    async def get_world_lore(discord_id: int) -> WorldLoreResponse:
+        """`panem_shared.lore.WorldLoreSettings`'s singleton "Alternate
+        Universe" notes -- unconditional background every NPC in the
+        nation keeps in mind, unlike the keyword-gated history entries
+        above. Previously only manageable via `/staff lore au-set|au-show`."""
+        await _require_staff(discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            row = await lore_svc.get_world_lore(session)
+            return WorldLoreResponse(
+                alternate_universe_notes=row.alternate_universe_notes if row is not None else ""
+            )
+
+    @router.put("/world-lore", response_model=WorldLoreResponse)
+    async def save_world_lore(body: UpdateWorldLoreRequest) -> WorldLoreResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                row = await lore_svc.set_world_lore(
+                    session, alternate_universe_notes=body.alternate_universe_notes
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            return WorldLoreResponse(alternate_universe_notes=row.alternate_universe_notes)
 
     return router

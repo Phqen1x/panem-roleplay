@@ -99,6 +99,9 @@ services:
       DATABASE_URL: postgresql+asyncpg://panem:panem@postgres:5432/panem
       REDIS_URL: redis://redis:6379/0
       LLM_BASE_URL: http://lemonade:13305/v1
+      # Server-to-server: how the bot reaches the api container to persist
+      # an uploaded `/character avatar` attachment (panem_shared.avatars).
+      API_INTERNAL_URL: http://api:8000
     volumes:
       - ../data:/app/data:ro
     depends_on:
@@ -144,10 +147,12 @@ services:
       - "8000:8000"
     volumes:
       - ../data:/app/data:ro
-      # Staff-uploaded Picrew layer images (panem_shared.layers) -- a named
-      # volume, not `:ro` data content, since these are written at runtime
-      # through the dashboard and need to survive a container rebuild the
-      # same way panem_pg_data does for Postgres.
+      # Everything under static/uploads/ -- staff-uploaded Picrew layer
+      # images (panem_shared.layers, uploads/layers/) and player-uploaded
+      # character avatars (panem_shared.avatars, uploads/avatars/) both
+      # live here. A named volume, not `:ro` data content, since these are
+      # written at runtime through the dashboard and need to survive a
+      # container rebuild the same way panem_pg_data does for Postgres.
       - panem_layer_uploads:/app/packages/panem_api/src/panem_api/static/uploads
     depends_on:
       postgres:

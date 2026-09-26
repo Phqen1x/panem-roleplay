@@ -34,6 +34,7 @@ from panem_shared.db.models import (
     PropertyAuction,
     RelationshipRow,
     Shift,
+    Shipment,
 )
 from panem_shared.enums import DayPhase
 
@@ -135,6 +136,21 @@ class WorldState:
     """`PropertyAuction` rows `housing.py` creates this tick (a
     foreclosure auto-listing a repossessed property); persisted by
     `tick.py` like `new_shifts`."""
+    shipments: dict[int, Shipment] = field(default_factory=dict)
+    """Every currently-active (unexpired) `Shipment` row, keyed by id."""
+    new_shipments: list[Shipment] = field(default_factory=list)
+    """`Shipment` rows `shipments.py` spawns this tick; persisted by
+    `tick.py` like `new_shifts`."""
+    deleted_shipment_ids: list[int] = field(default_factory=list)
+    """`Shipment` row ids `shipments.py` wants pruned this tick (expired --
+    peacekeepers cleared it before anyone hit it); deleted by `tick.py`,
+    the same pattern as `deleted_memory_ids`. A *claimed* shipment (someone
+    attempted it) is deleted directly by `panem_shared.shipments.apply_
+    shipment_outcome` instead, outside the tick loop -- same split
+    `deleted_apartment_lease_ids` doesn't need since housing evictions only
+    ever happen inside a tick, but jail/crime consequences here can be
+    applied from `panem_bot`/`panem_api` at any moment, not just on a
+    tick boundary."""
     affliction_types: list[AfflictionType] = field(default_factory=list)
     """The staff-authored catalog (`panem_shared.afflictions`), loaded
     once per tick -- `needs.py` uses it to auto-apply/auto-cure afflictions

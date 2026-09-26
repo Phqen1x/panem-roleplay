@@ -1,8 +1,8 @@
-// The "Crime" tab: mirrors /steal, /burgle, /poach. All three mint a
-// crime attempt (same shape /activity/crime/{id} already reads) and play
+// The "Crime" tab: mirrors /steal, /burgle, /poach, /shipment. All four mint
+// a crime attempt (same shape /activity/crime/{id} already reads) and play
 // via an embedded crime.html <iframe>, reusing the pickpocket/lockpick/
 // archery minigames unmodified -- same pattern as static/tabs/jail.js.
-import { fetchJson, el, dropdown } from "./_shared.js?v=5";
+import { fetchJson, el, dropdown, setStatusText, watchIframeResize } from "./_shared.js?v=7";
 
 // How long crime.html's own result screen (posted via postMessage, see
 // static/crime.js's `finish()`) stays visible before this tab clears the
@@ -35,6 +35,16 @@ export function mount(root, ctx) {
   const poachBtn = el("button", { class: "btn secondary", type: "button" }, "Poach at the outskirts");
   const poachPanel = el("div", { class: "panel" }, el("h2", { text: "Poach" }), poachBtn);
 
+  const shipmentStatusEl = el("p", { class: "tab-status" });
+  const shipmentBtn = el("button", { class: "btn secondary", type: "button" }, "Rob the shipment");
+  const shipmentPanel = el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "Shipment" }),
+    shipmentStatusEl,
+    shipmentBtn
+  );
+
   const resultLine = el("p", { class: "result-line" });
   const iframeHost = el("div", {});
   const statusEl = el("p", { class: "tab-status" });
@@ -64,15 +74,29 @@ export function mount(root, ctx) {
     )
   );
 
-  root.append(statusEl, stealPanel, burglePanel, poachPanel, resultLine, iframeHost, logPanel);
+  root.append(
+    statusEl,
+    stealPanel,
+    burglePanel,
+    poachPanel,
+    shipmentPanel,
+    resultLine,
+    iframeHost,
+    logPanel
+  );
 
   let messageListener = null;
   let closeResultTimer = null;
+  let stopResizeWatch = null;
 
   function stopListening() {
     if (messageListener) {
       window.removeEventListener("message", messageListener);
       messageListener = null;
+    }
+    if (stopResizeWatch) {
+      stopResizeWatch();
+      stopResizeWatch = null;
     }
   }
 
@@ -91,7 +115,13 @@ export function mount(root, ctx) {
       src: `/crime.html?attempt_id=${encodeURIComponent(attemptId)}&kind=${kind}`,
     });
     iframeHost.append(iframe);
+    // Brings the newly-mounted game into view instead of leaving the
+    // player to scroll down and find it themselves -- crime.html's own
+    // `reportSize` then keeps this iframe grown to fit whichever minigame
+    // it mounts (see watchIframeResize's own comment).
+    iframe.scrollIntoView({ behavior: "smooth", block: "start" });
     stopListening();
+    stopResizeWatch = watchIframeResize(iframe);
     messageListener = (event) => {
       if (event.data && event.data.source === "panem-activity" && event.data.type === "crime-result") {
         stopListening();
@@ -109,20 +139,22 @@ export function mount(root, ctx) {
     window.addEventListener("message", messageListener);
   }
 
+  // steal/burgle/poach/shipment all log the same shape now: a success
+  // names the good and qty taken (never money), so a plain `entry.
+  // good_name` check covers all four instead of branching on `entry.kind`
+  // first.
   function describeLogEntry(entry) {
-    const verb = { steal: "Steal", burgle: "Burgle", poach: "Poach" }[entry.kind] || entry.kind;
+    const verb =
+      { steal: "Steal", burgle: "Burgle", poach: "Poach", shipment: "Shipment" }[entry.kind] ||
+      entry.kind;
     if (entry.caught) {
       return { verb, result: "Caught", cls: "lose", detail: "Fined and jailed" };
     }
-    if (entry.kind === "poach") {
-      if (entry.good_name) {
-        return { verb, result: "Success", cls: "win", detail: `${entry.amount}x ${entry.good_name}` };
-      }
-      return { verb, result: "Missed", cls: "", detail: "Came back empty-handed" };
+    if (entry.good_name) {
+      return { verb, result: "Success", cls: "win", detail: `${entry.amount}x ${entry.good_name}` };
     }
-    if (entry.success) {
-      const from = entry.target_name ? ` from ${entry.target_name}` : "";
-      return { verb, result: "Success", cls: "win", detail: `${entry.amount} money${from}` };
+    if (entry.kind === "poach") {
+      return { verb, result: "Missed", cls: "", detail: "Came back empty-handed" };
     }
     return { verb, result: "Failed", cls: "", detail: entry.target_name || "No one to blame" };
   }
@@ -132,7 +164,7 @@ export function mount(root, ctx) {
     const discordId = ctx.discordId();
     if (!characterId || !discordId) {
       logBody.innerHTML = "";
-      logStatus.textContent = "";
+      setStatusText(logStatus, "");
       return;
     }
     try {
@@ -141,10 +173,10 @@ export function mount(root, ctx) {
       );
       logBody.innerHTML = "";
       if (body.entries.length === 0) {
-        logStatus.textContent = "No crimes attempted yet.";
+        setStatusText(logStatus, "No crimes attempted yet.");
         return;
       }
-      logStatus.textContent = "";
+      setStatusText(logStatus, "");
       for (const entry of body.entries) {
         const { verb, result, cls, detail } = describeLogEntry(entry);
         logBody.append(
@@ -159,7 +191,7 @@ export function mount(root, ctx) {
         );
       }
     } catch (err) {
-      logStatus.textContent = `Could not load activity: ${err.message}`;
+      setStatusText(logStatus, `Could not load activity: ${err.message}`, { error: true });
     }
   }
 
@@ -167,19 +199,22 @@ export function mount(root, ctx) {
     const characterId = ctx.characterId();
     const discordId = ctx.discordId();
     if (!characterId || !discordId) {
-      statusEl.textContent = "Pick a character above first.";
-      [stealPanel, burglePanel, poachPanel].forEach((p) => (p.hidden = true));
+      setStatusText(statusEl, "Pick a character above first.");
+      [stealPanel, burglePanel, poachPanel, shipmentPanel].forEach((p) => (p.hidden = true));
       return;
     }
-    [stealPanel, burglePanel, poachPanel].forEach((p) => (p.hidden = false));
-    statusEl.textContent = "";
+    [stealPanel, burglePanel, poachPanel, shipmentPanel].forEach((p) => (p.hidden = false));
+    setStatusText(statusEl, "");
     try {
-      const [stealBody, burgleBody] = await Promise.all([
+      const [stealBody, burgleBody, shipmentBody] = await Promise.all([
         ctx.apiFetch(
           `/activity/dashboard/crime/${characterId}/steal-targets?discord_id=${encodeURIComponent(discordId)}`
         ),
         ctx.apiFetch(
           `/activity/dashboard/crime/${characterId}/burgle-targets?discord_id=${encodeURIComponent(discordId)}`
+        ),
+        ctx.apiFetch(
+          `/activity/dashboard/crime/${characterId}/shipment?discord_id=${encodeURIComponent(discordId)}`
         ),
       ]);
       if (stealBody.targets.length === 0) {
@@ -198,8 +233,18 @@ export function mount(root, ctx) {
         burgleBtn.disabled = false;
         burgleSelect.setOptions(burgleBody.owners.map((owner) => ({ value: owner, label: owner })));
       }
+      if (shipmentBody.present) {
+        shipmentBtn.disabled = false;
+        setStatusText(
+          shipmentStatusEl,
+          `A shipment of ${shipmentBody.qty}x ${shipmentBody.good_name} is sitting here -- move fast.`
+        );
+      } else {
+        shipmentBtn.disabled = true;
+        setStatusText(shipmentStatusEl, "No shipment here right now.");
+      }
     } catch (err) {
-      statusEl.textContent = `Could not load targets: ${err.message}`;
+      setStatusText(statusEl, `Could not load targets: ${err.message}`, { error: true });
     }
   }
 
@@ -251,6 +296,24 @@ export function mount(root, ctx) {
         }
       );
       mountMinigame(body.attempt_id, "poach");
+    } catch (err) {
+      resultLine.className = "result-line lose";
+      resultLine.textContent = err.message;
+    }
+  });
+
+  shipmentBtn.addEventListener("click", async () => {
+    resultLine.textContent = "";
+    try {
+      const body = await ctx.apiFetch(
+        `/activity/dashboard/crime/${ctx.characterId()}/shipment/start`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ discord_id: ctx.discordId() }),
+        }
+      );
+      mountMinigame(body.attempt_id, "shipment");
     } catch (err) {
       resultLine.className = "result-line lose";
       resultLine.textContent = err.message;

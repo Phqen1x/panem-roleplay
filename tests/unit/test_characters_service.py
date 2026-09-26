@@ -177,6 +177,41 @@ class TestCreateCharacter:
         assert character.job_title == "Miner"
         assert character.shift_phase == "morning"
         assert character.job_is_illicit is False
+        assert character.gender is None
+
+    async def test_gender_persists_when_given(self, db_session):
+        user = await make_user(db_session)
+        character = await characters_svc.create_character(
+            db_session,
+            user=user,
+            district_id=12,
+            name="Katniss",
+            age=16,
+            appearance="",
+            backstory="",
+            job_title="Miner",
+            shift_phase="morning",
+            max_characters=3,
+            gender="female",
+        )
+        assert character.gender == "female"
+
+    async def test_invalid_gender_refused(self, db_session):
+        user = await make_user(db_session)
+        with pytest.raises(ValidationFailed):
+            await characters_svc.create_character(
+                db_session,
+                user=user,
+                district_id=12,
+                name="Katniss",
+                age=16,
+                appearance="",
+                backstory="",
+                job_title="Miner",
+                shift_phase="morning",
+                max_characters=3,
+                gender="not-a-real-gender",
+            )
 
     async def test_job_is_illicit_defaults_false_and_threads_through(self, db_session):
         user = await make_user(db_session)

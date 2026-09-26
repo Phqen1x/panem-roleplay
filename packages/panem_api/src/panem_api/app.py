@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import datetime as dt
 import json
 import os
 import random
@@ -56,6 +57,7 @@ from panem_api.dashboard_routes import (
     build_blackmarket_router,
     build_characters_router,
     build_crime_router,
+    build_district_lore_router,
     build_housing_router,
     build_identify_router,
     build_jail_router,
@@ -80,9 +82,11 @@ from panem_shared.db.models import (
     Npc,
     Property,
     Shift,
+    Shipment,
     WorldClock,
 )
 from panem_shared.db.session import session_scope
+from panem_shared.enums import Position
 from panem_shared.jail import apply_lockpick_attempt, lockpick_difficulty, resolve_illicit_heat
 from panem_shared.job_levels import job_level_for_shifts
 from panem_shared.logging import get_logger
@@ -97,10 +101,12 @@ from panem_shared.redis_keys import (
 from panem_shared.shifts import (
     already_worked_this_tick,
     apply_shift_outcome,
+    can_work_from_current_location,
     illicit_shift_output,
     market_multiplier_for_district,
     resolve_shift_game,
 )
+from panem_shared.shipments import apply_shipment_outcome, shipment_difficulty
 from panem_shared.stealing import (
     apply_burgle_outcome,
     apply_steal_outcome,
@@ -182,6 +188,15 @@ class WorldTimeResponse(BaseModel):
     year: int
     time: str
     phase: str
+    # Everything below lets the Activity frontend interpolate the clock
+    # smoothly between polls (minute-by-minute, not just once per tick)
+    # instead of freezing the displayed time until the next poll lands
+    # on a new persisted tick.
+    tick: int
+    updated_at: str
+    tick_interval_seconds: int
+    ticks_per_day: int
+    days_per_month: int
 
 
 class ActivityConfig(BaseModel):
@@ -262,8 +277,12 @@ class CrimeResultResponse(BaseModel):
     alerted: bool = False
     caught: bool = False
     amount: int = 0
+    """Unused by `/steal`/`/burgle`/`/poach`/`/shipment` -- all four grant
+    loot, not money (see `good_name`/`qty`); kept only for older API
+    compatibility."""
     tries_left: int | None = None
-    # Set for `/poach` only: what was actually brought home (or not).
+    # What was actually brought home (or not) -- steal/burgle/poach/shipment
+    # alike, all four moved off a cash payout onto random goods.
     good_name: str | None = None
     qty: int | None = None
     fine: int | None = None
@@ -357,6 +376,19 @@ def create_app(
     # `static/` dir. Overridable so tests can point it at a tmp_path
     # instead of writing real files into the checked-out static/ tree.
     static_dir: Path | None = None,
+    # Turns an uploaded avatar's relative `save_avatar_image` path into
+    # the absolute URL `Character.avatar_url` needs (Discord's webhook
+    # `avatar_url` field fetches it directly, unlike a layer image's path
+    # which only ever needs to resolve against the frontend's own origin)
+    # -- same setting `panem_bot`'s `/work` reads for its minigame link.
+    # Left blank, upload-avatar endpoints refuse rather than store a
+    # relative path that would break the moment Discord tries to fetch it.
+    activity_public_url: str = "",
+    # The real seconds between ticks (`Settings.tick_interval_seconds`) --
+    # `/world/time` hands this to the frontend so it can interpolate the
+    # displayed clock between polls at the sim's actual pace rather than
+    # a hardcoded guess.
+    tick_interval_seconds: int = 600,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -409,10 +441,13 @@ def create_app(
         DB just reports as tick 0 (Day 1, Month 1, Year 1) rather than
         breaking the header entirely."""
         tick = 0
+        updated_at = dt.datetime.now(dt.UTC)
         if session_factory is not None:
             async with session_scope(session_factory) as session:
                 clock = await session.get(WorldClock, 1)
-                tick = clock.tick if clock is not None else 0
+                if clock is not None:
+                    tick = clock.tick
+                    updated_at = clock.updated_at
         _tick, phase, day, month = simtime.current(tick)
         return WorldTimeResponse(
             day=day,
@@ -420,6 +455,11 @@ def create_app(
             year=simtime.year_for(tick),
             time=simtime.clock_string(tick),
             phase=phase.value,
+            tick=tick,
+            updated_at=updated_at.isoformat(),
+            tick_interval_seconds=tick_interval_seconds,
+            ticks_per_day=constants.TICKS_PER_DAY,
+            days_per_month=constants.DAYS_PER_MONTH,
         )
 
     @app.websocket("/ws/districts/{district_id}/positions")
@@ -566,6 +606,15 @@ def create_app(
             tick = clock.tick if clock is not None else 0
             if already_worked_this_tick(shift, tick):
                 raise HTTPException(status_code=409, detail="Already worked this shift this tick")
+            if (
+                Position.GAMEMAKER.value not in character.positions
+                and not can_work_from_current_location(character, tick)
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="This character isn't in their home district right now and can't "
+                    "work this shift -- come back once they've returned home.",
+                )
             district = content.district(character.district_id)
             market_multiplier = await market_multiplier_for_district(session, content, district)
             before_level = job_level_for_shifts(character.shifts_completed)
@@ -608,9 +657,9 @@ def create_app(
 
     @app.get("/activity/crime/{attempt_id}", response_model=CrimeAttemptStatus)
     async def crime_attempt_status(attempt_id: str) -> CrimeAttemptStatus:
-        """Lets `crime.html` show who/what a `/lockpick`/`/steal`/`/burgle`
-        attempt is for, and how hard to size the minigame's target zone
-        (`difficulty`), before mounting a game at all."""
+        """Lets `crime.html` show who/what a `/lockpick`/`/steal`/`/burgle`/
+        `/shipment` attempt is for, and how hard to size the minigame's
+        target zone (`difficulty`), before mounting a game at all."""
         if session_factory is None:
             raise HTTPException(status_code=503, detail="The crime minigame isn't configured")
         raw = await redis_client.get(crime_attempt_key(attempt_id))
@@ -654,13 +703,20 @@ def create_app(
                 return CrimeAttemptStatus(
                     kind=kind, character_name=character.name, difficulty=poach_difficulty()
                 )
+            if kind == "shipment":
+                shipment = await session.get(Shipment, attempt["shipment_id"])
+                if shipment is None:
+                    raise HTTPException(status_code=404, detail="No such attempt")
+                return CrimeAttemptStatus(
+                    kind=kind, character_name=character.name, difficulty=shipment_difficulty()
+                )
             raise HTTPException(status_code=400, detail="Unknown crime kind")
 
     @app.post("/activity/crime/{attempt_id}/result", response_model=CrimeResultResponse)
     async def crime_attempt_result(
         attempt_id: str, body: CrimeResultRequest
     ) -> CrimeResultResponse:
-        """Resolves a `/lockpick`/`/steal`/`/burgle` attempt once the
+        """Resolves a `/lockpick`/`/steal`/`/burgle`/`/shipment` attempt once the
         minigame reports whether the player won it -- the initial skill
         check the RNG-fallback path would otherwise roll for itself
         (`panem_bot.services.stealing.roll_and_apply_steal`/`_burgle`,
@@ -711,6 +767,7 @@ def create_app(
                     current_tick=attempt["current_tick"],
                     success=body.won,
                     rng=rng,
+                    goods=content.goods,
                 )
                 banner = "This lift has already been tried!"
                 response_obj = CrimeResultResponse(
@@ -720,7 +777,9 @@ def create_app(
                     success=result.success,
                     alerted=result.alerted,
                     caught=result.caught,
-                    amount=result.amount,
+                    good_name=result.good_name,
+                    qty=result.amount if result.good_name is not None else None,
+                    fine=constants.STEAL_FINE if result.caught else None,
                 )
             elif kind == "burgle":
                 district_row = await session.get(DistrictState, attempt["district_id"])
@@ -735,6 +794,7 @@ def create_app(
                     current_tick=attempt["current_tick"],
                     success=body.won,
                     rng=rng,
+                    goods=content.goods,
                 )
                 banner = "This break-in has already been tried!"
                 response_obj = CrimeResultResponse(
@@ -743,7 +803,9 @@ def create_app(
                     success=result.success,
                     alerted=result.alerted,
                     caught=result.caught,
-                    amount=result.amount,
+                    good_name=result.good_name,
+                    qty=result.amount if result.good_name is not None else None,
+                    fine=constants.STEAL_FINE if result.caught else None,
                 )
             elif kind == "poach":
                 good = content.goods[attempt["good_id"]]
@@ -765,6 +827,32 @@ def create_app(
                     good_name=poach_result.good.name if poach_result.good is not None else None,
                     qty=constants.POACH_YIELD_QTY if poach_result.good is not None else None,
                     fine=constants.POACH_FINE if poach_result.caught else None,
+                )
+            elif kind == "shipment":
+                district_row = await session.get(DistrictState, attempt["district_id"])
+                shipment = await session.get(Shipment, attempt["shipment_id"])
+                if shipment is None:
+                    raise HTTPException(status_code=404, detail="No such attempt")
+                result = await apply_shipment_outcome(
+                    session,
+                    character=character,
+                    shipment=shipment,
+                    district_row=district_row,
+                    current_tick=attempt["current_tick"],
+                    success=body.won,
+                    rng=rng,
+                    goods=content.goods,
+                )
+                banner = "This shipment has already been tried!"
+                response_obj = CrimeResultResponse(
+                    kind=kind,
+                    character_name=character.name,
+                    success=result.success,
+                    alerted=result.alerted,
+                    caught=result.caught,
+                    good_name=result.good_name,
+                    qty=result.amount if result.good_name is not None else None,
+                    fine=constants.SHIPMENT_FINE if result.caught else None,
                 )
             else:
                 raise HTTPException(status_code=400, detail="Unknown crime kind")
@@ -797,6 +885,8 @@ def create_app(
             session_factory=session_factory,
             max_characters_per_user=max_characters_per_user,
             redis_client=redis_client,
+            static_dir=static_dir or STATIC_DIR,
+            activity_public_url=activity_public_url,
         )
     )
     app.include_router(
@@ -816,7 +906,9 @@ def create_app(
     app.include_router(build_residents_router(content=content, session_factory=session_factory))
     app.include_router(build_housing_router(content=content, session_factory=session_factory))
     app.include_router(build_vitals_router(content=content, session_factory=session_factory))
-    app.include_router(build_rp_mode_router(session_factory=session_factory))
+    app.include_router(
+        build_rp_mode_router(session_factory=session_factory, redis_client=redis_client)
+    )
     app.include_router(build_pay_router(session_factory=session_factory))
     app.include_router(build_trade_router(session_factory=session_factory))
     app.include_router(
@@ -828,6 +920,7 @@ def create_app(
     )
     app.include_router(
         build_staff_router(
+            content=content,
             session_factory=session_factory,
             static_dir=static_dir or STATIC_DIR,
             discord_token=discord_token,
@@ -836,6 +929,29 @@ def create_app(
             log_channel_id=log_channel_id,
         )
     )
+    app.include_router(
+        build_district_lore_router(
+            session_factory=session_factory,
+            discord_token=discord_token,
+            discord_guild_id=discord_guild_id,
+            staff_role_id=staff_role_id,
+        )
+    )
+
+    uploads_root = static_dir or STATIC_DIR
+    if uploads_root != STATIC_DIR:
+        # `static_dir` was overridden (`Settings.static_uploads_dir`, a
+        # writable directory outside the read-only bundled `static/` tree
+        # -- see its own docstring) -- staff-uploaded layer images
+        # (`layers.UPLOAD_SUBDIR`, "uploads/layers/...") live there instead
+        # of under `STATIC_DIR` now, so they need their own mount at the
+        # same "/uploads" URL prefix `image_path` already assumes. Must be
+        # registered before the catch-all "/" mount below, or that mount's
+        # own (nonexistent, in this override case) "uploads/" subtree would
+        # shadow it.
+        uploads_dir = uploads_root / "uploads"
+        uploads_dir.mkdir(parents=True, exist_ok=True)
+        app.mount("/uploads", NoCacheStaticFiles(directory=uploads_dir), name="uploads")
 
     if STATIC_DIR.exists():
         # Mounted last so it only ever catches paths none of the routes

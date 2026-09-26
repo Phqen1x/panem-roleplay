@@ -162,6 +162,13 @@ def _apply_npc_job_completion(state: WorldState, ctx: TickContext) -> None:
         job = _job_for(ctx, npc.job_id)
         if job is None or job.shift_phase != ctx.phase:
             continue
+        # FR-LOC: `schedule.run` (which always runs before this system,
+        # see `systems.FIXED_ORDER`) has already moved `npc.location_id`
+        # to wherever this phase's weighted schedule sent them -- an NPC
+        # whose schedule didn't land them at their own job's `workplace`
+        # this phase isn't actually there to work it.
+        if npc.location_id != job.workplace:
+            continue
         if ctx.rng.random() < constants.NPC_JOB_COMPLETION_PROB:
             npc.money += job.wage
 

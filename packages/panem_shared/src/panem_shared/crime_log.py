@@ -1,9 +1,10 @@
-"""The `/steal`/`/burgle`/`/poach` activity log (`CrimeLog`) -- one row per
-resolved attempt, written from the single funnel every attempt already
-passes through (`panem_shared.stealing.apply_steal_outcome`/
-`apply_burgle_outcome`, `panem_shared.poaching.apply_poach_outcome`), so
-both the RNG-fallback roll and the Activity minigame's own result log
-identically without either call site needing to remember to do it.
+"""The `/steal`/`/burgle`/`/poach`/`/shipment` activity log (`CrimeLog`) --
+one row per resolved attempt, written from the single funnel every attempt
+already passes through (`panem_shared.stealing.apply_steal_outcome`/
+`apply_burgle_outcome`, `panem_shared.poaching.apply_poach_outcome`,
+`panem_shared.shipments.apply_shipment_outcome`), so both the RNG-fallback
+roll and the Activity minigame's own result log identically without either
+call site needing to remember to do it.
 
 Lives here (not `panem_bot`) for the same reason every other contraband-
 system module already moved: `panem_api`'s crime-attempt result endpoint

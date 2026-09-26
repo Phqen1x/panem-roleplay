@@ -1,7 +1,8 @@
-// Snake. Arrow keys or WASD steer; eating `WIN_SCORE` food clears the
-// shift, crashing into a wall or yourself before then loses it. The
-// target score climbs with job level (`levelIndex`, 0 = Apprentice..
-// 4 = Expert) -- same board, same speed, just more to survive for.
+// Snake. Arrow keys, WASD, or a swipe/tap on the board steer; eating
+// `WIN_SCORE` food clears the shift, crashing into a wall or yourself
+// before then loses it. The target score climbs with job level
+// (`levelIndex`, 0 = Apprentice.. 4 = Expert) -- same board, same speed,
+// just more to survive for.
 
 const GRID_SIZE = 20;
 const CELL_PX = 20;
@@ -13,10 +14,12 @@ function winScoreForLevel(levelIndex) {
   return BASE_WIN_SCORE + WIN_SCORE_GROWTH_PER_LEVEL * Math.max(0, levelIndex);
 }
 
+const SWIPE_THRESHOLD_PX = 16;
+
 export const label = "Snake";
 export function instructions(levelIndex = 0) {
   const winScore = winScoreForLevel(levelIndex);
-  return `Eat ${winScore} to clear the shift -- arrow keys or WASD to start, don't hit a wall or yourself.`;
+  return `Eat ${winScore} to clear the shift -- arrow keys, WASD, or swipe/tap the board to start, don't hit a wall or yourself.`;
 }
 
 const DIRECTIONS = {
@@ -39,6 +42,23 @@ export function mount(boardEl, { onFinish, setStatus, levelIndex = 0 }) {
   const canvas = boardEl.querySelector("#snake-canvas");
   const scoreEl = boardEl.querySelector("#snake-score");
   const ctx = canvas.getContext("2d");
+  // Without this, a touch drag on the canvas is the browser's own
+  // scroll/zoom gesture first and a `pointer*` event second (if it gets
+  // one at all) -- this is what actually made "tapping/swiping" look
+  // broken on mobile: the page scrolled instead of steering the snake.
+  canvas.style.touchAction = "none";
+  // Arrow keys/WASD are read off a `keydown` listener below, but keydown
+  // only reaches whichever element (and, when this page is loaded inside
+  // work.js's dashboard-tab `<iframe>`, whichever *frame*) currently has
+  // focus -- neither the canvas nor the iframe gets that automatically
+  // just by being on screen, which is what made the keys look dead
+  // without first clicking into the board. Giving the canvas a tabIndex
+  // and focusing it here (plus work.js/tabs/work.js focusing their side
+  // of an iframe embedding) means a shift's snake game is steerable the
+  // instant it mounts, no click required.
+  canvas.tabIndex = -1;
+  canvas.style.outline = "none";
+  canvas.focus({ preventScroll: true });
 
   let snake = [
     { x: 10, y: 10 },
@@ -63,16 +83,54 @@ export function mount(boardEl, { onFinish, setStatus, levelIndex = 0 }) {
     }
   }
 
-  function onKeyDown(event) {
-    const next = DIRECTIONS[event.key];
-    if (!next) return;
-    event.preventDefault();
+  function steer(next) {
     if (next.x === -direction.x && next.y === -direction.y) return;
     pendingDirection = next;
     if (!started) {
       started = true;
       timer = setInterval(tick, TICK_MS);
     }
+  }
+
+  function onKeyDown(event) {
+    const next = DIRECTIONS[event.key];
+    if (!next) return;
+    event.preventDefault();
+    steer(next);
+  }
+
+  // Touch/pointer fallback for Activities opened without a keyboard: a
+  // swipe steers the same as an arrow key would, and a plain tap (too
+  // short a drag to read as a swipe) just starts the game moving in its
+  // current direction -- same as pressing the key it's already heading in.
+  let pointerStart = null;
+
+  function onPointerDown(event) {
+    pointerStart = { x: event.clientX, y: event.clientY };
+    // `preventDefault()` (needed below to stop the touch turning into a
+    // page scroll) also suppresses the browser's default click-to-focus
+    // behavior, so a tap wouldn't hand keyboard focus back to the canvas
+    // without this explicit call.
+    canvas.focus({ preventScroll: true });
+    event.preventDefault();
+  }
+
+  function onPointerUp(event) {
+    if (!pointerStart) return;
+    const dx = event.clientX - pointerStart.x;
+    const dy = event.clientY - pointerStart.y;
+    pointerStart = null;
+    if (Math.abs(dx) < SWIPE_THRESHOLD_PX && Math.abs(dy) < SWIPE_THRESHOLD_PX) {
+      steer(direction);
+      return;
+    }
+    const next =
+      Math.abs(dx) > Math.abs(dy) ? { x: dx > 0 ? 1 : -1, y: 0 } : { x: 0, y: dy > 0 ? 1 : -1 };
+    steer(next);
+  }
+
+  function onPointerCancel() {
+    pointerStart = null;
   }
 
   function draw() {
@@ -90,6 +148,9 @@ export function mount(boardEl, { onFinish, setStatus, levelIndex = 0 }) {
     gameOver = true;
     clearInterval(timer);
     document.removeEventListener("keydown", onKeyDown);
+    canvas.removeEventListener("pointerdown", onPointerDown);
+    canvas.removeEventListener("pointerup", onPointerUp);
+    canvas.removeEventListener("pointercancel", onPointerCancel);
     onFinish(won);
   }
 
@@ -128,5 +189,8 @@ export function mount(boardEl, { onFinish, setStatus, levelIndex = 0 }) {
   }
 
   document.addEventListener("keydown", onKeyDown);
+  canvas.addEventListener("pointerdown", onPointerDown);
+  canvas.addEventListener("pointerup", onPointerUp);
+  canvas.addEventListener("pointercancel", onPointerCancel);
   draw();
 }
