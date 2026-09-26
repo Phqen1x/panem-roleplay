@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import datetime as dt
 import json
 import os
 import random
@@ -187,6 +188,15 @@ class WorldTimeResponse(BaseModel):
     year: int
     time: str
     phase: str
+    # Everything below lets the Activity frontend interpolate the clock
+    # smoothly between polls (minute-by-minute, not just once per tick)
+    # instead of freezing the displayed time until the next poll lands
+    # on a new persisted tick.
+    tick: int
+    updated_at: str
+    tick_interval_seconds: int
+    ticks_per_day: int
+    days_per_month: int
 
 
 class ActivityConfig(BaseModel):
@@ -374,6 +384,11 @@ def create_app(
     # Left blank, upload-avatar endpoints refuse rather than store a
     # relative path that would break the moment Discord tries to fetch it.
     activity_public_url: str = "",
+    # The real seconds between ticks (`Settings.tick_interval_seconds`) --
+    # `/world/time` hands this to the frontend so it can interpolate the
+    # displayed clock between polls at the sim's actual pace rather than
+    # a hardcoded guess.
+    tick_interval_seconds: int = 600,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -426,10 +441,13 @@ def create_app(
         DB just reports as tick 0 (Day 1, Month 1, Year 1) rather than
         breaking the header entirely."""
         tick = 0
+        updated_at = dt.datetime.now(dt.UTC)
         if session_factory is not None:
             async with session_scope(session_factory) as session:
                 clock = await session.get(WorldClock, 1)
-                tick = clock.tick if clock is not None else 0
+                if clock is not None:
+                    tick = clock.tick
+                    updated_at = clock.updated_at
         _tick, phase, day, month = simtime.current(tick)
         return WorldTimeResponse(
             day=day,
@@ -437,6 +455,11 @@ def create_app(
             year=simtime.year_for(tick),
             time=simtime.clock_string(tick),
             phase=phase.value,
+            tick=tick,
+            updated_at=updated_at.isoformat(),
+            tick_interval_seconds=tick_interval_seconds,
+            ticks_per_day=constants.TICKS_PER_DAY,
+            days_per_month=constants.DAYS_PER_MONTH,
         )
 
     @app.websocket("/ws/districts/{district_id}/positions")

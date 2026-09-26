@@ -38,6 +38,7 @@ def main() -> None:
         log_channel_id=settings.log_channel_id,
         static_dir=Path(settings.static_uploads_dir) if settings.static_uploads_dir else None,
         activity_public_url=settings.activity_public_url,
+        tick_interval_seconds=settings.tick_interval_seconds,
     )
     uvicorn.run(app, host=settings.api_host, port=settings.api_port)
 

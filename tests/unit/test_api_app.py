@@ -722,32 +722,50 @@ class TestListDistricts:
 
 class TestWorldTime:
     def test_defaults_to_tick_zero_when_no_db_configured(self, client: TestClient):
+        before = dt.datetime.now(dt.UTC)
         response = client.get("/world/time")
         assert response.status_code == 200
-        assert response.json() == {
+        body = response.json()
+        updated_at = body.pop("updated_at")
+        assert body == {
             "day": 1,
             "month": 1,
             "year": 1,
             "time": simtime.clock_string(0),
             "phase": DayPhase.NIGHT.value,
+            "tick": 0,
+            "tick_interval_seconds": 600,
+            "ticks_per_day": constants.TICKS_PER_DAY,
+            "days_per_month": constants.DAYS_PER_MONTH,
         }
+        # No `WorldClock` row exists, so this falls back to "now" rather
+        # than some fixed/stale value -- just check it's a real recent
+        # timestamp, not an exact one.
+        assert dt.datetime.fromisoformat(updated_at) >= before
 
     async def test_reflects_the_persisted_world_clock(self, work_app, db_session_factory):
         from panem_shared.db.models import WorldClock
 
+        clock_updated_at = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
         async with db_session_factory() as session, session.begin():
-            session.add(WorldClock(id=1, tick=1000))
+            session.add(WorldClock(id=1, tick=1000, updated_at=clock_updated_at))
         transport = httpx.ASGITransport(app=work_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get("/world/time")
         assert response.status_code == 200
         _tick, phase, day, month = simtime.current(1000)
-        assert response.json() == {
+        body = response.json()
+        assert dt.datetime.fromisoformat(body.pop("updated_at")) == clock_updated_at
+        assert body == {
             "day": day,
             "month": month,
             "year": simtime.year_for(1000),
             "time": simtime.clock_string(1000),
             "phase": phase.value,
+            "tick": 1000,
+            "tick_interval_seconds": 600,
+            "ticks_per_day": constants.TICKS_PER_DAY,
+            "days_per_month": constants.DAYS_PER_MONTH,
         }
 
 

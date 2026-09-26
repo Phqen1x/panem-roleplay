@@ -159,6 +159,7 @@ const characterMenuEl = document.getElementById("character-select-menu");
 const themePickerEl = document.getElementById("theme-picker");
 const worldClockTimeEl = document.getElementById("world-clock-time");
 const worldClockDateEl = document.getElementById("world-clock-date");
+const worldClockShiftEl = document.getElementById("world-clock-shift");
 
 const state = {
   discordUser: null,
@@ -838,15 +839,71 @@ async function loadDistrictMottos() {
 
 // The world clock is global sim state, not per-player -- `/world/time`
 // needs no discord_id and is polled on a plain interval rather than
-// re-fetched alongside identity/character refreshes.
+// re-fetched alongside identity/character refreshes. The poll just
+// re-syncs a baseline (tick + when it was persisted); `renderWorldClock`
+// below runs far more often than that to interpolate the displayed
+// time/shift smoothly in between polls, mirroring `panem_shared.simtime`'s
+// own tick -> hour/day/month/phase math client-side (see that module for
+// the server version this must stay in sync with).
 const WORLD_TIME_POLL_INTERVAL_MS = 60_000;
+const WORLD_CLOCK_RENDER_INTERVAL_MS = 1000;
+const PHASE_ORDER = ["night", "morning", "afternoon", "evening"];
+
+let worldTimeBaseline = null; // { tick, updatedAtMs, tickIntervalSeconds, ticksPerDay, daysPerMonth }
+
+function capitalize(word) {
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+function renderWorldClock() {
+  if (!worldTimeBaseline) return;
+  const { tick, updatedAtMs, tickIntervalSeconds, ticksPerDay, daysPerMonth } = worldTimeBaseline;
+
+  const elapsedSeconds = (Date.now() - updatedAtMs) / 1000;
+  // Clamped below 1 full tick's worth of progress: if the sim has
+  // stalled (or is just running behind), this holds the display just
+  // shy of the next hour instead of sprinting arbitrarily far into a
+  // "future" the sim never actually reached.
+  const elapsedTicks = Math.max(0, Math.min(elapsedSeconds / tickIntervalSeconds, 0.999999));
+  const fractionalTick = tick + elapsedTicks;
+
+  const hourOfDay = fractionalTick % ticksPerDay;
+  const dayIndex = Math.floor(fractionalTick / ticksPerDay);
+  const day = (dayIndex % daysPerMonth) + 1;
+  const month = (Math.floor(dayIndex / daysPerMonth) % 12) + 1;
+  const year = Math.floor(dayIndex / (daysPerMonth * 12)) + 1;
+
+  const totalMinutes = (hourOfDay * 24 * 60) / ticksPerDay;
+  const hour24 = Math.floor(totalMinutes / 60) % 24;
+  const minute = Math.floor(totalMinutes % 60);
+  const period = hour24 < 12 ? "AM" : "PM";
+  const hour12 = hour24 % 12 || 12;
+  const timeStr = `${hour12}:${String(minute).padStart(2, "0")} ${period}`;
+
+  const ticksPerPhase = ticksPerDay / PHASE_ORDER.length;
+  const phaseIndex = Math.min(
+    PHASE_ORDER.length - 1,
+    Math.floor(hourOfDay / ticksPerPhase)
+  );
+  const phase = PHASE_ORDER[phaseIndex];
+
+  worldClockTimeEl.innerHTML = `Simulation Time: <strong>${timeStr}</strong>`;
+  worldClockDateEl.innerHTML =
+    `Simulation Date: <strong>Month ${month}, Day ${day}, Year ${year}</strong>`;
+  worldClockShiftEl.innerHTML = `Current Shift: <strong>${capitalize(phase)}</strong>`;
+}
 
 async function refreshWorldTime() {
   try {
     const time = await fetchJson("/world/time");
-    worldClockTimeEl.innerHTML = `Simulation Time: <strong>${time.time}</strong>`;
-    worldClockDateEl.innerHTML =
-      `Simulation Date: <strong>Month ${time.month}, Day ${time.day}, Year ${time.year}</strong>`;
+    worldTimeBaseline = {
+      tick: time.tick,
+      updatedAtMs: Date.parse(time.updated_at),
+      tickIntervalSeconds: time.tick_interval_seconds,
+      ticksPerDay: time.ticks_per_day,
+      daysPerMonth: time.days_per_month,
+    };
+    renderWorldClock();
   } catch (err) {
     console.warn("Could not load world time:", err);
   }
@@ -865,6 +922,7 @@ async function main() {
   loadDistrictMottos();
   refreshWorldTime();
   setInterval(refreshWorldTime, WORLD_TIME_POLL_INTERVAL_MS);
+  setInterval(renderWorldClock, WORLD_CLOCK_RENDER_INTERVAL_MS);
 
   state.discordUser = await authenticateWithDiscord();
   if (!state.discordUser) {
