@@ -35,6 +35,8 @@ def next_eligible_switch_at(character: Character) -> dt.datetime | None:
 
 
 def check_can_switch_mode(character: Character, new_mode: RpMode, now: dt.datetime) -> None:
+    if character.pending_rp_mode is not None:
+        raise NotAllowed("mode_switch_already_pending")
     if new_mode.value == character.rp_mode:
         raise ValidationFailed("mode_already_active", mode=new_mode.value)
     eligible_at = next_eligible_switch_at(character)
@@ -47,6 +49,62 @@ def switch_mode(character: Character, new_mode: RpMode, now: dt.datetime) -> Non
     check_can_switch_mode(character, new_mode, now)
     character.rp_mode = new_mode.value
     character.rp_mode_changed_at = now
+
+
+def mode_switch_needs_job_info(character: Character, new_mode: RpMode) -> bool:
+    """Story mode never needs job info, and a character that already has
+    `job_title` on file -- i.e. one that was Life/Simulation at some point
+    in the past, however long ago -- keeps it and switches instantly
+    (`switch_mode` above never touches `job_title`/`shift_phase`, so it's
+    still sitting there). It's only switching into Life/Simulation for the
+    very first time that needs fresh job info collected and, since that's
+    materially the same as a new application, staff sign-off on it too --
+    see `stage_mode_switch`/`apply_staged_mode_switch`."""
+    return new_mode != RpMode.STORY and character.job_title is None
+
+
+def stage_mode_switch(
+    character: Character,
+    new_mode: RpMode,
+    *,
+    job_title: str,
+    shift_phase: str,
+    job_is_illicit: bool,
+) -> None:
+    """Records a mode switch awaiting staff approval without touching any
+    of the character's real, currently-live fields -- see `Character.
+    pending_rp_mode`'s docstring for why. Callers must have already called
+    `check_can_switch_mode` (this raises nothing of its own)."""
+    character.pending_rp_mode = new_mode.value
+    character.pending_job_title = job_title
+    character.pending_shift_phase = shift_phase
+    character.pending_job_is_illicit = job_is_illicit
+    character.pending_mode_switch_notified_at = None
+
+
+def apply_staged_mode_switch(character: Character, now: dt.datetime) -> None:
+    """Staff approved a staged switch (`stage_mode_switch`) -- copy the
+    staged fields onto the real ones and clear the staging columns. Callers
+    are expected to have already confirmed `pending_rp_mode is not None`."""
+    assert character.pending_rp_mode is not None
+    character.rp_mode = character.pending_rp_mode
+    character.job_title = character.pending_job_title
+    character.shift_phase = character.pending_shift_phase
+    character.job_is_illicit = character.pending_job_is_illicit
+    character.rp_mode_changed_at = now
+    discard_staged_mode_switch(character)
+
+
+def discard_staged_mode_switch(character: Character) -> None:
+    """Staff declined a staged switch, or it's otherwise being abandoned --
+    clears the staging columns without touching the character's real mode/
+    job fields at all, so nothing about the character it already was is
+    lost (unlike rejecting a fresh application, which deletes the row)."""
+    character.pending_rp_mode = None
+    character.pending_job_title = None
+    character.pending_shift_phase = None
+    character.pending_job_is_illicit = False
+    character.pending_mode_switch_notified_at = None
 
 
 def next_eligible_crime_toggle_at(character: Character) -> dt.datetime | None:

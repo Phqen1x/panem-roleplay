@@ -3957,3 +3957,59 @@ documented `uv`/`snapcraft`/LXD behavior instead. Sanity-checked here: every edi
 differs from STATIC_DIR" branch) confirmed by inspection to still pass -- it only asserted the uploaded
 file landed on disk before, never that `image_url` was actually fetchable, which is exactly the gap the new
 `/uploads` mount closes rather than a behavior it could have broken.
+
+## Switching from Story into Life/Simulation for the first time re-opens the job-info application
+
+`switch_mode` (`panem_shared.rp_modes`) never touched `job_title`/`shift_phase` -- fine for a character
+that had already been Life/Simulation at some point (that info just sits there across a switch, which is
+why picking Story and then coming back has always "remembered" it), but a character that started and
+stayed in Story has no job on file at all, and nothing collected one or told staff about the switch before
+it took effect.
+
+Added `Character.pending_rp_mode`/`pending_job_title`/`pending_shift_phase`/`pending_job_is_illicit`/
+`pending_mode_switch_notified_at` (migration `c6b8f2a4d1e9`) and three new `panem_shared.rp_modes`
+functions: `mode_switch_needs_job_info` (`new_mode != story and job_title is None`), `stage_mode_switch`,
+and `apply_staged_mode_switch`/`discard_staged_mode_switch`. Staging writes only the `pending_*` columns --
+`rp_mode`/`job_title`/`shift_phase` stay exactly as they were the whole time a switch is awaiting approval,
+so the character keeps playing in their current mode (this also matters functionally: `panem_sim.systems.
+jobs._open_shifts_for_due_characters` opens a shift purely off `job_title`/`shift_phase` being set, with no
+`rp_mode` check of its own -- writing those columns immediately, before approval, would have let a still-
+Story character start working shifts).
+
+Declining a staged switch must never delete the character -- unlike rejecting a fresh application (which
+never became a real character), this one already exists and is playing. That ruled out reusing `Character
+Status.PENDING`/`ApprovalView`'s "Reject" button at all, so this got a deliberately separate,
+non-destructive `ModeSwitchApprovalView` (Approve/Decline only, `panem_bot/views.py`) with its own handlers
+(`_handle_mode_switch_approve`/`_decline`, `panem_bot/cogs/characters.py`) -- approve calls `apply_staged_
+mode_switch`, decline just calls `discard_staged_mode_switch`.
+
+- **`/character mode`**: unchanged for switching to Story, or to Life/Simulation with `job_title` already
+  set -- still the instant `ConfirmView`-then-`switch_mode` flow. Needing job info instead reopens the same
+  job-title/shift-phase/illicit-declare prompts `/character create` uses (`JobInfoModal` in `modals.py`,
+  reusing `ShiftPhaseSelectView`/`IllicitDeclareView`), stages the switch, and posts a staff embed (mirrors
+  `_post_approval_embed`'s idempotency-via-timestamp shape, on its own `pending_mode_switch_notified_at`
+  column and its own poll/pubsub pair -- `_announce_pending_mode_switches`/`_listen_for_pending_mode_
+  switches`/`CHARACTER_MODE_SWITCH_PENDING_CHANNEL` -- since a mode-switch post and a fresh-application post
+  are different facts and shouldn't share one "already posted?" guard).
+- **Dashboard mode-switch panel** (`tabs/home.js`): `RpModeStatusResponse` gained `has_job_info`/
+  `pending_mode`; picking a non-Story mode without `has_job_info` reveals job-title/shift-phase/illicit
+  fields before "Confirm switch" is enabled, and a pending switch replaces the panel with a plain status
+  line until staff resolve it. `/activity/dashboard/mode/{id}/switch` stages instead of applying when job
+  info is needed and publishes on the new channel for the bot to pick up, same duty `panem_api` already has
+  for a dashboard-created character with no bot token of its own.
+
+Verified: new `panem_shared.rp_modes` tests (`mode_switch_needs_job_info`, stage/apply/discard, the
+already-pending guard on `check_can_switch_mode`); new `CharacterCog` tests for the approval-embed
+idempotency and the approve/decline handlers, including one asserting decline leaves the character row
+intact; new dashboard-route tests for the staged-switch and switching-to-story-never-needs-job-info paths;
+fixed `TestDashboardRpMode.test_switch_moves_to_the_new_mode`'s fixture (it seeded a Simulation-mode
+character with no `job_title` at all, a state `create_character` itself would never produce). `ruff check`/
+`ruff format --check` clean on every touched file (both already carried unrelated pre-existing drift
+elsewhere in the repo, confirmed via `git stash`). `mypy packages/panem_shared/src packages/panem_sim/src`
+(the CI-gated pair) clean; the `panem_bot`/`panem_api` baseline (not CI-gated, NFR-11 only covers the first
+two) grew from 165 to 183 errors, entirely the same three pre-existing categories every other cog method
+already carries (`"Bot" has no attribute "db"`, missing generic type args on `discord.ui.Button`/`Select`,
+missing `var-annotated` on a modal's own `TextInput` fields) applied to the new code, none a new category.
+Full suite: **1441 passed**, 1 pre-existing unrelated failure (`test_serves_the_vendored_discord_sdk_not_a_
+cdn_url`, confirmed failing identically on a clean checkout via `git stash`). Migration verified
+up/down/up.

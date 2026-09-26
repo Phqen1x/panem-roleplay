@@ -76,3 +76,24 @@ class CharacterDetailsModal(discord.ui.Modal, title="New Character"):
             str(self.backstory.value or ""),
             str(self.job_title.value),
         )
+
+
+class JobInfoModal(discord.ui.Modal, title="Job Details"):
+    """`/character mode`'s equivalent of `CharacterDetailsModal`'s job-title
+    field, used on its own when switching into Life/Simulation needs fresh
+    job info collected (`panem_shared.rp_modes.mode_switch_needs_job_info`)
+    -- name/age/appearance/backstory don't need re-collecting for a mode
+    switch, just the job, so this doesn't reuse the full modal."""
+
+    job_title = discord.ui.TextInput(
+        label="What job will your character do?",
+        max_length=80,
+        placeholder="e.g. Coal miner, Seamstress, Fisherman's apprentice",
+    )
+
+    def __init__(self, *, on_submit: Callable[[discord.Interaction, str], Awaitable[None]]) -> None:
+        super().__init__()
+        self._on_submit = on_submit
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await self._on_submit(interaction, str(self.job_title.value))

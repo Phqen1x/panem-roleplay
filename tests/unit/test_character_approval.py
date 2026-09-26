@@ -61,6 +61,7 @@ def cog(bot: FakeBot) -> CharacterCog:
     cog = CharacterCog.__new__(CharacterCog)
     cog.bot = bot
     cog.approval_view = MagicMock()
+    cog.mode_switch_approval_view = MagicMock()
     return cog
 
 
@@ -172,3 +173,161 @@ class TestTryAnnounce:
         await cog._try_announce(999999)  # no raise
 
         bot.channel.send.assert_not_awaited()
+
+
+async def _seed_approved_character(
+    db_session,
+    *,
+    rp_mode: str = "story",
+    job_title: str | None = None,
+    pending_rp_mode: str | None = None,
+    pending_job_title: str | None = None,
+    pending_shift_phase: str | None = None,
+    pending_mode_switch_notified_at: dt.datetime | None = None,
+) -> Character:
+    user = User(discord_id=42)
+    db_session.add(user)
+    await db_session.flush()
+    character = Character(
+        user_id=user.id,
+        district_id=1,
+        current_district_id=1,
+        name="Wren",
+        age=20,
+        status=CharacterStatus.APPROVED.value,
+        rp_mode=rp_mode,
+        job_title=job_title,
+        pending_rp_mode=pending_rp_mode,
+        pending_job_title=pending_job_title,
+        pending_shift_phase=pending_shift_phase,
+        pending_mode_switch_notified_at=pending_mode_switch_notified_at,
+    )
+    db_session.add(character)
+    await db_session.flush()
+    return character
+
+
+class TestPostModeSwitchApprovalEmbedIdempotency:
+    async def test_posts_and_stamps_a_staged_switch(
+        self, db_session, bot: FakeBot, cog: CharacterCog
+    ):
+        character = await _seed_approved_character(
+            db_session,
+            pending_rp_mode="simulation",
+            pending_job_title="Baker",
+            pending_shift_phase="morning",
+        )
+
+        await cog._post_mode_switch_approval_embed(character.id, applicant_discord_id=42)
+
+        bot.channel.send.assert_awaited_once()
+        refreshed = await db_session.get(Character, character.id, populate_existing=True)
+        assert refreshed.pending_mode_switch_notified_at is not None
+        # Staging the switch never touches the real, currently-live mode.
+        assert refreshed.rp_mode == "story"
+
+    async def test_no_op_when_nothing_is_staged(self, db_session, bot: FakeBot, cog: CharacterCog):
+        character = await _seed_approved_character(db_session)
+
+        await cog._post_mode_switch_approval_embed(character.id, applicant_discord_id=42)
+
+        bot.channel.send.assert_not_awaited()
+
+    async def test_no_op_when_already_notified(self, db_session, bot: FakeBot, cog: CharacterCog):
+        already = dt.datetime.now(dt.UTC)
+        character = await _seed_approved_character(
+            db_session,
+            pending_rp_mode="simulation",
+            pending_job_title="Baker",
+            pending_shift_phase="morning",
+            pending_mode_switch_notified_at=already,
+        )
+
+        await cog._post_mode_switch_approval_embed(character.id, applicant_discord_id=42)
+
+        bot.channel.send.assert_not_awaited()
+
+
+class TestFinishModeSwitchRequest:
+    async def test_stages_the_switch_and_posts_for_approval(
+        self, db_session, bot: FakeBot, cog: CharacterCog
+    ):
+        from panem_shared.enums import RpMode
+
+        character = await _seed_approved_character(db_session, rp_mode="story")
+        interaction = MagicMock()
+        interaction.user.id = 42
+        interaction.response.send_message = AsyncMock()
+
+        await cog._finish_mode_switch_request(
+            interaction, character.id, "Wren", RpMode.SIMULATION, "Baker", "morning", False
+        )
+
+        bot.channel.send.assert_awaited_once()
+        refreshed = await db_session.get(Character, character.id, populate_existing=True)
+        assert refreshed.rp_mode == "story"
+        assert refreshed.pending_rp_mode == "simulation"
+        assert refreshed.pending_job_title == "Baker"
+
+
+class TestHandleModeSwitchApprove:
+    async def test_applies_the_staged_switch(self, db_session, bot: FakeBot, cog: CharacterCog):
+        character = await _seed_approved_character(
+            db_session,
+            rp_mode="story",
+            pending_rp_mode="simulation",
+            pending_job_title="Baker",
+            pending_shift_phase="morning",
+        )
+        interaction = MagicMock()
+        interaction.guild = None
+        interaction.message.embeds = []
+        interaction.message.edit = AsyncMock()
+        interaction.response.send_message = AsyncMock()
+
+        await cog._handle_mode_switch_approve(interaction, character.id)
+
+        refreshed = await db_session.get(Character, character.id, populate_existing=True)
+        assert refreshed.rp_mode == "simulation"
+        assert refreshed.job_title == "Baker"
+        assert refreshed.shift_phase == "morning"
+        assert refreshed.pending_rp_mode is None
+
+    async def test_no_op_when_nothing_is_staged(self, db_session, bot: FakeBot, cog: CharacterCog):
+        character = await _seed_approved_character(db_session, rp_mode="story")
+        interaction = MagicMock()
+        interaction.response.send_message = AsyncMock()
+
+        await cog._handle_mode_switch_approve(interaction, character.id)
+
+        refreshed = await db_session.get(Character, character.id, populate_existing=True)
+        assert refreshed.rp_mode == "story"
+
+
+class TestHandleModeSwitchDecline:
+    async def test_discards_the_staged_switch_without_deleting_the_character(
+        self, db_session, bot: FakeBot, cog: CharacterCog
+    ):
+        character = await _seed_approved_character(
+            db_session,
+            rp_mode="story",
+            pending_rp_mode="simulation",
+            pending_job_title="Baker",
+            pending_shift_phase="morning",
+        )
+        interaction = MagicMock()
+        interaction.guild = None
+        interaction.message.embeds = []
+        interaction.message.edit = AsyncMock()
+        interaction.response.send_message = AsyncMock()
+
+        await cog._handle_mode_switch_decline(interaction, character.id, "Not a fit right now.")
+
+        # The character -- already existing and playing -- must never be
+        # deleted by a decline, unlike rejecting a fresh application.
+        refreshed = await db_session.get(Character, character.id, populate_existing=True)
+        assert refreshed is not None
+        assert refreshed.rp_mode == "story"
+        assert refreshed.job_title is None
+        assert refreshed.pending_rp_mode is None
+        assert refreshed.pending_job_title is None

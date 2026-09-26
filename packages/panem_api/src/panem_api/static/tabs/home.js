@@ -6,6 +6,7 @@
 import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=7";
 
 const MODE_LABELS = { story: "Story", life: "Life", simulation: "Simulation" };
+const SHIFT_PHASES = ["morning", "afternoon", "evening", "night"];
 
 const MODE_DESCRIPTIONS = {
   story:
@@ -167,6 +168,24 @@ function crimeTogglePanel(ctx, status, resultLine, onChanged) {
 }
 
 function modeSwitchPanel(ctx, status, resultLine, onChanged) {
+  if (status.pending_mode) {
+    // Staged via `rp_modes.stage_mode_switch` -- awaiting the same staff
+    // approval `/character mode` sends a fresh job-info switch to. The
+    // character keeps playing in `status.mode` until it's resolved.
+    const pendingLabel = MODE_LABELS[status.pending_mode] || status.pending_mode;
+    return el(
+      "div",
+      { class: "panel" },
+      el("h2", { text: "Change Mode" }),
+      el(
+        "p",
+        { class: "tab-status" },
+        `A switch to ${pendingLabel} mode is awaiting staff approval -- you stay in ` +
+          `${MODE_LABELS[status.mode] || status.mode} mode until then.`
+      )
+    );
+  }
+
   const remaining = status.next_mode_switch_eligible_at
     ? formatRemaining(status.next_mode_switch_eligible_at)
     : null;
@@ -199,8 +218,48 @@ function modeSwitchPanel(ctx, status, resultLine, onChanged) {
       bulletsHost.append(el("li", {}, bullet));
     }
   }
-  modeSelect.addEventListener("change", renderBullets);
+
+  // Never been Life/Simulation before (`!status.has_job_info`) -- switching
+  // into either needs a job on file first, same job-title/shift-phase/
+  // illicit prompts character creation uses, and it needs staff sign-off
+  // before it takes effect (`rp_modes.mode_switch_needs_job_info`). A
+  // character that already has `job_title` on file keeps it and switches
+  // straight through, same as switching to Story always does.
+  const jobInput = el("input", { type: "text", maxlength: "80", placeholder: "Miner, Baker, ..." });
+  const phaseSelect = dropdown(SHIFT_PHASES.map((phase) => ({ value: phase, label: phase })));
+  const illicitInput = el("input", { type: "checkbox" });
+  const jobInfoNote = el(
+    "p",
+    { class: "tab-status" },
+    "This character has never had a job on file -- switching needs one, plus staff " +
+      "approval, before it takes effect."
+  );
+  const jobRow = el("div", { class: "field-row" }, el("label", { text: "Job title" }), jobInput);
+  const shiftRow = el("div", { class: "field-row" }, el("label", { text: "Shift" }), phaseSelect);
+  const illicitRow = el(
+    "div",
+    { class: "field-row" },
+    el("label", { text: "Illicit job?" }),
+    illicitInput
+  );
+
+  function needsJobInfo() {
+    return modeSelect.value !== "story" && !status.has_job_info;
+  }
+
+  function syncJobFieldsVisibility() {
+    const needed = needsJobInfo();
+    jobInfoNote.hidden = !needed;
+    jobRow.hidden = !needed;
+    shiftRow.hidden = !needed;
+    illicitRow.hidden = !needed;
+  }
+  modeSelect.addEventListener("change", () => {
+    renderBullets();
+    syncJobFieldsVisibility();
+  });
   renderBullets();
+  syncJobFieldsVisibility();
 
   const confirmBtn = el("button", { class: "btn", type: "button" }, "Confirm switch");
   const cancelBtn = el("button", { class: "btn secondary", type: "button" }, "Cancel");
@@ -209,14 +268,28 @@ function modeSwitchPanel(ctx, status, resultLine, onChanged) {
   });
   confirmBtn.addEventListener("click", async () => {
     resultLine.textContent = "";
+    const needed = needsJobInfo();
+    if (needed && !jobInput.value.trim()) {
+      resultLine.className = "result-line lose";
+      resultLine.textContent = "Job title is required for this switch.";
+      return;
+    }
     try {
       await ctx.apiFetch(`/activity/dashboard/mode/${ctx.characterId()}/switch`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ discord_id: ctx.discordId(), new_mode: modeSelect.value }),
+        body: JSON.stringify({
+          discord_id: ctx.discordId(),
+          new_mode: modeSelect.value,
+          job_title: needed ? jobInput.value : null,
+          shift_phase: needed ? phaseSelect.value : null,
+          job_is_illicit: needed ? illicitInput.checked : false,
+        }),
       });
       resultLine.className = "result-line win";
-      resultLine.textContent = `Switched to ${MODE_LABELS[modeSelect.value]}.`;
+      resultLine.textContent = needed
+        ? `Switch to ${MODE_LABELS[modeSelect.value]} sent to staff for approval.`
+        : `Switched to ${MODE_LABELS[modeSelect.value]}.`;
       confirmHost.hidden = true;
       onChanged();
     } catch (err) {
@@ -229,6 +302,10 @@ function modeSwitchPanel(ctx, status, resultLine, onChanged) {
     el("p", { class: "tab-status" }, "What changes:"),
     bulletsHost,
     el("div", { class: "field-row" }, el("label", { text: "New mode" }), modeSelect),
+    jobInfoNote,
+    jobRow,
+    shiftRow,
+    illicitRow,
     el("div", { class: "field-row" }, confirmBtn, cancelBtn)
   );
 

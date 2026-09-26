@@ -106,6 +106,7 @@ from panem_shared.enums import (
 )
 from panem_shared.errors import NotAllowed, NotFound, ServiceError
 from panem_shared.redis_keys import (
+    CHARACTER_MODE_SWITCH_PENDING_CHANNEL,
     CHARACTER_PENDING_CHANNEL,
     CRIME_ATTEMPT_TTL_S,
     crime_attempt_key,
@@ -3893,11 +3894,31 @@ class RpModeStatusResponse(BaseModel):
     fatigue: float
     sanity: float
     afflictions: list[ActiveAfflictionSummary]
+    has_job_info: bool = False
+    """Whether `job_title` is already on file -- i.e. this character was
+    Life/Simulation at some point in the past, however long ago. The
+    frontend uses this to decide whether picking a non-Story `new_mode`
+    needs the job-title/shift-phase/illicit fields shown before `/switch`
+    can be called (`rp_modes.mode_switch_needs_job_info`); switching to
+    Story never needs them regardless."""
+    pending_mode: str | None = None
+    """Set while a switch that needed fresh job info is awaiting staff
+    approval (`Character.pending_rp_mode`) -- the frontend shows this
+    instead of the switch panel until it's resolved."""
 
 
 class RpModeSwitchRequest(BaseModel):
     discord_id: int
     new_mode: RpMode
+    job_title: str | None = None
+    shift_phase: str | None = None
+    job_is_illicit: bool = False
+    """Only used when `rp_modes.mode_switch_needs_job_info` says this
+    switch needs fresh job info -- mirrors the bot's `/character mode`
+    job-title/shift-phase/illicit prompts, collected by the frontend
+    instead of a chained modal/select. Ignored (the switch applies
+    immediately, same as before this field existed) when job info isn't
+    needed."""
 
 
 class RpModeCrimeToggleRequest(BaseModel):
@@ -3908,6 +3929,7 @@ class RpModeCrimeToggleRequest(BaseModel):
 def build_rp_mode_router(
     *,
     session_factory: async_sessionmaker[AsyncSession] | None,
+    redis_client: redis.Redis,
 ) -> APIRouter:
     """The home page's mode-switch panel (Milestone 11) -- `/character
     mode`/`/character crime`'s dashboard equivalent, mirroring the bot
@@ -3953,6 +3975,8 @@ def build_rp_mode_router(
             fatigue=character.fatigue,
             sanity=character.sanity,
             afflictions=afflictions,
+            has_job_info=character.job_title is not None,
+            pending_mode=character.pending_rp_mode,
         )
 
     @router.get("/{character_id}/status", response_model=RpModeStatusResponse)
@@ -3966,16 +3990,51 @@ def build_rp_mode_router(
 
     @router.post("/{character_id}/switch", response_model=RpModeStatusResponse)
     async def switch(character_id: int, body: RpModeSwitchRequest) -> RpModeStatusResponse:
+        """Switching straight to Story, or into Life/Simulation when
+        `job_title` is already on file, applies immediately -- unchanged
+        from before this field existed. Switching into Life/Simulation for
+        the *first* time (`rp_modes.mode_switch_needs_job_info`) instead
+        needs `body.job_title`/`shift_phase` (mirroring `/character mode`'s
+        job-title/shift-phase/illicit prompts) and stages the switch for
+        staff approval rather than applying it -- `panem_api` has no bot
+        token to post that approval embed itself, so it publishes on
+        `CHARACTER_MODE_SWITCH_PENDING_CHANNEL` the same way character
+        creation does on `CHARACTER_PENDING_CHANNEL`."""
         factory = _require_session_factory(session_factory)
+        needs_announce = False
         async with session_scope(factory) as session:
             character = await _resolve_owned_character(
                 session, discord_id=body.discord_id, character_id=character_id
             )
             try:
-                rp_modes_svc.switch_mode(character, body.new_mode, dt.datetime.now(dt.UTC))
+                rp_modes_svc.check_can_switch_mode(character, body.new_mode, dt.datetime.now(dt.UTC))
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
-            return await _status_response(session, character)
+            if rp_modes_svc.mode_switch_needs_job_info(character, body.new_mode):
+                if not body.job_title or not body.shift_phase:
+                    raise HTTPException(
+                        status_code=400, detail="job_title and shift_phase are required"
+                    )
+                if body.shift_phase not in {phase.value for phase in DayPhase}:
+                    raise HTTPException(status_code=400, detail="Invalid shift phase")
+                try:
+                    characters_svc.validate_job_title(body.job_title)
+                except ServiceError as exc:
+                    raise _http_from_service_error(exc) from exc
+                rp_modes_svc.stage_mode_switch(
+                    character,
+                    body.new_mode,
+                    job_title=body.job_title,
+                    shift_phase=body.shift_phase,
+                    job_is_illicit=body.job_is_illicit,
+                )
+                needs_announce = True
+            else:
+                rp_modes_svc.switch_mode(character, body.new_mode, dt.datetime.now(dt.UTC))
+            response = await _status_response(session, character)
+        if needs_announce:
+            await redis_client.publish(CHARACTER_MODE_SWITCH_PENDING_CHANNEL, str(character_id))
+        return response
 
     @router.post("/{character_id}/crime-toggle", response_model=RpModeStatusResponse)
     async def crime_toggle(

@@ -4035,7 +4035,15 @@ class TestDashboardRpMode:
         assert body["afflictions"] == []
 
     async def test_switch_moves_to_the_new_mode(self, work_app, db_session_factory):
-        char_id = await seed_character(db_session_factory, discord_id=5)
+        # `job_title` set -- a real Simulation-mode character always has one
+        # (`characters_svc.create_character` requires it for any non-Story
+        # mode), so this switch needs no fresh job info and applies
+        # immediately; `TestSwitchNeedingJobInfo` below covers the other case.
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"job_title": "Baker", "shift_phase": "morning"},
+        )
         transport = httpx.ASGITransport(app=work_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(
@@ -4046,6 +4054,7 @@ class TestDashboardRpMode:
         body = response.json()
         assert body["mode"] == "life"
         assert body["next_mode_switch_eligible_at"] is not None
+        assert body["pending_mode"] is None
 
     async def test_switch_refuses_within_the_cooldown_window(self, work_app, db_session_factory):
         char_id = await seed_character(
@@ -4111,6 +4120,80 @@ class TestDashboardRpMode:
             )
         assert response.status_code == 400
         assert response.json()["detail"] == "crime_toggle_on_cooldown"
+
+    async def test_status_reports_has_job_info(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"rp_mode": "story"}
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/mode/{char_id}/status", params={"discord_id": 5}
+            )
+        assert response.status_code == 200
+        assert response.json()["has_job_info"] is False
+
+
+class TestSwitchNeedingJobInfo:
+    """Switching a character that's never had `job_title` on file (i.e.
+    never been Life/Simulation) into a working mode -- the scenario the
+    request "switching from story mode to sim mode needs to reopen the
+    character creation application" describes. `/switch` must not apply
+    the mode change immediately here; it stages it (`rp_modes.stage_mode_
+    switch`) for staff approval instead, same as `/character mode`'s bot
+    side."""
+
+    async def test_switch_without_job_info_is_refused(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"rp_mode": "story"}
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/mode/{char_id}/switch",
+                json={"discord_id": 5, "new_mode": "simulation"},
+            )
+        assert response.status_code == 400
+
+    async def test_switch_with_job_info_stages_instead_of_applying(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"rp_mode": "story"}
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/mode/{char_id}/switch",
+                json={
+                    "discord_id": 5,
+                    "new_mode": "simulation",
+                    "job_title": "Baker",
+                    "shift_phase": "morning",
+                    "job_is_illicit": False,
+                },
+            )
+        assert response.status_code == 200
+        body = response.json()
+        # Stays in Story mode -- the switch is only staged, awaiting staff
+        # approval, not applied.
+        assert body["mode"] == "story"
+        assert body["pending_mode"] == "simulation"
+
+    async def test_switching_to_story_never_needs_job_info(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"rp_mode": "life"}
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/mode/{char_id}/switch",
+                json={"discord_id": 5, "new_mode": "story"},
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["mode"] == "story"
+        assert body["pending_mode"] is None
 
 
 class TestDashboardHousing:

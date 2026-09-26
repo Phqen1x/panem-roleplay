@@ -906,7 +906,9 @@ def create_app(
     app.include_router(build_residents_router(content=content, session_factory=session_factory))
     app.include_router(build_housing_router(content=content, session_factory=session_factory))
     app.include_router(build_vitals_router(content=content, session_factory=session_factory))
-    app.include_router(build_rp_mode_router(session_factory=session_factory))
+    app.include_router(
+        build_rp_mode_router(session_factory=session_factory, redis_client=redis_client)
+    )
     app.include_router(build_pay_router(session_factory=session_factory))
     app.include_router(build_trade_router(session_factory=session_factory))
     app.include_router(

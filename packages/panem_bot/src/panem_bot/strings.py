@@ -181,6 +181,14 @@ STRINGS: dict[str, str] = {
         "This character switched modes too recently -- {hours} hour(s) left before they can "
         "switch again."
     ),
+    "mode_switch_already_pending": (
+        "This character already has a mode switch awaiting staff approval."
+    ),
+    "mode_switch_approved_dm": "Your **{name}**'s switch to **{mode}** mode has been approved!",
+    "mode_switch_declined_dm": (
+        "Staff declined **{name}**'s switch to **{mode}** mode: {note}\n"
+        "Use `/character mode` to try again."
+    ),
     "crime_toggle_wrong_mode": "Only Life-mode characters can toggle crime on/off for themselves.",
     "crime_toggle_already_set": "This character's crime setting is already {enabled}.",
     "crime_toggle_on_cooldown": (

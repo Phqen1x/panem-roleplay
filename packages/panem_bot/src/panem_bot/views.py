@@ -278,6 +278,79 @@ class RejectReasonModal(discord.ui.Modal, title="Reject Character"):
         await self._on_submit(interaction, str(self.reason.value))
 
 
+class ModeSwitchDeclineReasonModal(discord.ui.Modal, title="Decline Mode Switch"):
+    reason = discord.ui.TextInput(
+        label="Reason", style=discord.TextStyle.paragraph, max_length=1000
+    )
+
+    def __init__(self, on_submit: Callable[[discord.Interaction, str], Awaitable[None]]) -> None:
+        super().__init__()
+        self._on_submit = on_submit
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await self._on_submit(interaction, str(self.reason.value))
+
+
+class ModeSwitchApprovalView(discord.ui.View):
+    """Staff approval for a mode switch that needed fresh job info staged
+    (`panem_shared.rp_modes.stage_mode_switch`) -- persistent, same reason
+    as `ApprovalView`. Deliberately a *separate* view rather than reusing
+    `ApprovalView`: declining a staged switch must never delete the
+    character (unlike rejecting a fresh application, it already exists and
+    is playing in its current mode), so there's no "Reject" button here at
+    all, only "Approve"/"Decline", and the decline handler only discards
+    the staged fields."""
+
+    def __init__(
+        self,
+        *,
+        is_staff: Callable[[discord.Interaction], Awaitable[bool]],
+        on_approve: Callable[[discord.Interaction, int], Awaitable[None]],
+        on_decline: Callable[[discord.Interaction, int, str], Awaitable[None]],
+    ) -> None:
+        super().__init__(timeout=None)
+        self._is_staff = is_staff
+        self._on_approve = on_approve
+        self._on_decline = on_decline
+
+    async def _check(self, interaction: discord.Interaction) -> int | None:
+        if not await self._is_staff(interaction):
+            await interaction.response.send_message("Staff only.", ephemeral=True)
+            return None
+        character_id = character_id_from_message(interaction.message)
+        if character_id is None:
+            await interaction.response.send_message(
+                "Couldn't read the character id.", ephemeral=True
+            )
+            return None
+        return character_id
+
+    @discord.ui.button(
+        label="Approve Switch",
+        style=discord.ButtonStyle.success,
+        custom_id="panem:char_mode_switch_approve",
+    )
+    async def approve(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
+        character_id = await self._check(interaction)
+        if character_id is not None:
+            await self._on_approve(interaction, character_id)
+
+    @discord.ui.button(
+        label="Decline Switch",
+        style=discord.ButtonStyle.danger,
+        custom_id="panem:char_mode_switch_decline",
+    )
+    async def decline(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
+        character_id = await self._check(interaction)
+        if character_id is None:
+            return
+
+        async def _submit(modal_interaction: discord.Interaction, reason: str) -> None:
+            await self._on_decline(modal_interaction, character_id, reason)
+
+        await interaction.response.send_modal(ModeSwitchDeclineReasonModal(_submit))
+
+
 class ApprovalView(discord.ui.View):
     """Persistent (static custom_ids) — registered once via `bot.add_view()`
     so it keeps working across a bot restart (FR-CHR-3)."""

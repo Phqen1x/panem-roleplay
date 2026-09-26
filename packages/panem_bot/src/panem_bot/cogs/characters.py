@@ -28,6 +28,7 @@ from panem_bot.views import (
     ConfirmView,
     GenderSelectView,
     IllicitDeclareView,
+    ModeSwitchApprovalView,
     RpModeSelectView,
     ShiftPhaseSelectView,
 )
@@ -42,7 +43,7 @@ from panem_shared.db.models import (
 )
 from panem_shared.enums import CharacterStatus, DayPhase, RpMode
 from panem_shared.logging import get_logger
-from panem_shared.redis_keys import CHARACTER_PENDING_CHANNEL
+from panem_shared.redis_keys import CHARACTER_MODE_SWITCH_PENDING_CHANNEL, CHARACTER_PENDING_CHANNEL
 from panem_shared.simtime import clock_string, phase_time_range
 
 logger = get_logger(component="characters")
@@ -89,14 +90,28 @@ class CharacterCog(commands.Cog):
             on_reject=self._handle_reject,
         )
         self.bot.add_view(self.approval_view)
+        self.mode_switch_approval_view = ModeSwitchApprovalView(
+            is_staff=self._interaction_is_staff,
+            on_approve=self._handle_mode_switch_approve,
+            on_decline=self._handle_mode_switch_decline,
+        )
+        self.bot.add_view(self.mode_switch_approval_view)
         self._announce_pending_characters.start()
+        self._announce_pending_mode_switches.start()
         self._pending_listener_task = asyncio.create_task(self._listen_for_pending_characters())
+        self._mode_switch_listener_task = asyncio.create_task(
+            self._listen_for_pending_mode_switches()
+        )
 
     async def cog_unload(self) -> None:
         self._announce_pending_characters.cancel()
+        self._announce_pending_mode_switches.cancel()
         self._pending_listener_task.cancel()
+        self._mode_switch_listener_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await self._pending_listener_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await self._mode_switch_listener_task
 
     async def _interaction_is_staff(self, interaction: discord.Interaction) -> bool:
         if not isinstance(interaction.user, discord.Member):
@@ -489,6 +504,165 @@ class CharacterCog(commands.Cog):
             await pubsub.unsubscribe(CHARACTER_PENDING_CHANNEL)
             await pubsub.aclose()
 
+    # ------------------------------------------------------- mode-switch flow
+
+    async def _post_mode_switch_approval_embed(
+        self, character_id: int, *, applicant_discord_id: int
+    ) -> None:
+        """Mode-switch equivalent of `_post_approval_embed` -- posts the
+        staff embed for a staged mode switch
+        (`panem_shared.rp_modes.stage_mode_switch`) and stamps
+        `pending_mode_switch_notified_at` so this stays idempotent the same
+        way `_post_approval_embed` is against its own poll/listener race."""
+        channel = self.bot.get_channel(self.bot.settings.approval_channel_id)
+        if channel is None:
+            return
+        async with self.bot.db() as session:
+            character = await characters_svc.get_character(session, character_id)
+            if (
+                character.pending_rp_mode is None
+                or character.pending_mode_switch_notified_at is not None
+            ):
+                return
+            district = self.bot.content.district(character.district_id)
+            embed = discord.Embed(
+                title=f"Mode Switch Request: {character.name}", color=discord.Color.gold()
+            )
+            embed.add_field(name="Applicant", value=f"<@{applicant_discord_id}>", inline=True)
+            embed.add_field(name="District", value=district.name, inline=True)
+            embed.add_field(name="Current Mode", value=character.rp_mode.title(), inline=True)
+            embed.add_field(
+                name="Requested Mode", value=character.pending_rp_mode.title(), inline=True
+            )
+            shift_label = SHIFT_PHASE_LABELS.get(
+                character.pending_shift_phase or "", character.pending_shift_phase
+            )
+            illicit_suffix = " [illicit]" if character.pending_job_is_illicit else ""
+            embed.add_field(
+                name="Desired Job",
+                value=f"{character.pending_job_title} ({shift_label} shift){illicit_suffix}",
+                inline=True,
+            )
+            embed.set_footer(text=f"{CHAR_ID_FOOTER_PREFIX}{character.id}")
+            character.pending_mode_switch_notified_at = dt.datetime.now(dt.UTC)
+
+        await channel.send(embed=embed, view=self.mode_switch_approval_view)
+
+    @tasks.loop(minutes=constants.CHARACTER_APPROVAL_POLL_INTERVAL_MINUTES)
+    async def _announce_pending_mode_switches(self) -> None:
+        """Mode-switch equivalent of `_announce_pending_characters` -- picks
+        up a switch staged by the web dashboard (no bot token of its own to
+        post with) that the instant listener below missed."""
+        async with self.bot.db() as session:
+            rows = (
+                await session.execute(
+                    select(Character.id, User.discord_id)
+                    .join(User, User.id == Character.user_id)
+                    .where(
+                        Character.pending_rp_mode.is_not(None),
+                        Character.pending_mode_switch_notified_at.is_(None),
+                    )
+                )
+            ).all()
+        for character_id, discord_id in rows:
+            await self._post_mode_switch_approval_embed(character_id, applicant_discord_id=discord_id)
+
+    @_announce_pending_mode_switches.before_loop
+    async def _before_announce_pending_mode_switches(self) -> None:
+        await self.bot.wait_until_ready()
+
+    async def _try_announce_mode_switch(self, character_id: int) -> None:
+        async with self.bot.db() as session:
+            row = (
+                await session.execute(
+                    select(Character.id, User.discord_id)
+                    .join(User, User.id == Character.user_id)
+                    .where(
+                        Character.id == character_id,
+                        Character.pending_rp_mode.is_not(None),
+                        Character.pending_mode_switch_notified_at.is_(None),
+                    )
+                )
+            ).first()
+        if row is None:
+            return
+        _, discord_id = row
+        await self._post_mode_switch_approval_embed(character_id, applicant_discord_id=discord_id)
+
+    async def _listen_for_pending_mode_switches(self) -> None:
+        """Instant counterpart to `_announce_pending_mode_switches`'s poll,
+        mirroring `_listen_for_pending_characters` exactly but on its own
+        channel (`CHARACTER_MODE_SWITCH_PENDING_CHANNEL`) since a mode
+        switch and a fresh application announce different things."""
+        await self.bot.wait_until_ready()
+        pubsub = self.bot.redis.pubsub()
+        await pubsub.subscribe(CHARACTER_MODE_SWITCH_PENDING_CHANNEL)
+        try:
+            async for message in pubsub.listen():
+                if message["type"] != "message":
+                    continue
+                try:
+                    character_id = int(message["data"])
+                except (TypeError, ValueError):
+                    logger.warning("pending_mode_switch_bad_payload", data=message["data"])
+                    continue
+                try:
+                    await self._try_announce_mode_switch(character_id)
+                except Exception:
+                    logger.exception(
+                        "pending_mode_switch_announce_failed", character_id=character_id
+                    )
+        finally:
+            await pubsub.unsubscribe(CHARACTER_MODE_SWITCH_PENDING_CHANNEL)
+            await pubsub.aclose()
+
+    async def _handle_mode_switch_approve(
+        self, interaction: discord.Interaction, character_id: int
+    ) -> None:
+        async with self.bot.db() as session:
+            character = await characters_svc.get_character(session, character_id)
+            if character.pending_rp_mode is None:
+                await interaction.response.send_message("Already handled.", ephemeral=True)
+                return
+            new_mode_label = character.pending_rp_mode.title()
+            rp_modes_svc.apply_staged_mode_switch(character, dt.datetime.now(dt.UTC))
+            user = await session.get(User, character.user_id)
+            char_name, discord_id = character.name, user.discord_id
+
+        await self._disable_approval_message(interaction, f"Approved by {interaction.user.mention}")
+        await interaction.response.send_message(
+            f"Approved **{char_name}**'s switch to {new_mode_label} mode.", ephemeral=True
+        )
+
+        guild = interaction.guild
+        member = guild.get_member(discord_id) if guild else None
+        if member:
+            with contextlib.suppress(discord.Forbidden):
+                await member.send(t("mode_switch_approved_dm", name=char_name, mode=new_mode_label))
+
+    async def _handle_mode_switch_decline(
+        self, interaction: discord.Interaction, character_id: int, reason: str
+    ) -> None:
+        async with self.bot.db() as session:
+            character = await characters_svc.get_character(session, character_id)
+            if character.pending_rp_mode is None:
+                await interaction.response.send_message("Already handled.", ephemeral=True)
+                return
+            new_mode_label = character.pending_rp_mode.title()
+            char_name = character.name
+            discord_id = (await session.get(User, character.user_id)).discord_id
+            rp_modes_svc.discard_staged_mode_switch(character)
+
+        await self._disable_approval_message(interaction, f"Declined by {interaction.user.mention}")
+        await interaction.response.send_message("Declined.", ephemeral=True)
+
+        member = interaction.guild.get_member(discord_id) if interaction.guild else None
+        if member:
+            with contextlib.suppress(discord.Forbidden):
+                await member.send(
+                    t("mode_switch_declined_dm", name=char_name, mode=new_mode_label, note=reason)
+                )
+
     # --------------------------------------------------------- approval flow
 
     async def _handle_approve(self, interaction: discord.Interaction, character_id: int) -> None:
@@ -836,6 +1010,19 @@ class CharacterCog(commands.Cog):
                 )
                 return
             character_id, current_mode, name = row.id, row.rp_mode, row.name
+            needs_job_info = rp_modes_svc.mode_switch_needs_job_info(row, new_mode)
+
+        if needs_job_info:
+            # Never been Life/Simulation before -- no job on file to fall
+            # back to, so this needs the same job-title/shift-phase/illicit
+            # prompts character creation uses, then staff sign-off, same as
+            # a fresh application. `current_mode` stays in effect (and
+            # playable) the whole time this is pending -- see
+            # `Character.pending_rp_mode`'s docstring.
+            await self._prompt_mode_switch_job_info(
+                interaction, character_id, name, new_mode
+            )
+            return
 
         async def on_confirm(confirm_interaction: discord.Interaction) -> None:
             async with self.bot.db() as confirm_session:
@@ -868,6 +1055,107 @@ class CharacterCog(commands.Cog):
             "switch again. Are you sure?",
             view=ConfirmView(target_discord_id=interaction.user.id, on_confirm=on_confirm),
             ephemeral=True,
+        )
+
+    async def _prompt_mode_switch_job_info(
+        self,
+        interaction: discord.Interaction,
+        character_id: int,
+        name: str,
+        new_mode: RpMode,
+    ) -> None:
+        from panem_bot.modals import JobInfoModal
+
+        async def on_submit(modal_interaction: discord.Interaction, job_title: str) -> None:
+            try:
+                characters_svc.validate_job_title(job_title)
+            except ValidationFailed as exc:
+                await modal_interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+
+            async def on_phase_chosen(
+                phase_interaction: discord.Interaction, shift_phase: str
+            ) -> None:
+                await self._prompt_mode_switch_illicit(
+                    phase_interaction, character_id, name, new_mode, job_title, shift_phase
+                )
+
+            await modal_interaction.response.send_message(
+                "When will your character work their shift?",
+                view=ShiftPhaseSelectView(on_phase_chosen),
+                ephemeral=True,
+            )
+
+        await interaction.response.send_modal(JobInfoModal(on_submit=on_submit))
+
+    async def _prompt_mode_switch_illicit(
+        self,
+        interaction: discord.Interaction,
+        character_id: int,
+        name: str,
+        new_mode: RpMode,
+        job_title: str,
+        shift_phase: str,
+    ) -> None:
+        async def on_illicit_chosen(
+            illicit_interaction: discord.Interaction, job_is_illicit: bool
+        ) -> None:
+            await self._finish_mode_switch_request(
+                illicit_interaction,
+                character_id,
+                name,
+                new_mode,
+                job_title,
+                shift_phase,
+                job_is_illicit,
+            )
+
+        await interaction.response.send_message(
+            "Is this job illicit -- under-the-table work the Capitol doesn't sanction "
+            "(smuggling, black-market trading, and the like)?",
+            view=IllicitDeclareView(on_illicit_chosen),
+            ephemeral=True,
+        )
+
+    async def _finish_mode_switch_request(
+        self,
+        interaction: discord.Interaction,
+        character_id: int,
+        name: str,
+        new_mode: RpMode,
+        job_title: str,
+        shift_phase: str,
+        job_is_illicit: bool,
+    ) -> None:
+        async with self.bot.db() as session:
+            char = await session.get(Character, character_id)
+            if char is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            try:
+                rp_modes_svc.check_can_switch_mode(char, new_mode, dt.datetime.now(dt.UTC))
+            except ServiceError as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+            rp_modes_svc.stage_mode_switch(
+                char,
+                new_mode,
+                job_title=job_title,
+                shift_phase=shift_phase,
+                job_is_illicit=job_is_illicit,
+            )
+
+        await interaction.response.send_message(
+            f"**{name}**'s switch to **{new_mode.value.title()}** mode has been sent to staff "
+            f"for approval -- **{name}** stays in their current mode until then.",
+            ephemeral=True,
+        )
+        await self._post_mode_switch_approval_embed(
+            character_id, applicant_discord_id=interaction.user.id
         )
 
     @group.command(name="crime", description="Enable or disable committing/being targeted by crime")

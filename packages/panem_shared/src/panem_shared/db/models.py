@@ -339,6 +339,40 @@ class Character(TimestampMixin, Base):
     background task polls for `status == PENDING AND approval_notified_at
     IS NULL` and posts the same embed those get, then stamps this."""
 
+    pending_rp_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    """Set by `rp_modes.stage_mode_switch` when a mode switch needs staff
+    sign-off before it takes effect -- specifically, switching into
+    Life/Simulation for the first time (`job_title is None`, i.e. this
+    character has never had job info on file) reopens the same job-title/
+    shift-phase/illicit prompts character creation uses and requires
+    re-approval, same as a fresh application. `None` means no switch is
+    awaiting approval. `rp_mode`/`job_title`/`shift_phase`/`job_is_illicit`
+    are left completely untouched while this is set -- the character keeps
+    playing in their current mode, with whatever job info they already had
+    (which is exactly what lets a character who *was* Life/Simulation in
+    the past, and so already has `job_title` set, switch back and forth
+    with Story instantly, no re-approval, per `rp_modes.mode_switch_needs_
+    job_info`). `rp_modes.apply_staged_mode_switch` copies the staged
+    fields below over the real ones (and clears all of them) on staff
+    approval; `discard_staged_mode_switch` just clears them on decline.
+    Unlike rejecting a fresh application, declining a staged switch must
+    never delete the character -- it already exists and is playing -- so
+    this can't reuse `CharacterStatus.PENDING`/`ApprovalView`'s reject-
+    deletes-the-row shape at all."""
+    pending_job_title: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    pending_shift_phase: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    pending_job_is_illicit: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    pending_mode_switch_notified_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    """Same idempotency purpose as `approval_notified_at` above, kept as its
+    own column rather than shared: a mode-switch request and a fresh
+    application are always mutually exclusive (switching modes requires
+    already being `APPROVED`), but the two "has this been posted to staff
+    yet" facts are conceptually different and gate different background
+    tasks (`_announce_pending_characters` vs. `_announce_pending_mode_
+    switches`)."""
+
     in_transit_until_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
     transit_destination_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     away_since_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
