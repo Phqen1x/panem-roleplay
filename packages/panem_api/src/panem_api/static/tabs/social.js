@@ -92,9 +92,14 @@ function engagementPanel(ctx) {
         `/activity/dashboard/social/${characterId}?discord_id=${encodeURIComponent(discordId)}`
       );
 
-      const title = status.in_scene ? status.scene_title : "The Square — ambient";
-      const kind = status.in_scene ? status.scene_kind : "ambient";
-      const location = status.location_name || "The Square";
+      if (!status.in_scene) {
+        setStatusText(statusEl, "No engagements.");
+        return;
+      }
+
+      const title = status.scene_title;
+      const kind = status.scene_kind;
+      const location = status.location_name || "Unknown";
       const characters = status.participant_character_names && status.participant_character_names.length > 0
         ? status.participant_character_names.join(", ")
         : "You";
