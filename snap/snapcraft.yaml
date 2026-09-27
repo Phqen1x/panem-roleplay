@@ -54,7 +54,7 @@ apps:
     daemon: simple
     restart-condition: on-failure
     restart-delay: 5s
-    plugs: [network, network-bind]
+    plugs: [network, network-bind, opengl]
   migrate:
     # Not a daemon -- run by hand after install/upgrade: `sudo panem.migrate`.
     command: bin/panem-migrate
@@ -66,7 +66,7 @@ apps:
   lemonade-omni:
     # Admin one-off: `sudo panem.lemonade-omni install` (scripts/lemonade_omni.py).
     command: bin/panem-lemonade-omni
-    plugs: [network]
+    plugs: [network, opengl]
 
 parts:
   app:
@@ -85,6 +85,9 @@ parts:
       # /usr/lib at all -- so this has to be staged inside the snap
       # itself, same as any other strict-snap binary dependency.
       - libdrm-amdgpu1
+      - libarchive-tools
+      - libgomp1
+      - libvulkan1
     override-build: |
       set -eux
       cd "$CRAFT_PART_BUILD"
@@ -174,6 +177,11 @@ parts:
       - migrations
       - alembic.ini
       - usr/lib/x86_64-linux-gnu
+      - usr/bin/bsdtar
+    override-prime: |
+      craftctl default
+      mkdir -p "$CRAFT_PRIME/bin"
+      ln -sf ../usr/bin/bsdtar "$CRAFT_PRIME/bin/tar"
     prime:
       - python
       - data
@@ -182,6 +190,8 @@ parts:
       - migrations
       - alembic.ini
       - usr/lib/x86_64-linux-gnu
+      - usr/bin/bsdtar
+
 
   wrappers:
     plugin: dump

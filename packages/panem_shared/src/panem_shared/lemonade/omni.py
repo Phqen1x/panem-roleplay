@@ -41,6 +41,7 @@ from panem_shared.enums import LocationKind
 
 COLLECTION_RECIPE = "collection.omni"
 ALIAS = "panem-omni"
+DEFAULT_BASE_URL = "http://127.0.0.1:13305/v1"
 
 # Expanded by lemond at request time (see Lemonade's collection_orchestrator).
 TOOL_LIST_PLACEHOLDER = "{tool_list}"

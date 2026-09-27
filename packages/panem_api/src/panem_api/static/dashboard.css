@@ -1296,6 +1296,110 @@ table.data-table .btn {
   gap: 8px;
 }
 
+/* ------------------------------- Games tab: Panem Party Pack catalog */
+
+.game-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.game-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.game-card h3 {
+  margin: 0 0 6px;
+  font-family: var(--font-serif);
+  font-size: 14.5px;
+  color: #fff;
+}
+
+.game-list {
+  columns: 2;
+  column-gap: 24px;
+  margin: 0;
+  padding-left: 20px;
+  color: var(--muted);
+}
+
+.game-list li {
+  break-inside: avoid;
+  margin-bottom: 6px;
+}
+
+@media (max-width: 640px) {
+  .game-list {
+    columns: 1;
+  }
+}
+
+.game-card-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(224, 167, 46, 0.18);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  vertical-align: middle;
+}
+
+/* ------------------------------------- Games tab: the Party Room itself */
+
+.party-room {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.party-canvas-wrap {
+  flex: 1 1 640px;
+  min-width: 300px;
+}
+
+.party-canvas {
+  display: block;
+  width: 100%;
+  max-width: 960px;
+  aspect-ratio: 960 / 640;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #1a2e1f;
+}
+
+.party-sidebar {
+  flex: 0 1 300px;
+  min-width: 260px;
+}
+
+.party-station-panel {
+  margin-bottom: 16px;
+}
+
+.party-station-body p {
+  margin: 6px 0;
+}
+
+.party-answer-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+
+@media (max-width: 720px) {
+  .party-answer-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* --------------------------------- Header: donor dashboard theme picker */
 /* `theme_picker.js`'s `mountThemePicker` -- a little color-wheel button
    pinned to the header's top-right corner (last child, after `#character-

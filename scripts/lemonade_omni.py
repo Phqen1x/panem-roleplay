@@ -42,6 +42,7 @@ from typing import Any
 from panem_shared.content.loader import load_content
 from panem_shared.lemonade.omni import (
     ALIAS,
+    DEFAULT_BASE_URL,
     PROFILES,
     OmniProfile,
     RequestContext,
@@ -62,7 +63,6 @@ LEMONADE_DIR = REPO_ROOT / "lemonade"
 PROMPT_PATH = LEMONADE_DIR / "system_prompt.md"
 CATALOG_PATH = LEMONADE_DIR / "components.json"
 EMBEDDED_CONFIG_PATH = LEMONADE_DIR / "embedded" / "config.json"
-DEFAULT_BASE_URL = "http://127.0.0.1:13305/v1"
 RELEASE_URL = "https://github.com/lemonade-sdk/lemonade/releases/download/v{version}/{asset}"
 
 
@@ -161,7 +161,10 @@ def build_all() -> dict[str, tuple[Path, str]]:
     out: dict[str, tuple[Path, str]] = {}
     for key, profile in PROFILES.items():
         collection = build_collection(profile, system_prompt=prompt, catalog=catalog)
-        out[key] = (LEMONADE_DIR / collection_filename(profile), dump_collection(collection))
+        out[key] = (
+            LEMONADE_DIR / collection_filename(profile),
+            dump_collection(collection),
+        )
     return out
 
 
@@ -183,7 +186,8 @@ def cmd_build(args: argparse.Namespace) -> int:
     if stale:
         names = ", ".join(str(p.relative_to(REPO_ROOT)) for p in stale)
         print(
-            f"stale: {names} -- run `uv run python scripts/lemonade_omni.py build`", file=sys.stderr
+            f"stale: {names} -- run `uv run python scripts/lemonade_omni.py build`",
+            file=sys.stderr,
         )
         return 1
     if args.check:
@@ -261,7 +265,9 @@ def register_collection(api: Lemonade, profile: OmniProfile, *, download: bool) 
 def cmd_register(args: argparse.Namespace) -> int:
     settings = get_settings()
     register_collection(
-        client_from(settings, args), profile_from(settings, args), download=args.download
+        client_from(settings, args),
+        profile_from(settings, args),
+        download=args.download,
     )
     return 0
 
@@ -372,11 +378,19 @@ def cmd_smoke(args: argparse.Namespace) -> int:
     reply = api.chat(body, timeout=args.timeout)
     elapsed = time.monotonic() - started
     choice = reply["choices"][0]
-    content = choice["message"].get("content") or ""
+    message = choice["message"]
+    content = message.get("content") or ""
+    reasoning = message.get("reasoning_content") or ""
     print(
         f"<- ({elapsed:.1f}s, finish={choice.get('finish_reason')}, {len(content.split())} words)"
     )
-    print(content[:4000])
+    if reasoning:
+        print(f"[thinking / reasoning ({len(reasoning.split())} words)]:")
+        print(reasoning[:2000])
+    if content:
+        print(content[:4000])
+    elif not reasoning:
+        print(f"[raw message: {message}]")
     if "<audio>" in content:
         print("[reply embeds generated audio as a data URI]")
     return 0
@@ -462,6 +476,12 @@ def running_lemond(
     env = dict(os.environ)
     if settings.llm_api_key:
         env["LEMONADE_API_KEY"] = settings.llm_api_key
+
+    # Shadow GNU tar with bundled bsdtar ($SNAP/bin/tar -> bsdtar)
+    snap_dir = os.environ.get("SNAP")
+    if snap_dir:
+        bin_dir = f"{snap_dir}/bin"
+        env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
     # lemond refuses to start without a writable runtime dir (systemd would
     # normally provide one); a private one under the data dir mirrors what
     # Lemonade's own Docker image does.
@@ -576,7 +596,10 @@ def main(argv: list[str] | None = None) -> int:
             default=None,
         )
         p.add_argument(
-            "--profile", choices=sorted(PROFILES), default=None, help="default: LEMONADE_PROFILE"
+            "--profile",
+            choices=sorted(PROFILES),
+            default=None,
+            help="default: LEMONADE_PROFILE",
         )
 
     p_build = sub.add_parser("build", help="render lemonade/Panem-Omni-*.json")
@@ -600,10 +623,14 @@ def main(argv: list[str] | None = None) -> int:
     p_smoke = sub.add_parser("smoke", help="send a sample request to the collection")
     add_server_opts(p_smoke)
     p_smoke.add_argument(
-        "--model", default=None, help="default: LLM_MODEL, else the profile's model_name"
+        "--model",
+        default=None,
+        help="default: LLM_MODEL, else the profile's model_name",
     )
     p_smoke.add_argument(
-        "--mode", choices=[m.value for m in RequestMode], default=RequestMode.DIALOGUE.value
+        "--mode",
+        choices=[m.value for m in RequestMode],
+        default=RequestMode.DIALOGUE.value,
     )
     p_smoke.add_argument("--message", default=None, help="override the sample player line")
     p_smoke.add_argument("--max-tokens", type=int, default=400)
@@ -619,7 +646,9 @@ def main(argv: list[str] | None = None) -> int:
         "--register", action="store_true", help="also register the collection once up"
     )
     p_serve.add_argument(
-        "--download", action="store_true", help="with --register: download components too"
+        "--download",
+        action="store_true",
+        help="with --register: download components too",
     )
     p_serve.set_defaults(func=cmd_serve)
 
