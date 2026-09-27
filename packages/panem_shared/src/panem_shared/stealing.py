@@ -191,11 +191,12 @@ async def _apply_catch_consequences(
 ) -> None:
     """The shared tail of a caught steal or burglary: fine, jail,
     reputation, district pressure, and -- an NPC victim only -- crashing
-    that relationship to `hates` (Spec §6's relationship model has no
-    equivalent row for a player victim). Being caught red-handed is at
-    least as damning as a clean theft they never even noticed (`apply_
-    steal_outcome`'s own call on a plain success), so this uses the same
-    `crash_to_hated`, not a smaller decrement."""
+    that relationship to `hates` immediately via `crash_to_hated` (Spec
+    §6's relationship model has no equivalent row for a player victim).
+    A clean, undetected success never reaches here at all (`apply_steal_
+    outcome` only calls this on the alert/escape/caught chain), so an
+    NPC's opinion only ever moves once they've actually caught the thief
+    in the act, not on a theft they never noticed."""
     character.money = max(0, character.money - constants.STEAL_FINE)
     commit_to_jail(character, constants.STEAL_JAIL_TICKS, current_tick)
     character.reputation -= constants.REP_STEAL_CAUGHT_GENERAL_PENALTY
@@ -253,31 +254,22 @@ async def apply_steal_outcome(
     """Given whether the pickpocket skill check itself succeeded -- a
     roll (`STEAL_FROM_*_BASE_SUCCESS`), or the pickpocket minigame's own
     result when `/steal` launched via Activity -- resolves the rest: a
-    clean, consequence-free -- to the victim's wallet and, for a player
-    mark, their standing -- lift, or the alert/escape/caught chain. A
-    success lifts a random item off the mark (`STEAL_LOOT_GOOD_IDS`), not
-    money -- the only way to turn it into cash is the black market
+    clean, fully consequence-free lift, or the alert/escape/caught chain.
+    A success lifts a random item off the mark (`STEAL_LOOT_GOOD_IDS`),
+    not money -- the only way to turn it into cash is the black market
     (`blackmarket.resolve_good`'s `category: "stolen"` carve-out), so the
-    victim's own wallet is never touched here. An NPC mark's *relationship*
-    with the thief still crashes to `hates` immediately either way (`crash_
-    to_hated`) even on a clean, silent success -- "if a player steals from
-    an NPC" doesn't hinge on whether the NPC consciously noticed it happen,
-    unlike the alert/escape/caught chain below, which is about getting
-    caught trying, not about a completed theft. Logs the attempt to
-    `CrimeLog` either way (`record_crime_log`) -- this is the one funnel
-    both the RNG-fallback and Activity paths already share, so the log
-    stays complete without either caller doing it separately."""
+    victim's own wallet is never touched here. A clean success leaves an
+    NPC mark's relationship with the thief untouched too -- they never
+    knew it happened, so there's nothing for their opinion to react to;
+    only actually getting caught (`_apply_catch_consequences`, below)
+    crashes it. Logs the attempt to `CrimeLog` either way (`record_crime_
+    log`) -- this is the one funnel both the RNG-fallback and Activity
+    paths already share, so the log stays complete without either caller
+    doing it separately."""
     if success:
         good_id = rng.choice(constants.STEAL_LOOT_GOOD_IDS)
         good = goods[good_id]
         await _grant_good(session, character, good_id, constants.STEAL_LOOT_QTY)
-        if isinstance(victim, Npc):
-            relationship = await get_or_create_relationship(
-                session,
-                (OwnerKind.CHARACTER.value, str(character.id)),
-                (OwnerKind.NPC.value, victim.id),
-            )
-            crash_to_hated(relationship, current_tick=current_tick)
         result = StealResult(True, False, False, constants.STEAL_LOOT_QTY, good.name)
     else:
         result = await _apply_alert_escape_caught(

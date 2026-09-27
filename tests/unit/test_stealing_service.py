@@ -204,16 +204,14 @@ class TestResolveSteal:
         assert row is not None
         assert row.qty == constants.STEAL_LOOT_QTY
 
-        # A clean, silent success still crashes the NPC's opinion of the
-        # thief to the floor immediately -- it doesn't hinge on whether
-        # the victim consciously noticed (unlike the alert/escape/caught
-        # chain, which is about getting caught trying).
+        # A clean, undetected success leaves the NPC's opinion of the
+        # thief untouched -- they never noticed, so there's nothing for
+        # it to react to. Only actually getting caught crashes it.
         relationship = await db_session.get(
             RelationshipRow,
             (OwnerKind.CHARACTER.value, "1", OwnerKind.NPC.value, victim.id),
         )
-        assert relationship.affinity == constants.AFFINITY_FLOOR
-        assert relationship.stance == "hates"
+        assert relationship is None
 
     async def test_clean_miss_changes_nothing(self, db_session):
         character = make_character(money=100)

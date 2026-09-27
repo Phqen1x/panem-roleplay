@@ -4083,19 +4083,17 @@ affinity_delta`, which also recomputes `stance` immediately (so `/resident profi
 right away, not on some future tick the two happen to share a location again) and bumps `interaction_
 count`.
 
-Separately, but in the same relationship-mutation code: **stealing from an NPC now crashes that
-relationship to the floor immediately**, not a smaller decrement only on getting caught. Previously a
-*successful, undetected* `/steal` against an NPC left the relationship completely untouched (they never
-"knew"), and only the caught branch docked a modest `REP_STEAL_CAUGHT_VICTIM_PENALTY` (20). Per the
-explicit ask ("if a player steals from an NPC, the NPC should immediately lower their friendship meter to
-the lowest possible") this doesn't hinge on the NPC consciously noticing: a clean success now calls the new
-`relationships.crash_to_hated` (sets `affinity` to the new `constants.AFFINITY_FLOOR`, -100, well past the
-`hates` threshold, and forces `interaction_count` up to `STANCE_MIN_INTERACTIONS_EXTREME` so `stance` reads
-`hates` immediately rather than the lesser `dislikes` a low interaction count would otherwise cap it at) --
-and getting caught red-handed uses the exact same call rather than a smaller one, since being caught is at
-least as damning as a theft the victim never noticed. The alert-but-escaped branch (nothing was actually
-taken, and Spec's own existing test asserts it "changes nothing") is deliberately untouched -- "stealing
-from" reads as a completed act, not a failed attempt.
+Separately, but in the same relationship-mutation code: **getting caught stealing from an NPC now crashes
+that relationship to the floor**, not the smaller `REP_STEAL_CAUGHT_VICTIM_PENALTY` (20) decrement it used
+to dock. A first pass here also crashed the relationship on a *clean, undetected* success, reasoning that
+"if a player steals from an NPC" shouldn't hinge on the NPC consciously noticing -- reverted on explicit
+correction: a clean success the victim never noticed leaves the relationship completely untouched, exactly
+as before; only actually getting caught moves it at all, via the new `relationships.crash_to_hated` (sets
+`affinity` to the new `constants.AFFINITY_FLOOR`, -100, well past the `hates` threshold, and forces
+`interaction_count` up to `STANCE_MIN_INTERACTIONS_EXTREME` so `stance` reads `hates` immediately rather
+than the lesser `dislikes` a low interaction count would otherwise cap it at). The alert-but-escaped branch
+(nothing was actually taken or confirmed caught, and Spec's own existing test asserts it "changes nothing")
+stays untouched either way.
 
 Both the hostile-action penalty and the steal-crash share the same two new `panem_shared.relationships`
 helpers, added alongside `panem_sim.systems.social`'s own `_stance_for` moving there (`stance_for_affinity`,
