@@ -8,6 +8,7 @@ produces:
 imports:
 - fish
 - grain
+- livestock
 - lumber
 - medicine
 - power

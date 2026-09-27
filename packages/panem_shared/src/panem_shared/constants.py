@@ -408,6 +408,25 @@ MARKET_SUPPLY_FLOOR = 0.01
 """Supply is clamped to at least this before dividing by it in the price
 formula, so a district producing literally nothing today doesn't divide
 by zero -- reads as "effectively empty shelves", not an error."""
+MARKET_MINIMUM_STOCK: dict[str, float] = {
+    "livestock": 3.0,  # meat (Meats)
+    "grain": 3.0,      # grain (Grain)
+    "fish": 3.0,       # seafood (Seafood)
+    "produce": 3.0,    # fruits/drinks (Fruits/Drinks)
+    "medicine": 1.0,   # medicine (Medicine)
+    # Display name aliases:
+    "meat": 3.0,
+    "meats": 3.0,
+    "seafood": 3.0,
+    "fruit": 3.0,
+    "fruits": 3.0,
+    "fruits/drinks": 3.0,
+}
+"""Minimum daily stock guaranteed at district markets per sim day for
+essential goods (minimum of 3 meat, grain, seafood, and fruits/drinks, and
+at least 1 medicine). Prevents empty shelves for basic sustenance and medical
+needs regardless of daily production or export fluctuations."""
+
 
 ACTIVE_PLAYER_WINDOW_SIM_DAYS = 42
 """"Interacted within the past real-life week" for the active-player

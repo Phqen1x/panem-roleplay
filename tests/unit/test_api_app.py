@@ -865,7 +865,7 @@ class TestActivityFrontend:
         at runtime (see the README's Activity-frontend notes) -- app.js
         imports the SDK from this same-origin path."""
         app_js = client.get("/app.js").text
-        assert 'DISCORD_SDK_URL = "/vendor/discord-embedded-app-sdk.js"' in app_js
+        assert 'DISCORD_SDK_URL = "/vendor/discord-embedded-app-sdk.js?v=1"' in app_js
         response = client.get("/vendor/discord-embedded-app-sdk.js")
         assert response.status_code == 200
         assert "DiscordSDK" in response.text
