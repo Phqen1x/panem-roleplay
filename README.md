@@ -4013,3 +4013,110 @@ missing `var-annotated` on a modal's own `TextInput` fields) applied to the new 
 Full suite: **1441 passed**, 1 pre-existing unrelated failure (`test_serves_the_vendored_discord_sdk_not_a_
 cdn_url`, confirmed failing identically on a clean checkout via `git stash`). Migration verified
 up/down/up.
+
+## Fixing /engage end, the black market's dead-end location, and NPC opinions from roleplay itself
+
+Four independent bugs/gaps reported from live play, none related to each other except that all four sat in
+the "NPC social/crime" corner of the codebase.
+
+**1. `/engage end` refused the person who started it, and staff got a 500.** Two separate bugs, same
+command. First: `EngagementCog._actor_can_manage` only ever checked `Scene.created_by_character_id` --
+but `/engage start` run inside an *existing* scene (an ambient thread, an open `/scene`) attaches NPCs to
+a scene it didn't create, and never touched that column. The character who just ran `/engage start` there
+had no way to satisfy the "only the person who started it or staff can end it" check at all. Fixed by
+recording `participants["engaged_by_character_id"]` on every `/engage start` (`cogs/engagements.py`) and
+having `_actor_can_manage` accept either that or `created_by_character_id`. Second, and the actual cause
+of staff's own `discord.errors.NotFound: 404 ... Unknown interaction`: `end` called `_persist_engagement_
+summaries` (one LLM call per joined NPC, via `dialogue.summarize_engagement`) *before* ever responding to
+the interaction -- routinely well past Discord's 3-second response window, so the token had already expired
+by the time `interaction.response.send_message` ran, for anyone, staff included. Fixed by deferring
+(`interaction.response.defer(ephemeral=True, thinking=True)`) as the very first line and switching every
+reply in the command to `interaction.followup.send`, which has a 15-minute window instead.
+
+**2. The black market's own designated location was unreachable to ordinary players.** `/blackmarket`
+requires standing at the district's `kind: outskirts` location, at night (a deliberate earlier redesign --
+see "Gate the outskirts and black market to night" in git history -- moving it off the old per-district
+"Underground Exchange"-style market location). What broke it: every district's `outskirts` location was
+still authored `restricted: true` with two `access_jobs` catalog ids left over from before the job system
+became free-typed text (e.g. District 1's outskirts required `job_title` to be exactly `"d1_jeweler"` or
+`"d1_polisher"` -- two catalog ids with nothing to do with the outskirts thematically, just whatever two
+jobs existed there under the old system). Since `Character.job_title` is free-typed now, `has_location_
+access` (`panem_shared/location_access.py`) would essentially never match, and no non-staff, non-Positioned
+Life/Simulation character could satisfy it -- the *only* place `/blackmarket`/`/poach` can be reached from
+was gated behind an access rule nobody could ever pass, on top of (redundantly, since it's already the
+real gate) the night-only check. Fixed by exempting `kind: outskirts` from `access_jobs`/`restricted`
+entirely in `has_location_access` -- the day/night check its callers (`travel.check_can_travel`, `proxy.
+check_can_proxy`) already run *is* its access control by design, not an addition to a job gate. No content
+file changes needed; this was a code-level bug, not a missing location (every district already has one).
+
+**3. Nobody could learn who a district's black-market fence NPC is.** `NpcContent.black_market_contact`
+existed and drove `/blackmarket` itself (`resolve_fence`), but nothing anywhere -- not `/resident profile`,
+not the dashboard's Social tab -- ever surfaced which NPC that flag actually points to; a player had no
+in-game way to find out short of staff telling them out of character. Added `is_black_market_contact` to
+both `ResidentSummary` (the Residents/Social tab's list) and `ResidentProfileResponse` (an NPC's own
+dossier), computed server-side and `True` only once the viewer is allowed to know it: staff always (a real
+`discord_staff.fetch_is_staff` check, not a cosmetic client flag -- this gates real information disclosure,
+unlike `/identify`'s own UI-only `is_staff`), or a player whose relationship with that specific NPC has
+already reached `blackmarket.TRUSTED_STANCES` (Likes/Loves) -- the exact same threshold `/blackmarket`
+itself requires before trading, so "you can tell who they are" and "they'll actually trade with you" land
+at the same moment. `build_residents_router` gained `discord_token`/`discord_guild_id`/`staff_role_id`
+parameters (wired through `app.py`, mirroring `build_district_lore_router`'s own pattern) to make that staff
+check. `social.js`'s Residents table gets a small "Black Market" badge next to a revealed contact's name,
+and the dossier modal gets an equivalent "Known black market contact" row.
+
+**4. Roleplay itself never touched NPC opinions.** `RelationshipRow` only ever moved from `panem_sim.
+systems.social`'s passive per-tick "shared a location" proximity nudge -- nothing read what a player's
+message to or around an NPC actually *said*. Added `panem_shared/hostility.py`: `is_hostile_action(message)`,
+a plain case-insensitive substring check against a curated list of hostile-action roots (spit, hit, punch,
+attack, stab, strangle, harm, annoy, harass, threaten, ...) -- the same "keyword match standing in for a
+real detector" tradeoff `panem_shared.lore.match_history_entries` already makes, not an LLM sentiment call.
+Wired into `ProxyCog.post_engagement_replies` (`cogs/proxy.py`), the one function that already handles
+*every* RP message an NPC might react to -- both `/talk` (which calls this directly, per its own docstring)
+and ordinary scene/engagement proxying -- so one hook covers both surfaces. Targeting reuses `engagements_
+svc.npcs_that_should_reply`'s existing `speaking` list (every joined NPC in a strict 1:1, only the ones
+actually named otherwise) rather than a second name-matching pass, and runs independently of whether the
+NPC ends up actually replying (low stamina, etc.) -- being spit on doesn't require the NPC to have enough
+stamina left to talk back. A hostile hit knocks `RelationshipRow.affinity` down by a flat `HOSTILE_ACTION_
+AFFINITY_PENALTY` (40, bigger than a passing proximity nudge and even the steal-victim penalty below --
+"significantly lower" reads as one sharp hit, not a slow drift) via the new shared `relationships.apply_
+affinity_delta`, which also recomputes `stance` immediately (so `/resident profile`/the dashboard reflect it
+right away, not on some future tick the two happen to share a location again) and bumps `interaction_
+count`.
+
+Separately, but in the same relationship-mutation code: **stealing from an NPC now crashes that
+relationship to the floor immediately**, not a smaller decrement only on getting caught. Previously a
+*successful, undetected* `/steal` against an NPC left the relationship completely untouched (they never
+"knew"), and only the caught branch docked a modest `REP_STEAL_CAUGHT_VICTIM_PENALTY` (20). Per the
+explicit ask ("if a player steals from an NPC, the NPC should immediately lower their friendship meter to
+the lowest possible") this doesn't hinge on the NPC consciously noticing: a clean success now calls the new
+`relationships.crash_to_hated` (sets `affinity` to the new `constants.AFFINITY_FLOOR`, -100, well past the
+`hates` threshold, and forces `interaction_count` up to `STANCE_MIN_INTERACTIONS_EXTREME` so `stance` reads
+`hates` immediately rather than the lesser `dislikes` a low interaction count would otherwise cap it at) --
+and getting caught red-handed uses the exact same call rather than a smaller one, since being caught is at
+least as damning as a theft the victim never noticed. The alert-but-escaped branch (nothing was actually
+taken, and Spec's own existing test asserts it "changes nothing") is deliberately untouched -- "stealing
+from" reads as a completed act, not a failed attempt.
+
+Both the hostile-action penalty and the steal-crash share the same two new `panem_shared.relationships`
+helpers, added alongside `panem_sim.systems.social`'s own `_stance_for` moving there (`stance_for_affinity`,
+re-exported back into `social.py` as a local alias) so every affinity mutator in the codebase classifies a
+stance the identical way: `get_or_create_relationship` (the get-or-create pattern `stealing.py` and this new
+code both needed, previously duplicated inline) and `apply_affinity_delta`/`crash_to_hated`.
+
+Verified: new `panem_shared.location_access`/`proxy_service` tests for the outskirts exemption (including
+confirming an *ordinary* `restricted` location, e.g. a job-gated workplace, is untouched -- this only
+carves out `kind: outskirts` specifically); new `EngagementCog._actor_can_manage` test covering the exact
+previously-broken case (an ambient scene with no `created_by_character_id` but an `engaged_by_character_id`
+recorded); new `panem_shared.relationships` tests for `stance_for_affinity`/`get_or_create_relationship`/
+`apply_affinity_delta`/`crash_to_hated`; new `panem_shared.hostility` tests; new `TestDashboardResidentsBlack
+MarketReveal` tests covering the stranger/trusted/staff paths on both the list and profile endpoints, plus a
+control case confirming a non-contact NPC never reveals regardless of staff; updated `test_stealing_
+service.py` assertions for the new crash-to-floor behavior on both the clean-success and caught paths.
+`ASSET_VERSION` bumped 48 -> 49 (`tabs/social.js` changed) and `index.html`'s `app.js?v=` 49 -> 50 (`app.js`'s
+own `ASSET_VERSION` edit). `ruff check`/`ruff format --check` clean on every touched file (the one drift this
+session introduced, in `cogs/engagements.py`, was fixed by running `ruff format`; pre-existing drift
+elsewhere, e.g. `dashboard_routes.py`/`test_api_app.py`, confirmed via `git stash` and left alone). `mypy
+packages/panem_shared/src packages/panem_sim/src` (CI-gated) clean; the `panem_bot`/`panem_api` baseline
+(not CI-gated) stayed at exactly 182 errors before and after (confirmed via `git stash`) -- this pass added
+no new mypy errors at all, gated or not. Full suite: **1467 passed**, the same 1 pre-existing unrelated
+failure as every prior pass (`test_serves_the_vendored_discord_sdk_not_a_cdn_url`).

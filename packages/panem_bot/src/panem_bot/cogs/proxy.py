@@ -22,7 +22,7 @@ from panem_bot.services import jail as jail_svc
 from panem_bot.services import proxy as proxy_svc
 from panem_bot.services import shifts as shifts_svc
 from panem_bot.strings import t
-from panem_shared import constants
+from panem_shared import constants, hostility, relationships
 from panem_shared.db.models import (
     Character,
     DialogueLog,
@@ -505,6 +505,27 @@ class ProxyCog(commands.Cog):
             history_entries = (await session.execute(select(PanemHistoryEntry))).scalars().all()
             world_lore = await session.get(WorldLoreSettings, 1)
             world_notes = world_lore.alternate_universe_notes if world_lore is not None else None
+
+            # A hostile action (spitting on, hitting, attacking, or
+            # otherwise harming/annoying an NPC) tanks that NPC's opinion
+            # of the speaker immediately, independent of whether they end
+            # up replying at all -- `speaking` is reused as the targeting
+            # set (every joined NPC in a strict 1:1, only the ones
+            # actually named otherwise) since "who does this message
+            # concern" is exactly the same question `npcs_that_should_
+            # reply` already answers for the reply itself.
+            if hostility.is_hostile_action(message_content):
+                for npc in speaking:
+                    relationship = await relationships.get_or_create_relationship(
+                        session,
+                        (OwnerKind.CHARACTER.value, str(speaker.id)),
+                        (OwnerKind.NPC.value, npc.id),
+                    )
+                    relationships.apply_affinity_delta(
+                        relationship,
+                        -constants.HOSTILE_ACTION_AFFINITY_PENALTY,
+                        current_tick=current_tick,
+                    )
 
             for npc in speaking:
                 try:

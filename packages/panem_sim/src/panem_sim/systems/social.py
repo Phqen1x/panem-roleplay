@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from panem_shared import constants
+from panem_shared import constants, relationships
 from panem_shared.db.models import RelationshipRow
 from panem_shared.enums import OwnerKind, Stance
 from panem_shared.events import AnyWorldEvent
@@ -84,24 +84,12 @@ def _get_or_create(state: WorldState, subject: Occupant, obj: Occupant) -> Relat
     return row
 
 
-def _stance_for(affinity: int, interaction_count: int) -> str:
-    """Pure classification, reusable outside `_apply_interaction`'s
-    always-at-least-one-interaction call path (e.g. a future `/resident
-    profile` querying a pair with no `RelationshipRow` at all yet) --
-    `interaction_count == 0` means exactly that: never interacted."""
-    if interaction_count == 0:
-        return Stance.STRANGER.value
-    lo_extreme, lo, hi, hi_extreme = constants.STANCE_THRESHOLDS
-    extreme_ok = interaction_count >= constants.STANCE_MIN_INTERACTIONS_EXTREME
-    if affinity <= lo_extreme:
-        return Stance.HATES.value if extreme_ok else Stance.DISLIKES.value
-    if affinity <= lo:
-        return Stance.DISLIKES.value
-    if affinity < hi:
-        return Stance.NEUTRAL.value
-    if affinity < hi_extreme:
-        return Stance.LIKES.value
-    return Stance.LOVES.value if extreme_ok else Stance.LIKES.value
+_stance_for = relationships.stance_for_affinity
+"""Moved to `panem_shared.relationships.stance_for_affinity` so `panem_
+shared.stealing`/`panem_shared.hostility`'s callers can classify an
+affinity swing the exact same way this module's own proximity nudges do,
+without depending on `panem_sim`. Kept as a local alias rather than
+rewriting every call site below to the fully-qualified name."""
 
 
 def _display_name(state: WorldState, kind: str, owner_id: str) -> str:

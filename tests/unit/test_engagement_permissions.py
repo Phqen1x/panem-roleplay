@@ -2,6 +2,15 @@
 (and every other creator-gated engagement action): the character who
 started the engagement, or staff. A participant who merely joined isn't
 enough (mirrors `SceneCog._actor_can_manage`).
+
+`TestActorCanManageAnEngagedAmbientScene` covers the case that used to be
+broken: `/engage start` run inside an ambient thread or pre-existing
+`/scene` attaches NPCs without ever setting `created_by_character_id`
+(that column belongs to whoever opened the *scene*, not whoever engaged
+the NPCs in it) -- so the character who just ran `/engage start` there,
+and was told "only the person who started it or staff can end it", could
+never actually satisfy that check. `participants["engaged_by_character_id"]`
+(set by `EngagementCog.start`) is what fixes that.
 """
 
 from __future__ import annotations
@@ -115,4 +124,51 @@ class TestActorCanManage:
         )
         assert await cog._actor_can_manage(
             db_session, discord_user_id=1, scene=scene, is_staff=True
+        )
+
+
+class TestActorCanManageAnEngagedAmbientScene:
+    """`/engage start` inside an ambient thread/pre-existing `/scene` never
+    sets `created_by_character_id` -- that column is the *scene's* creator,
+    which `/engage start` doesn't touch when it's merely attaching NPCs to
+    a scene someone else (or a gateway listener, for a scene nobody
+    explicitly created) already opened. `participants["engaged_by_
+    character_id"]` is what actually records who ran `/engage start`."""
+
+    async def test_the_character_who_engaged_the_npcs_can_end_it(
+        self, db_session, cog: EngagementCog
+    ):
+        user = User(discord_id=1)
+        db_session.add(user)
+        await db_session.flush()
+        engager = Character(
+            user_id=user.id,
+            district_id=1,
+            current_district_id=1,
+            name="Engager",
+            age=20,
+            status=CharacterStatus.APPROVED.value,
+        )
+        db_session.add(engager)
+        await db_session.flush()
+
+        scene = Scene(
+            district_id=1,
+            location_id="square",
+            thread_id=444,
+            forum_channel_id=222,
+            kind=SceneKind.AMBIENT.value,
+            title="Ambient",
+            status=SceneStatus.OPEN.value,
+            created_by_character_id=None,
+            participants={"npcs": ["npc1"], "engaged_by_character_id": engager.id},
+        )
+        db_session.add(scene)
+        await db_session.flush()
+
+        assert await cog._actor_can_manage(
+            db_session, discord_user_id=1, scene=scene, is_staff=False
+        )
+        assert not await cog._actor_can_manage(
+            db_session, discord_user_id=999, scene=scene, is_staff=False
         )

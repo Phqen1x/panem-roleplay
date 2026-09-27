@@ -60,7 +60,7 @@ async function openExternalLink(url) {
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "48";
+const ASSET_VERSION = "49";
 
 // District names mapping for Capitol and Districts 1-12
 const DISTRICT_NAMES = {

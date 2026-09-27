@@ -417,6 +417,22 @@ function residentsPanel(ctx, openDossierFn) {
         : el("span", { text: "—" });
 
       const avatar = el("div", { class: "avatar-badge", text: initial });
+      // `is_black_market_contact` is only ever true once the viewer is
+      // actually allowed to know it (staff, or friendship with this exact
+      // NPC -- see dashboard_routes.py's `ResidentSummary`), so showing
+      // the badge whenever the field is true needs no extra client-side
+      // gating here.
+      const blackMarketBadge = r.is_black_market_contact
+        ? el(
+            "span",
+            {
+              class: "opinion-pill",
+              title: "Known black market contact",
+              style: "background: var(--danger-bg, #3a1f1f); color: var(--danger, #e08080);",
+              text: "Black Market",
+            }
+          )
+        : null;
       const nameCell = el(
         "td",
         {},
@@ -424,7 +440,8 @@ function residentsPanel(ctx, openDossierFn) {
           "div",
           { style: "display: flex; align-items: center; gap: 10px; font-weight: 500;" },
           avatar,
-          el("span", { text: r.name })
+          el("span", { text: r.name }),
+          blackMarketBadge
         )
       );
 
@@ -508,6 +525,17 @@ function dossierModal(ctx) {
   const npcRow1 = el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "Traits" }), traitsEl);
   const npcRow2 = el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "Speech Style" }), speechEl);
   const npcRow3 = el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "Opinion of You" }), stanceEl);
+  const blackMarketEl = el("span", {
+    class: "opinion-pill",
+    style: "background: var(--danger-bg, #3a1f1f); color: var(--danger, #e08080);",
+    text: "Known black market contact",
+  });
+  // Only ever inserted when `resident_profile`'s own `is_black_market_
+  // contact` comes back true -- staff always, or once a friendship
+  // stance (Likes/Loves) is reached with this exact NPC, same reveal
+  // rule as the Residents table's own badge.
+  const npcRow4 = el("div", { class: "dossier-prop" }, blackMarketEl);
+  npcRow4.hidden = true;
   const userRow1 = el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "Age & Gender" }), ageGenderEl);
   const userRow2 = el(
     "div",
@@ -539,6 +567,7 @@ function dossierModal(ctx) {
       npcRow1,
       npcRow2,
       npcRow3,
+      npcRow4,
       el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "Appearance" }), appearanceEl),
       userRow2,
       el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "Backstory" }), backstoryEl)
@@ -591,6 +620,7 @@ function dossierModal(ctx) {
     appearanceEl.textContent = "—";
     backstoryEl.textContent = "—";
     ageGenderEl.textContent = "—";
+    npcRow4.hidden = true;
     showNpcRows(kind === "npc");
     showUserRows(kind === "user");
 
@@ -635,6 +665,7 @@ function dossierModal(ctx) {
       stanceEl.textContent = profile.stance || "Courteous and attentive.";
       appearanceEl.textContent = profile.appearance || "Elegant district attire.";
       backstoryEl.textContent = profile.backstory || `A citizen of ${districtName}.`;
+      npcRow4.hidden = !profile.is_black_market_contact;
 
       traitsEl.innerHTML = "";
       (profile.traits || []).forEach((t) => {

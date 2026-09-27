@@ -2084,6 +2084,16 @@ class ResidentSummary(BaseModel):
     `loves`), not itself an orderable scale a client should try to sort
     alphabetically. `0` (not `None`) alongside a `"stranger"` label when no
     row exists, `None` for a `"user"` row same as `opinion_label`."""
+    is_black_market_contact: bool = False
+    """Whether this NPC is flagged `black_market_contact: true` in content
+    AND the viewer is currently allowed to know it -- staff always, or a
+    player whose `opinion_label` with this specific NPC has reached
+    `blackmarket.TRUSTED_STANCES` (Likes/Loves), the exact same threshold
+    `/blackmarket` itself requires before trading. `False` (never omitted
+    or left ambiguous) rather than simply not flagging the row, since the
+    fence's identity is otherwise undiscoverable in the game at all --
+    nothing else in the dashboard or bot ever surfaces it. Always `False`
+    for a `"user"` row."""
 
 
 class ResidentsResponse(BaseModel):
@@ -2100,6 +2110,10 @@ class ResidentProfileResponse(BaseModel):
     stance: str
     appearance: str
     backstory: str
+    is_black_market_contact: bool = False
+    """Same reveal rule as `ResidentSummary.is_black_market_contact` --
+    staff always, or a friendship stance (Likes/Loves) with this NPC
+    specifically."""
 
 
 class CharacterProfileResponse(BaseModel):
@@ -2123,14 +2137,35 @@ class CharacterProfileResponse(BaseModel):
 
 
 def build_residents_router(
-    *, content: ContentBundle, session_factory: async_sessionmaker[AsyncSession] | None
+    *,
+    content: ContentBundle,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    discord_token: str = "",
+    discord_guild_id: int = 0,
+    staff_role_id: int = 0,
 ) -> APIRouter:
     """The Residents tab's REST surface: mirrors `/resident list|where|
     profile`. Unlike the split Discord commands, `list` here already
     includes each resident's current location (an improvement in the same
     spirit as the Crime tab's burgle-targets -- avoiding a second
-    request per NPC the dashboard would otherwise need to make)."""
+    request per NPC the dashboard would otherwise need to make).
+
+    `discord_token`/`discord_guild_id`/`staff_role_id` back a real (not
+    cosmetic) `discord_staff.fetch_is_staff` check in both routes below,
+    to decide `is_black_market_contact` -- unlike `/identify`'s own
+    `is_staff` (UI-only, re-checked at the actual point of write), this
+    one gates real information disclosure: a district's fence NPC is
+    otherwise undiscoverable anywhere in the game, so the client can't be
+    trusted to decide for itself who staff is."""
     router = APIRouter(prefix="/activity/dashboard/residents", tags=["dashboard"])
+
+    async def _is_staff(discord_id: int) -> bool:
+        return await discord_staff.fetch_is_staff(
+            discord_id,
+            bot_token=discord_token,
+            guild_id=discord_guild_id,
+            staff_role_id=staff_role_id,
+        )
 
     async def _resolve_npc(session: AsyncSession, character: Character, name: str) -> Npc:
         npc = (
@@ -2183,6 +2218,7 @@ def build_residents_router(
 
     @router.get("/{character_id}", response_model=ResidentsResponse)
     async def resident_list(character_id: int, discord_id: int) -> ResidentsResponse:
+        is_staff = await _is_staff(discord_id)
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             character = await _resolve_owned_character(
@@ -2249,6 +2285,9 @@ def build_residents_router(
                 job = all_jobs.get(npc.job_id) if npc.job_id else None
                 location = locations_by_id.get(npc.location_id) if npc.location_id else None
                 relationship = relationship_by_npc_id.get(npc.id)
+                stance = relationship.stance if relationship else Stance.STRANGER.value
+                authored = content.npcs.get(npc.id)
+                is_contact = bool(authored is not None and authored.black_market_contact)
                 residents.append(
                     ResidentSummary(
                         name=npc.name,
@@ -2256,8 +2295,10 @@ def build_residents_router(
                         location_id=npc.location_id,
                         location_name=location.name if location is not None else None,
                         kind="npc",
-                        opinion_label=relationship.stance if relationship else Stance.STRANGER.value,
+                        opinion_label=stance,
                         opinion_score=relationship.affinity if relationship else 0,
+                        is_black_market_contact=is_contact
+                        and (is_staff or stance in blackmarket_svc.TRUSTED_STANCES),
                     )
                 )
             for other in other_characters:
@@ -2282,6 +2323,7 @@ def build_residents_router(
     async def resident_profile(
         character_id: int, resident_name: str, discord_id: int
     ) -> ResidentProfileResponse:
+        is_staff = await _is_staff(discord_id)
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             character = await _resolve_owned_character(
@@ -2303,6 +2345,7 @@ def build_residents_router(
             authored = content.npcs.get(npc.id)
             appearance = npc.appearance_override or (authored.appearance if authored else "")
             backstory = npc.backstory_override or (authored.backstory if authored else "")
+            is_contact = bool(authored is not None and authored.black_market_contact)
         return ResidentProfileResponse(
             name=npc.name,
             job_title=job_name,
@@ -2312,6 +2355,8 @@ def build_residents_router(
             stance=stance,
             appearance=appearance,
             backstory=backstory,
+            is_black_market_contact=is_contact
+            and (is_staff or stance in blackmarket_svc.TRUSTED_STANCES),
         )
 
     @router.get("/{character_id}/character/{other_name}", response_model=CharacterProfileResponse)

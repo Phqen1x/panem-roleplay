@@ -903,7 +903,15 @@ def create_app(
     app.include_router(build_market_router(content=content, session_factory=session_factory))
     app.include_router(build_blackmarket_router(content=content, session_factory=session_factory))
     app.include_router(build_travel_router(content=content, session_factory=session_factory))
-    app.include_router(build_residents_router(content=content, session_factory=session_factory))
+    app.include_router(
+        build_residents_router(
+            content=content,
+            session_factory=session_factory,
+            discord_token=discord_token,
+            discord_guild_id=discord_guild_id,
+            staff_role_id=staff_role_id,
+        )
+    )
     app.include_router(build_housing_router(content=content, session_factory=session_factory))
     app.include_router(build_vitals_router(content=content, session_factory=session_factory))
     app.include_router(

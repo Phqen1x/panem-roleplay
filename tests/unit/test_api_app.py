@@ -3726,6 +3726,7 @@ class TestDashboardResidents:
                 "status": None,
                 "opinion_label": "stranger",
                 "opinion_score": 0,
+                "is_black_market_contact": False,
             }
         ]
 
@@ -3950,6 +3951,128 @@ class TestDashboardResidents:
                 params={"discord_id": 42},
             )
         assert response.status_code == 404
+
+
+class TestDashboardResidentsBlackMarketReveal:
+    """`is_black_market_contact` on both the Residents list and an NPC's
+    own profile: only ever `True` once the viewer is allowed to know it --
+    staff always (`discord_staff.fetch_is_staff`, patched here the same
+    way `TestDashboardStaff` does), or a friendship stance with that
+    specific NPC (`blackmarket_svc.TRUSTED_STANCES`). `market_app`'s
+    `fence` NPC (district 1, `black_market_contact=True`) is reused from
+    the black-market trading tests below."""
+
+    async def test_list_hides_it_from_a_stranger(self, market_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_npc(db_session_factory, id="fence", name="Sal")
+        transport = httpx.ASGITransport(app=market_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}", params={"discord_id": 42}
+            )
+        resident = response.json()["residents"][0]
+        assert resident["is_black_market_contact"] is False
+
+    async def test_list_reveals_it_once_the_player_is_trusted(
+        self, market_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_npc(db_session_factory, id="fence", name="Sal")
+        async with db_session_factory() as session, session.begin():
+            session.add(
+                RelationshipRow(
+                    subject_kind=OwnerKind.CHARACTER.value,
+                    subject_id=str(char_id),
+                    object_kind=OwnerKind.NPC.value,
+                    object_id="fence",
+                    affinity=50,
+                    stance="likes",
+                )
+            )
+        transport = httpx.ASGITransport(app=market_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}", params={"discord_id": 42}
+            )
+        resident = response.json()["residents"][0]
+        assert resident["is_black_market_contact"] is True
+
+    async def test_list_reveals_it_to_staff_regardless_of_relationship(
+        self, market_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_npc(db_session_factory, id="fence", name="Sal")
+        with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=True)):
+            transport = httpx.ASGITransport(app=market_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.get(
+                    f"/activity/dashboard/residents/{char_id}", params={"discord_id": 42}
+                )
+        resident = response.json()["residents"][0]
+        assert resident["is_black_market_contact"] is True
+
+    async def test_profile_hides_it_from_a_stranger(self, market_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_npc(db_session_factory, id="fence", name="Sal")
+        transport = httpx.ASGITransport(app=market_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}/Sal", params={"discord_id": 42}
+            )
+        assert response.json()["is_black_market_contact"] is False
+
+    async def test_profile_reveals_it_once_the_player_is_trusted(
+        self, market_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_npc(db_session_factory, id="fence", name="Sal")
+        async with db_session_factory() as session, session.begin():
+            session.add(
+                RelationshipRow(
+                    subject_kind=OwnerKind.CHARACTER.value,
+                    subject_id=str(char_id),
+                    object_kind=OwnerKind.NPC.value,
+                    object_id="fence",
+                    affinity=50,
+                    stance="loves",
+                )
+            )
+        transport = httpx.ASGITransport(app=market_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}/Sal", params={"discord_id": 42}
+            )
+        assert response.json()["is_black_market_contact"] is True
+
+    async def test_profile_reveals_it_to_staff_regardless_of_relationship(
+        self, market_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_npc(db_session_factory, id="fence", name="Sal")
+        with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=True)):
+            transport = httpx.ASGITransport(app=market_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.get(
+                    f"/activity/dashboard/residents/{char_id}/Sal", params={"discord_id": 42}
+                )
+        assert response.json()["is_black_market_contact"] is True
+
+    async def test_non_contact_npc_never_reveals_regardless_of_staff(
+        self, market_app, db_session_factory
+    ):
+        """`black_market_contact` gates this before staff/friendship even
+        matter -- staff seeing `True` for every NPC would be a much bigger
+        bug than the one this feature fixes."""
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_npc(db_session_factory, id="ordinary", name="Rue")
+        with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=True)):
+            transport = httpx.ASGITransport(app=market_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.get(
+                    f"/activity/dashboard/residents/{char_id}", params={"discord_id": 42}
+                )
+        resident = next(r for r in response.json()["residents"] if r["name"] == "Rue")
+        assert resident["is_black_market_contact"] is False
 
 
 class TestDashboardSocial:

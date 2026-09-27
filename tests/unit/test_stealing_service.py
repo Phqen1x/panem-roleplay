@@ -50,7 +50,9 @@ def make_goods() -> dict[str, Good]:
     does, rather than depending on `data/goods.yaml`."""
     good_ids = set(constants.STEAL_LOOT_GOOD_IDS) | set(constants.BURGLE_LOOT_GOOD_IDS)
     return {
-        good_id: Good(id=good_id, name=good_id.replace("_", " ").title(), base_price=10.0, category="stolen")
+        good_id: Good(
+            id=good_id, name=good_id.replace("_", " ").title(), base_price=10.0, category="stolen"
+        )
         for good_id in good_ids
     }
 
@@ -202,6 +204,17 @@ class TestResolveSteal:
         assert row is not None
         assert row.qty == constants.STEAL_LOOT_QTY
 
+        # A clean, silent success still crashes the NPC's opinion of the
+        # thief to the floor immediately -- it doesn't hinge on whether
+        # the victim consciously noticed (unlike the alert/escape/caught
+        # chain, which is about getting caught trying).
+        relationship = await db_session.get(
+            RelationshipRow,
+            (OwnerKind.CHARACTER.value, "1", OwnerKind.NPC.value, victim.id),
+        )
+        assert relationship.affinity == constants.AFFINITY_FLOOR
+        assert relationship.stance == "hates"
+
     async def test_clean_miss_changes_nothing(self, db_session):
         character = make_character(money=100)
         victim = make_npc(money=50.0)
@@ -265,7 +278,11 @@ class TestResolveSteal:
             RelationshipRow,
             (OwnerKind.CHARACTER.value, "1", OwnerKind.NPC.value, victim.id),
         )
-        assert relationship.affinity == -constants.REP_STEAL_CAUGHT_VICTIM_PENALTY
+        # Caught red-handed crashes the relationship to the same floor a
+        # clean, undetected success does (`crash_to_hated`) -- being
+        # caught is at least as damning as a theft they never noticed.
+        assert relationship.affinity == constants.AFFINITY_FLOOR
+        assert relationship.stance == "hates"
 
         district_row = await db_session.get(DistrictState, 1)
         assert district_row.peacekeeper_pressure == 0.3 + stealing_svc.STEAL_PRESSURE_DELTA
