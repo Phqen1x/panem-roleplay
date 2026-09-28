@@ -35,7 +35,7 @@ from __future__ import annotations
 from panem_shared import constants
 from panem_shared.content.schemas import Job
 from panem_shared.db.models import Character, Shift
-from panem_shared.enums import OwnerKind, ShiftResult
+from panem_shared.enums import CharacterStatus, OwnerKind, ShiftResult
 from panem_shared.events import AnyWorldEvent
 from panem_sim.state import NotableEvent, TickContext, WorldState
 from panem_sim.systems.time import is_phase_boundary
@@ -138,9 +138,13 @@ def _open_shifts_for_due_characters(state: WorldState, ctx: TickContext) -> None
 
     already_open = {shift.character_id for shift in state.open_shifts}
     for character in state.characters.values():
+        if character.status != CharacterStatus.APPROVED.value:
+            continue
         if character.id in already_open:
             continue
-        if character.job_title is None or character.shift_phase != ctx.phase:
+        if character.job_title is None or (
+            character.shift_phase and character.shift_phase.lower() != ctx.phase.value
+        ):
             continue
 
         shift = Shift(

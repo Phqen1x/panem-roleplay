@@ -35,7 +35,6 @@ from panem_shared.db.models import (
     RelationshipRow,
     Scene,
     SceneMessage,
-    Shift,
     User,
     WorldClock,
     WorldLoreSettings,
@@ -194,14 +193,13 @@ class ProxyCog(commands.Cog):
                     character.sanity + constants.SANITY_GAIN_PER_INTERACTION,
                 )
 
-        open_shift = (
-            await session.execute(
-                select(Shift).where(Shift.character_id == character.id, Shift.result.is_(None))
-            )
-        ).scalar_one_or_none()
-        if open_shift is None:
-            return
         if not qualifies:
+            return
+
+        open_shift = await shifts_svc.get_or_open_shift_for_character(
+            session, character, current_tick
+        )
+        if open_shift is None:
             return
         if not shifts_svc.can_earn_rp_credit_anywhere(
             character

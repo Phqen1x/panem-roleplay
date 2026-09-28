@@ -19,6 +19,7 @@ from panem_bot.errors import ServiceError
 from panem_bot.services import characters as characters_svc
 from panem_bot.services import jail as jail_svc
 from panem_bot.services import jobs as jobs_svc
+from panem_bot.services import shifts as shifts_svc
 from panem_bot.services.staff import log_staff_action
 from panem_bot.strings import t
 from panem_bot.views import GENDER_LABELS
@@ -654,6 +655,9 @@ class StaffCog(commands.Cog):
                 row.job_is_illicit = illicit
             row.job_started_tick = None
             row.consecutive_missed = 0
+            clock = await session.get(WorldClock, 1)
+            if clock is not None:
+                await shifts_svc.get_or_open_shift_for_character(session, row, clock.tick)
             await log_staff_action(
                 session,
                 bot=self.bot,

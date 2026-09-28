@@ -202,24 +202,15 @@ class JobsCog(commands.Cog):
             )
             can_bypass_location = is_staff or Position.GAMEMAKER.value in char.positions
 
-            open_shift = (
-                await session.execute(
-                    select(Shift).where(Shift.character_id == char.id, Shift.result.is_(None))
-                )
-            ).scalar_one_or_none()
-            if open_shift is None:
-                open_shift = shifts_svc.open_adhoc_shift_override(
-                    char, await self._current_tick(session), is_staff=is_staff
-                )
-                if open_shift is None:
-                    await interaction.response.send_message(
-                        t("job_no_open_shift", name=char.name), ephemeral=True
-                    )
-                    return
-                session.add(open_shift)
-                await session.flush()
-
             current_tick = await self._current_tick(session)
+            open_shift = await shifts_svc.get_or_open_shift_for_character(
+                session, char, current_tick, is_staff=is_staff
+            )
+            if open_shift is None:
+                await interaction.response.send_message(
+                    t("job_no_open_shift", name=char.name), ephemeral=True
+                )
+                return
             if not can_bypass_location and not shifts_svc.can_work_from_current_location(
                 char, current_tick
             ):

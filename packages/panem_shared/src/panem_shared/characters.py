@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from panem_shared import constants
 from panem_shared import layers as layers_svc
 from panem_shared.content.schemas import District
-from panem_shared.db.models import Character, Shift, User
+from panem_shared.db.models import Character, Shift, User, WorldClock
 from panem_shared.enums import CharacterStatus, Gender, RpMode, ShiftResult
 from panem_shared.errors import LimitReached, NotAllowed, NotFound, ValidationFailed
 from panem_shared.settings import Settings
@@ -231,6 +231,12 @@ async def approve_character(
     character.money = constants.STARTING_MONEY
     character.location_id = public_location.id
     character.current_district_id = district.id
+
+    clock = await session.get(WorldClock, 1)
+    if clock is not None:
+        from panem_shared.shifts import get_or_open_shift_for_character
+
+        await get_or_open_shift_for_character(session, character, clock.tick)
 
     await session.flush()
     return character

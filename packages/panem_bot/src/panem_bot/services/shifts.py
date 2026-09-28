@@ -45,10 +45,16 @@ from panem_shared.shifts import (
     can_work_from_current_location as can_work_from_current_location,
 )
 from panem_shared.shifts import (
+    get_or_open_shift_for_character as get_or_open_shift_for_character,
+)
+from panem_shared.shifts import (
     has_job as has_job,
 )
 from panem_shared.shifts import (
     illicit_shift_output as illicit_shift_output,
+)
+from panem_shared.shifts import (
+    is_in_shift_phase as is_in_shift_phase,
 )
 from panem_shared.shifts import (
     market_multiplier_for_district as market_multiplier_for_district,
@@ -58,6 +64,9 @@ from panem_shared.shifts import (
 )
 from panem_shared.shifts import (
     open_adhoc_shift_override as open_adhoc_shift_override,
+)
+from panem_shared.shifts import (
+    phase_window_for_tick as phase_window_for_tick,
 )
 from panem_shared.shifts import (
     resolve_shift_game as resolve_shift_game,

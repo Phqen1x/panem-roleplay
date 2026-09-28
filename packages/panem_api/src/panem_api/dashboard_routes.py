@@ -82,7 +82,6 @@ from panem_shared.db.models import (
     PropertyAuction,
     RelationshipRow,
     Scene,
-    Shift,
     StaffAction,
     ThemeProfile,
     Trade,
@@ -115,8 +114,8 @@ from panem_shared.relationships import relationship_key
 from panem_shared.shifts import (
     already_worked_this_tick,
     can_work_from_current_location,
+    get_or_open_shift_for_character,
     has_job,
-    open_adhoc_shift_override,
     start_shift_game,
 )
 
@@ -1643,22 +1642,12 @@ def build_work_router(*, session_factory: async_sessionmaker[AsyncSession] | Non
                 raise _http_from_service_error(exc) from exc
 
             is_gamemaker = Position.GAMEMAKER.value in character.positions
-            open_shift = (
-                await session.execute(
-                    select(Shift).where(Shift.character_id == character.id, Shift.result.is_(None))
-                )
-            ).scalar_one_or_none()
-            if open_shift is None:
-                current_tick = await _current_tick(session)
-                open_shift = open_adhoc_shift_override(
-                    character, current_tick, is_staff=is_gamemaker
-                )
-                if open_shift is None:
-                    raise HTTPException(status_code=400, detail="job_no_open_shift")
-                session.add(open_shift)
-                await session.flush()
-
             current_tick = await _current_tick(session)
+            open_shift = await get_or_open_shift_for_character(
+                session, character, current_tick, is_staff=is_gamemaker
+            )
+            if open_shift is None:
+                raise HTTPException(status_code=400, detail="job_no_open_shift")
             if not is_gamemaker and not can_work_from_current_location(character, current_tick):
                 raise HTTPException(
                     status_code=400,
