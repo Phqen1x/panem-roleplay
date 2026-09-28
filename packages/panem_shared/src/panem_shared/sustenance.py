@@ -1,9 +1,9 @@
-"""`/eat`/`/drink`/`/entertain` -- the player-initiated, proactive half of
-Simulation mode's hunger/thirst/sanity meters (Vitals tab feature).
+"""`/eat`/`/drink`/`/heal`/`/entertain` -- the player-initiated, proactive half of
+Simulation mode's hunger/thirst/health/sanity meters (Vitals tab feature).
 
 Full rewrite from this module's original once-per-sim-day/flat-cost shape:
-eating/drinking now consumes a specific owned `Good` from inventory (each
-good carries its own `hunger_value`/`thirst_value`, content-authored --
+eating/drinking/healing now consume a specific owned `Good` from inventory (each
+good carries its own `hunger_value`/`thirst_value`/`heal_value`, content-authored --
 `panem_shared.content.schemas.Good`), and there's no daily cooldown on
 either -- the passive per-phase hunger/thirst decay
 (`panem_sim.systems.needs`, `constants.HUNGER_PHASE_DECAY_MIN`/`MAX`) is
@@ -59,9 +59,10 @@ async def _owned_qty(session: AsyncSession, character: Character, good_id: str) 
 async def owned_consumables(
     session: AsyncSession, character: Character, goods: dict[str, Good]
 ) -> list[tuple[Inventory, Good]]:
-    """Every inventory row the character owns that's actually edible or
-    drinkable (`hunger_value > 0` or `thirst_value > 0`), paired with its
-    `Good` -- the Vitals tab status endpoint's eat/drink panel data."""
+    """Every inventory row the character owns that's actually edible,
+    drinkable, or usable for healing (`hunger_value > 0`, `thirst_value > 0`,
+    or `heal_value > 0`), paired with its `Good` -- the Vitals tab status
+    endpoint's eat/drink/heal panel data."""
     rows = (
         await session.execute(
             select(Inventory).where(
@@ -74,7 +75,9 @@ async def owned_consumables(
     pairs: list[tuple[Inventory, Good]] = []
     for row in rows:
         good = goods.get(row.good_id)
-        if good is not None and (good.hunger_value > 0 or good.thirst_value > 0):
+        if good is not None and (
+            good.hunger_value > 0 or good.thirst_value > 0 or good.heal_value > 0
+        ):
             pairs.append((row, good))
     return pairs
 
@@ -129,6 +132,26 @@ async def drink(
     character.thirst = max(constants.THIRST_MIN, character.thirst - good.thirst_value)
     character.last_drank_tick = current_tick
     return character.thirst
+
+
+def check_can_heal(character: Character, good: Good, qty_owned: int) -> None:
+    _check_alive_approved_sim(character)
+    if good.heal_value <= 0:
+        raise NotAllowed("good_not_healing", name=character.name, good=good.name)
+    if qty_owned < 1:
+        raise NotAllowed("sustenance_no_inventory", name=character.name, good=good.name)
+
+
+async def heal(
+    session: AsyncSession, character: Character, good: Good, current_tick: int
+) -> float:
+    """Consumes one unit of `good`, restores `health` by its `heal_value`,
+    clamped to `constants.HEALTH_MAX`. Returns the character's new `health`."""
+    qty_owned = await _owned_qty(session, character, good.id)
+    check_can_heal(character, good, qty_owned)
+    await market.adjust_inventory(session, character, good.id, -1)
+    character.health = min(constants.HEALTH_MAX, character.health + good.heal_value)
+    return character.health
 
 
 def check_can_entertain(character: Character) -> None:

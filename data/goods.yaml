@@ -93,6 +93,7 @@
   perishable: false
   category: medical
   rationed: true
+  heal_value: 30.0
 - id: career_training
   name: Career Training
   base_price: 30.0

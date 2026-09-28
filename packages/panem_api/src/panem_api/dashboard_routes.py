@@ -1689,6 +1689,7 @@ class GoodPrice(BaseModel):
     # that aren't directly consumable (see `content.schemas.Good`).
     hunger_value: float = 0.0
     thirst_value: float = 0.0
+    heal_value: float = 0.0
     cook_method: str | None = None
     stock: float | None = None
     """Today's remaining purchasable stock (`MarketPrice.supply`) --
@@ -1762,6 +1763,7 @@ def build_market_router(
                         price=price,
                         hunger_value=good.hunger_value,
                         thirst_value=good.thirst_value,
+                        heal_value=good.heal_value,
                         cook_method=good.cook_method,
                         stock=stock,
                     )
@@ -3409,8 +3411,9 @@ class VitalsConsumable(BaseModel):
     good_id: str
     name: str
     qty: int
-    hunger_value: float
-    thirst_value: float
+    hunger_value: float = 0.0
+    thirst_value: float = 0.0
+    heal_value: float = 0.0
     cook_method: str | None = None
 
 
@@ -3431,6 +3434,7 @@ class VitalsStatusResponse(BaseModel):
     fatigue_restore_per_tick: float
     edible: list[VitalsConsumable]
     drinkable: list[VitalsConsumable]
+    healable: list[VitalsConsumable]
     entertainment: list[VitalsEntertainmentOption]
 
 
@@ -3455,6 +3459,17 @@ class VitalsDrinkResponse(BaseModel):
     good_id: str
     good_name: str
     thirst: float
+
+
+class VitalsHealRequest(BaseModel):
+    discord_id: int
+    good_id: str
+
+
+class VitalsHealResponse(BaseModel):
+    good_id: str
+    good_name: str
+    health: float
 
 
 class VitalsEntertainRequest(BaseModel):
@@ -3494,6 +3509,7 @@ def build_vitals_router(
                     qty=row.qty,
                     hunger_value=good.hunger_value,
                     thirst_value=good.thirst_value,
+                    heal_value=good.heal_value,
                     cook_method=good.cook_method,
                 )
                 for row, good in pairs
@@ -3506,10 +3522,24 @@ def build_vitals_router(
                     qty=row.qty,
                     hunger_value=good.hunger_value,
                     thirst_value=good.thirst_value,
+                    heal_value=good.heal_value,
                     cook_method=good.cook_method,
                 )
                 for row, good in pairs
                 if good.thirst_value > 0
+            ]
+            healable = [
+                VitalsConsumable(
+                    good_id=good.id,
+                    name=good.name,
+                    qty=row.qty,
+                    hunger_value=good.hunger_value,
+                    thirst_value=good.thirst_value,
+                    heal_value=good.heal_value,
+                    cook_method=good.cook_method,
+                )
+                for row, good in pairs
+                if good.heal_value > 0
             ]
             entertainment = [
                 VitalsEntertainmentOption(
@@ -3533,6 +3563,7 @@ def build_vitals_router(
             fatigue_restore_per_tick=round(fatigue_restore_per_tick, 2),
             edible=edible,
             drinkable=drinkable,
+            healable=healable,
             entertainment=entertainment,
         )
 
@@ -3571,6 +3602,23 @@ def build_vitals_router(
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
         return VitalsDrinkResponse(good_id=good.id, good_name=good.name, thirst=round(thirst, 1))
+
+    @router.post("/{character_id}/heal", response_model=VitalsHealResponse)
+    async def vitals_heal(character_id: int, body: VitalsHealRequest) -> VitalsHealResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            good = content.goods.get(body.good_id)
+            if good is None:
+                raise HTTPException(status_code=404, detail="good_not_healing")
+            current_tick = await _current_tick(session)
+            try:
+                health = await sustenance_svc.heal(session, character, good, current_tick)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return VitalsHealResponse(good_id=good.id, good_name=good.name, health=round(health, 1))
 
     @router.post("/{character_id}/entertain", response_model=VitalsEntertainResponse)
     async def vitals_entertain(

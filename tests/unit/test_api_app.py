@@ -539,6 +539,13 @@ def make_content_with_vitals() -> ContentBundle:
                 thirst_value=25.0,
             ),
             "coal": Good(id="coal", name="Coal", base_price=1.0, category="fuel"),
+            "medicine": Good(
+                id="medicine",
+                name="Medicine",
+                base_price=15.0,
+                category="medical",
+                heal_value=30.0,
+            ),
         },
         jobs={},
         routes=[],
@@ -4597,6 +4604,7 @@ class TestDashboardVitals:
         char_id = await seed_character(db_session_factory, discord_id=5)
         await give_inventory(db_session_factory, char_id, "grain", 2)
         await give_inventory(db_session_factory, char_id, "produce", 1)
+        await give_inventory(db_session_factory, char_id, "medicine", 1)
         await give_inventory(db_session_factory, char_id, "coal", 3)
         transport = httpx.ASGITransport(app=vitals_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -4608,6 +4616,8 @@ class TestDashboardVitals:
         assert [g["good_id"] for g in body["edible"]] == ["grain"]
         assert body["edible"][0]["cook_method"] == "oven"
         assert [g["good_id"] for g in body["drinkable"]] == ["produce"]
+        assert [g["good_id"] for g in body["healable"]] == ["medicine"]
+        assert body["healable"][0]["heal_value"] == 30.0
         assert body["has_bed"] is False
         assert len(body["entertainment"]) == 6
         assert {g["game_id"] for g in body["entertainment"]} == {
@@ -4680,6 +4690,57 @@ class TestDashboardVitals:
             )
         assert response.status_code == 200
         assert response.json()["thirst"] == 25.0
+
+    async def test_heal_consumes_inventory_and_restores_health(
+        self, vitals_app, db_session_factory
+    ):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"health": 50.0}
+        )
+        await give_inventory(db_session_factory, char_id, "medicine", 2)
+        transport = httpx.ASGITransport(app=vitals_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/vitals/{char_id}/heal",
+                json={"discord_id": 5, "good_id": "medicine"},
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["health"] == 80.0
+        async with db_session_factory() as session:
+            row = await session.get(Inventory, (OwnerKind.CHARACTER.value, str(char_id), "medicine"))
+            assert row.qty == 1
+
+    async def test_heal_refuses_without_inventory(self, vitals_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=vitals_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/vitals/{char_id}/heal",
+                json={"discord_id": 5, "good_id": "medicine"},
+            )
+        assert response.status_code == 400
+
+    async def test_heal_refuses_a_non_healing_good(self, vitals_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        await give_inventory(db_session_factory, char_id, "coal", 1)
+        transport = httpx.ASGITransport(app=vitals_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/vitals/{char_id}/heal",
+                json={"discord_id": 5, "good_id": "coal"},
+            )
+        assert response.status_code == 400
+
+    async def test_heal_returns_404_for_unknown_good(self, vitals_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=vitals_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/vitals/{char_id}/heal",
+                json={"discord_id": 5, "good_id": "nonexistent"},
+            )
+        assert response.status_code == 404
 
     async def test_entertain_credits_the_games_sanity_value(self, vitals_app, db_session_factory):
         char_id = await seed_character(

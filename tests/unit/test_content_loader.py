@@ -488,5 +488,11 @@ class TestGoodConsumptionFields:
         # A non-food good stays fully inert -- no accidental consumption.
         assert bundle.goods["coal"].hunger_value == 0.0
         assert bundle.goods["coal"].thirst_value == 0.0
+        assert bundle.goods["coal"].heal_value == 0.0
         # `oil` is a pure ingredient: food category, but not directly eaten.
         assert bundle.goods["oil"].hunger_value == 0.0
+        # `medicine` is medical: heals health, not edible or drinkable.
+        assert bundle.goods["medicine"].heal_value == 30.0
+        assert bundle.goods["medicine"].health_value == 30.0
+        assert bundle.goods["medicine"].hunger_value == 0.0
+        assert bundle.goods["medicine"].thirst_value == 0.0

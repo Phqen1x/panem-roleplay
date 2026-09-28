@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 from panem_shared.enums import DayPhase, Gender, LocationKind
 
@@ -130,7 +130,7 @@ class District(BaseModel):
 
 
 class Good(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     id: str
     name: str
@@ -147,11 +147,23 @@ class Good(BaseModel):
     thirst_value: float = Field(default=0.0, ge=0.0)
     """Same shape as `hunger_value`, for `/drink` (0.0 = not drinkable).
     No minigame/bonus applies to drinking."""
+    heal_value: float = Field(
+        default=0.0,
+        ge=0.0,
+        validation_alias=AliasChoices("heal_value", "health_value"),
+    )
+    """How much `Character.health` a Vitals-tab `/heal` of one unit restores
+    (0.0 = not healing, the default for every non-medical good). Bounded by
+    `constants.HEALTH_MAX` -- see `panem_shared.sustenance`."""
     cook_method: Literal["stove", "oven"] | None = None
     """Which Vitals-tab minigame (`static/games/cook.js` for `"stove"`,
     `bake.js` for `"oven"`) can be played on this good for the cook bonus.
     `None` means straight-eat only, no bonus available -- also `None` for
     every non-edible good (`hunger_value == 0.0`)."""
+
+    @property
+    def health_value(self) -> float:
+        return self.heal_value
 
 
 class JobOption(BaseModel):

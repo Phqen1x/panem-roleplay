@@ -35,7 +35,7 @@ class SequenceRng:
     def randint(self, a: int, b: int) -> int:
         return a
 
-    def choice(self, seq):  # noqa: ANN001, ANN201 -- matches random.Random's own loose typing
+    def choice(self, seq):
         """Deterministic stand-in for `rng.choice(STEAL_LOOT_GOOD_IDS)`/
         `rng.choice(BURGLE_LOOT_GOOD_IDS)` -- always the first entry, the
         same "always the low end" determinism `randint` above already
