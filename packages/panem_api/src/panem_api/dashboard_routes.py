@@ -5403,13 +5403,24 @@ def build_district_lore_router(
         discord_id: int = Form(...),
         title: str = Form(...),
         scope: str = Form("global"),
-        district_id: int | None = Form(None),
+        district_id: str | None = Form(None),
         location_id: str | None = Form(None),
         channel_id: str | None = Form(None),
         file: UploadFile = File(...),
     ) -> AmbientTrackResponse:
         await _require_staff(discord_id)
         factory = _require_session_factory(session_factory)
+
+        parsed_district_id: int | None = None
+        if district_id is not None and str(district_id).strip():
+            try:
+                parsed_district_id = int(str(district_id).strip())
+            except ValueError:
+                pass
+
+        clean_location_id = location_id.strip() if location_id and location_id.strip() else None
+        clean_channel_id = channel_id.strip() if channel_id and channel_id.strip() else None
+
         file_bytes = await file.read()
         uploads_root = static_dir or STATIC_DIR
         rel_path = ambient_svc.save_ambient_audio_bytes(file_bytes, file.filename or "track.mp3", uploads_root)
@@ -5420,9 +5431,9 @@ def build_district_lore_router(
                     title=title,
                     file_path=rel_path,
                     scope=scope,
-                    district_id=district_id,
-                    location_id=location_id,
-                    channel_id=channel_id,
+                    district_id=parsed_district_id,
+                    location_id=clean_location_id,
+                    channel_id=clean_channel_id,
                     created_by_staff_discord_id=discord_id,
                 )
             except ServiceError as exc:
