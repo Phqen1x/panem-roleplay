@@ -165,18 +165,25 @@ class ResidentCog(commands.Cog):
             traits = ", ".join(npc.traits) if npc.traits else "unknown"
             tone = npc.speech_style.get("tone", "unknown") if npc.speech_style else "unknown"
             authored = content.npcs.get(npc.id)
-            # A staff edit (`/staff npc set-appearance`/`set-background`)
-            # always wins over the authored content -- a staff-created NPC
-            # (`/staff npc add`) has no authored entry at all, so the
-            # override is the only place this can live for them.
             appearance = npc.appearance_override or (authored.appearance if authored else "")
             backstory = npc.backstory_override or (authored.backstory if authored else "")
+            is_contact = bool(authored is not None and authored.black_market_contact)
+
+        is_staff = False
+        if isinstance(interaction.user, discord.Member):
+            is_staff = await self.bot.is_staff(interaction.user)  # type: ignore[attr-defined]
 
         embed = discord.Embed(title=name)
         embed.add_field(name="Job", value=job_name)
         embed.add_field(name="Traits", value=traits.capitalize())
         embed.add_field(name="Speech", value=tone.capitalize())
         embed.add_field(name=f"Opinion of {char.name}", value=stance.capitalize())
+        if is_contact and (is_staff or stance in ("likes", "loves")):
+            embed.add_field(
+                name="Black Market Contact",
+                value="Fence — trades illegal wares (contraband and stolen goods) at Outskirts at night",
+                inline=False,
+            )
         if appearance:
             embed.add_field(name="Appearance", value=appearance, inline=False)
         if backstory:

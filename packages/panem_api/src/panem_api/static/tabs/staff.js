@@ -1497,6 +1497,165 @@ function npcAdminPanel(ctx) {
   );
 }
 
+function ambientMusicPanel(ctx) {
+  const root = el("div", {});
+  const listEl = el("div", {});
+  const statusEl = el("p", { class: "tab-status" });
+
+  const titleInput = el("input", { type: "text", placeholder: "Track Title (e.g., District 12 Night)", maxlength: "128" });
+  const scopeSelect = dropdown([
+    { value: "global", label: "Global (Plays Everywhere)" },
+    { value: "district", label: "District Scoped" },
+    { value: "location", label: "Location Scoped" },
+    { value: "channel", label: "Channel Scoped" },
+  ]);
+  const districtSelect = districtDropdown(ctx);
+  const locationInput = el("input", { type: "text", placeholder: "Location ID (e.g. d12_square)", maxlength: "64" });
+  const channelInput = el("input", { type: "text", placeholder: "Channel ID (e.g. 123456789)", maxlength: "64" });
+  const fileInput = el("input", { type: "file", accept: "audio/mp3,audio/mpeg,audio/wav,audio/ogg,audio/flac,audio/aac,audio/m4a" });
+  const uploadResult = el("p", { class: "result-line" });
+  const uploadBtn = el("button", { class: "btn primary", type: "button" }, "Upload Track");
+
+  let currentPreviewAudio = null;
+
+  async function refreshTracks() {
+    listEl.innerHTML = "";
+    setStatusText(statusEl, "Loading ambient tracks…");
+    try {
+      const tracks = await fetchJson(`/activity/dashboard/staff/ambient?discord_id=${ctx.discordId()}`);
+      if (tracks.length === 0) {
+        setStatusText(statusEl, "No ambient tracks uploaded yet.");
+        return;
+      }
+      setStatusText(statusEl, `Total tracks: ${tracks.length}`);
+
+      const tableRows = tracks.map((track) => {
+        let targetText = "Global";
+        if (track.scope === "district" && track.district_id != null) {
+          const dName = ctx.districtName ? ctx.districtName(track.district_id) : `District ${track.district_id}`;
+          targetText = `District: ${dName}`;
+        } else if (track.scope === "location" && track.location_id) {
+          targetText = `Location: ${track.location_id}`;
+        } else if (track.scope === "channel" && track.channel_id) {
+          targetText = `Channel: ${track.channel_id}`;
+        }
+
+        const previewBtn = el("button", { class: "btn secondary", type: "button" }, "Preview");
+        previewBtn.addEventListener("click", () => {
+          if (currentPreviewAudio) {
+            currentPreviewAudio.pause();
+            currentPreviewAudio = null;
+          }
+          currentPreviewAudio = new Audio(track.file_url);
+          currentPreviewAudio.play().catch((e) => console.warn("Preview play error:", e));
+        });
+
+        const deleteBtn = el("button", { class: "btn lose", type: "button" }, "Delete");
+        deleteBtn.addEventListener("click", async () => {
+          if (!confirm(`Delete track "${track.title}"?`)) return;
+          try {
+            await fetchJson(`/activity/dashboard/staff/ambient/${track.id}/delete`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ discord_id: ctx.discordId() }),
+            });
+            if (currentPreviewAudio) {
+              currentPreviewAudio.pause();
+              currentPreviewAudio = null;
+            }
+            refreshTracks();
+          } catch (err) {
+            alert(`Failed to delete track: ${err.message}`);
+          }
+        });
+
+        return el(
+          "div",
+          { class: "field-row", style: "justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color, rgba(197, 160, 89, 0.2)); padding: 6px 0;" },
+          el("div", {}, el("strong", { text: track.title }), el("span", { class: "tab-status", style: "margin-left: 10px;" }, `[${track.scope.toUpperCase()}] ${targetText}`)),
+          el("div", { class: "btn-group" }, previewBtn, deleteBtn)
+        );
+      });
+
+      listEl.append(...tableRows);
+    } catch (err) {
+      setStatusText(statusEl, `Failed to load tracks: ${err.message}`, { error: true });
+    }
+  }
+
+  uploadBtn.addEventListener("click", async () => {
+    uploadResult.textContent = "";
+    const title = titleInput.value.trim();
+    const scope = scopeSelect.value;
+    const file = fileInput.files[0];
+
+    if (!title) {
+      uploadResult.className = "result-line lose";
+      uploadResult.textContent = "Please provide a track title.";
+      return;
+    }
+    if (!file) {
+      uploadResult.className = "result-line lose";
+      uploadResult.textContent = "Please select an audio file to upload.";
+      return;
+    }
+
+    const form = new FormData();
+    form.append("discord_id", String(ctx.discordId()));
+    form.append("title", title);
+    form.append("scope", scope);
+
+    if (scope === "district") {
+      form.append("district_id", String(districtSelect.value));
+    } else if (scope === "location" && locationInput.value.trim()) {
+      form.append("location_id", locationInput.value.trim());
+    } else if (scope === "channel" && channelInput.value.trim()) {
+      form.append("channel_id", channelInput.value.trim());
+    }
+
+    form.append("file", file);
+
+    try {
+      uploadResult.className = "result-line";
+      uploadResult.textContent = "Uploading track...";
+      await fetchJson("/activity/dashboard/staff/ambient/upload", {
+        method: "POST",
+        body: form,
+      });
+      uploadResult.className = "result-line win";
+      uploadResult.textContent = `Successfully uploaded track "${title}"!`;
+      titleInput.value = "";
+      fileInput.value = "";
+      locationInput.value = "";
+      channelInput.value = "";
+      refreshTracks();
+    } catch (err) {
+      uploadResult.className = "result-line lose";
+      uploadResult.textContent = err.message;
+    }
+  });
+
+  refreshTracks();
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "Ambient Music Options" }),
+    el("p", { class: "tab-status" }, "Upload and manage ambient music tracks. Tracks can be global or scoped to a specific district, location, or channel."),
+    statusEl,
+    listEl,
+    el("h3", { text: "Upload New Ambient Track" }),
+    el("div", { class: "field-row" }, el("label", { text: "Track Title" }), titleInput),
+    el("div", { class: "field-row" }, el("label", { text: "Scope" }), scopeSelect),
+    el("div", { class: "field-row" }, el("label", { text: "District" }), districtSelect),
+    el("div", { class: "field-row" }, el("label", { text: "Location ID" }), locationInput),
+    el("div", { class: "field-row" }, el("label", { text: "Channel ID" }), channelInput),
+    el("div", { class: "field-row" }, el("label", { text: "Audio File" }), fileInput),
+    el("div", { class: "field-row" }, uploadBtn),
+    uploadResult
+  );
+}
+
 export function mount(root, ctx) {
   root.append(
     jailPanel(ctx),
@@ -1504,6 +1663,7 @@ export function mount(root, ctx) {
     characterActionsPanel(ctx),
     districtAdminPanel(ctx),
     npcAdminPanel(ctx),
+    ambientMusicPanel(ctx),
     housingEngagementPanel(ctx),
     marketStockPanel(ctx),
     mottosPanel(ctx),
@@ -1511,3 +1671,4 @@ export function mount(root, ctx) {
     afflictionTypesPanel(ctx)
   );
 }
+

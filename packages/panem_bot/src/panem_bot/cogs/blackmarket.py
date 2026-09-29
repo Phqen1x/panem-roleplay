@@ -54,17 +54,40 @@ class BlackMarketCog(commands.Cog):
 
             content = self.bot.content  # type: ignore[attr-defined]
             district = content.district(char.current_district_id)
-            if not district.illicit_produces:
-                await interaction.response.send_message(t("market_no_goods_traded"), ephemeral=True)
-                return
+
+            fence = next(
+                (npc for npc in content.npcs.values() if npc.district == district.id and npc.black_market_contact),
+                None,
+            )
+            is_trusted = False
+            if fence:
+                try:
+                    await blackmarket_svc.check_can_trade(session, char, fence)
+                    is_trusted = True
+                except ServiceError:
+                    is_trusted = False
 
             lines = []
+            if is_trusted and fence:
+                lines.append(f"Black Market Contact: **{fence.name}** (Location: Outskirts, Time: Night)\n")
+            elif fence:
+                lines.append(f"Befriend **{fence.name}** (reach Likes/Loves standing) to trade illegal wares at the Outskirts at night.\n")
+
+            lines.append("**Illicit Goods**")
             for good_id in district.illicit_produces:
                 good = content.goods.get(good_id)
                 if good is None:
                     continue
                 price = await blackmarket_svc.get_price(session, district.id, good)
-                lines.append(f"**{good.name}** (`{good.id}`) -- {price:.2f}")
+                lines.append(f"• **{good.name}** (`{good.id}`) -- {price:.2f}")
+
+            stolen_goods = [g for g in content.goods.values() if g.category == "stolen"]
+            if stolen_goods:
+                lines.append("\n**Stolen Wares (Sell Price)**")
+                for good in stolen_goods:
+                    base_p = await blackmarket_svc.get_price(session, district.id, good)
+                    sell_p = round(base_p * constants.SELL_DISCOUNT, 2)
+                    lines.append(f"• **{good.name}** (`{good.id}`) -- {sell_p:.2f}")
 
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
@@ -136,7 +159,7 @@ class BlackMarketCog(commands.Cog):
         await interaction.response.send_message(text, ephemeral=True)
 
     async def _good_choices(
-        self, interaction: discord.Interaction, current: str
+        self, interaction: discord.Interaction, current: str, *, side: str = "buy"
     ) -> list[app_commands.Choice[str]]:
         character_name = getattr(interaction.namespace, "character", None)
         if not character_name:
@@ -146,11 +169,15 @@ class BlackMarketCog(commands.Cog):
             if char is None:
                 return []
             content = self.bot.content  # type: ignore[attr-defined]
-            good_ids = content.district(char.current_district_id).illicit_produces
+            good_ids = set(content.district(char.current_district_id).illicit_produces)
+            if side == "sell":
+                for g_id, g_obj in content.goods.items():
+                    if g_obj.category == "stolen":
+                        good_ids.add(g_id)
         current_lower = current.lower()
         matches = [
             good_id
-            for good_id in good_ids
+            for good_id in sorted(good_ids)
             if current_lower in good_id.lower()
             or current_lower in content.goods[good_id].name.lower()
         ]
@@ -163,13 +190,13 @@ class BlackMarketCog(commands.Cog):
     async def buy_good_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        return await self._good_choices(interaction, current)
+        return await self._good_choices(interaction, current, side="buy")
 
     @sell.autocomplete("good")
     async def sell_good_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        return await self._good_choices(interaction, current)
+        return await self._good_choices(interaction, current, side="sell")
 
 
 async def setup(bot: commands.Bot) -> None:

@@ -1160,3 +1160,19 @@ class DistrictLorePerson(TimestampMixin, Base):
     notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     character: Mapped[Character | None] = relationship()
+
+
+class AmbientTrack(TimestampMixin, Base):
+    """Staff-uploaded ambient music tracks for the Activity."""
+
+    __tablename__ = "ambient_tracks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(String(128), nullable=False)
+    file_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    scope: Mapped[str] = mapped_column(String(32), nullable=False, default="global")
+    district_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    location_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    channel_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_by_staff_discord_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+

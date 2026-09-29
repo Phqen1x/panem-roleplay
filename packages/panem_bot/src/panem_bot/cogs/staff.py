@@ -8,6 +8,8 @@ import random
 import re
 import uuid
 
+from pathlib import Path
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -23,7 +25,7 @@ from panem_bot.services import shifts as shifts_svc
 from panem_bot.services.staff import log_staff_action
 from panem_bot.strings import t
 from panem_bot.views import GENDER_LABELS
-from panem_shared import constants, job_levels
+from panem_shared import ambient as ambient_svc, constants, job_levels
 from panem_shared import lore as lore_svc
 from panem_shared.content.traits import speech_tone
 from panem_shared.db.models import (
@@ -88,6 +90,11 @@ class StaffCog(commands.Cog):
         description="Panem-wide history and Alternate Universe notes NPCs draw on",
         parent=group,
     )
+    music_group = app_commands.Group(
+        name="music",
+        description="Manage activity ambient music tracks",
+        parent=group,
+    )
 
     @group.command(name="whois", description="Look up who a proxied message belongs to")
     @app_commands.describe(message_link="Link to the proxied message")
@@ -128,7 +135,14 @@ class StaffCog(commands.Cog):
             return
 
         district_name = self.bot.content.district(district).name  # type: ignore[attr-defined]
+        fence = next(
+            (npc for npc in self.bot.content.npcs.values() if npc.district == district and npc.black_market_contact),
+            None,
+        )
         embed = discord.Embed(title=f"{district_name} -- district state")
+        embed.add_field(
+            name="Black Market Contact", value=f"**{fence.name}** (`{fence.id}`)" if fence else "None"
+        )
         embed.add_field(
             name="Crisis level", value=f"{row.crisis_level} ({row.crisis_kind or 'calm'})"
         )
@@ -1192,6 +1206,110 @@ class StaffCog(commands.Cog):
         await interaction.response.send_message(
             notes[:1900] or "No Alternate Universe notes set.", ephemeral=True
         )
+
+    @music_group.command(name="upload", description="Upload an ambient music track for the Activity")
+    @app_commands.describe(
+        attachment="Audio file (mp3, ogg, wav, m4a, flac, webm)",
+        title="Display title for the track",
+        scope="Scope: global, location, channel, or district",
+        district_id="Optional district number (0-12)",
+        location_id="Optional location id (e.g., outskirts, square, hob)",
+        channel_id="Optional Discord channel ID",
+    )
+    @app_commands.choices(
+        scope=[
+            app_commands.Choice(name="Global (everywhere)", value="global"),
+            app_commands.Choice(name="Specific Location", value="location"),
+            app_commands.Choice(name="Specific Channel", value="channel"),
+            app_commands.Choice(name="Specific District", value="district"),
+        ]
+    )
+    @app_commands.check(_is_staff)
+    async def music_upload(
+        self,
+        interaction: discord.Interaction,
+        attachment: discord.Attachment,
+        title: str,
+        scope: app_commands.Choice[str],
+        district_id: app_commands.Range[int, 0, 12] | None = None,
+        location_id: str | None = None,
+        channel_id: str | None = None,
+    ) -> None:
+        await interaction.response.defer(ephemeral=True)
+        file_bytes = await attachment.read()
+        settings_dir = getattr(self.bot.settings, "static_uploads_dir", None)
+        uploads_root = Path(settings_dir) if settings_dir else (Path(__file__).parents[4] / "packages" / "panem_api" / "src" / "panem_api" / "static")
+        try:
+            rel_path = ambient_svc.save_ambient_audio_bytes(file_bytes, attachment.filename, uploads_root)
+            async with self.bot.db() as session:
+                track = await ambient_svc.create_ambient_track(
+                    session,
+                    title=title,
+                    file_path=rel_path,
+                    scope=scope.value,
+                    district_id=district_id,
+                    location_id=location_id,
+                    channel_id=channel_id,
+                    created_by_staff_discord_id=interaction.user.id,
+                )
+                await log_staff_action(
+                    session,
+                    bot=self.bot,
+                    staff_discord_id=interaction.user.id,
+                    action="music_upload",
+                    target=str(track.id),
+                    payload={"title": title, "scope": scope.value, "file_path": rel_path},
+                )
+        except Exception as exc:
+            await interaction.followup.send(f"Failed to upload audio track: {exc}", ephemeral=True)
+            return
+
+        await interaction.followup.send(
+            f"Uploaded ambient track **{track.title}** (ID: `{track.id}`, Scope: `{track.scope}`)!",
+            ephemeral=True,
+        )
+
+    @music_group.command(name="list", description="List uploaded ambient music tracks")
+    @app_commands.check(_is_staff)
+    async def music_list(self, interaction: discord.Interaction) -> None:
+        async with self.bot.db() as session:
+            tracks = await ambient_svc.list_ambient_tracks(session)
+        if not tracks:
+            await interaction.response.send_message("No ambient tracks uploaded yet.", ephemeral=True)
+            return
+        lines = []
+        for t in tracks:
+            target_str = ""
+            if t.scope == "location":
+                target_str = f" [Location: {t.location_id}]"
+            elif t.scope == "district":
+                target_str = f" [District: {t.district_id}]"
+            elif t.scope == "channel":
+                target_str = f" [Channel: {t.channel_id}]"
+            lines.append(f"**#{t.id}** -- **{t.title}** (`{t.scope}`{target_str})")
+
+        embed = discord.Embed(title="Activity Ambient Music Tracks", description="\n".join(lines[:20]))
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @music_group.command(name="delete", description="Delete an ambient music track by ID")
+    @app_commands.describe(track_id="ID of the track to delete")
+    @app_commands.check(_is_staff)
+    async def music_delete(self, interaction: discord.Interaction, track_id: int) -> None:
+        async with self.bot.db() as session:
+            try:
+                await ambient_svc.delete_ambient_track(session, track_id)
+                await log_staff_action(
+                    session,
+                    bot=self.bot,
+                    staff_discord_id=interaction.user.id,
+                    action="music_delete",
+                    target=str(track_id),
+                    payload={"track_id": track_id},
+                )
+            except ServiceError as exc:
+                await interaction.response.send_message(f"Error: {exc}", ephemeral=True)
+                return
+        await interaction.response.send_message(f"Deleted ambient track #{track_id}.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot) -> None:

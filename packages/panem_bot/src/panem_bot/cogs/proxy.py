@@ -583,6 +583,9 @@ class ProxyCog(commands.Cog):
                     if len(raw_background) > constants.NPC_BACKGROUND_PROMPT_MAX_LEN:
                         npc_background += "…"
 
+                is_black_market_contact = bool(
+                    npc_content is not None and npc_content.black_market_contact
+                )
                 reply = await dialogue_svc.generate_reply(
                     npc=npc,
                     district=district,
@@ -604,6 +607,7 @@ class ProxyCog(commands.Cog):
                     known=known,
                     district_on_edge=jail_svc.is_crackdown_active(district_state, current_tick),
                     district_lore=district_lore,
+                    is_black_market_contact=is_black_market_contact,
                 )
 
                 sent = await webhook.send(

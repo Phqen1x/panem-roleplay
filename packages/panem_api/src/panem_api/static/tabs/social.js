@@ -528,7 +528,7 @@ function dossierModal(ctx) {
   const blackMarketEl = el("span", {
     class: "opinion-pill",
     style: "background: var(--danger-bg, #3a1f1f); color: var(--danger, #e08080);",
-    text: "Known black market contact",
+    text: "Black Market Contact — Trades illegal wares at Outskirts at night",
   });
   // Only ever inserted when `resident_profile`'s own `is_black_market_
   // contact` comes back true -- staff always, or once a friendship

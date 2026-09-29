@@ -40,6 +40,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from panem_api import discord_staff
+from panem_shared import ambient as ambient_svc
 from panem_shared import affliction_types as affliction_types_svc
 from panem_shared import avatars as avatars_svc
 from panem_shared import blackmarket as blackmarket_svc
@@ -5371,5 +5372,118 @@ def build_district_lore_router(
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
             return WorldLoreResponse(alternate_universe_notes=row.alternate_universe_notes)
+
+    # ---------------------------------------------------- Ambient Music
+
+    @router.get("/ambient", response_model=list[AmbientTrackResponse])
+    async def list_staff_ambient_tracks(discord_id: int) -> list[AmbientTrackResponse]:
+        await _require_staff(discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            tracks = await ambient_svc.list_ambient_tracks(session)
+            return [
+                AmbientTrackResponse(
+                    id=t.id,
+                    title=t.title,
+                    file_url=f"/{t.file_path}",
+                    scope=t.scope,
+                    district_id=t.district_id,
+                    location_id=t.location_id,
+                    channel_id=t.channel_id,
+                )
+                for t in tracks
+            ]
+
+    @router.post("/ambient/upload", response_model=AmbientTrackResponse)
+    async def upload_staff_ambient_track(
+        discord_id: int = Form(...),
+        title: str = Form(...),
+        scope: str = Form("global"),
+        district_id: int | None = Form(None),
+        location_id: str | None = Form(None),
+        channel_id: str | None = Form(None),
+        file: UploadFile = File(...),
+    ) -> AmbientTrackResponse:
+        await _require_staff(discord_id)
+        factory = _require_session_factory(session_factory)
+        file_bytes = await file.read()
+        uploads_root = static_dir or STATIC_DIR
+        rel_path = ambient_svc.save_ambient_audio_bytes(file_bytes, file.filename or "track.mp3", uploads_root)
+        async with session_scope(factory) as session:
+            try:
+                track = await ambient_svc.create_ambient_track(
+                    session,
+                    title=title,
+                    file_path=rel_path,
+                    scope=scope,
+                    district_id=district_id,
+                    location_id=location_id,
+                    channel_id=channel_id,
+                    created_by_staff_discord_id=discord_id,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            return AmbientTrackResponse(
+                id=track.id,
+                title=track.title,
+                file_url=f"/{track.file_path}",
+                scope=track.scope,
+                district_id=track.district_id,
+                location_id=track.location_id,
+                channel_id=track.channel_id,
+            )
+
+    @router.post("/ambient/{track_id}/delete")
+    async def delete_staff_ambient_track(track_id: int, body: DeletePanemHistoryEntryRequest) -> dict[str, bool]:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                await ambient_svc.delete_ambient_track(session, track_id)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"deleted": True}
+
+    return router
+
+
+class AmbientTrackResponse(BaseModel):
+    id: int
+    title: str
+    file_url: str
+    scope: str
+    district_id: int | None = None
+    location_id: str | None = None
+    channel_id: str | None = None
+
+
+def build_ambient_router(
+    *, session_factory: async_sessionmaker[AsyncSession] | None
+) -> APIRouter:
+    router = APIRouter(prefix="/activity/dashboard/ambient", tags=["dashboard"])
+
+    @router.get("/tracks", response_model=list[AmbientTrackResponse])
+    async def get_ambient_tracks(
+        district_id: int | None = None,
+        location_id: str | None = None,
+        channel_id: str | None = None,
+    ) -> list[AmbientTrackResponse]:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            tracks = await ambient_svc.get_matching_ambient_tracks(
+                session, district_id=district_id, location_id=location_id, channel_id=channel_id
+            )
+            return [
+                AmbientTrackResponse(
+                    id=t.id,
+                    title=t.title,
+                    file_url=f"/{t.file_path}",
+                    scope=t.scope,
+                    district_id=t.district_id,
+                    location_id=t.location_id,
+                    channel_id=t.channel_id,
+                )
+                for t in tracks
+            ]
 
     return router

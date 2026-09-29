@@ -129,6 +129,7 @@ def build_request_context(
     constraints: Mapping[str, str] | None = None,
     district_on_edge: bool = False,
     district_lore: DistrictLore | None = None,
+    is_black_market_contact: bool = False,
 ) -> omni.RequestContext:
     """`present` lists everyone else in the scene besides `character`
     (other engaged NPCs, other joined characters) -- the system prompt
@@ -203,6 +204,12 @@ def build_request_context(
         npc_block["personality"] = ", ".join(npc.traits)
     if npc_background:
         npc_block["background"] = npc_background
+    if is_black_market_contact and stance in ("likes", "loves"):
+        npc_block["black_market_role"] = (
+            "You are this district's secret black market contact (fence). Because you trust this person, "
+            "you are willing to deal with them. If relevant, remind them that you buy and sell illegal wares "
+            "(contraband and stolen goods like pilfered valuables) at the district outskirts at night."
+        )
 
     scene: dict[str, str] = {"location": location.name, "district": district.name}
     if present:
@@ -267,7 +274,9 @@ _TONE_LINES: dict[str, tuple[str, ...]] = {
 }
 
 
-def template_reply(npc: Npc, stance: str, message: str) -> str:
+def template_reply(
+    npc: Npc, stance: str, message: str, *, is_black_market_contact: bool = False
+) -> str:
     """The `dialogue_provider="template"` (or LLM-fallback) path: no
     real language understanding, just a canned line varied by the NPC's
     `speech_tone` (`panem_shared.content.traits.speech_tone`) and the
@@ -275,7 +284,9 @@ def template_reply(npc: Npc, stance: str, message: str) -> str:
     text so the same line doesn't repeat every call."""
     tone = (npc.speech_style or {}).get("tone", "plain")
     openers = _STANCE_OPENERS.get(stance, _STANCE_OPENERS["stranger"])
-    lines = _TONE_LINES.get(tone, _TONE_LINES["plain"])
+    lines = list(_TONE_LINES.get(tone, _TONE_LINES["plain"]))
+    if is_black_market_contact and stance in ("likes", "loves"):
+        lines.append('"Keep your voice down... if you\'ve got illegal goods or pilfered valuables to sell, find me at the outskirts at night."')
     rng = random.Random(hash((npc.id, message)))
     opener = rng.choice(openers)
     line = rng.choice(lines)
@@ -461,10 +472,11 @@ async def generate_reply(
     known: str | None = None,
     district_on_edge: bool = False,
     district_lore: DistrictLore | None = None,
+    is_black_market_contact: bool = False,
 ) -> str:
     provider = resolve_provider(npc, settings)
     if provider == "template":
-        return template_reply(npc, stance, message)
+        return template_reply(npc, stance, message, is_black_market_contact=is_black_market_contact)
 
     ctx = build_request_context(
         npc=npc,
@@ -485,13 +497,14 @@ async def generate_reply(
         character_home_district=character_home_district,
         known=known,
         district_lore=district_lore,
+        is_black_market_contact=is_black_market_contact,
         constraints={"max_words": str(_length_matched_max_words(message))},
     )
     try:
         return await generate_llm_reply(ctx, message, settings, history=history)
     except (httpx.HTTPError, KeyError, IndexError, ValueError, AttributeError) as exc:
         logger.warning("dialogue_llm_failed", npc_id=npc.id, error=_llm_error_detail(exc))
-        return template_reply(npc, stance, message)
+        return template_reply(npc, stance, message, is_black_market_contact=is_black_market_contact)
 
 
 async def summarize_engagement(

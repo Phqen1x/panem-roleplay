@@ -25,6 +25,9 @@
 // gap as the rest of this process.
 import { fetchJson, el, renderTabIcon } from "./tabs/_shared.js?v=7";
 import { mountThemePicker } from "./theme_picker.js?v=4";
+import { initClickSFX } from "./click_sfx.js?v=53";
+import { mountSoundPicker } from "./sound_picker.js?v=53";
+import { updateAmbientContext } from "./ambient_player.js?v=53";
 
 // `?v=N`, same cache-busting convention as every other asset this page
 // loads (see the `tabs/_shared.js`/`theme_picker.js` imports above) --
@@ -568,11 +571,14 @@ function closeCharacterMenu() {
 }
 
 function updateTelemetry(character) {
-  const telemetryEl = document.getElementById("footer-telemetry");
-  if (!telemetryEl) return;
   const districtId = character
     ? (character.current_district_id ?? character.district_id ?? 1)
     : 1;
+  const locationId = character ? (character.location_id || null) : null;
+  updateAmbientContext({ district_id: districtId, location_id: locationId });
+
+  const telemetryEl = document.getElementById("footer-telemetry");
+  if (!telemetryEl) return;
   const districtName =
     (character && (character.current_district_name || character.district_name)) ||
     DISTRICT_NAMES[districtId] ||
@@ -915,6 +921,12 @@ async function refreshWorldTime() {
 }
 
 async function main() {
+  initClickSFX();
+  const soundPickerEl = document.getElementById("sound-picker");
+  if (soundPickerEl) {
+    mountSoundPicker(soundPickerEl);
+  }
+
   setupIdentityControls();
   window.addEventListener("hashchange", () => showTab(currentTabName()));
   window.addEventListener("panem:motto-updated", (event) => {

@@ -54,6 +54,7 @@ from starlette.types import Scope
 
 from panem_api.dashboard_routes import (
     build_affliction_types_router,
+    build_ambient_router,
     build_blackmarket_router,
     build_characters_router,
     build_crime_router,
@@ -947,6 +948,7 @@ def create_app(
         )
     )
     app.include_router(build_party_router())
+    app.include_router(build_ambient_router(session_factory=session_factory))
 
     uploads_root = static_dir or STATIC_DIR
     if uploads_root != STATIC_DIR:

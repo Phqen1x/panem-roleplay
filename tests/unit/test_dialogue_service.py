@@ -988,3 +988,42 @@ class TestSummarizeEngagement:
         assert result is not None
         assert result.endswith("…")
         assert len(result[:-1].split()) == constants.RELATIONSHIP_SUMMARY_MAX_WORDS
+
+
+class TestBlackMarketContactDialogue:
+    def test_build_request_context_includes_black_market_role_when_trusted(self):
+        npc = make_npc()
+        district = make_district()
+        char = make_character()
+        ctx = dialogue.build_request_context(
+            npc=npc,
+            district=district,
+            location=district.locations[0],
+            character=char,
+            stance="likes",
+            memories=[],
+            is_black_market_contact=True,
+        )
+        assert "black_market_role" in ctx.npc
+        assert "outskirts at night" in ctx.npc["black_market_role"]
+
+    def test_build_request_context_omits_black_market_role_when_stranger(self):
+        npc = make_npc()
+        district = make_district()
+        char = make_character()
+        ctx = dialogue.build_request_context(
+            npc=npc,
+            district=district,
+            location=district.locations[0],
+            character=char,
+            stance="stranger",
+            memories=[],
+            is_black_market_contact=True,
+        )
+        assert "black_market_role" not in ctx.npc
+
+    def test_template_reply_includes_fence_hint_when_trusted(self):
+        npc = make_npc()
+        reply = dialogue.template_reply(npc, "likes", "help me sell stolen goods", is_black_market_contact=True)
+        assert isinstance(reply, str)
+        assert len(reply) > 0
