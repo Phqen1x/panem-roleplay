@@ -5379,20 +5379,24 @@ def build_district_lore_router(
     async def list_staff_ambient_tracks(discord_id: int) -> list[AmbientTrackResponse]:
         await _require_staff(discord_id)
         factory = _require_session_factory(session_factory)
-        async with session_scope(factory) as session:
-            tracks = await ambient_svc.list_ambient_tracks(session)
-            return [
-                AmbientTrackResponse(
-                    id=t.id,
-                    title=t.title,
-                    file_url=f"/{t.file_path}",
-                    scope=t.scope,
-                    district_id=t.district_id,
-                    location_id=t.location_id,
-                    channel_id=t.channel_id,
-                )
-                for t in tracks
-            ]
+        try:
+            async with session_scope(factory) as session:
+                tracks = await ambient_svc.list_ambient_tracks(session)
+                return [
+                    AmbientTrackResponse(
+                        id=t.id,
+                        title=t.title,
+                        file_url=f"/{t.file_path}",
+                        scope=t.scope,
+                        district_id=t.district_id,
+                        location_id=t.location_id,
+                        channel_id=t.channel_id,
+                    )
+                    for t in tracks
+                ]
+        except Exception as exc:
+            logger.warning("Could not list ambient tracks (table may not exist yet): %s", exc)
+            return []
 
     @router.post("/ambient/upload", response_model=AmbientTrackResponse)
     async def upload_staff_ambient_track(
@@ -5469,21 +5473,25 @@ def build_ambient_router(
         channel_id: str | None = None,
     ) -> list[AmbientTrackResponse]:
         factory = _require_session_factory(session_factory)
-        async with session_scope(factory) as session:
-            tracks = await ambient_svc.get_matching_ambient_tracks(
-                session, district_id=district_id, location_id=location_id, channel_id=channel_id
-            )
-            return [
-                AmbientTrackResponse(
-                    id=t.id,
-                    title=t.title,
-                    file_url=f"/{t.file_path}",
-                    scope=t.scope,
-                    district_id=t.district_id,
-                    location_id=t.location_id,
-                    channel_id=t.channel_id,
+        try:
+            async with session_scope(factory) as session:
+                tracks = await ambient_svc.get_matching_ambient_tracks(
+                    session, district_id=district_id, location_id=location_id, channel_id=channel_id
                 )
-                for t in tracks
-            ]
+                return [
+                    AmbientTrackResponse(
+                        id=t.id,
+                        title=t.title,
+                        file_url=f"/{t.file_path}",
+                        scope=t.scope,
+                        district_id=t.district_id,
+                        location_id=t.location_id,
+                        channel_id=t.channel_id,
+                    )
+                    for t in tracks
+                ]
+        except Exception as exc:
+            logger.warning("Could not fetch ambient tracks (table may not exist yet): %s", exc)
+            return []
 
     return router

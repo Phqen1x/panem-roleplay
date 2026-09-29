@@ -1170,7 +1170,7 @@ class AmbientTrack(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     title: Mapped[str] = mapped_column(String(128), nullable=False)
     file_path: Mapped[str] = mapped_column(String(512), nullable=False)
-    scope: Mapped[str] = mapped_column(String(32), nullable=False, default="global")
+    scope: Mapped[str] = mapped_column(String(32), nullable=False, default="global", index=True)
     district_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     location_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     channel_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
