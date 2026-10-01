@@ -6272,3 +6272,43 @@ class TestDashboardTrade:
                 await session.execute(select(Trade).where(Trade.id == trade_id))
             ).scalar_one()
             assert trade.status == "pending"
+
+    async def test_staff_ambient_routes_mount_under_staff_prefix(
+        self, work_app, db_session_factory
+    ):
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            with patch("panem_api.discord_staff.fetch_is_staff", return_value=True):
+                # GET staff ambient
+                r_list = await client.get("/activity/dashboard/staff/ambient?discord_id=123")
+                assert r_list.status_code == 200
+                assert isinstance(r_list.json(), list)
+
+                # POST upload staff ambient
+                files = {"file": ("ambient.mp3", b"ID3\x03\x00\x00\x00\x00\x00#ambient data", "audio/mpeg")}
+                data = {
+                    "discord_id": "123",
+                    "title": "District 12 Anthem",
+                    "scope": "district",
+                    "district_id": "12",
+                }
+                r_upload = await client.post(
+                    "/activity/dashboard/staff/ambient/upload",
+                    data=data,
+                    files=files,
+                )
+                assert r_upload.status_code == 200
+                track = r_upload.json()
+                assert track["title"] == "District 12 Anthem"
+                assert track["scope"] == "district"
+                assert track["district_id"] == 12
+                track_id = track["id"]
+
+                # POST delete staff ambient
+                r_delete = await client.post(
+                    f"/activity/dashboard/staff/ambient/{track_id}/delete",
+                    json={"discord_id": 123},
+                )
+                assert r_delete.status_code == 200
+                assert r_delete.json() == {"deleted": True}
+
