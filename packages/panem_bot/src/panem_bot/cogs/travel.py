@@ -49,8 +49,9 @@ class TravelCog(commands.Cog):
         location: str | None = None,
         district: app_commands.Range[int, 0, 12] | None = None,
     ) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
         if (location is None) == (district is None):
-            await interaction.response.send_message(t("travel_pick_one"), ephemeral=True)
+            await interaction.followup.send(t("travel_pick_one"), ephemeral=True)
             return
         if district is not None:
             await self._travel_district(interaction, character, district)
@@ -63,7 +64,7 @@ class TravelCog(commands.Cog):
         async with self.bot.db() as session:  # type: ignore[attr-defined]
             char = await self._get_character(session, interaction.user.id, character)
             if char is None:
-                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                await interaction.followup.send(t("character_not_found"), ephemeral=True)
                 return
 
             district_content = self.bot.content.district(char.current_district_id)  # type: ignore[attr-defined]
@@ -73,7 +74,7 @@ class TravelCog(commands.Cog):
                 loc = travel_svc.resolve_location(district_content, location)
                 travel_svc.check_can_travel(character=char, location=loc, current_tick=current_tick)
             except (NotFound, NotAllowed) as exc:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     t(exc.reason_key, **exc.fmt), ephemeral=True
                 )
                 return
@@ -84,7 +85,7 @@ class TravelCog(commands.Cog):
                 char.x, char.y = placed
             name, location_name = char.name, loc.name
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             t("travel_ok", name=name, location=location_name), ephemeral=True
         )
 
@@ -94,7 +95,7 @@ class TravelCog(commands.Cog):
         async with self.bot.db() as session:  # type: ignore[attr-defined]
             char = await self._get_character(session, interaction.user.id, character)
             if char is None:
-                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                await interaction.followup.send(t("character_not_found"), ephemeral=True)
                 return
 
             clock = await session.get(WorldClock, 1)
@@ -111,7 +112,7 @@ class TravelCog(commands.Cog):
                 if travel_svc.should_charge_transport(char, origin_district.id, destination_id):
                     await travel_svc.spend_transport(session, char)
             except (NotFound, NotAllowed) as exc:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     t(exc.reason_key, **exc.fmt), ephemeral=True
                 )
                 return
@@ -133,7 +134,7 @@ class TravelCog(commands.Cog):
             reply = t(
                 "travel_district_ok", name=name, district=destination_name, ticks=transit_ticks
             )
-        await interaction.response.send_message(reply, ephemeral=True)
+        await interaction.followup.send(reply, ephemeral=True)
 
     @travel.autocomplete("location")
     async def travel_location_autocomplete(
@@ -174,13 +175,14 @@ class TravelCog(commands.Cog):
     @app_commands.describe(character="Character name")
     @app_commands.autocomplete(character=autocomplete.own_approved)
     async def where(self, interaction: discord.Interaction, character: str) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
         async with self.bot.db() as session:  # type: ignore[attr-defined]
             char = await self._get_character(session, interaction.user.id, character)
             if char is None:
-                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                await interaction.followup.send(t("character_not_found"), ephemeral=True)
                 return
             if char.location_id is None:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     t("no_location_set", name=char.name), ephemeral=True
                 )
                 return
@@ -190,13 +192,14 @@ class TravelCog(commands.Cog):
             location_name = location.name if location else char.location_id
             name, district_name = char.name, district.name
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             t("where_ok", name=name, location=location_name, district=district_name),
             ephemeral=True,
         )
 
     @app_commands.command(name="time", description="Show the current in-world day and time")
     async def time(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
         async with self.bot.db() as session:  # type: ignore[attr-defined]
             clock = await session.get(WorldClock, 1)
             persisted_tick = clock.tick if clock is not None else 0
@@ -217,7 +220,7 @@ class TravelCog(commands.Cog):
         embed.add_field(name="Time", value=clock_string(tick))
         embed.add_field(name="Phase", value=phase.value.capitalize())
         embed.add_field(name="Time changes in", value=remaining)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 async def setup(bot: commands.Bot) -> None:
