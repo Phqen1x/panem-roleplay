@@ -25,6 +25,9 @@ _CACHE_TTL_S = 5.0
 _OWN_CHARACTERS_CACHE: dict[
     tuple[int, tuple[str, ...]], tuple[float, list[tuple[str, int, str]]]
 ] = {}
+_ALL_CHARACTERS_CACHE: dict[
+    tuple[str, tuple[str, ...]], tuple[float, list[tuple[str, int, str]]]
+] = {}
 _NPC_CACHE: tuple[float, list[tuple[str, str, int]]] | None = None
 _AFFLICTION_CACHE: tuple[float, list[tuple[str, bool]]] | None = None
 
@@ -93,27 +96,37 @@ async def _characters(
         ]
 
     # own_only is False: query across all characters
-    session_factory = getattr(bot, "session_factory", None)
-    if session_factory is not None:
-        async with session_factory() as session:
-            stmt = select(Character.name, Character.district_id, Character.status)
-            if statuses:
-                stmt = stmt.where(Character.status.in_(statuses))
-            if current:
-                stmt = stmt.where(Character.name.ilike(f"%{current}%"))
-            rows = list(
-                (await session.execute(stmt.order_by(Character.name).limit(MAX_CHOICES))).all()
-            )
+    cache_key_all = (current, status_tuple)
+    cached_all = _ALL_CHARACTERS_CACHE.get(cache_key_all)
+    if cached_all and (now - cached_all[0]) < _CACHE_TTL_S:
+        rows = cached_all[1]
     else:
-        async with bot.db() as session:  # type: ignore[attr-defined]
-            stmt = select(Character.name, Character.district_id, Character.status)
-            if statuses:
-                stmt = stmt.where(Character.status.in_(statuses))
-            if current:
-                stmt = stmt.where(Character.name.ilike(f"%{current}%"))
-            rows = list(
-                (await session.execute(stmt.order_by(Character.name).limit(MAX_CHOICES))).all()
-            )
+        session_factory = getattr(bot, "session_factory", None)
+        if session_factory is not None:
+            async with session_factory() as session:
+                stmt = select(Character.name, Character.district_id, Character.status)
+                if statuses:
+                    stmt = stmt.where(Character.status.in_(statuses))
+                if current:
+                    stmt = stmt.where(Character.name.ilike(f"%{current}%"))
+                rows = list(
+                    (await session.execute(stmt.order_by(Character.name).limit(MAX_CHOICES))).all()
+                )
+        else:
+            async with bot.db() as session:  # type: ignore[attr-defined]
+                stmt = select(Character.name, Character.district_id, Character.status)
+                if statuses:
+                    stmt = stmt.where(Character.status.in_(statuses))
+                if current:
+                    stmt = stmt.where(Character.name.ilike(f"%{current}%"))
+                rows = list(
+                    (await session.execute(stmt.order_by(Character.name).limit(MAX_CHOICES))).all()
+                )
+        _ALL_CHARACTERS_CACHE[cache_key_all] = (now, rows)
+        if len(_ALL_CHARACTERS_CACHE) > 1000:
+            expired = [k for k, (ts, _) in _ALL_CHARACTERS_CACHE.items() if (now - ts) >= _CACHE_TTL_S]
+            for k in expired:
+                _ALL_CHARACTERS_CACHE.pop(k, None)
 
     return [
         app_commands.Choice(
