@@ -17,7 +17,7 @@ from panem_bot.services import stealing as stealing_svc
 from panem_bot.strings import t
 from panem_shared import constants
 from panem_shared import crime_log as crime_log_svc
-from panem_shared.db.models import Character, CrimeLog, DistrictState, Npc, Property, WorldClock
+from panem_shared.db.models import Character, CrimeLog, DistrictState, Npc, Property, User, WorldClock
 from panem_shared.enums import CharacterStatus, OwnerKind, PropertyKind, RpMode
 from panem_shared.stealing import StealResult, StealVictim
 

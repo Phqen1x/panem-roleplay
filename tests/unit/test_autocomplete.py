@@ -162,3 +162,56 @@ async def test_bot_suppresses_unknown_interaction_error():
     await bot._on_app_command_error(interaction, error)
     interaction.response.send_message.assert_not_called()
     interaction.followup.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cog_autocompletes(db_session, db_session_factory):
+    from panem_bot.cogs.travel import TravelCog
+    from panem_bot.cogs.stealing import StealingCog
+    from panem_bot.cogs.engagements import EngagementCog
+
+    user = User(discord_id=999002)
+    db_session.add(user)
+    await db_session.flush()
+
+    char = Character(
+        user_id=user.id,
+        district_id=12,
+        current_district_id=12,
+        location_id="square",
+        name="Prim",
+        age=12,
+        status=CharacterStatus.APPROVED.value,
+        rp_mode=RpMode.SIMULATION.value,
+    )
+    db_session.add(char)
+    await db_session.commit()
+
+    content = load_content(Path("data"))
+    bot = MagicMock()
+    bot.session_factory = db_session_factory
+    bot.content = content
+
+    travel_cog = TravelCog(bot)
+    stealing_cog = StealingCog(bot)
+    engagement_cog = EngagementCog(bot)
+
+    interaction = FakeInteraction(discord_id=999002, bot=bot)
+    interaction.namespace = MagicMock()
+    interaction.namespace.character = "Prim"
+    interaction.namespace.location = None
+
+    # Test travel location autocomplete
+    loc_choices = await travel_cog.travel_location_autocomplete(interaction, "square")
+    assert any(c.value == "square" for c in loc_choices)
+
+    # Test stealing target autocomplete
+    target_choices = await stealing_cog.steal_target_autocomplete(interaction, "")
+    assert isinstance(target_choices, list)
+
+    # Test engagement location and participant autocomplete
+    eng_locs = await engagement_cog.start_location_autocomplete(interaction, "")
+    assert len(eng_locs) > 0
+    eng_parts = await engagement_cog.start_participant_autocomplete(interaction, "")
+    assert isinstance(eng_parts, list)
+

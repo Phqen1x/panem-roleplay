@@ -13,7 +13,7 @@ from panem_bot.errors import NotAllowed, NotFound
 from panem_bot.services import characters as characters_svc
 from panem_bot.services import travel as travel_svc
 from panem_bot.strings import t
-from panem_shared.db.models import Character, WorldClock
+from panem_shared.db.models import Character, User, WorldClock
 from panem_shared.simtime import clock_string, seconds_until_next_tick
 from panem_shared.simtime import current as current_sim_time
 
