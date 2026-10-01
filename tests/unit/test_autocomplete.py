@@ -143,7 +143,10 @@ async def test_any_good_and_districts_autocomplete():
 
 
 @pytest.mark.asyncio
-async def test_bot_suppresses_unknown_interaction_error():
+async def test_bot_suppresses_unknown_and_acknowledged_interaction_errors():
+    from panem_bot.bot import _AutocompleteNotFoundFilter
+    import logging
+
     settings = Settings()
     bot = PanemBot(settings=settings, data_dir=Path("data"))
 
@@ -154,14 +157,36 @@ async def test_bot_suppresses_unknown_interaction_error():
     # Simulate discord.NotFound with code 10062 (Unknown interaction)
     mock_response = MagicMock()
     mock_response.status = 404
-    data = {"code": 10062, "message": "Unknown interaction"}
-    not_found = discord.NotFound(mock_response, data)
-    error = app_commands.CommandInvokeError(interaction.command, not_found)
+    data_10062 = {"code": 10062, "message": "Unknown interaction"}
+    not_found = discord.NotFound(mock_response, data_10062)
+    error_10062 = app_commands.CommandInvokeError(interaction.command, not_found)
 
-    # _on_app_command_error should return cleanly without raising or calling send_message
-    await bot._on_app_command_error(interaction, error)
+    await bot._on_app_command_error(interaction, error_10062)
     interaction.response.send_message.assert_not_called()
     interaction.followup.send.assert_not_called()
+
+    # Simulate discord.HTTPException with code 40060 (Interaction has already been acknowledged)
+    mock_response_400 = MagicMock()
+    mock_response_400.status = 400
+    data_40060 = {"code": 40060, "message": "Interaction has already been acknowledged."}
+    already_ack = discord.HTTPException(mock_response_400, data_40060)
+    error_40060 = app_commands.CommandInvokeError(interaction.command, already_ack)
+
+    await bot._on_app_command_error(interaction, error_40060)
+    interaction.response.send_message.assert_not_called()
+    interaction.followup.send.assert_not_called()
+
+    # Test logging filter
+    log_filter = _AutocompleteNotFoundFilter()
+    rec_10062 = logging.LogRecord("discord.app_commands.tree", logging.ERROR, "", 0, "msg", (), (type(not_found), not_found, None))
+    rec_40060 = logging.LogRecord("discord.app_commands.tree", logging.ERROR, "", 0, "msg", (), (type(already_ack), already_ack, None))
+    rec_other = logging.LogRecord("discord.app_commands.tree", logging.ERROR, "", 0, "msg", (), (RuntimeError, RuntimeError("boom"), None))
+
+    assert not log_filter.filter(rec_10062)
+    assert not log_filter.filter(rec_40060)
+    assert log_filter.filter(rec_other)
+
+
 
 
 @pytest.mark.asyncio

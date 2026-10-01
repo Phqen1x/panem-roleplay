@@ -31,8 +31,10 @@ class _AutocompleteNotFoundFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         if record.exc_info:
             exc = record.exc_info[1]
-            if isinstance(exc, discord.NotFound) and getattr(exc, "code", None) == 10062:
-                return False
+            if isinstance(exc, (discord.NotFound, discord.HTTPException)):
+                code = getattr(exc, "code", None)
+                if code in (10062, 40060):
+                    return False
         return True
 
 INTENTS = discord.Intents.default()
@@ -134,9 +136,9 @@ class PanemBot(commands.Bot):
             return
 
         original = error.original if isinstance(error, app_commands.CommandInvokeError) else error
-        if isinstance(original, discord.NotFound) and getattr(original, "code", None) == 10062:
-            # Expired/superseded autocomplete interaction token -- occurs naturally when
-            # users type quickly in Discord.
+        if isinstance(original, (discord.NotFound, discord.HTTPException)) and getattr(original, "code", None) in (10062, 40060):
+            # Expired/superseded interaction token -- occurs naturally when
+            # users type quickly in Discord or duplicate responses race.
             return
         ref = uuid.uuid4().hex[:8]
         logger.error(
