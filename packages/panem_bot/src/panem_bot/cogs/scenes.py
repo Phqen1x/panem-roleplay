@@ -260,7 +260,9 @@ class SceneCog(commands.Cog):
         forum_channel_id = self._forum_channel_id(interaction.channel)
         if forum_channel_id is None:
             return []
-        async with self.bot.db() as session:
+        session_factory = getattr(self.bot, "session_factory", None)
+        ctx_mgr = session_factory() if session_factory is not None else self.bot.db()
+        async with ctx_mgr as session:
             district_id = await self._district_for_channel(session, forum_channel_id)
         if district_id is None:
             return []
@@ -282,14 +284,19 @@ class SceneCog(commands.Cog):
         forum_channel_id = self._forum_channel_id(interaction.channel)
         if forum_channel_id is None:
             return []
-        async with self.bot.db() as session:
+        session_factory = getattr(self.bot, "session_factory", None)
+        ctx_mgr = session_factory() if session_factory is not None else self.bot.db()
+        async with ctx_mgr as session:
             district_id = await self._district_for_channel(session, forum_channel_id)
             if district_id is None:
                 return []
-            user = await characters_svc.get_or_create_user(session, interaction.user.id)
-            stmt = select(Character).where(
-                Character.user_id == user.id,
-                Character.status == CharacterStatus.APPROVED.value,
+            stmt = (
+                select(Character)
+                .join(User, Character.user_id == User.id)
+                .where(
+                    User.discord_id == interaction.user.id,
+                    Character.status == CharacterStatus.APPROVED.value,
+                )
             )
             if current:
                 stmt = stmt.where(Character.name.ilike(f"%{current}%"))
@@ -382,7 +389,9 @@ class SceneCog(commands.Cog):
         thread = interaction.channel
         if not isinstance(thread, discord.Thread):
             return []
-        async with self.bot.db() as session:
+        session_factory = getattr(self.bot, "session_factory", None)
+        ctx_mgr = session_factory() if session_factory is not None else self.bot.db()
+        async with ctx_mgr as session:
             scene = (
                 await session.execute(select(Scene).where(Scene.thread_id == thread.id))
             ).scalar_one_or_none()

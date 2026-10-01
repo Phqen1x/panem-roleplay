@@ -119,7 +119,9 @@ class ProxyCog(commands.Cog):
     ) -> list[app_commands.Choice[str]]:
         if not isinstance(interaction.channel, discord.Thread):
             return []
-        async with self.bot.db() as session:
+        session_factory = getattr(self.bot, "session_factory", None)
+        ctx_mgr = session_factory() if session_factory is not None else self.bot.db()
+        async with ctx_mgr as session:
             forum_registered = (
                 await session.execute(
                     select(DiscordChannel).where(
@@ -130,10 +132,13 @@ class ProxyCog(commands.Cog):
             ).scalar_one_or_none()
             if forum_registered is None:
                 return []
-            user = await characters_svc.get_or_create_user(session, interaction.user.id)
-            stmt = select(Character).where(
-                Character.user_id == user.id,
-                Character.status == CharacterStatus.APPROVED.value,
+            stmt = (
+                select(Character)
+                .join(User, Character.user_id == User.id)
+                .where(
+                    User.discord_id == interaction.user.id,
+                    Character.status == CharacterStatus.APPROVED.value,
+                )
             )
             if current:
                 stmt = stmt.where(Character.name.ilike(f"%{current}%"))

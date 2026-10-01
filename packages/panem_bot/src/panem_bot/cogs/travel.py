@@ -143,11 +143,22 @@ class TravelCog(commands.Cog):
         character_name = getattr(interaction.namespace, "character", None)
         if not character_name:
             return []
-        async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await self._get_character(session, interaction.user.id, character_name)
-        if char is None:
+        session_factory = getattr(self.bot, "session_factory", None)
+        ctx_mgr = session_factory() if session_factory is not None else self.bot.db()
+        async with ctx_mgr as session:
+            char_district_id = (
+                await session.execute(
+                    select(Character.current_district_id)
+                    .join(User, Character.user_id == User.id)
+                    .where(
+                        User.discord_id == interaction.user.id,
+                        Character.name == character_name,
+                    )
+                )
+            ).scalar_one_or_none()
+        if char_district_id is None:
             return []
-        district = self.bot.content.district(char.current_district_id)  # type: ignore[attr-defined]
+        district = self.bot.content.district(char_district_id)
         current_lower = current.lower()
         matches = [
             loc

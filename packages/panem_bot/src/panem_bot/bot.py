@@ -123,6 +123,10 @@ class PanemBot(commands.Bot):
             return
 
         original = error.original if isinstance(error, app_commands.CommandInvokeError) else error
+        if isinstance(original, discord.NotFound) and getattr(original, "code", None) == 10062:
+            # Expired/superseded autocomplete interaction token -- occurs naturally when
+            # users type quickly in Discord.
+            return
         ref = uuid.uuid4().hex[:8]
         logger.error(
             "app_command_error",

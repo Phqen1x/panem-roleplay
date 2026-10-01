@@ -10,15 +10,29 @@ a bound `self` to resolve context) live next to their commands in
 
 from __future__ import annotations
 
+import time
+
 import discord
 from discord import app_commands
 from sqlalchemy import select
 
-from panem_bot.services import characters as characters_svc
-from panem_shared.db.models import AfflictionType, Character, Npc
+from panem_shared.db.models import AfflictionType, Character, Npc, User
 from panem_shared.enums import CharacterStatus
 
 MAX_CHOICES = 25
+
+_CACHE_TTL_S = 5.0
+_OWN_CHARACTERS_CACHE: dict[
+    tuple[int, tuple[str, ...]], tuple[float, list[tuple[str, int, str]]]
+] = {}
+_NPC_CACHE: tuple[float, list[tuple[str, str, int]]] | None = None
+_AFFLICTION_CACHE: tuple[float, list[tuple[str, bool]]] | None = None
+
+
+def _clean_own_cache(now: float) -> None:
+    expired = [k for k, (ts, _) in _OWN_CHARACTERS_CACHE.items() if (now - ts) >= _CACHE_TTL_S]
+    for k in expired:
+        _OWN_CHARACTERS_CACHE.pop(k, None)
 
 
 async def _characters(
@@ -29,16 +43,78 @@ async def _characters(
     statuses: list[str] | None,
 ) -> list[app_commands.Choice[str]]:
     bot = interaction.client
-    async with bot.db() as session:  # type: ignore[attr-defined]
-        stmt = select(Character.name, Character.district_id, Character.status)
-        if own_only:
-            user = await characters_svc.get_or_create_user(session, interaction.user.id)
-            stmt = stmt.where(Character.user_id == user.id)
-        if statuses:
-            stmt = stmt.where(Character.status.in_(statuses))
-        if current:
-            stmt = stmt.where(Character.name.ilike(f"%{current}%"))
-        rows = (await session.execute(stmt.order_by(Character.name).limit(MAX_CHOICES))).all()
+    now = time.monotonic()
+    status_tuple = tuple(statuses) if statuses else ()
+
+    if own_only:
+        cache_key = (interaction.user.id, status_tuple)
+        cached = _OWN_CHARACTERS_CACHE.get(cache_key)
+        if cached and (now - cached[0]) < _CACHE_TTL_S:
+            rows = cached[1]
+        else:
+            session_factory = getattr(bot, "session_factory", None)
+            if session_factory is not None:
+                async with session_factory() as session:
+                    stmt = (
+                        select(Character.name, Character.district_id, Character.status)
+                        .join(User, Character.user_id == User.id)
+                        .where(User.discord_id == interaction.user.id)
+                    )
+                    if statuses:
+                        stmt = stmt.where(Character.status.in_(statuses))
+                    rows = list((await session.execute(stmt.order_by(Character.name))).all())
+            else:
+                async with bot.db() as session:  # type: ignore[attr-defined]
+                    stmt = (
+                        select(Character.name, Character.district_id, Character.status)
+                        .join(User, Character.user_id == User.id)
+                        .where(User.discord_id == interaction.user.id)
+                    )
+                    if statuses:
+                        stmt = stmt.where(Character.status.in_(statuses))
+                    rows = list((await session.execute(stmt.order_by(Character.name))).all())
+            _OWN_CHARACTERS_CACHE[cache_key] = (now, rows)
+            if len(_OWN_CHARACTERS_CACHE) > 200:
+                _clean_own_cache(now)
+
+        current_lower = current.lower()
+        matches = [
+            (name, district_id, status)
+            for name, district_id, status in rows
+            if not current_lower or current_lower in name.lower()
+        ][:MAX_CHOICES]
+
+        return [
+            app_commands.Choice(
+                name=f"{name} ({bot.content.district(district_id).name}, {status})",  # type: ignore[attr-defined]
+                value=name,
+            )
+            for name, district_id, status in matches
+        ]
+
+    # own_only is False: query across all characters
+    session_factory = getattr(bot, "session_factory", None)
+    if session_factory is not None:
+        async with session_factory() as session:
+            stmt = select(Character.name, Character.district_id, Character.status)
+            if statuses:
+                stmt = stmt.where(Character.status.in_(statuses))
+            if current:
+                stmt = stmt.where(Character.name.ilike(f"%{current}%"))
+            rows = list(
+                (await session.execute(stmt.order_by(Character.name).limit(MAX_CHOICES))).all()
+            )
+    else:
+        async with bot.db() as session:  # type: ignore[attr-defined]
+            stmt = select(Character.name, Character.district_id, Character.status)
+            if statuses:
+                stmt = stmt.where(Character.status.in_(statuses))
+            if current:
+                stmt = stmt.where(Character.name.ilike(f"%{current}%"))
+            rows = list(
+                (await session.execute(stmt.order_by(Character.name).limit(MAX_CHOICES))).all()
+            )
+
     return [
         app_commands.Choice(
             name=f"{name} ({bot.content.district(district_id).name}, {status})",  # type: ignore[attr-defined]
@@ -91,18 +167,37 @@ async def any_npc(interaction: discord.Interaction, current: str) -> list[app_co
     NPC's actual unique `id`, not its name, so picking a suggestion
     always resolves to exactly the one NPC shown, never an ambiguous
     name shared by several."""
+    global _NPC_CACHE
     bot = interaction.client
-    async with bot.db() as session:  # type: ignore[attr-defined]
-        stmt = select(Npc.id, Npc.name, Npc.district_id)
-        if current:
-            stmt = stmt.where(Npc.name.ilike(f"%{current}%"))
-        rows = (await session.execute(stmt.order_by(Npc.name).limit(MAX_CHOICES))).all()
+    now = time.monotonic()
+
+    if _NPC_CACHE and (now - _NPC_CACHE[0]) < 30.0:
+        rows = _NPC_CACHE[1]
+    else:
+        session_factory = getattr(bot, "session_factory", None)
+        if session_factory is not None:
+            async with session_factory() as session:
+                stmt = select(Npc.id, Npc.name, Npc.district_id)
+                rows = list((await session.execute(stmt.order_by(Npc.name))).all())
+        else:
+            async with bot.db() as session:  # type: ignore[attr-defined]
+                stmt = select(Npc.id, Npc.name, Npc.district_id)
+                rows = list((await session.execute(stmt.order_by(Npc.name))).all())
+        _NPC_CACHE = (now, rows)
+
+    current_lower = current.lower()
+    matches = [
+        (npc_id, name, district_id)
+        for npc_id, name, district_id in rows
+        if not current_lower or current_lower in name.lower()
+    ][:MAX_CHOICES]
+
     return [
         app_commands.Choice(
             name=f"{name} ({bot.content.district(district_id).name})",  # type: ignore[attr-defined]
             value=npc_id,
         )
-        for npc_id, name, district_id in rows
+        for npc_id, name, district_id in matches
     ]
 
 
@@ -114,15 +209,34 @@ async def affliction_types(
     field. Choice `value` is the type's name (unique, same as a good/job
     id elsewhere in this module), which the cog re-looks-up by name at
     submit time rather than carrying a numeric id through the option."""
+    global _AFFLICTION_CACHE
     bot = interaction.client
-    async with bot.db() as session:  # type: ignore[attr-defined]
-        stmt = select(AfflictionType.name, AfflictionType.is_permanent)
-        if current:
-            stmt = stmt.where(AfflictionType.name.ilike(f"%{current}%"))
-        rows = (await session.execute(stmt.order_by(AfflictionType.name).limit(MAX_CHOICES))).all()
+    now = time.monotonic()
+
+    if _AFFLICTION_CACHE and (now - _AFFLICTION_CACHE[0]) < 30.0:
+        rows = _AFFLICTION_CACHE[1]
+    else:
+        session_factory = getattr(bot, "session_factory", None)
+        if session_factory is not None:
+            async with session_factory() as session:
+                stmt = select(AfflictionType.name, AfflictionType.is_permanent)
+                rows = list((await session.execute(stmt.order_by(AfflictionType.name))).all())
+        else:
+            async with bot.db() as session:  # type: ignore[attr-defined]
+                stmt = select(AfflictionType.name, AfflictionType.is_permanent)
+                rows = list((await session.execute(stmt.order_by(AfflictionType.name))).all())
+        _AFFLICTION_CACHE = (now, rows)
+
+    current_lower = current.lower()
+    matches = [
+        (name, is_perm)
+        for name, is_perm in rows
+        if not current_lower or current_lower in name.lower()
+    ][:MAX_CHOICES]
+
     return [
-        app_commands.Choice(name=f"{name} (permanent)" if is_permanent else name, value=name)
-        for name, is_permanent in rows
+        app_commands.Choice(name=f"{name} (permanent)" if is_perm else name, value=name)
+        for name, is_perm in matches
     ]
 
 

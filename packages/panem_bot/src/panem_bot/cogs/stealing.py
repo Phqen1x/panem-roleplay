@@ -251,18 +251,30 @@ class StealingCog(commands.Cog):
         character_name = getattr(interaction.namespace, "character", None)
         if not character_name:
             return []
-        async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await self._get_character(session, interaction.user.id, character_name)
-            if char is None:
+        session_factory = getattr(self.bot, "session_factory", None)
+        ctx_mgr = session_factory() if session_factory is not None else self.bot.db()
+        async with ctx_mgr as session:
+            char_info = (
+                await session.execute(
+                    select(Character.id, Character.current_district_id, Character.location_id)
+                    .join(User, Character.user_id == User.id)
+                    .where(
+                        User.discord_id == interaction.user.id,
+                        Character.name == character_name,
+                    )
+                )
+            ).first()
+            if char_info is None:
                 return []
+            char_id, current_district_id, location_id = char_info
             char_names = (
                 (
                     await session.execute(
                         select(Character.name).where(
                             Character.status == CharacterStatus.APPROVED.value,
-                            Character.current_district_id == char.current_district_id,
-                            Character.location_id == char.location_id,
-                            Character.id != char.id,
+                            Character.current_district_id == current_district_id,
+                            Character.location_id == location_id,
+                            Character.id != char_id,
                             Character.rp_mode != RpMode.STORY.value,
                         )
                     )
@@ -274,8 +286,8 @@ class StealingCog(commands.Cog):
                 (
                     await session.execute(
                         select(Npc.name).where(
-                            Npc.district_id == char.current_district_id,
-                            Npc.location_id == char.location_id,
+                            Npc.district_id == current_district_id,
+                            Npc.location_id == location_id,
                         )
                     )
                 )
