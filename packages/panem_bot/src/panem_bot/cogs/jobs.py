@@ -21,7 +21,7 @@ from discord.ext import commands
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from panem_bot import autocomplete
+from panem_bot import autocomplete, utils
 from panem_bot.services import characters as characters_svc
 from panem_bot.services import shifts as shifts_svc
 from panem_bot.strings import t
@@ -53,16 +53,6 @@ class _SkipButton(discord.ui.Button["discord.ui.View"]):
 class JobsCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-
-    async def _get_character(
-        self, session: AsyncSession, user_id: int, name: str
-    ) -> Character | None:
-        user = await characters_svc.get_or_create_user(session, user_id)
-        return (
-            await session.execute(
-                select(Character).where(Character.user_id == user.id, Character.name == name)
-            )
-        ).scalar_one_or_none()
 
     async def _current_tick(self, session: AsyncSession) -> int:
         clock = await session.get(WorldClock, 1)
@@ -179,7 +169,7 @@ class JobsCog(commands.Cog):
     @app_commands.autocomplete(character=autocomplete.own_approved)
     async def work(self, interaction: discord.Interaction, character: str) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await self._get_character(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return

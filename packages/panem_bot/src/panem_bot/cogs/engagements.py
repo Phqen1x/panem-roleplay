@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from panem_bot import autocomplete
+from panem_bot import autocomplete, utils
 from panem_bot.errors import ServiceError
 from panem_bot.services import characters as characters_svc
 from panem_bot.services import dialogue as dialogue_svc
@@ -87,16 +87,6 @@ class EngagementCog(commands.Cog):
         self.close_idle_engagements.cancel()
 
     # ------------------------------------------------------------- helpers
-
-    async def _get_character(
-        self, session: AsyncSession, user_id: int, name: str
-    ) -> Character | None:
-        user = await characters_svc.get_or_create_user(session, user_id)
-        return (
-            await session.execute(
-                select(Character).where(Character.user_id == user.id, Character.name == name)
-            )
-        ).scalar_one_or_none()
 
     async def _current_tick(self, session: AsyncSession) -> int:
         clock = await session.get(WorldClock, 1)
@@ -348,7 +338,7 @@ class EngagementCog(commands.Cog):
         assert interaction.guild is not None
         await interaction.response.defer(ephemeral=True, thinking=True)
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await self._get_character(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
             if char is None:
                 await interaction.followup.send(t("character_not_found"), ephemeral=True)
                 return
@@ -841,7 +831,7 @@ class EngagementCog(commands.Cog):
                     "Not a registered engagement.", ephemeral=True
                 )
                 return
-            char = await self._get_character(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return

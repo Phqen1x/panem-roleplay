@@ -19,7 +19,7 @@ from discord.ext import commands, tasks
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from panem_bot import autocomplete
+from panem_bot import autocomplete, utils
 from panem_bot.errors import ServiceError
 from panem_bot.services import characters as characters_svc
 from panem_bot.services import pay as pay_svc
@@ -66,16 +66,6 @@ class TradeCog(commands.Cog):
     async def cog_unload(self) -> None:
         self.expire_stale_trades.cancel()
 
-    async def _get_character(
-        self, session: AsyncSession, user_id: int, name: str
-    ) -> Character | None:
-        user = await characters_svc.get_or_create_user(session, user_id)
-        return (
-            await session.execute(
-                select(Character).where(Character.user_id == user.id, Character.name == name)
-            )
-        ).scalar_one_or_none()
-
     def _describe_side(self, good_id: str | None, qty: int | None, money: int) -> str:
         content = self.bot.content  # type: ignore[attr-defined]
         parts = []
@@ -97,7 +87,7 @@ class TradeCog(commands.Cog):
         self, interaction: discord.Interaction, character: str, target: str, amount: int
     ) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            sender = await self._get_character(session, interaction.user.id, character)
+            sender = await utils.get_character_case_insensitive(session, interaction.user.id, character)
             if sender is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -206,7 +196,7 @@ class TradeCog(commands.Cog):
         want_money: int = 0,
     ) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            initiator = await self._get_character(session, interaction.user.id, character)
+            initiator = await utils.get_character_case_insensitive(session, interaction.user.id, character)
             if initiator is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
