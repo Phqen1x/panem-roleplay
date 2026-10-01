@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import uuid
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -24,6 +25,15 @@ from panem_shared.logging import get_logger
 from panem_shared.settings import Settings
 
 logger = get_logger(component="bot")
+
+
+class _AutocompleteNotFoundFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.exc_info:
+            exc = record.exc_info[1]
+            if isinstance(exc, discord.NotFound) and getattr(exc, "code", None) == 10062:
+                return False
+        return True
 
 INTENTS = discord.Intents.default()
 INTENTS.message_content = True
@@ -82,6 +92,7 @@ class PanemBot(commands.Bot):
         self.content = load_content(self.data_dir)
 
     async def setup_hook(self) -> None:
+        logging.getLogger("discord.app_commands.tree").addFilter(_AutocompleteNotFoundFilter())
         for ext in COGS:
             await self.load_extension(ext)
 

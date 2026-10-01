@@ -660,17 +660,29 @@ class EngagementCog(commands.Cog):
         character_name = getattr(interaction.namespace, "character", None)
         if not character_name:
             return []
-        async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await self._get_character(session, interaction.user.id, character_name)
-            if char is None:
-                return []
-            district_id = char.current_district_id
-        district = self.bot.content.district(district_id)  # type: ignore[attr-defined]
+        session_factory = getattr(self.bot, "session_factory", None)
+        ctx_mgr = session_factory() if session_factory is not None else self.bot.db()
+        async with ctx_mgr as session:
+            district_id = (
+                await session.execute(
+                    select(Character.current_district_id)
+                    .join(User, Character.user_id == User.id)
+                    .where(
+                        User.discord_id == interaction.user.id,
+                        Character.name == character_name,
+                    )
+                )
+            ).scalar_one_or_none()
+        if district_id is None:
+            return []
+        district = self.bot.content.districts.get(district_id)
+        if district is None:
+            return []
         current_lower = current.lower()
         matches = [
             loc
             for loc in district.locations
-            if current_lower in loc.name.lower() or current_lower in loc.id.lower()
+            if not current_lower or current_lower in loc.name.lower() or current_lower in loc.id.lower()
         ]
         return [
             app_commands.Choice(name=f"{loc.name} ({loc.id})", value=loc.id) for loc in matches[:25]
@@ -692,12 +704,23 @@ class EngagementCog(commands.Cog):
         character_name = getattr(interaction.namespace, "character", None)
         if not character_name:
             return []
-        async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await self._get_character(session, interaction.user.id, character_name)
-            if char is None:
+        session_factory = getattr(self.bot, "session_factory", None)
+        ctx_mgr = session_factory() if session_factory is not None else self.bot.db()
+        async with ctx_mgr as session:
+            char_info = (
+                await session.execute(
+                    select(Character.id, Character.current_district_id, Character.location_id)
+                    .join(User, Character.user_id == User.id)
+                    .where(
+                        User.discord_id == interaction.user.id,
+                        Character.name == character_name,
+                    )
+                )
+            ).first()
+            if char_info is None:
                 return []
-            district_id = char.current_district_id
-            loc_id = getattr(interaction.namespace, "location", None) or char.location_id
+            char_id, district_id, char_loc_id = char_info
+            loc_id = getattr(interaction.namespace, "location", None) or char_loc_id
             npc_names = (
                 (await session.execute(select(Npc.name).where(Npc.district_id == district_id)))
                 .scalars()
@@ -711,7 +734,7 @@ class EngagementCog(commands.Cog):
                             select(Character.name).where(
                                 Character.status == CharacterStatus.APPROVED.value,
                                 Character.location_id == loc_id,
-                                Character.id != char.id,
+                                Character.id != char_id,
                             )
                         )
                     )
@@ -727,7 +750,7 @@ class EngagementCog(commands.Cog):
         matches = sorted(
             name
             for name in {*npc_names, *char_names}
-            if current_lower in name.lower() and name not in already_chosen
+            if (not current_lower or current_lower in name.lower()) and name not in already_chosen
         )
         return [app_commands.Choice(name=name, value=name) for name in matches[:25]]
 
