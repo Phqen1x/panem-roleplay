@@ -10,14 +10,14 @@ from discord.ext import commands
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from panem_bot import activity_launch, autocomplete
+from panem_bot import activity_launch, autocomplete, utils
 from panem_bot.errors import ServiceError
 from panem_bot.services import characters as characters_svc
 from panem_bot.services import stealing as stealing_svc
 from panem_bot.strings import t
 from panem_shared import constants
 from panem_shared import crime_log as crime_log_svc
-from panem_shared.db.models import Character, CrimeLog, DistrictState, Npc, Property, WorldClock
+from panem_shared.db.models import Character, CrimeLog, DistrictState, Npc, Property, User, WorldClock
 from panem_shared.enums import CharacterStatus, OwnerKind, PropertyKind, RpMode
 from panem_shared.stealing import StealResult, StealVictim
 
@@ -88,16 +88,6 @@ def _burgle_result_text(result: StealResult, name: str, owner_name: str) -> str:
 class StealingCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-
-    async def _get_character(
-        self, session: AsyncSession, user_id: int, name: str
-    ) -> Character | None:
-        user = await characters_svc.get_or_create_user(session, user_id)
-        return (
-            await session.execute(
-                select(Character).where(Character.user_id == user.id, Character.name == name)
-            )
-        ).scalar_one_or_none()
 
     async def _current_tick(self, session: AsyncSession) -> int:
         clock = await session.get(WorldClock, 1)
@@ -177,7 +167,7 @@ class StealingCog(commands.Cog):
     @app_commands.autocomplete(character=autocomplete.own_approved)
     async def steal(self, interaction: discord.Interaction, character: str, target: str) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await self._get_character(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -251,18 +241,30 @@ class StealingCog(commands.Cog):
         character_name = getattr(interaction.namespace, "character", None)
         if not character_name:
             return []
-        async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await self._get_character(session, interaction.user.id, character_name)
-            if char is None:
+        session_factory = getattr(self.bot, "session_factory", None)
+        ctx_mgr = session_factory() if session_factory is not None else self.bot.db()
+        async with ctx_mgr as session:
+            char_info = (
+                await session.execute(
+                    select(Character.id, Character.current_district_id, Character.location_id)
+                    .join(User, Character.user_id == User.id)
+                    .where(
+                        User.discord_id == interaction.user.id,
+                        Character.name == character_name,
+                    )
+                )
+            ).first()
+            if char_info is None:
                 return []
+            char_id, current_district_id, location_id = char_info
             char_names = (
                 (
                     await session.execute(
                         select(Character.name).where(
                             Character.status == CharacterStatus.APPROVED.value,
-                            Character.current_district_id == char.current_district_id,
-                            Character.location_id == char.location_id,
-                            Character.id != char.id,
+                            Character.current_district_id == current_district_id,
+                            Character.location_id == location_id,
+                            Character.id != char_id,
                             Character.rp_mode != RpMode.STORY.value,
                         )
                     )
@@ -274,8 +276,8 @@ class StealingCog(commands.Cog):
                 (
                     await session.execute(
                         select(Npc.name).where(
-                            Npc.district_id == char.current_district_id,
-                            Npc.location_id == char.location_id,
+                            Npc.district_id == current_district_id,
+                            Npc.location_id == location_id,
                         )
                     )
                 )
@@ -322,7 +324,7 @@ class StealingCog(commands.Cog):
     @app_commands.autocomplete(character=autocomplete.own_approved)
     async def burgle(self, interaction: discord.Interaction, character: str, owner: str) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await self._get_character(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -409,7 +411,7 @@ class StealingCog(commands.Cog):
     @app_commands.autocomplete(character=autocomplete.own_approved)
     async def crimelog(self, interaction: discord.Interaction, character: str) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await self._get_character(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return

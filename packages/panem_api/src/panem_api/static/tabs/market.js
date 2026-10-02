@@ -49,6 +49,9 @@ function priceTable(prices, onBuy) {
     if (p.thirst_value > 0) {
       badges.push(`+${p.thirst_value} thirst`);
     }
+    if (p.heal_value > 0) {
+      badges.push(`+${p.heal_value} health`);
+    }
     const goodCell =
       badges.length > 0
         ? el(

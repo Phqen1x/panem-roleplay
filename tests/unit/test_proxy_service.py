@@ -216,6 +216,16 @@ class TestHasLocationAccess:
             job_title="baker", has_position=False, location=loc
         )
 
+    def test_outskirts_ignores_restricted_and_access_jobs(self):
+        loc = Location(
+            id="meadow",
+            name="The Meadow",
+            kind="outskirts",
+            restricted=True,
+            access_jobs=["miner"],
+        )
+        assert proxy_svc.has_location_access(job_title=None, has_position=False, location=loc)
+
 
 class TestNpcDistrictAccess:
     def test_own_district_allowed(self):
@@ -405,6 +415,23 @@ class TestCheckCanProxy:
 
     def test_restricted_location_refused(self):
         loc = Location(
+            id="mine", name="The Mine", kind="workplace", restricted=True, access_jobs=["miner"]
+        )
+        character = make_character(location_id="mine")
+        district = self.make_district([loc])
+        refusal = proxy_svc.check_can_proxy(
+            character=character, district=district, location_id="mine", current_tick=0
+        )
+        assert refusal is not None and refusal.reason_key == "proxy_location_restricted"
+
+    def test_outskirts_never_job_restricted(self):
+        """Unlike an ordinary `restricted` location, the outskirts is
+        exempt from `access_jobs` entirely -- it's the one and only place
+        `/blackmarket`/`/poach` can be reached, gated purely by being
+        night (a separate check, not exercised here), not by a job/
+        position match nobody would ever have (see `location_access.
+        has_location_access`'s docstring)."""
+        loc = Location(
             id="meadow", name="The Meadow", kind="outskirts", restricted=True, access_jobs=["miner"]
         )
         character = make_character(location_id="meadow")
@@ -412,7 +439,7 @@ class TestCheckCanProxy:
         refusal = proxy_svc.check_can_proxy(
             character=character, district=district, location_id="meadow", current_tick=0
         )
-        assert refusal is not None and refusal.reason_key == "proxy_location_restricted"
+        assert refusal is None
 
     def test_story_mode_bypasses_the_restricted_location_gate(self):
         loc = Location(

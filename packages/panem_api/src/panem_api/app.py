@@ -54,6 +54,7 @@ from starlette.types import Scope
 
 from panem_api.dashboard_routes import (
     build_affliction_types_router,
+    build_ambient_router,
     build_blackmarket_router,
     build_characters_router,
     build_crime_router,
@@ -74,6 +75,7 @@ from panem_api.dashboard_routes import (
     build_vitals_router,
     build_work_router,
 )
+from panem_api.party_routes import build_party_router
 from panem_shared import constants, simtime
 from panem_shared.content.loader import ContentBundle
 from panem_shared.db.models import (
@@ -903,7 +905,15 @@ def create_app(
     app.include_router(build_market_router(content=content, session_factory=session_factory))
     app.include_router(build_blackmarket_router(content=content, session_factory=session_factory))
     app.include_router(build_travel_router(content=content, session_factory=session_factory))
-    app.include_router(build_residents_router(content=content, session_factory=session_factory))
+    app.include_router(
+        build_residents_router(
+            content=content,
+            session_factory=session_factory,
+            discord_token=discord_token,
+            discord_guild_id=discord_guild_id,
+            staff_role_id=staff_role_id,
+        )
+    )
     app.include_router(build_housing_router(content=content, session_factory=session_factory))
     app.include_router(build_vitals_router(content=content, session_factory=session_factory))
     app.include_router(
@@ -937,6 +947,8 @@ def create_app(
             staff_role_id=staff_role_id,
         )
     )
+    app.include_router(build_party_router())
+    app.include_router(build_ambient_router(session_factory=session_factory))
 
     uploads_root = static_dir or STATIC_DIR
     if uploads_root != STATIC_DIR:

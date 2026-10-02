@@ -35,7 +35,7 @@ class SequenceRng:
     def randint(self, a: int, b: int) -> int:
         return a
 
-    def choice(self, seq):  # noqa: ANN001, ANN201 -- matches random.Random's own loose typing
+    def choice(self, seq):
         """Deterministic stand-in for `rng.choice(STEAL_LOOT_GOOD_IDS)`/
         `rng.choice(BURGLE_LOOT_GOOD_IDS)` -- always the first entry, the
         same "always the low end" determinism `randint` above already
@@ -50,7 +50,9 @@ def make_goods() -> dict[str, Good]:
     does, rather than depending on `data/goods.yaml`."""
     good_ids = set(constants.STEAL_LOOT_GOOD_IDS) | set(constants.BURGLE_LOOT_GOOD_IDS)
     return {
-        good_id: Good(id=good_id, name=good_id.replace("_", " ").title(), base_price=10.0, category="stolen")
+        good_id: Good(
+            id=good_id, name=good_id.replace("_", " ").title(), base_price=10.0, category="stolen"
+        )
         for good_id in good_ids
     }
 
@@ -202,6 +204,15 @@ class TestResolveSteal:
         assert row is not None
         assert row.qty == constants.STEAL_LOOT_QTY
 
+        # A clean, undetected success leaves the NPC's opinion of the
+        # thief untouched -- they never noticed, so there's nothing for
+        # it to react to. Only actually getting caught crashes it.
+        relationship = await db_session.get(
+            RelationshipRow,
+            (OwnerKind.CHARACTER.value, "1", OwnerKind.NPC.value, victim.id),
+        )
+        assert relationship is None
+
     async def test_clean_miss_changes_nothing(self, db_session):
         character = make_character(money=100)
         victim = make_npc(money=50.0)
@@ -265,7 +276,11 @@ class TestResolveSteal:
             RelationshipRow,
             (OwnerKind.CHARACTER.value, "1", OwnerKind.NPC.value, victim.id),
         )
-        assert relationship.affinity == -constants.REP_STEAL_CAUGHT_VICTIM_PENALTY
+        # Caught red-handed crashes the relationship to the same floor a
+        # clean, undetected success does (`crash_to_hated`) -- being
+        # caught is at least as damning as a theft they never noticed.
+        assert relationship.affinity == constants.AFFINITY_FLOOR
+        assert relationship.stance == "hates"
 
         district_row = await db_session.get(DistrictState, 1)
         assert district_row.peacekeeper_pressure == 0.3 + stealing_svc.STEAL_PRESSURE_DELTA

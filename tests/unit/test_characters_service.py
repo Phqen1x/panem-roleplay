@@ -13,7 +13,7 @@ from panem_shared.content.schemas import (
     DistrictQuota,
     Location,
 )
-from panem_shared.db.models import Character, User
+from panem_shared.db.models import Character, Shift, User, WorldClock
 from panem_shared.enums import CharacterStatus, RpMode
 from panem_shared.settings import Settings
 
@@ -617,6 +617,44 @@ class TestApproveCharacter:
         await characters_svc.approve_character(db_session, character, district=district)
         with pytest.raises(NotAllowed):
             await characters_svc.approve_character(db_session, character, district=district)
+
+    async def test_opens_shift_if_clock_is_in_character_shift_phase(self, db_session):
+        user = await make_user(db_session)
+        district = make_district()
+        # Set world clock to tick 18 (6:00 PM, Evening)
+        clock = await db_session.get(WorldClock, 1)
+        if clock is None:
+            clock = WorldClock(id=1, tick=18)
+            db_session.add(clock)
+        else:
+            clock.tick = 18
+        await db_session.flush()
+
+        character = await characters_svc.create_character(
+            db_session,
+            user=user,
+            district_id=district.id,
+            name="Katniss",
+            age=16,
+            appearance="",
+            backstory="",
+            job_title="Barkeep",
+            shift_phase="evening",
+            max_characters=3,
+        )
+        await characters_svc.approve_character(db_session, character, district=district)
+        assert character.status == CharacterStatus.APPROVED.value
+
+        from sqlalchemy import select
+        shift = (
+            await db_session.execute(
+                select(Shift).where(Shift.character_id == character.id, Shift.result.is_(None))
+            )
+        ).scalar_one_or_none()
+        assert shift is not None
+        assert shift.job_id == "Barkeep"
+        assert shift.tick_opened == 18
+        assert shift.tick_due == 24
 
 
 class TestRetireCharacter:

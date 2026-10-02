@@ -271,6 +271,25 @@ STANCE_PRICE_MOD = {
     # "hates" is a refusal, not a multiplier (FR-ECO-3).
 }
 
+AFFINITY_FLOOR = -100
+"""The worst a `RelationshipRow.affinity` is ever deliberately driven to
+-- well past `STANCE_THRESHOLDS`' own `hates` cutoff (-60), so nothing
+else (a later passing proximity nudge, a small reputation-style penalty)
+could plausibly claw it back into a friendlier bucket for a long time.
+Used by `relationships.crash_to_hated` (stealing from an NPC: `stealing.
+apply_steal_outcome` -- "immediately lower to the lowest possible", not a
+gradual decrement)."""
+
+HOSTILE_ACTION_AFFINITY_PENALTY = 40
+"""How hard a detected hostile roleplay action (spitting on, hitting,
+attacking, or otherwise harming/annoying an NPC -- `panem_shared.
+hostility.is_hostile_action`) knocks `RelationshipRow.affinity` down,
+via `relationships.apply_affinity_delta`. Bigger than a passing `social.
+py` proximity nudge (`AFFINITY_STEP`, 2) or even `REP_STEAL_CAUGHT_
+VICTIM_PENALTY` (20) -- "significantly lower their opinion" reads as a
+sharp, single-message hit, not a slow drift, and 40 alone is enough to
+cross a full `STANCE_THRESHOLDS` bucket from most starting points."""
+
 # Phase 0 additions not in the tunables table but referenced by name-length /
 # validation rules spelled out in the spec (FR-CHR-2/7).
 CHARACTER_NAME_MAX_LEN = 32
@@ -389,6 +408,25 @@ MARKET_SUPPLY_FLOOR = 0.01
 """Supply is clamped to at least this before dividing by it in the price
 formula, so a district producing literally nothing today doesn't divide
 by zero -- reads as "effectively empty shelves", not an error."""
+MARKET_MINIMUM_STOCK: dict[str, float] = {
+    "livestock": 3.0,  # meat (Meats)
+    "grain": 3.0,      # grain (Grain)
+    "fish": 3.0,       # seafood (Seafood)
+    "produce": 3.0,    # fruits/drinks (Fruits/Drinks)
+    "medicine": 1.0,   # medicine (Medicine)
+    # Display name aliases:
+    "meat": 3.0,
+    "meats": 3.0,
+    "seafood": 3.0,
+    "fruit": 3.0,
+    "fruits": 3.0,
+    "fruits/drinks": 3.0,
+}
+"""Minimum daily stock guaranteed at district markets per sim day for
+essential goods (minimum of 3 meat, grain, seafood, and fruits/drinks, and
+at least 1 medicine). Prevents empty shelves for basic sustenance and medical
+needs regardless of daily production or export fluctuations."""
+
 
 ACTIVE_PLAYER_WINDOW_SIM_DAYS = 42
 """"Interacted within the past real-life week" for the active-player
@@ -722,7 +760,12 @@ BURGLE_BASE_SUCCESS = 0.35
 """A flat harder tier than either `/steal` target -- there's no owner
 physically present to read a "same location" precision off, so
 difficulty stands in for that missing signal instead."""
-BURGLE_LOOT_GOOD_IDS = ("stolen_furniture", "stolen_jewelry", "stolen_silverware", "stolen_heirlooms")
+BURGLE_LOOT_GOOD_IDS = (
+    "stolen_furniture",
+    "stolen_jewelry",
+    "stolen_silverware",
+    "stolen_heirlooms",
+)
 """What a successful `/burgle` carries out of the house -- a random pick
 from here, `BURGLE_LOOT_QTY_RANGE` units, same `category: "stolen"`
 fence-only sale restriction as `STEAL_LOOT_GOOD_IDS`. Pricier goods on

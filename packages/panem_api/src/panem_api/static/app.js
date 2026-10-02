@@ -25,6 +25,9 @@
 // gap as the rest of this process.
 import { fetchJson, el, renderTabIcon } from "./tabs/_shared.js?v=7";
 import { mountThemePicker } from "./theme_picker.js?v=4";
+import { initClickSFX } from "./click_sfx.js?v=53";
+import { mountSoundPicker } from "./sound_picker.js?v=53";
+import { updateAmbientContext } from "./ambient_player.js?v=53";
 
 // `?v=N`, same cache-busting convention as every other asset this page
 // loads (see the `tabs/_shared.js`/`theme_picker.js` imports above) --
@@ -60,7 +63,7 @@ async function openExternalLink(url) {
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "48";
+const ASSET_VERSION = "52";
 
 // District names mapping for Capitol and Districts 1-12
 const DISTRICT_NAMES = {
@@ -149,6 +152,19 @@ const STAFF_TAB_LABEL = "Staff";
 // large, district-scoped editor, not another admin-panel panel.
 const HISTORY_TAB = "history";
 const HISTORY_TAB_LABEL = "History";
+
+// The "Panem Party Pack" games catalog -- staff-only for now while the
+// pitch/roadmap is reviewed, same gating as STAFF_TAB above. Once the
+// individual games are actually built and ready for players, this should
+// move into TABS/TAB_LABELS like any other player-facing tab.
+const GAMES_TAB = "games";
+const GAMES_TAB_LABEL = "Games";
+const STAFF_ONLY_TABS = [STAFF_TAB, HISTORY_TAB, GAMES_TAB];
+const STAFF_ONLY_TAB_LABELS = {
+  [STAFF_TAB]: STAFF_TAB_LABEL,
+  [HISTORY_TAB]: HISTORY_TAB_LABEL,
+  [GAMES_TAB]: GAMES_TAB_LABEL,
+};
 
 const statusEl = document.getElementById("status");
 const navEl = document.getElementById("tab-nav");
@@ -555,11 +571,14 @@ function closeCharacterMenu() {
 }
 
 function updateTelemetry(character) {
-  const telemetryEl = document.getElementById("footer-telemetry");
-  if (!telemetryEl) return;
   const districtId = character
     ? (character.current_district_id ?? character.district_id ?? 1)
     : 1;
+  const locationId = character ? (character.location_id || null) : null;
+  updateAmbientContext({ district_id: districtId, location_id: locationId });
+
+  const telemetryEl = document.getElementById("footer-telemetry");
+  if (!telemetryEl) return;
   const districtName =
     (character && (character.current_district_name || character.district_name)) ||
     DISTRICT_NAMES[districtId] ||
@@ -695,7 +714,7 @@ function buildCtx() {
 }
 
 function visibleTabs() {
-  return state.isStaff ? [...TABS, STAFF_TAB, HISTORY_TAB] : TABS;
+  return state.isStaff ? [...TABS, ...STAFF_ONLY_TABS] : TABS;
 }
 
 function currentTabName() {
@@ -757,15 +776,7 @@ function setupNav() {
   const active = currentTabName();
   for (const name of visibleTabs()) {
     const icon = renderTabIcon(name);
-    const label = el(
-      "span",
-      {},
-      name === STAFF_TAB
-        ? STAFF_TAB_LABEL
-        : name === HISTORY_TAB
-          ? HISTORY_TAB_LABEL
-          : TAB_LABELS[name]
-    );
+    const label = el("span", {}, STAFF_ONLY_TAB_LABELS[name] || TAB_LABELS[name]);
     navEl.append(
       el(
         "button",
@@ -910,6 +921,12 @@ async function refreshWorldTime() {
 }
 
 async function main() {
+  initClickSFX();
+  const soundPickerEl = document.getElementById("sound-picker");
+  if (soundPickerEl) {
+    mountSoundPicker(soundPickerEl);
+  }
+
   setupIdentityControls();
   window.addEventListener("hashchange", () => showTab(currentTabName()));
   window.addEventListener("panem:motto-updated", (event) => {

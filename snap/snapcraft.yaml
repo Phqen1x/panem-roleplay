@@ -88,6 +88,7 @@ parts:
       - libarchive-tools
       - libgomp1
       - libvulkan1
+      - mesa-vulkan-drivers
     override-build: |
       set -eux
       cd "$CRAFT_PART_BUILD"

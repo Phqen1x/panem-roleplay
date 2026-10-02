@@ -26,6 +26,9 @@ PRODUCE = Good(
     id="produce", name="Fruits/Drinks", base_price=3.0, category="food", thirst_value=25.0
 )
 COAL = Good(id="coal", name="Coal", base_price=4.0, category="fuel")
+MEDICINE = Good(
+    id="medicine", name="Medicine", base_price=15.0, category="medical", heal_value=30.0
+)
 
 
 def make_character(**overrides: object) -> Character:
@@ -175,21 +178,70 @@ class TestDrink:
 
 
 class TestOwnedConsumables:
-    async def test_filters_to_edible_and_drinkable_goods_only(self, db_session):
+    async def test_filters_to_edible_drinkable_and_healing_goods(self, db_session):
         character = make_character()
         await give_inventory(db_session, character, "fish", 2)
         await give_inventory(db_session, character, "coal", 5)
         await give_inventory(db_session, character, "produce", 1)
-        goods = {"fish": FISH, "coal": COAL, "produce": PRODUCE}
+        await give_inventory(db_session, character, "medicine", 1)
+        goods = {"fish": FISH, "coal": COAL, "produce": PRODUCE, "medicine": MEDICINE}
         pairs = await sustenance_svc.owned_consumables(db_session, character, goods)
         good_ids = {good.id for _, good in pairs}
-        assert good_ids == {"fish", "produce"}
+        assert good_ids == {"fish", "produce", "medicine"}
 
     async def test_excludes_zero_quantity_rows(self, db_session):
         character = make_character()
         await give_inventory(db_session, character, "fish", 0)
         pairs = await sustenance_svc.owned_consumables(db_session, character, {"fish": FISH})
         assert pairs == []
+
+
+class TestCheckCanHeal:
+    def test_refuses_a_dead_character(self):
+        character = make_character(status=CharacterStatus.DEAD.value)
+        with pytest.raises(NotAllowed) as exc_info:
+            sustenance_svc.check_can_heal(character, MEDICINE, 1)
+        assert exc_info.value.reason_key == "character_dead"
+
+    def test_refuses_a_non_simulation_character(self):
+        character = make_character(rp_mode=RpMode.LIFE.value)
+        with pytest.raises(NotAllowed) as exc_info:
+            sustenance_svc.check_can_heal(character, MEDICINE, 1)
+        assert exc_info.value.reason_key == "sustenance_mode_forbidden"
+
+    def test_refuses_a_non_healing_good(self):
+        character = make_character()
+        with pytest.raises(NotAllowed) as exc_info:
+            sustenance_svc.check_can_heal(character, COAL, 5)
+        assert exc_info.value.reason_key == "good_not_healing"
+
+    def test_refuses_with_no_inventory(self):
+        character = make_character()
+        with pytest.raises(NotAllowed) as exc_info:
+            sustenance_svc.check_can_heal(character, MEDICINE, 0)
+        assert exc_info.value.reason_key == "sustenance_no_inventory"
+
+    def test_allows_with_inventory_on_hand(self):
+        character = make_character()
+        sustenance_svc.check_can_heal(character, MEDICINE, 1)
+
+
+class TestHeal:
+    async def test_consumes_one_unit_and_restores_health(self, db_session):
+        character = make_character(health=50.0)
+        await give_inventory(db_session, character, "medicine", 2)
+        health = await sustenance_svc.heal(db_session, character, MEDICINE, TICK)
+        assert health == 50.0 + MEDICINE.heal_value
+        assert character.health == health
+        inv = await db_session.get(Inventory, (OwnerKind.CHARACTER.value, "1", "medicine"))
+        assert inv.qty == 1
+
+    async def test_clamps_health_at_max(self, db_session):
+        character = make_character(health=90.0)
+        await give_inventory(db_session, character, "medicine", 1)
+        health = await sustenance_svc.heal(db_session, character, MEDICINE, TICK)
+        assert health == constants.HEALTH_MAX
+        assert character.health == constants.HEALTH_MAX
 
 
 class TestCheckCanEntertain:

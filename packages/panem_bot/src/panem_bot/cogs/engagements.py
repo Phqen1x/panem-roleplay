@@ -13,11 +13,11 @@ from collections.abc import Awaitable, Callable
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from panem_bot import autocomplete
+from panem_bot import autocomplete, utils
 from panem_bot.errors import ServiceError
 from panem_bot.services import characters as characters_svc
 from panem_bot.services import dialogue as dialogue_svc
@@ -88,16 +88,6 @@ class EngagementCog(commands.Cog):
 
     # ------------------------------------------------------------- helpers
 
-    async def _get_character(
-        self, session: AsyncSession, user_id: int, name: str
-    ) -> Character | None:
-        user = await characters_svc.get_or_create_user(session, user_id)
-        return (
-            await session.execute(
-                select(Character).where(Character.user_id == user.id, Character.name == name)
-            )
-        ).scalar_one_or_none()
-
     async def _current_tick(self, session: AsyncSession) -> int:
         clock = await session.get(WorldClock, 1)
         return clock.tick if clock is not None else 0
@@ -117,16 +107,30 @@ class EngagementCog(commands.Cog):
     async def _actor_can_manage(
         self, session: AsyncSession, *, discord_user_id: int, scene: Scene, is_staff: bool
     ) -> bool:
-        """Creator-or-staff, mirroring `SceneCog._actor_can_manage` exactly."""
+        """Creator-or-staff, like `SceneCog._actor_can_manage`, but also
+        honors whoever most recently ran `/engage start` in this scene
+        (`participants["engaged_by_character_id"]`, set below). Those two
+        can differ: `/engage start` attaches NPCs to *any* existing scene
+        an ambient thread, an open `/scene` -- not just a dedicated
+        engagement thread it created itself, so `created_by_character_id`
+        is frequently `None` or belongs to someone else entirely. Without
+        this, the person who just ran `/engage start` and was told "only
+        the person who started it or staff can end it" could never
+        actually satisfy that check themselves."""
         if is_staff:
             return True
-        if scene.created_by_character_id is None:
+        character_ids = {
+            scene.created_by_character_id,
+            scene.participants.get("engaged_by_character_id"),
+        }
+        character_ids.discard(None)
+        if not character_ids:
             return False
         user = await characters_svc.get_or_create_user(session, discord_user_id)
         owned = (
             await session.execute(
                 select(Character.id).where(
-                    Character.id == scene.created_by_character_id, Character.user_id == user.id
+                    Character.id.in_(character_ids), Character.user_id == user.id
                 )
             )
         ).scalar_one_or_none()
@@ -334,7 +338,7 @@ class EngagementCog(commands.Cog):
         assert interaction.guild is not None
         await interaction.response.defer(ephemeral=True, thinking=True)
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await self._get_character(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
             if char is None:
                 await interaction.followup.send(t("character_not_found"), ephemeral=True)
                 return
@@ -511,6 +515,13 @@ class EngagementCog(commands.Cog):
                     if c.id not in pending_here and c.id not in chars_here:
                         pending_here.append(c.id)
                 participants["pending_characters"] = pending_here
+                # Whoever most recently ran `/engage start` here -- distinct
+                # from `scene.created_by_character_id`, since this branch by
+                # definition attaches NPCs to a scene this character didn't
+                # create (an ambient thread, an open `/scene`). `end`'s
+                # ownership check (`_actor_can_manage`) reads this so the
+                # person who just started the engagement can also end it.
+                participants["engaged_by_character_id"] = char_id
                 scene.participants = participants
 
                 for npc_id in free_npc_ids:
@@ -639,17 +650,29 @@ class EngagementCog(commands.Cog):
         character_name = getattr(interaction.namespace, "character", None)
         if not character_name:
             return []
-        async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await self._get_character(session, interaction.user.id, character_name)
-            if char is None:
-                return []
-            district_id = char.current_district_id
-        district = self.bot.content.district(district_id)  # type: ignore[attr-defined]
+        session_factory = getattr(self.bot, "session_factory", None)
+        ctx_mgr = session_factory() if session_factory is not None else self.bot.db()
+        async with ctx_mgr as session:
+            district_id = (
+                await session.execute(
+                    select(Character.current_district_id)
+                    .join(User, Character.user_id == User.id)
+                    .where(
+                        User.discord_id == interaction.user.id,
+                        func.lower(Character.name) == character_name.strip().lower(),
+                    )
+                )
+            ).scalar_one_or_none()
+        if district_id is None:
+            return []
+        district = self.bot.content.districts.get(district_id)
+        if district is None:
+            return []
         current_lower = current.lower()
         matches = [
             loc
             for loc in district.locations
-            if current_lower in loc.name.lower() or current_lower in loc.id.lower()
+            if not current_lower or current_lower in loc.name.lower() or current_lower in loc.id.lower()
         ]
         return [
             app_commands.Choice(name=f"{loc.name} ({loc.id})", value=loc.id) for loc in matches[:25]
@@ -671,12 +694,23 @@ class EngagementCog(commands.Cog):
         character_name = getattr(interaction.namespace, "character", None)
         if not character_name:
             return []
-        async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await self._get_character(session, interaction.user.id, character_name)
-            if char is None:
+        session_factory = getattr(self.bot, "session_factory", None)
+        ctx_mgr = session_factory() if session_factory is not None else self.bot.db()
+        async with ctx_mgr as session:
+            char_info = (
+                await session.execute(
+                    select(Character.id, Character.current_district_id, Character.location_id)
+                    .join(User, Character.user_id == User.id)
+                    .where(
+                        User.discord_id == interaction.user.id,
+                        func.lower(Character.name) == character_name.strip().lower(),
+                    )
+                )
+            ).first()
+            if char_info is None:
                 return []
-            district_id = char.current_district_id
-            loc_id = getattr(interaction.namespace, "location", None) or char.location_id
+            char_id, district_id, char_loc_id = char_info
+            loc_id = getattr(interaction.namespace, "location", None) or char_loc_id
             npc_names = (
                 (await session.execute(select(Npc.name).where(Npc.district_id == district_id)))
                 .scalars()
@@ -690,7 +724,7 @@ class EngagementCog(commands.Cog):
                             select(Character.name).where(
                                 Character.status == CharacterStatus.APPROVED.value,
                                 Character.location_id == loc_id,
-                                Character.id != char.id,
+                                Character.id != char_id,
                             )
                         )
                     )
@@ -706,17 +740,24 @@ class EngagementCog(commands.Cog):
         matches = sorted(
             name
             for name in {*npc_names, *char_names}
-            if current_lower in name.lower() and name not in already_chosen
+            if (not current_lower or current_lower in name.lower()) and name not in already_chosen
         )
         return [app_commands.Choice(name=name, value=name) for name in matches[:25]]
 
     @group.command(name="end", description="End this engagement")
     async def end(self, interaction: discord.Interaction) -> None:
+        # Deferred immediately: `_persist_engagement_summaries` below makes
+        # an LLM call per NPC, which routinely takes longer than Discord's
+        # 3-second interaction-response window -- without deferring first,
+        # the later `interaction.response.send_message` calls raced (and
+        # regularly lost to) that window, dying with `discord.errors.
+        # NotFound: 404 ... Unknown interaction` for everyone, staff
+        # included, once the token had already expired. Deferring buys the
+        # full 15-minute followup window instead.
+        await interaction.response.defer(ephemeral=True, thinking=True)
         thread = interaction.channel
         if not isinstance(thread, discord.Thread):
-            await interaction.response.send_message(
-                "Use this inside an engagement.", ephemeral=True
-            )
+            await interaction.followup.send("Use this inside an engagement.", ephemeral=True)
             return
 
         is_staff = isinstance(interaction.user, discord.Member) and await self.bot.is_staff(  # type: ignore[attr-defined]
@@ -731,14 +772,12 @@ class EngagementCog(commands.Cog):
             # attach NPCs to any scene (an ambient thread, an open
             # `/scene`), not just a dedicated engagement thread.
             if scene is None or not scene.participants.get("npcs"):
-                await interaction.response.send_message(
-                    "Not a registered engagement.", ephemeral=True
-                )
+                await interaction.followup.send("Not a registered engagement.", ephemeral=True)
                 return
             if not await self._actor_can_manage(
                 session, discord_user_id=interaction.user.id, scene=scene, is_staff=is_staff
             ):
-                await interaction.response.send_message(t("engagement_not_yours"), ephemeral=True)
+                await interaction.followup.send(t("engagement_not_yours"), ephemeral=True)
                 return
 
             await self._persist_engagement_summaries(session, scene)
@@ -759,7 +798,7 @@ class EngagementCog(commands.Cog):
 
         await thread.send(t("engagement_closing_line"))
         if not is_dedicated_engagement:
-            await interaction.response.send_message(t("engagement_ended_ok"), ephemeral=True)
+            await interaction.followup.send(t("engagement_ended_ok"), ephemeral=True)
             return
 
         closed_tag = (
@@ -770,7 +809,7 @@ class EngagementCog(commands.Cog):
         new_tags = [tg for tg in thread.applied_tags if tg.name != OPEN_TAG]
         if closed_tag is not None:
             new_tags.append(closed_tag)
-        await interaction.response.send_message(t("engagement_ended_ok"), ephemeral=True)
+        await interaction.followup.send(t("engagement_ended_ok"), ephemeral=True)
         await thread.edit(archived=True, applied_tags=new_tags, reason="Engagement ended")
 
     @group.command(name="join", description="Join an engagement you're physically present for")
@@ -792,7 +831,7 @@ class EngagementCog(commands.Cog):
                     "Not a registered engagement.", ephemeral=True
                 )
                 return
-            char = await self._get_character(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return

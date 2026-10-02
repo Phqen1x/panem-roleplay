@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     llm_base_url: str = "http://127.0.0.1:13305/v1"
     llm_model: str = "panem-omni"
     llm_api_key: str = ""
-    llm_timeout_ms: int = 10000
+    llm_timeout_ms: int = 60000
     llm_max_concurrent: int = 4
     llm_min_importance: int = 2
     llm_json_mode: bool = False

@@ -539,6 +539,13 @@ def make_content_with_vitals() -> ContentBundle:
                 thirst_value=25.0,
             ),
             "coal": Good(id="coal", name="Coal", base_price=1.0, category="fuel"),
+            "medicine": Good(
+                id="medicine",
+                name="Medicine",
+                base_price=15.0,
+                category="medical",
+                heal_value=30.0,
+            ),
         },
         jobs={},
         routes=[],
@@ -865,7 +872,7 @@ class TestActivityFrontend:
         at runtime (see the README's Activity-frontend notes) -- app.js
         imports the SDK from this same-origin path."""
         app_js = client.get("/app.js").text
-        assert 'DISCORD_SDK_URL = "/vendor/discord-embedded-app-sdk.js"' in app_js
+        assert 'DISCORD_SDK_URL = "/vendor/discord-embedded-app-sdk.js?v=1"' in app_js
         response = client.get("/vendor/discord-embedded-app-sdk.js")
         assert response.status_code == 200
         assert "DiscordSDK" in response.text
@@ -3726,6 +3733,7 @@ class TestDashboardResidents:
                 "status": None,
                 "opinion_label": "stranger",
                 "opinion_score": 0,
+                "is_black_market_contact": False,
             }
         ]
 
@@ -3950,6 +3958,128 @@ class TestDashboardResidents:
                 params={"discord_id": 42},
             )
         assert response.status_code == 404
+
+
+class TestDashboardResidentsBlackMarketReveal:
+    """`is_black_market_contact` on both the Residents list and an NPC's
+    own profile: only ever `True` once the viewer is allowed to know it --
+    staff always (`discord_staff.fetch_is_staff`, patched here the same
+    way `TestDashboardStaff` does), or a friendship stance with that
+    specific NPC (`blackmarket_svc.TRUSTED_STANCES`). `market_app`'s
+    `fence` NPC (district 1, `black_market_contact=True`) is reused from
+    the black-market trading tests below."""
+
+    async def test_list_hides_it_from_a_stranger(self, market_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_npc(db_session_factory, id="fence", name="Sal")
+        transport = httpx.ASGITransport(app=market_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}", params={"discord_id": 42}
+            )
+        resident = response.json()["residents"][0]
+        assert resident["is_black_market_contact"] is False
+
+    async def test_list_reveals_it_once_the_player_is_trusted(
+        self, market_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_npc(db_session_factory, id="fence", name="Sal")
+        async with db_session_factory() as session, session.begin():
+            session.add(
+                RelationshipRow(
+                    subject_kind=OwnerKind.CHARACTER.value,
+                    subject_id=str(char_id),
+                    object_kind=OwnerKind.NPC.value,
+                    object_id="fence",
+                    affinity=50,
+                    stance="likes",
+                )
+            )
+        transport = httpx.ASGITransport(app=market_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}", params={"discord_id": 42}
+            )
+        resident = response.json()["residents"][0]
+        assert resident["is_black_market_contact"] is True
+
+    async def test_list_reveals_it_to_staff_regardless_of_relationship(
+        self, market_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_npc(db_session_factory, id="fence", name="Sal")
+        with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=True)):
+            transport = httpx.ASGITransport(app=market_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.get(
+                    f"/activity/dashboard/residents/{char_id}", params={"discord_id": 42}
+                )
+        resident = response.json()["residents"][0]
+        assert resident["is_black_market_contact"] is True
+
+    async def test_profile_hides_it_from_a_stranger(self, market_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_npc(db_session_factory, id="fence", name="Sal")
+        transport = httpx.ASGITransport(app=market_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}/Sal", params={"discord_id": 42}
+            )
+        assert response.json()["is_black_market_contact"] is False
+
+    async def test_profile_reveals_it_once_the_player_is_trusted(
+        self, market_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_npc(db_session_factory, id="fence", name="Sal")
+        async with db_session_factory() as session, session.begin():
+            session.add(
+                RelationshipRow(
+                    subject_kind=OwnerKind.CHARACTER.value,
+                    subject_id=str(char_id),
+                    object_kind=OwnerKind.NPC.value,
+                    object_id="fence",
+                    affinity=50,
+                    stance="loves",
+                )
+            )
+        transport = httpx.ASGITransport(app=market_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/activity/dashboard/residents/{char_id}/Sal", params={"discord_id": 42}
+            )
+        assert response.json()["is_black_market_contact"] is True
+
+    async def test_profile_reveals_it_to_staff_regardless_of_relationship(
+        self, market_app, db_session_factory
+    ):
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_npc(db_session_factory, id="fence", name="Sal")
+        with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=True)):
+            transport = httpx.ASGITransport(app=market_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.get(
+                    f"/activity/dashboard/residents/{char_id}/Sal", params={"discord_id": 42}
+                )
+        assert response.json()["is_black_market_contact"] is True
+
+    async def test_non_contact_npc_never_reveals_regardless_of_staff(
+        self, market_app, db_session_factory
+    ):
+        """`black_market_contact` gates this before staff/friendship even
+        matter -- staff seeing `True` for every NPC would be a much bigger
+        bug than the one this feature fixes."""
+        char_id = await seed_character(db_session_factory, discord_id=42)
+        await seed_npc(db_session_factory, id="ordinary", name="Rue")
+        with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=True)):
+            transport = httpx.ASGITransport(app=market_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.get(
+                    f"/activity/dashboard/residents/{char_id}", params={"discord_id": 42}
+                )
+        resident = next(r for r in response.json()["residents"] if r["name"] == "Rue")
+        assert resident["is_black_market_contact"] is False
 
 
 class TestDashboardSocial:
@@ -4474,6 +4604,7 @@ class TestDashboardVitals:
         char_id = await seed_character(db_session_factory, discord_id=5)
         await give_inventory(db_session_factory, char_id, "grain", 2)
         await give_inventory(db_session_factory, char_id, "produce", 1)
+        await give_inventory(db_session_factory, char_id, "medicine", 1)
         await give_inventory(db_session_factory, char_id, "coal", 3)
         transport = httpx.ASGITransport(app=vitals_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -4485,6 +4616,8 @@ class TestDashboardVitals:
         assert [g["good_id"] for g in body["edible"]] == ["grain"]
         assert body["edible"][0]["cook_method"] == "oven"
         assert [g["good_id"] for g in body["drinkable"]] == ["produce"]
+        assert [g["good_id"] for g in body["healable"]] == ["medicine"]
+        assert body["healable"][0]["heal_value"] == 30.0
         assert body["has_bed"] is False
         assert len(body["entertainment"]) == 6
         assert {g["game_id"] for g in body["entertainment"]} == {
@@ -4557,6 +4690,57 @@ class TestDashboardVitals:
             )
         assert response.status_code == 200
         assert response.json()["thirst"] == 25.0
+
+    async def test_heal_consumes_inventory_and_restores_health(
+        self, vitals_app, db_session_factory
+    ):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"health": 50.0}
+        )
+        await give_inventory(db_session_factory, char_id, "medicine", 2)
+        transport = httpx.ASGITransport(app=vitals_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/vitals/{char_id}/heal",
+                json={"discord_id": 5, "good_id": "medicine"},
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["health"] == 80.0
+        async with db_session_factory() as session:
+            row = await session.get(Inventory, (OwnerKind.CHARACTER.value, str(char_id), "medicine"))
+            assert row.qty == 1
+
+    async def test_heal_refuses_without_inventory(self, vitals_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=vitals_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/vitals/{char_id}/heal",
+                json={"discord_id": 5, "good_id": "medicine"},
+            )
+        assert response.status_code == 400
+
+    async def test_heal_refuses_a_non_healing_good(self, vitals_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        await give_inventory(db_session_factory, char_id, "coal", 1)
+        transport = httpx.ASGITransport(app=vitals_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/vitals/{char_id}/heal",
+                json={"discord_id": 5, "good_id": "coal"},
+            )
+        assert response.status_code == 400
+
+    async def test_heal_returns_404_for_unknown_good(self, vitals_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        transport = httpx.ASGITransport(app=vitals_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/vitals/{char_id}/heal",
+                json={"discord_id": 5, "good_id": "nonexistent"},
+            )
+        assert response.status_code == 404
 
     async def test_entertain_credits_the_games_sanity_value(self, vitals_app, db_session_factory):
         char_id = await seed_character(
@@ -6088,3 +6272,43 @@ class TestDashboardTrade:
                 await session.execute(select(Trade).where(Trade.id == trade_id))
             ).scalar_one()
             assert trade.status == "pending"
+
+    async def test_staff_ambient_routes_mount_under_staff_prefix(
+        self, work_app, db_session_factory
+    ):
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            with patch("panem_api.discord_staff.fetch_is_staff", return_value=True):
+                # GET staff ambient
+                r_list = await client.get("/activity/dashboard/staff/ambient?discord_id=123")
+                assert r_list.status_code == 200
+                assert isinstance(r_list.json(), list)
+
+                # POST upload staff ambient
+                files = {"file": ("ambient.mp3", b"ID3\x03\x00\x00\x00\x00\x00#ambient data", "audio/mpeg")}
+                data = {
+                    "discord_id": "123",
+                    "title": "District 12 Anthem",
+                    "scope": "district",
+                    "district_id": "12",
+                }
+                r_upload = await client.post(
+                    "/activity/dashboard/staff/ambient/upload",
+                    data=data,
+                    files=files,
+                )
+                assert r_upload.status_code == 200
+                track = r_upload.json()
+                assert track["title"] == "District 12 Anthem"
+                assert track["scope"] == "district"
+                assert track["district_id"] == 12
+                track_id = track["id"]
+
+                # POST delete staff ambient
+                r_delete = await client.post(
+                    f"/activity/dashboard/staff/ambient/{track_id}/delete",
+                    json={"discord_id": 123},
+                )
+                assert r_delete.status_code == 200
+                assert r_delete.json() == {"deleted": True}
+

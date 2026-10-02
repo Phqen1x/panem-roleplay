@@ -40,6 +40,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from panem_api import discord_staff
+from panem_shared import ambient as ambient_svc
 from panem_shared import affliction_types as affliction_types_svc
 from panem_shared import avatars as avatars_svc
 from panem_shared import blackmarket as blackmarket_svc
@@ -82,7 +83,6 @@ from panem_shared.db.models import (
     PropertyAuction,
     RelationshipRow,
     Scene,
-    Shift,
     StaffAction,
     ThemeProfile,
     Trade,
@@ -115,8 +115,8 @@ from panem_shared.relationships import relationship_key
 from panem_shared.shifts import (
     already_worked_this_tick,
     can_work_from_current_location,
+    get_or_open_shift_for_character,
     has_job,
-    open_adhoc_shift_override,
     start_shift_game,
 )
 
@@ -1643,22 +1643,12 @@ def build_work_router(*, session_factory: async_sessionmaker[AsyncSession] | Non
                 raise _http_from_service_error(exc) from exc
 
             is_gamemaker = Position.GAMEMAKER.value in character.positions
-            open_shift = (
-                await session.execute(
-                    select(Shift).where(Shift.character_id == character.id, Shift.result.is_(None))
-                )
-            ).scalar_one_or_none()
-            if open_shift is None:
-                current_tick = await _current_tick(session)
-                open_shift = open_adhoc_shift_override(
-                    character, current_tick, is_staff=is_gamemaker
-                )
-                if open_shift is None:
-                    raise HTTPException(status_code=400, detail="job_no_open_shift")
-                session.add(open_shift)
-                await session.flush()
-
             current_tick = await _current_tick(session)
+            open_shift = await get_or_open_shift_for_character(
+                session, character, current_tick, is_staff=is_gamemaker
+            )
+            if open_shift is None:
+                raise HTTPException(status_code=400, detail="job_no_open_shift")
             if not is_gamemaker and not can_work_from_current_location(character, current_tick):
                 raise HTTPException(
                     status_code=400,
@@ -1689,6 +1679,7 @@ class GoodPrice(BaseModel):
     # that aren't directly consumable (see `content.schemas.Good`).
     hunger_value: float = 0.0
     thirst_value: float = 0.0
+    heal_value: float = 0.0
     cook_method: str | None = None
     stock: float | None = None
     """Today's remaining purchasable stock (`MarketPrice.supply`) --
@@ -1762,6 +1753,7 @@ def build_market_router(
                         price=price,
                         hunger_value=good.hunger_value,
                         thirst_value=good.thirst_value,
+                        heal_value=good.heal_value,
                         cook_method=good.cook_method,
                         stock=stock,
                     )
@@ -2084,6 +2076,16 @@ class ResidentSummary(BaseModel):
     `loves`), not itself an orderable scale a client should try to sort
     alphabetically. `0` (not `None`) alongside a `"stranger"` label when no
     row exists, `None` for a `"user"` row same as `opinion_label`."""
+    is_black_market_contact: bool = False
+    """Whether this NPC is flagged `black_market_contact: true` in content
+    AND the viewer is currently allowed to know it -- staff always, or a
+    player whose `opinion_label` with this specific NPC has reached
+    `blackmarket.TRUSTED_STANCES` (Likes/Loves), the exact same threshold
+    `/blackmarket` itself requires before trading. `False` (never omitted
+    or left ambiguous) rather than simply not flagging the row, since the
+    fence's identity is otherwise undiscoverable in the game at all --
+    nothing else in the dashboard or bot ever surfaces it. Always `False`
+    for a `"user"` row."""
 
 
 class ResidentsResponse(BaseModel):
@@ -2100,6 +2102,10 @@ class ResidentProfileResponse(BaseModel):
     stance: str
     appearance: str
     backstory: str
+    is_black_market_contact: bool = False
+    """Same reveal rule as `ResidentSummary.is_black_market_contact` --
+    staff always, or a friendship stance (Likes/Loves) with this NPC
+    specifically."""
 
 
 class CharacterProfileResponse(BaseModel):
@@ -2123,14 +2129,35 @@ class CharacterProfileResponse(BaseModel):
 
 
 def build_residents_router(
-    *, content: ContentBundle, session_factory: async_sessionmaker[AsyncSession] | None
+    *,
+    content: ContentBundle,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    discord_token: str = "",
+    discord_guild_id: int = 0,
+    staff_role_id: int = 0,
 ) -> APIRouter:
     """The Residents tab's REST surface: mirrors `/resident list|where|
     profile`. Unlike the split Discord commands, `list` here already
     includes each resident's current location (an improvement in the same
     spirit as the Crime tab's burgle-targets -- avoiding a second
-    request per NPC the dashboard would otherwise need to make)."""
+    request per NPC the dashboard would otherwise need to make).
+
+    `discord_token`/`discord_guild_id`/`staff_role_id` back a real (not
+    cosmetic) `discord_staff.fetch_is_staff` check in both routes below,
+    to decide `is_black_market_contact` -- unlike `/identify`'s own
+    `is_staff` (UI-only, re-checked at the actual point of write), this
+    one gates real information disclosure: a district's fence NPC is
+    otherwise undiscoverable anywhere in the game, so the client can't be
+    trusted to decide for itself who staff is."""
     router = APIRouter(prefix="/activity/dashboard/residents", tags=["dashboard"])
+
+    async def _is_staff(discord_id: int) -> bool:
+        return await discord_staff.fetch_is_staff(
+            discord_id,
+            bot_token=discord_token,
+            guild_id=discord_guild_id,
+            staff_role_id=staff_role_id,
+        )
 
     async def _resolve_npc(session: AsyncSession, character: Character, name: str) -> Npc:
         npc = (
@@ -2183,6 +2210,7 @@ def build_residents_router(
 
     @router.get("/{character_id}", response_model=ResidentsResponse)
     async def resident_list(character_id: int, discord_id: int) -> ResidentsResponse:
+        is_staff = await _is_staff(discord_id)
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             character = await _resolve_owned_character(
@@ -2249,6 +2277,9 @@ def build_residents_router(
                 job = all_jobs.get(npc.job_id) if npc.job_id else None
                 location = locations_by_id.get(npc.location_id) if npc.location_id else None
                 relationship = relationship_by_npc_id.get(npc.id)
+                stance = relationship.stance if relationship else Stance.STRANGER.value
+                authored = content.npcs.get(npc.id)
+                is_contact = bool(authored is not None and authored.black_market_contact)
                 residents.append(
                     ResidentSummary(
                         name=npc.name,
@@ -2256,8 +2287,10 @@ def build_residents_router(
                         location_id=npc.location_id,
                         location_name=location.name if location is not None else None,
                         kind="npc",
-                        opinion_label=relationship.stance if relationship else Stance.STRANGER.value,
+                        opinion_label=stance,
                         opinion_score=relationship.affinity if relationship else 0,
+                        is_black_market_contact=is_contact
+                        and (is_staff or stance in blackmarket_svc.TRUSTED_STANCES),
                     )
                 )
             for other in other_characters:
@@ -2282,6 +2315,7 @@ def build_residents_router(
     async def resident_profile(
         character_id: int, resident_name: str, discord_id: int
     ) -> ResidentProfileResponse:
+        is_staff = await _is_staff(discord_id)
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             character = await _resolve_owned_character(
@@ -2303,6 +2337,7 @@ def build_residents_router(
             authored = content.npcs.get(npc.id)
             appearance = npc.appearance_override or (authored.appearance if authored else "")
             backstory = npc.backstory_override or (authored.backstory if authored else "")
+            is_contact = bool(authored is not None and authored.black_market_contact)
         return ResidentProfileResponse(
             name=npc.name,
             job_title=job_name,
@@ -2312,6 +2347,8 @@ def build_residents_router(
             stance=stance,
             appearance=appearance,
             backstory=backstory,
+            is_black_market_contact=is_contact
+            and (is_staff or stance in blackmarket_svc.TRUSTED_STANCES),
         )
 
     @router.get("/{character_id}/character/{other_name}", response_model=CharacterProfileResponse)
@@ -3364,8 +3401,9 @@ class VitalsConsumable(BaseModel):
     good_id: str
     name: str
     qty: int
-    hunger_value: float
-    thirst_value: float
+    hunger_value: float = 0.0
+    thirst_value: float = 0.0
+    heal_value: float = 0.0
     cook_method: str | None = None
 
 
@@ -3386,6 +3424,7 @@ class VitalsStatusResponse(BaseModel):
     fatigue_restore_per_tick: float
     edible: list[VitalsConsumable]
     drinkable: list[VitalsConsumable]
+    healable: list[VitalsConsumable]
     entertainment: list[VitalsEntertainmentOption]
 
 
@@ -3410,6 +3449,17 @@ class VitalsDrinkResponse(BaseModel):
     good_id: str
     good_name: str
     thirst: float
+
+
+class VitalsHealRequest(BaseModel):
+    discord_id: int
+    good_id: str
+
+
+class VitalsHealResponse(BaseModel):
+    good_id: str
+    good_name: str
+    health: float
 
 
 class VitalsEntertainRequest(BaseModel):
@@ -3449,6 +3499,7 @@ def build_vitals_router(
                     qty=row.qty,
                     hunger_value=good.hunger_value,
                     thirst_value=good.thirst_value,
+                    heal_value=good.heal_value,
                     cook_method=good.cook_method,
                 )
                 for row, good in pairs
@@ -3461,10 +3512,24 @@ def build_vitals_router(
                     qty=row.qty,
                     hunger_value=good.hunger_value,
                     thirst_value=good.thirst_value,
+                    heal_value=good.heal_value,
                     cook_method=good.cook_method,
                 )
                 for row, good in pairs
                 if good.thirst_value > 0
+            ]
+            healable = [
+                VitalsConsumable(
+                    good_id=good.id,
+                    name=good.name,
+                    qty=row.qty,
+                    hunger_value=good.hunger_value,
+                    thirst_value=good.thirst_value,
+                    heal_value=good.heal_value,
+                    cook_method=good.cook_method,
+                )
+                for row, good in pairs
+                if good.heal_value > 0
             ]
             entertainment = [
                 VitalsEntertainmentOption(
@@ -3488,6 +3553,7 @@ def build_vitals_router(
             fatigue_restore_per_tick=round(fatigue_restore_per_tick, 2),
             edible=edible,
             drinkable=drinkable,
+            healable=healable,
             entertainment=entertainment,
         )
 
@@ -3526,6 +3592,23 @@ def build_vitals_router(
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
         return VitalsDrinkResponse(good_id=good.id, good_name=good.name, thirst=round(thirst, 1))
+
+    @router.post("/{character_id}/heal", response_model=VitalsHealResponse)
+    async def vitals_heal(character_id: int, body: VitalsHealRequest) -> VitalsHealResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            good = content.goods.get(body.good_id)
+            if good is None:
+                raise HTTPException(status_code=404, detail="good_not_healing")
+            current_tick = await _current_tick(session)
+            try:
+                health = await sustenance_svc.heal(session, character, good, current_tick)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return VitalsHealResponse(good_id=good.id, good_name=good.name, health=round(health, 1))
 
     @router.post("/{character_id}/entertain", response_model=VitalsEntertainResponse)
     async def vitals_entertain(
@@ -4052,6 +4135,20 @@ def build_rp_mode_router(
             return await _status_response(session, character)
 
     return router
+
+
+class AmbientTrackResponse(BaseModel):
+    id: int
+    title: str
+    file_url: str
+    scope: str
+    district_id: int | None = None
+    location_id: str | None = None
+    channel_id: str | None = None
+
+
+class DeleteAmbientTrackRequest(BaseModel):
+    discord_id: int
 
 
 def build_staff_router(
@@ -4925,6 +5022,92 @@ def build_staff_router(
             )
         return StaffNpcSummary(id=npc_id, name=body.name)
 
+    # ---------------------------------------------------- Ambient Music
+
+    @router.get("/ambient", response_model=list[AmbientTrackResponse])
+    async def list_staff_ambient_tracks(discord_id: int) -> list[AmbientTrackResponse]:
+        await _require_staff(discord_id)
+        factory = _require_session_factory(session_factory)
+        try:
+            async with session_scope(factory) as session:
+                tracks = await ambient_svc.list_ambient_tracks(session)
+                return [
+                    AmbientTrackResponse(
+                        id=t.id,
+                        title=t.title,
+                        file_url=f"/{t.file_path}",
+                        scope=t.scope,
+                        district_id=t.district_id,
+                        location_id=t.location_id,
+                        channel_id=t.channel_id,
+                    )
+                    for t in tracks
+                ]
+        except Exception as exc:
+            logger.warning("Could not list ambient tracks (table may not exist yet): %s", exc)
+            return []
+
+    @router.post("/ambient/upload", response_model=AmbientTrackResponse)
+    async def upload_staff_ambient_track(
+        discord_id: int = Form(...),
+        title: str = Form(...),
+        scope: str = Form("global"),
+        district_id: str | None = Form(None),
+        location_id: str | None = Form(None),
+        channel_id: str | None = Form(None),
+        file: UploadFile = File(...),
+    ) -> AmbientTrackResponse:
+        await _require_staff(discord_id)
+        factory = _require_session_factory(session_factory)
+
+        parsed_district_id: int | None = None
+        if district_id is not None and str(district_id).strip():
+            try:
+                parsed_district_id = int(str(district_id).strip())
+            except ValueError:
+                pass
+
+        clean_location_id = location_id.strip() if location_id and location_id.strip() else None
+        clean_channel_id = channel_id.strip() if channel_id and channel_id.strip() else None
+
+        file_bytes = await file.read()
+        uploads_root = static_dir or STATIC_DIR
+        rel_path = ambient_svc.save_ambient_audio_bytes(file_bytes, file.filename or "track.mp3", uploads_root)
+        async with session_scope(factory) as session:
+            try:
+                track = await ambient_svc.create_ambient_track(
+                    session,
+                    title=title,
+                    file_path=rel_path,
+                    scope=scope,
+                    district_id=parsed_district_id,
+                    location_id=clean_location_id,
+                    channel_id=clean_channel_id,
+                    created_by_staff_discord_id=discord_id,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            return AmbientTrackResponse(
+                id=track.id,
+                title=track.title,
+                file_url=f"/{track.file_path}",
+                scope=track.scope,
+                district_id=track.district_id,
+                location_id=track.location_id,
+                channel_id=track.channel_id,
+            )
+
+    @router.post("/ambient/{track_id}/delete")
+    async def delete_staff_ambient_track(track_id: int, body: DeleteAmbientTrackRequest) -> dict[str, bool]:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            try:
+                await ambient_svc.delete_ambient_track(session, track_id)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"deleted": True}
+
     return router
 
 
@@ -5289,5 +5472,41 @@ def build_district_lore_router(
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
             return WorldLoreResponse(alternate_universe_notes=row.alternate_universe_notes)
+
+    return router
+
+
+def build_ambient_router(
+    *, session_factory: async_sessionmaker[AsyncSession] | None
+) -> APIRouter:
+    router = APIRouter(prefix="/activity/dashboard/ambient", tags=["dashboard"])
+
+    @router.get("/tracks", response_model=list[AmbientTrackResponse])
+    async def get_ambient_tracks(
+        district_id: int | None = None,
+        location_id: str | None = None,
+        channel_id: str | None = None,
+    ) -> list[AmbientTrackResponse]:
+        factory = _require_session_factory(session_factory)
+        try:
+            async with session_scope(factory) as session:
+                tracks = await ambient_svc.get_matching_ambient_tracks(
+                    session, district_id=district_id, location_id=location_id, channel_id=channel_id
+                )
+                return [
+                    AmbientTrackResponse(
+                        id=t.id,
+                        title=t.title,
+                        file_url=f"/{t.file_path}",
+                        scope=t.scope,
+                        district_id=t.district_id,
+                        location_id=t.location_id,
+                        channel_id=t.channel_id,
+                    )
+                    for t in tracks
+                ]
+        except Exception as exc:
+            logger.warning("Could not fetch ambient tracks (table may not exist yet): %s", exc)
+            return []
 
     return router

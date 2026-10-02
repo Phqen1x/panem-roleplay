@@ -15,7 +15,7 @@ from discord.ext import commands
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from panem_bot import autocomplete
+from panem_bot import autocomplete, utils
 from panem_bot.services import characters as characters_svc
 from panem_bot.services import jobs as jobs_svc
 from panem_bot.strings import t
@@ -30,16 +30,6 @@ class ResidentCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    async def _get_character(
-        self, session: AsyncSession, user_id: int, name: str
-    ) -> Character | None:
-        user = await characters_svc.get_or_create_user(session, user_id)
-        return (
-            await session.execute(
-                select(Character).where(Character.user_id == user.id, Character.name == name)
-            )
-        ).scalar_one_or_none()
-
     group = app_commands.Group(name="resident", description="Look up a district's NPC residents")
 
     @group.command(name="list", description="List residents of a character's current district")
@@ -47,7 +37,7 @@ class ResidentCog(commands.Cog):
     @app_commands.autocomplete(character=autocomplete.own_approved)
     async def resident_list(self, interaction: discord.Interaction, character: str) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await self._get_character(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -90,7 +80,7 @@ class ResidentCog(commands.Cog):
         self, interaction: discord.Interaction, character: str, resident: str
     ) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await self._get_character(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -135,7 +125,7 @@ class ResidentCog(commands.Cog):
         self, interaction: discord.Interaction, character: str, resident: str
     ) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await self._get_character(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -165,18 +155,25 @@ class ResidentCog(commands.Cog):
             traits = ", ".join(npc.traits) if npc.traits else "unknown"
             tone = npc.speech_style.get("tone", "unknown") if npc.speech_style else "unknown"
             authored = content.npcs.get(npc.id)
-            # A staff edit (`/staff npc set-appearance`/`set-background`)
-            # always wins over the authored content -- a staff-created NPC
-            # (`/staff npc add`) has no authored entry at all, so the
-            # override is the only place this can live for them.
             appearance = npc.appearance_override or (authored.appearance if authored else "")
             backstory = npc.backstory_override or (authored.backstory if authored else "")
+            is_contact = bool(authored is not None and authored.black_market_contact)
+
+        is_staff = False
+        if isinstance(interaction.user, discord.Member):
+            is_staff = await self.bot.is_staff(interaction.user)  # type: ignore[attr-defined]
 
         embed = discord.Embed(title=name)
         embed.add_field(name="Job", value=job_name)
         embed.add_field(name="Traits", value=traits.capitalize())
         embed.add_field(name="Speech", value=tone.capitalize())
         embed.add_field(name=f"Opinion of {char.name}", value=stance.capitalize())
+        if is_contact and (is_staff or stance in ("likes", "loves")):
+            embed.add_field(
+                name="Black Market Contact",
+                value="Fence — trades illegal wares (contraband and stolen goods) at Outskirts at night",
+                inline=False,
+            )
         if appearance:
             embed.add_field(name="Appearance", value=appearance, inline=False)
         if backstory:
@@ -198,7 +195,7 @@ class ResidentCog(commands.Cog):
         if not character_name:
             return []
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await self._get_character(session, interaction.user.id, character_name)
+            char = await utils.get_character_case_insensitive(session, interaction.user.id, character_name)
             if char is None:
                 return []
             names = (

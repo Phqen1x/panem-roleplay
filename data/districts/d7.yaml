@@ -6,6 +6,7 @@ produces:
 imports:
 - fish
 - grain
+- livestock
 - medicine
 - power
 - produce

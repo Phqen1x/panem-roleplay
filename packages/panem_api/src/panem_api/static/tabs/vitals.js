@@ -39,6 +39,7 @@ export function mount(root, ctx) {
   const iframeHost = el("div", {});
   const eatHost = el("div", {});
   const drinkHost = el("div", {});
+  const healHost = el("div", {});
   const sleepHost = el("div", {});
   const entertainHost = el("div", {});
 
@@ -54,6 +55,7 @@ export function mount(root, ctx) {
     iframeHost,
     el("div", { class: "panel" }, el("h2", { text: "Eat" }), eatHost),
     el("div", { class: "panel" }, el("h2", { text: "Drink" }), drinkHost),
+    el("div", { class: "panel" }, el("h2", { text: "Heal" }), healHost),
     el("div", { class: "panel" }, el("h2", { text: "Sleep" }), sleepHost),
     el("div", { class: "panel" }, el("h2", { text: "Entertainment" }), entertainHost)
   );
@@ -192,6 +194,42 @@ export function mount(root, ctx) {
     }
   }
 
+  function renderHeal(status, characterId, discordId) {
+    healHost.innerHTML = "";
+    const items = status.healable || [];
+    if (items.length === 0) {
+      healHost.append(el("p", { class: "tab-status" }, "No medical goods in inventory."));
+      return;
+    }
+    for (const good of items) {
+      const healBtn = el("button", { class: "btn", type: "button" }, "Use");
+      healBtn.addEventListener("click", async () => {
+        resultLine.textContent = "";
+        try {
+          const body = await ctx.apiFetch(`/activity/dashboard/vitals/${characterId}/heal`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ discord_id: discordId, good_id: good.good_id }),
+          });
+          resultLine.className = "result-line win";
+          resultLine.textContent = `${body.good_name} used -- health now ${body.health}/100.`;
+          refresh();
+        } catch (err) {
+          resultLine.className = "result-line lose";
+          resultLine.textContent = err.message;
+        }
+      });
+      healHost.append(
+        el(
+          "div",
+          { class: "field-row" },
+          el("span", {}, `${good.name} x${good.qty} (+${good.heal_value} health)`),
+          healBtn
+        )
+      );
+    }
+  }
+
   function renderSleep(status, characterId, discordId) {
     sleepHost.innerHTML = "";
     const ticksInput = el("input", {
@@ -267,6 +305,7 @@ export function mount(root, ctx) {
     metersHost.innerHTML = "";
     eatHost.innerHTML = "";
     drinkHost.innerHTML = "";
+    healHost.innerHTML = "";
     sleepHost.innerHTML = "";
     entertainHost.innerHTML = "";
     const characterId = ctx.characterId();
@@ -310,6 +349,7 @@ export function mount(root, ctx) {
     );
     renderEat(status, characterId, discordId);
     renderDrink(status, characterId, discordId);
+    renderHeal(status, characterId, discordId);
     renderSleep(status, characterId, discordId);
     renderEntertain(status, characterId, discordId);
   }

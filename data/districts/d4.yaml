@@ -6,6 +6,7 @@ produces:
 - career_training
 imports:
 - grain
+- livestock
 - medicine
 - power
 - produce

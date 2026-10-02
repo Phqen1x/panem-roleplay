@@ -17,6 +17,7 @@ from panem_bot.errors import ServiceError, ValidationFailed
 from panem_bot.services import afflictions as afflictions_svc
 from panem_bot.services import characters as characters_svc
 from panem_bot.services import rp_modes as rp_modes_svc
+from panem_bot.services import shifts as shifts_svc
 from panem_bot.strings import t
 from panem_bot.views import (
     CHAR_ID_FOOTER_PREFIX,
@@ -41,7 +42,7 @@ from panem_shared.db.models import (
     User,
     WorldClock,
 )
-from panem_shared.enums import CharacterStatus, DayPhase, RpMode
+from panem_shared.enums import CharacterStatus, DayPhase, RpMode, ShiftResult
 from panem_shared.logging import get_logger
 from panem_shared.redis_keys import CHARACTER_MODE_SWITCH_PENDING_CHANNEL, CHARACTER_PENDING_CHANNEL
 from panem_shared.simtime import clock_string, phase_time_range
@@ -626,6 +627,9 @@ class CharacterCog(commands.Cog):
                 return
             new_mode_label = character.pending_rp_mode.title()
             rp_modes_svc.apply_staged_mode_switch(character, dt.datetime.now(dt.UTC))
+            clock = await session.get(WorldClock, 1)
+            if clock is not None:
+                await shifts_svc.get_or_open_shift_for_character(session, character, clock.tick)
             user = await session.get(User, character.user_id)
             char_name, discord_id = character.name, user.discord_id
 
@@ -1407,23 +1411,39 @@ class CharacterCog(commands.Cog):
                 )
                 location_name = location.name if location else row.location_id
 
-            open_shift = (
-                await session.execute(
-                    select(Shift).where(Shift.character_id == row.id, Shift.result.is_(None))
-                )
-            ).scalar_one_or_none()
+            clock = await session.get(WorldClock, 1)
+            current_tick = clock.tick if clock is not None else 0
+            open_shift = await shifts_svc.get_or_open_shift_for_character(
+                session, row, current_tick
+            )
             if open_shift is not None:
-                clock = await session.get(WorldClock, 1)
-                current_tick = clock.tick if clock is not None else 0
                 due_time = clock_string(open_shift.tick_due)
                 if current_tick >= open_shift.tick_due:
                     shift_value = f"Overdue since {due_time} -- work it now!"
                 else:
                     shift_value = f"Open, due by {due_time}"
             elif row.shift_phase is not None:
-                shift_value = (
-                    f"No shift open -- works {phase_time_range(DayPhase(row.shift_phase))}"
-                )
+                _phase_start, phase_end = shifts_svc.phase_window_for_tick(current_tick)
+                prior_shift = (
+                    await session.execute(
+                        select(Shift).where(
+                            Shift.character_id == row.id,
+                            Shift.tick_due == phase_end,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if prior_shift is not None and prior_shift.result == ShiftResult.COMPLETED.value:
+                    shift_value = (
+                        f"Shift completed for today -- works {phase_time_range(DayPhase(row.shift_phase))}"
+                    )
+                elif prior_shift is not None and prior_shift.result == ShiftResult.MISSED.value:
+                    shift_value = (
+                        f"Shift missed for today -- works {phase_time_range(DayPhase(row.shift_phase))}"
+                    )
+                else:
+                    shift_value = (
+                        f"No shift open -- works {phase_time_range(DayPhase(row.shift_phase))}"
+                    )
             else:
                 shift_value = "No job"
 

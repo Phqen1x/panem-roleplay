@@ -22,7 +22,7 @@ from panem_bot.services import jail as jail_svc
 from panem_bot.services import proxy as proxy_svc
 from panem_bot.services import shifts as shifts_svc
 from panem_bot.strings import t
-from panem_shared import constants
+from panem_shared import constants, hostility, relationships
 from panem_shared.db.models import (
     Character,
     DialogueLog,
@@ -35,7 +35,6 @@ from panem_shared.db.models import (
     RelationshipRow,
     Scene,
     SceneMessage,
-    Shift,
     User,
     WorldClock,
     WorldLoreSettings,
@@ -120,7 +119,9 @@ class ProxyCog(commands.Cog):
     ) -> list[app_commands.Choice[str]]:
         if not isinstance(interaction.channel, discord.Thread):
             return []
-        async with self.bot.db() as session:
+        session_factory = getattr(self.bot, "session_factory", None)
+        ctx_mgr = session_factory() if session_factory is not None else self.bot.db()
+        async with ctx_mgr as session:
             forum_registered = (
                 await session.execute(
                     select(DiscordChannel).where(
@@ -131,10 +132,13 @@ class ProxyCog(commands.Cog):
             ).scalar_one_or_none()
             if forum_registered is None:
                 return []
-            user = await characters_svc.get_or_create_user(session, interaction.user.id)
-            stmt = select(Character).where(
-                Character.user_id == user.id,
-                Character.status == CharacterStatus.APPROVED.value,
+            stmt = (
+                select(Character)
+                .join(User, Character.user_id == User.id)
+                .where(
+                    User.discord_id == interaction.user.id,
+                    Character.status == CharacterStatus.APPROVED.value,
+                )
             )
             if current:
                 stmt = stmt.where(Character.name.ilike(f"%{current}%"))
@@ -194,14 +198,13 @@ class ProxyCog(commands.Cog):
                     character.sanity + constants.SANITY_GAIN_PER_INTERACTION,
                 )
 
-        open_shift = (
-            await session.execute(
-                select(Shift).where(Shift.character_id == character.id, Shift.result.is_(None))
-            )
-        ).scalar_one_or_none()
-        if open_shift is None:
-            return
         if not qualifies:
+            return
+
+        open_shift = await shifts_svc.get_or_open_shift_for_character(
+            session, character, current_tick
+        )
+        if open_shift is None:
             return
         if not shifts_svc.can_earn_rp_credit_anywhere(
             character
@@ -506,6 +509,27 @@ class ProxyCog(commands.Cog):
             world_lore = await session.get(WorldLoreSettings, 1)
             world_notes = world_lore.alternate_universe_notes if world_lore is not None else None
 
+            # A hostile action (spitting on, hitting, attacking, or
+            # otherwise harming/annoying an NPC) tanks that NPC's opinion
+            # of the speaker immediately, independent of whether they end
+            # up replying at all -- `speaking` is reused as the targeting
+            # set (every joined NPC in a strict 1:1, only the ones
+            # actually named otherwise) since "who does this message
+            # concern" is exactly the same question `npcs_that_should_
+            # reply` already answers for the reply itself.
+            if hostility.is_hostile_action(message_content):
+                for npc in speaking:
+                    relationship = await relationships.get_or_create_relationship(
+                        session,
+                        (OwnerKind.CHARACTER.value, str(speaker.id)),
+                        (OwnerKind.NPC.value, npc.id),
+                    )
+                    relationships.apply_affinity_delta(
+                        relationship,
+                        -constants.HOSTILE_ACTION_AFFINITY_PENALTY,
+                        current_tick=current_tick,
+                    )
+
             for npc in speaking:
                 try:
                     await dialogue_svc.check_and_spend_stamina(
@@ -564,6 +588,9 @@ class ProxyCog(commands.Cog):
                     if len(raw_background) > constants.NPC_BACKGROUND_PROMPT_MAX_LEN:
                         npc_background += "…"
 
+                is_black_market_contact = bool(
+                    npc_content is not None and npc_content.black_market_contact
+                )
                 reply = await dialogue_svc.generate_reply(
                     npc=npc,
                     district=district,
@@ -585,6 +612,7 @@ class ProxyCog(commands.Cog):
                     known=known,
                     district_on_edge=jail_svc.is_crackdown_active(district_state, current_tick),
                     district_lore=district_lore,
+                    is_black_market_contact=is_black_market_contact,
                 )
 
                 sent = await webhook.send(

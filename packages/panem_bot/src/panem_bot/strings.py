@@ -328,10 +328,12 @@ STRINGS: dict[str, str] = {
     "themselves in their current RP mode.",
     "good_not_edible": "**{good}** isn't something {name} can eat.",
     "good_not_drinkable": "**{good}** isn't something {name} can drink.",
+    "good_not_healing": "**{good}** isn't something {name} can use to heal.",
     "sustenance_no_inventory": "**{name}** doesn't have any **{good}** to consume.",
     "unknown_game": "**{game}** isn't one of the Vitals tab's entertainment games.",
     "eat_ok": "**{name}** eats some **{good}** and feels better (hunger now {hunger}/100).",
     "drink_ok": "**{name}** drinks some **{good}** (thirst now {thirst}/100).",
+    "heal_ok": "**{name}** uses some **{good}** to treat their injuries (health now {health}/100).",
     "entertain_ok": "**{name}** takes some time to unwind (sanity now {sanity}/100).",
     # NPC engagements (group RP threads with one or more NPCs, plus other players'
     # characters by invitation)

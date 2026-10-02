@@ -23,13 +23,14 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from panem_shared import constants, job_levels
+from panem_shared import constants, job_levels, simtime
 from panem_shared.content.loader import ContentBundle
 from panem_shared.content.schemas import District
 from panem_shared.db.models import Character, MarketPrice, Shift
-from panem_shared.enums import Position
+from panem_shared.enums import CharacterStatus, Position
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,6 +268,80 @@ def open_adhoc_shift_override(
         tick_opened=tick,
         tick_due=tick + constants.SHIFT_DURATION_TICKS,
     )
+
+
+def is_in_shift_phase(character: Character, tick: int) -> bool:
+    """Whether `character` is assigned to work during `tick`'s day phase."""
+    if not character.job_title or not character.shift_phase:
+        return False
+    _, phase, _, _ = simtime.current(tick)
+    return character.shift_phase.lower() == phase.value
+
+
+def phase_window_for_tick(tick: int) -> tuple[int, int]:
+    """Return `(phase_start_tick, phase_end_tick)` for the day phase covering `tick`."""
+    start = tick - (tick % simtime.TICKS_PER_PHASE)
+    end = start + simtime.TICKS_PER_PHASE
+    return start, end
+
+
+async def get_or_open_shift_for_character(
+    session: AsyncSession,
+    character: Character,
+    current_tick: int,
+    *,
+    is_staff: bool = False,
+) -> Shift | None:
+    """Returns an open `Shift` for `character`, opening one if they are currently
+    in their shift phase (or Gamemaker/staff adhoc override) and have not yet
+    completed or missed a shift for this phase window."""
+    open_shift = (
+        await session.execute(
+            select(Shift).where(Shift.character_id == character.id, Shift.result.is_(None))
+        )
+    ).scalar_one_or_none()
+    if open_shift is not None:
+        return open_shift
+
+    adhoc_shift = open_adhoc_shift_override(character, current_tick, is_staff=is_staff)
+    if adhoc_shift is not None:
+        session.add(adhoc_shift)
+        await session.flush()
+        return adhoc_shift
+
+    if (
+        character.status != CharacterStatus.APPROVED.value
+        or not has_job(character)
+        or not is_in_shift_phase(character, current_tick)
+    ):
+        return None
+
+    phase_start, phase_end = phase_window_for_tick(current_tick)
+    existing_shift = (
+        await session.execute(
+            select(Shift).where(
+                Shift.character_id == character.id,
+                Shift.tick_due == phase_end,
+            )
+        )
+    ).scalar_one_or_none()
+
+    if existing_shift is not None:
+        if existing_shift.result is not None:
+            return None
+        return existing_shift
+
+    assert character.job_title is not None
+    shift = Shift(
+        character_id=character.id,
+        job_id=character.job_title,
+        tick_opened=phase_start,
+        tick_due=phase_end,
+        result=None,
+    )
+    session.add(shift)
+    await session.flush()
+    return shift
 
 
 def already_worked_this_tick(shift: Shift, tick: int) -> bool:

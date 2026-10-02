@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import uuid
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -24,6 +25,17 @@ from panem_shared.logging import get_logger
 from panem_shared.settings import Settings
 
 logger = get_logger(component="bot")
+
+
+class _AutocompleteNotFoundFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.exc_info:
+            exc = record.exc_info[1]
+            if isinstance(exc, (discord.NotFound, discord.HTTPException)):
+                code = getattr(exc, "code", None)
+                if code in (10062, 40060):
+                    return False
+        return True
 
 INTENTS = discord.Intents.default()
 INTENTS.message_content = True
@@ -82,6 +94,7 @@ class PanemBot(commands.Bot):
         self.content = load_content(self.data_dir)
 
     async def setup_hook(self) -> None:
+        logging.getLogger("discord.app_commands.tree").addFilter(_AutocompleteNotFoundFilter())
         for ext in COGS:
             await self.load_extension(ext)
 
@@ -123,6 +136,10 @@ class PanemBot(commands.Bot):
             return
 
         original = error.original if isinstance(error, app_commands.CommandInvokeError) else error
+        if isinstance(original, (discord.NotFound, discord.HTTPException)) and getattr(original, "code", None) in (10062, 40060):
+            # Expired/superseded interaction token -- occurs naturally when
+            # users type quickly in Discord or duplicate responses race.
+            return
         ref = uuid.uuid4().hex[:8]
         logger.error(
             "app_command_error",

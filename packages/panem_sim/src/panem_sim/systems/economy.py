@@ -349,7 +349,8 @@ def _update_prices(state: WorldState, ctx: TickContext, supply: Supply) -> None:
             good = ctx.content.goods.get(good_id)
             if good is None:
                 continue
-            qty_supplied = max(district_supply.get(good_id, 0.0), constants.MARKET_SUPPLY_FLOOR)
+            floor = constants.MARKET_MINIMUM_STOCK.get(good_id, constants.MARKET_SUPPLY_FLOOR)
+            qty_supplied = max(district_supply.get(good_id, 0.0), floor)
             demand = _demand_for_good(district, good_id, active_players=active_players)
             ratio = demand / qty_supplied
             clamped = min(

@@ -707,3 +707,73 @@ class TestIllicitGoods:
         assert len(events) == 1
         assert "Contraband" not in events[0].text
         assert "contraband_weapons" not in events[0].text
+
+
+class TestMinimumStock:
+    def test_market_stocks_minimum_food_and_medicine_with_no_production(self):
+        """Even with zero shifts and zero NPC output, every district trading
+        essential goods receives at least 3 meat, 3 grain, 3 seafood, 3 fruits/drinks,
+        and at least 1 medicine per sim day."""
+        district = make_district(
+            1,
+            produces=["livestock"],
+            imports=["grain", "fish", "produce", "medicine", "coal"],
+            population_base=10,
+        )
+        goods = [
+            make_good("livestock", base_price=12.0),
+            make_good("grain", base_price=2.0),
+            make_good("fish", base_price=5.0),
+            make_good("produce", base_price=3.0),
+            make_good("medicine", base_price=15.0),
+            make_good("coal", base_price=4.0),
+        ]
+        content = make_content([district], goods)
+        state = make_state(districts={1: make_district_row(1)})
+
+        economy.run(state, make_ctx(content))
+
+        assert state.market_prices[(1, "livestock")].supply == 3.0
+        assert state.market_prices[(1, "grain")].supply == 3.0
+        assert state.market_prices[(1, "fish")].supply == 3.0
+        assert state.market_prices[(1, "produce")].supply == 3.0
+        assert state.market_prices[(1, "medicine")].supply == 1.0
+        # Non-essential goods still use MARKET_SUPPLY_FLOOR
+        assert state.market_prices[(1, "coal")].supply == constants.MARKET_SUPPLY_FLOOR
+
+    def test_higher_production_is_preserved_above_minimum(self):
+        """When production yields more than the minimum stock, the higher
+        figure is kept rather than capped to the floor."""
+        district = make_district(1, produces=["livestock"], population_base=1)
+        good = make_good("livestock", base_price=12.0)
+        job = make_job(id="butcher", district=1, produces={"livestock": 100.0})
+        content = make_content([district], [good], [job])
+        npc = make_npc("n1", district_id=1, job_id="butcher")
+        state = make_state(districts={1: make_district_row(1)}, npcs={"n1": npc})
+
+        economy.run(state, make_ctx(content))
+
+        raw = 100.0 * constants.NPC_JOB_COMPLETION_PROB
+        expected = raw * (1 - constants.CAPITOL_CUT_FRACTION)
+        assert expected > 3.0
+        assert state.market_prices[(1, "livestock")].supply == expected
+
+    def test_depleted_stock_is_replenished_on_next_sim_day(self):
+        """If player buying depletes stock down to 0, the next day's run
+        restocks it back to the minimum."""
+        district = make_district(1, imports=["medicine"], population_base=10)
+        good = make_good("medicine", base_price=15.0)
+        content = make_content([district], [good])
+        state = make_state(
+            districts={1: make_district_row(1)},
+            market_prices={
+                (1, "medicine"): MarketPrice(
+                    district_id=1, good_id="medicine", price=15.0, supply=0.0, tick=0
+                )
+            },
+        )
+
+        economy.run(state, make_ctx(content, tick=24))
+
+        assert state.market_prices[(1, "medicine")].supply >= 1.0
+

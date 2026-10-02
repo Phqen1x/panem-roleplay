@@ -11,7 +11,7 @@ from panem_shared.content.schemas import (
     Good,
     Location,
 )
-from panem_shared.db.models import Character, DistrictState, MarketPrice, Shift
+from panem_shared.db.models import Character, DistrictState, MarketPrice, Shift, User
 from panem_shared.enums import CharacterStatus
 
 
@@ -227,3 +227,113 @@ class TestResolveIllicitHeat:
         )
 
         assert arrested is True
+
+
+class TestShiftPhaseMath:
+    def test_is_in_shift_phase_matches(self):
+        char = make_character(job_title="Miner", shift_phase="evening")
+        # Tick 18 is 6:00 PM (Evening)
+        assert shifts_svc.is_in_shift_phase(char, 18) is True
+        # Tick 19 is 7:00 PM (Evening)
+        assert shifts_svc.is_in_shift_phase(char, 19) is True
+        # Tick 12 is 12:00 PM (Afternoon)
+        assert shifts_svc.is_in_shift_phase(char, 12) is False
+
+    def test_is_in_shift_phase_unemployed(self):
+        char = make_character(job_title=None, shift_phase="evening")
+        assert shifts_svc.is_in_shift_phase(char, 18) is False
+        char2 = make_character(job_title="Miner", shift_phase=None)
+        assert shifts_svc.is_in_shift_phase(char2, 18) is False
+
+    def test_phase_window_for_tick(self):
+        assert shifts_svc.phase_window_for_tick(18) == (18, 24)
+        assert shifts_svc.phase_window_for_tick(19) == (18, 24)
+        assert shifts_svc.phase_window_for_tick(23) == (18, 24)
+        assert shifts_svc.phase_window_for_tick(0) == (0, 6)
+        assert shifts_svc.phase_window_for_tick(6) == (6, 12)
+        assert shifts_svc.phase_window_for_tick(12) == (12, 18)
+
+
+class TestGetOrOpenShiftForCharacter:
+    async def _setup_user(self, db_session):
+        user = await db_session.get(User, 1)
+        if user is None:
+            user = User(id=1, discord_id=1)
+            db_session.add(user)
+            await db_session.flush()
+
+    async def test_returns_existing_open_shift(self, db_session):
+        await self._setup_user(db_session)
+        char = make_character(id=1, job_title="Miner", shift_phase="evening")
+        db_session.add(char)
+        shift = Shift(character_id=1, job_id="Miner", tick_opened=18, tick_due=24, result=None)
+        db_session.add(shift)
+        await db_session.flush()
+
+        result = await shifts_svc.get_or_open_shift_for_character(db_session, char, 18)
+        assert result is not None
+        assert result.id == shift.id
+
+    async def test_opens_shift_during_shift_phase_when_none_exists(self, db_session):
+        await self._setup_user(db_session)
+        char = make_character(id=2, job_title="Barkeep", shift_phase="evening")
+        db_session.add(char)
+        await db_session.flush()
+
+        # At tick 18 (6:00 PM), no shift existed yet -> opens one due at tick 24 (12:00 AM)
+        shift = await shifts_svc.get_or_open_shift_for_character(db_session, char, 18)
+        assert shift is not None
+        assert shift.character_id == 2
+        assert shift.job_id == "Barkeep"
+        assert shift.tick_opened == 18
+        assert shift.tick_due == 24
+        assert shift.result is None
+
+    async def test_opens_shift_mid_phase_when_none_exists(self, db_session):
+        await self._setup_user(db_session)
+        char = make_character(id=3, job_title="Barkeep", shift_phase="evening")
+        db_session.add(char)
+        await db_session.flush()
+
+        # At tick 20 (8:00 PM), opens shift with window (18, 24)
+        shift = await shifts_svc.get_or_open_shift_for_character(db_session, char, 20)
+        assert shift is not None
+        assert shift.tick_opened == 18
+        assert shift.tick_due == 24
+
+    async def test_returns_none_outside_shift_phase(self, db_session):
+        await self._setup_user(db_session)
+        char = make_character(id=4, job_title="Barkeep", shift_phase="evening")
+        db_session.add(char)
+        await db_session.flush()
+
+        # At tick 12 (Afternoon), not in shift phase -> None
+        shift = await shifts_svc.get_or_open_shift_for_character(db_session, char, 12)
+        assert shift is None
+
+    async def test_returns_none_if_already_completed_this_phase(self, db_session):
+        await self._setup_user(db_session)
+        char = make_character(id=5, job_title="Barkeep", shift_phase="evening")
+        db_session.add(char)
+        completed_shift = Shift(
+            character_id=5, job_id="Barkeep", tick_opened=18, tick_due=24, result="completed"
+        )
+        db_session.add(completed_shift)
+        await db_session.flush()
+
+        # Shift already completed for the window -> None
+        shift = await shifts_svc.get_or_open_shift_for_character(db_session, char, 19)
+        assert shift is None
+
+    async def test_opens_adhoc_for_staff_outside_shift_phase(self, db_session):
+        await self._setup_user(db_session)
+        char = make_character(id=6, job_title="Barkeep", shift_phase="evening")
+        db_session.add(char)
+        await db_session.flush()
+
+        # At tick 12 (Afternoon), is_staff=True creates adhoc shift
+        shift = await shifts_svc.get_or_open_shift_for_character(
+            db_session, char, 12, is_staff=True
+        )
+        assert shift is not None
+        assert shift.character_id == 6
