@@ -5,7 +5,7 @@ from __future__ import annotations
 import discord
 from discord import app_commands
 from discord.ext import commands
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from panem_bot import autocomplete, utils
@@ -142,7 +142,7 @@ class TravelCog(commands.Cog):
                     .join(User, Character.user_id == User.id)
                     .where(
                         User.discord_id == interaction.user.id,
-                        Character.name == character_name,
+                        func.lower(Character.name) == character_name.strip().lower(),
                     )
                 )
             ).scalar_one_or_none()

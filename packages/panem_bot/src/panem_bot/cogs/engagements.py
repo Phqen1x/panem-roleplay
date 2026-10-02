@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -659,7 +659,7 @@ class EngagementCog(commands.Cog):
                     .join(User, Character.user_id == User.id)
                     .where(
                         User.discord_id == interaction.user.id,
-                        Character.name == character_name,
+                        func.lower(Character.name) == character_name.strip().lower(),
                     )
                 )
             ).scalar_one_or_none()
@@ -703,7 +703,7 @@ class EngagementCog(commands.Cog):
                     .join(User, Character.user_id == User.id)
                     .where(
                         User.discord_id == interaction.user.id,
-                        Character.name == character_name,
+                        func.lower(Character.name) == character_name.strip().lower(),
                     )
                 )
             ).first()
