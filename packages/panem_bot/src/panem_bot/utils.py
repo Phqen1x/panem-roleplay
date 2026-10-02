@@ -14,7 +14,7 @@ async def get_character_case_insensitive(
     return (
         await session.execute(
             select(Character).where(
-                Character.user_id == user.id, func.lower(Character.name) == name.lower()
+                Character.user_id == user.id, func.lower(Character.name) == name.strip().lower()
             )
         )
     ).scalar_one_or_none()
