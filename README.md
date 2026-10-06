@@ -4118,3 +4118,60 @@ packages/panem_shared/src packages/panem_sim/src` (CI-gated) clean; the `panem_b
 (not CI-gated) stayed at exactly 182 errors before and after (confirmed via `git stash`) -- this pass added
 no new mypy errors at all, gated or not. Full suite: **1467 passed**, the same 1 pre-existing unrelated
 failure as every prior pass (`test_serves_the_vendored_discord_sdk_not_a_cdn_url`).
+
+## Semantic NPC memory recall, Whisper voice messages, Kokoro NPC voices, and a 9B Halo planner
+
+Four changes that all sit on the Lemonade side of the bot (the earlier note about "no embedding search
+actually runs anywhere" is superseded by item 1).
+
+**1. The embedding model now does its job (`panem_shared.embeddings`, `panem_bot.services.memory_recall`).**
+`memory.retrieve()` ranked an NPC's memories by importance then recency, so an NPC asked about their sister
+recalled whatever mattered most lately, not the memory about their sister -- and `nomic-embed`/`Qwen3-Embedding`
+loaded for nothing. `ProxyCog.post_engagement_replies` (which serves `/talk` and every scene reply) now calls
+`memory_recall.recall`, which embeds the line just spoken and ranks the NPC's memories by
+`0.6 * similarity + 0.25 * importance + 0.15 * recency` (`constants.MEMORY_RECALL_WEIGHT_*`), so meaning dominates
+but a life-changing memory still beats a trivial on-topic one. Design choices worth knowing:
+- **Vectors are filled lazily, by the bot, never the sim.** A tick must stay deterministic and offline, so memory
+  *formation* is untouched; the first conversation an NPC has embeds any memories missing a vector (one batched
+  `/v1/embeddings` call) and caches them on the row (`Memory.embedding`, `Memory.embedding_model`, migration
+  `a1d4e7b9c2f6`). The column is `deferred`, so the sim's every-tick load of all memories doesn't drag hundreds of
+  floats per row along; the bot undefers it explicitly.
+- **`embedding_model` is stored per row**, so switching `LEMONADE_PROFILE` (nomic on Lite, Qwen3-Embedding on Halo,
+  different dimensions) re-embeds instead of comparing vectors from two spaces. nomic's `search_query:`/
+  `search_document:` task prefixes are applied only for nomic models.
+- **Every failure degrades to exactly the old behavior**: `dialogue_provider=template`, `EMBEDDINGS_ENABLED=false`,
+  no memories, a down/slow embedding server, or a malformed response all return the importance/recency top-6. A
+  reply never waits on, or fails because of, this.
+
+**2. Whisper speech-to-text for Discord voice messages (`panem_shared.audio.transcribe`).** A voice message posted in a
+scene by someone with an active `/rp` character is transcribed (`STT_ENABLED`, default on; model = the profile's Whisper)
+and proxied as `🎙️ "..."` under the character's webhook with the original audio attached; the transcript is what the NPCs
+reply to and what hostile-action detection and RP credit read. Transcription runs *before* the DB session opens (it can
+take seconds). Failures (silence/`[BLANK_AUDIO]`, server error, longer than `STT_MAX_AUDIO_SECONDS`) leave the original
+message alone and post a short-lived notice. If the Whisper build rejects Opus/OGG and `ffmpeg` is on `PATH`, one retry
+is made as 16 kHz WAV.
+
+**3. Kokoro text-to-speech (`panem_shared.audio.synthesize`), opt-in twice.** Off unless `TTS_ENABLED=true`, and even then
+NPCs only speak in a scene where a participant ran the new `/engage voice enabled:True` (a Redis flag, cleared by
+`/engage end`). Each NPC reply is posted as text first; the audio (`🔊` + an mp3) follows as a background task under the
+NPC's name, so a slow synthesis never delays text or the other NPCs in a group scene, and any TTS failure is swallowed.
+Only the spoken words are voiced (`*asterisk actions*`, `((OOC))` and markdown are stripped; long replies are cut at a
+sentence). Voices are stable per NPC (`audio.voice_for_npc`: SHA-256 of the NPC id picks within a gender-keyed Kokoro
+pool; Capitol NPCs get the British voices). **Kokoro is deliberately not a component of either collection**
+(`omni.TTS_MODEL`): Lemonade loads every component of an omni model together, and a Kokoro archive that failed to
+extract is exactly what took dialogue down before. `scripts/lemonade_omni.py install --with-tts` pulls it as its own
+model, and a failed Kokoro download there is non-fatal.
+
+**4. The Halo planner is now Qwen3.5-9B instead of Qwen3.6-35B-A3B** (~8 GB for the whole profile instead of ~26 GB; fits
+16 GB+ GPUs). `lemonade/components.json` and `omni.PROFILES["halo"]` changed and `Panem-Omni-Halo.json` was regenerated;
+Lite is byte-for-byte unchanged. The 9B checkpoint (`unsloth/Qwen3.5-9B-MTP-GGUF:Qwen3.5-9B-UD-Q4_K_XL.gguf`, 5.97 GB)
+was named by analogy with the 4B entry -- this sandbox can't reach Hugging Face, so **verify it against your Lemonade's
+`resources/server_models.json` before `install`**, and correct `components.json` if the catalog spells it differently.
+
+**Not verified against live services.** Everything above is covered by unit tests with the HTTP layer mocked
+(`tests/unit/test_embeddings.py`, `test_audio.py`, plus new `build_request_context(recalled=...)` and profile
+tests), but this sandbox has no Lemonade, Whisper, Kokoro or Discord to run against. In particular untested for real: the
+exact `/v1/audio/*` request/response shapes against Lemonade 11.9.0, Kokoro's voice ids, and Discord's voice-message
+attachment flow. Verified: full suite **1587 passed**; `alembic upgrade head`/`downgrade -1`/`upgrade head` on a fresh
+database; CI-gated `mypy packages/panem_shared/src packages/panem_sim/src` clean; `ruff` clean on every new/changed file
+(the repo's 47 existing lint findings elsewhere were not touched).

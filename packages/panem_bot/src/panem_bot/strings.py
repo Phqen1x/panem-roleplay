@@ -349,6 +349,12 @@ STRINGS: dict[str, str] = {
     "engagement_started_ok": "Engagement started: {thread}",
     "engagement_not_yours": "Only the creator or staff can do that.",
     "engagement_ended_ok": "Engagement ended.",
+    "engagement_voice_on": "NPCs in this scene will now speak their lines aloud (Kokoro voices).",
+    "engagement_voice_off": "NPCs in this scene are back to text only.",
+    "engagement_voice_unavailable": "Spoken NPC replies aren't enabled on this server.",
+    "engagement_voice_not_in_scene": "Only someone playing in this scene (or staff) can change that.",
+    "voice_transcribe_failed": "I couldn't make out that voice message -- try again, or type it instead.",
+    "voice_too_long": "That voice message is too long to transcribe (limit {seconds}s).",
     "engagement_invite_prompt": "{mention}, **{character}** has been invited to join this "
     "engagement.",
     "engagement_invite_not_yours": "That invitation isn't for you.",

@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +24,7 @@ from panem_bot.services import dialogue as dialogue_svc
 from panem_bot.services import engagements as engagements_svc
 from panem_bot.services import proxy as proxy_svc
 from panem_bot.services import travel as travel_svc
+from panem_bot.services import voice as voice_svc
 from panem_bot.strings import t
 from panem_shared import constants, simtime
 from panem_shared.db.models import (
@@ -338,7 +339,9 @@ class EngagementCog(commands.Cog):
         assert interaction.guild is not None
         await interaction.response.defer(ephemeral=True, thinking=True)
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.followup.send(t("character_not_found"), ephemeral=True)
                 return
@@ -672,7 +675,9 @@ class EngagementCog(commands.Cog):
         matches = [
             loc
             for loc in district.locations
-            if not current_lower or current_lower in loc.name.lower() or current_lower in loc.id.lower()
+            if not current_lower
+            or current_lower in loc.name.lower()
+            or current_lower in loc.id.lower()
         ]
         return [
             app_commands.Choice(name=f"{loc.name} ({loc.id})", value=loc.id) for loc in matches[:25]
@@ -796,6 +801,9 @@ class EngagementCog(commands.Cog):
             if is_dedicated_engagement:
                 scene.status = SceneStatus.ARCHIVED.value
 
+        # The NPCs are gone; a later `/engage start` here shouldn't inherit
+        # last time's voice opt-in.
+        await voice_svc.set_scene_voice(self.bot.redis, thread.id, enabled=False)  # type: ignore[attr-defined]
         await thread.send(t("engagement_closing_line"))
         if not is_dedicated_engagement:
             await interaction.followup.send(t("engagement_ended_ok"), ephemeral=True)
@@ -811,6 +819,65 @@ class EngagementCog(commands.Cog):
             new_tags.append(closed_tag)
         await interaction.followup.send(t("engagement_ended_ok"), ephemeral=True)
         await thread.edit(archived=True, applied_tags=new_tags, reason="Engagement ended")
+
+    @group.command(
+        name="voice", description="Have NPCs in this scene speak their lines aloud (Kokoro TTS)"
+    )
+    @app_commands.describe(enabled="On: NPC replies come with an audio clip. Off: text only.")
+    async def voice(self, interaction: discord.Interaction, enabled: bool) -> None:
+        """Per-scene opt-in for text-to-speech. Voices are an extra file on
+        every NPC line, so they're off unless someone in the scene asks --
+        and only when the server has TTS switched on at all
+        (`Settings.tts_enabled`)."""
+        if not self.bot.settings.tts_enabled:  # type: ignore[attr-defined]
+            await interaction.response.send_message(
+                t("engagement_voice_unavailable"), ephemeral=True
+            )
+            return
+        thread = interaction.channel
+        if not isinstance(thread, discord.Thread):
+            await interaction.response.send_message(
+                "Use this inside an engagement.", ephemeral=True
+            )
+            return
+        is_staff = isinstance(interaction.user, discord.Member) and await self.bot.is_staff(  # type: ignore[attr-defined]
+            interaction.user
+        )
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            scene = (
+                await session.execute(select(Scene).where(Scene.thread_id == thread.id))
+            ).scalar_one_or_none()
+            if scene is None or not scene.participants.get("npcs"):
+                await interaction.response.send_message(
+                    "Not a registered engagement.", ephemeral=True
+                )
+                return
+            allowed = is_staff or await self._actor_can_manage(
+                session, discord_user_id=interaction.user.id, scene=scene, is_staff=is_staff
+            )
+            if not allowed:
+                user = await characters_svc.get_or_create_user(session, interaction.user.id)
+                in_scene = list(scene.participants.get("characters", []))
+                allowed = (
+                    bool(in_scene)
+                    and (
+                        await session.execute(
+                            select(Character.id).where(
+                                Character.id.in_(in_scene), Character.user_id == user.id
+                            )
+                        )
+                    ).first()
+                    is not None
+                )
+        if not allowed:
+            await interaction.response.send_message(
+                t("engagement_voice_not_in_scene"), ephemeral=True
+            )
+            return
+        await voice_svc.set_scene_voice(self.bot.redis, thread.id, enabled=enabled)  # type: ignore[attr-defined]
+        await interaction.response.send_message(
+            t("engagement_voice_on" if enabled else "engagement_voice_off"), ephemeral=False
+        )
 
     @group.command(name="join", description="Join an engagement you're physically present for")
     @app_commands.describe(character="Which character")
@@ -831,7 +898,9 @@ class EngagementCog(commands.Cog):
                     "Not a registered engagement.", ephemeral=True
                 )
                 return
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return

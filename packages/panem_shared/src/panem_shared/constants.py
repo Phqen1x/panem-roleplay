@@ -157,6 +157,19 @@ AFFINITY_DECAY_FLOOR = 20
 MEMORY_CAP_PER_NPC = 200
 RETRIEVAL_K = 6
 
+MEMORY_IMPORTANCE_MAX = 5
+"""`Memory.importance` runs 1..5 (the sim writes 2 for ordinary events,
+`panem_sim.systems.memory.HIGH_IMPORTANCE` = 4 and up never expire);
+`panem_shared.embeddings.score_memory` normalises against this."""
+
+MEMORY_RECALL_WEIGHT_SIMILARITY = 0.6
+MEMORY_RECALL_WEIGHT_IMPORTANCE = 0.25
+MEMORY_RECALL_WEIGHT_RECENCY = 0.15
+"""How `panem_shared.embeddings.rank_memories` blends its three signals:
+meaning dominates (that is the point of embedding at all), importance is
+the strong tiebreak so a trivial but on-topic memory doesn't beat a
+life-changing one, and recency nudges. Sum to 1.0."""
+
 TALK_STAMINA_PER_HOUR = 12
 NPC_REPLY_BASE_DELAY_S = 3
 SOFTMAX_TEMPERATURE = 0.3

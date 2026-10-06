@@ -130,8 +130,15 @@ def build_request_context(
     district_on_edge: bool = False,
     district_lore: DistrictLore | None = None,
     is_black_market_contact: bool = False,
+    recalled: Sequence[Memory] | None = None,
 ) -> omni.RequestContext:
-    """`present` lists everyone else in the scene besides `character`
+    """`recalled` is a caller-ranked list of memories (`panem_bot.services.
+    memory_recall.recall` -- semantic similarity to `message`, blended with
+    importance/recency); when given it is used as-is and `memories` is not
+    consulted. `None` keeps the original behavior of taking the top
+    `RETRIEVAL_K` of `memories` by importance then recency.
+
+    `present` lists everyone else in the scene besides `character`
     (other engaged NPCs, other joined characters) -- the system prompt
     already documents and expects a `[SCENE] ... present: ...` field
     (see `lemonade/system_prompt.md`'s request-contract example), this is
@@ -185,7 +192,9 @@ def build_request_context(
     (see `omni.RequestContext.world_notes`) rather than matched -- a
     caller with nothing to give either one simply omits it, same as every
     other optional field here."""
-    relevant = retrieve_memories(memories, "npc", npc.id)
+    relevant = (
+        list(recalled) if recalled is not None else retrieve_memories(memories, "npc", npc.id)
+    )
     history = tuple(match_history_entries(history_entries, message))
     tone = (npc.speech_style or {}).get("tone", "plain")
 
@@ -473,6 +482,7 @@ async def generate_reply(
     district_on_edge: bool = False,
     district_lore: DistrictLore | None = None,
     is_black_market_contact: bool = False,
+    recalled: Sequence[Memory] | None = None,
 ) -> str:
     provider = resolve_provider(npc, settings)
     if provider == "template":
@@ -498,6 +508,7 @@ async def generate_reply(
         known=known,
         district_lore=district_lore,
         is_black_market_contact=is_black_market_contact,
+        recalled=recalled,
         constraints={"max_words": str(_length_matched_max_words(message))},
     )
     try:

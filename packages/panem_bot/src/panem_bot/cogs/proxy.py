@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import datetime as dt
+import io
 
 import discord
+import structlog
 from discord import app_commands
 from discord.ext import commands
 from sqlalchemy import select
@@ -14,22 +17,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from panem_bot import redis_keys
 from panem_bot.errors import NotAllowed
 from panem_bot.outbound import OutboundMessage, SendPriority
-from panem_bot.services import characters as characters_svc
 from panem_bot.services import dialogue as dialogue_svc
 from panem_bot.services import engagements as engagements_svc
 from panem_bot.services import housing as housing_svc
 from panem_bot.services import jail as jail_svc
+from panem_bot.services import memory_recall as memory_recall_svc
 from panem_bot.services import proxy as proxy_svc
 from panem_bot.services import shifts as shifts_svc
+from panem_bot.services import voice as voice_svc
 from panem_bot.strings import t
-from panem_shared import constants, hostility, relationships
+from panem_shared import audio, constants, hostility, relationships
 from panem_shared.db.models import (
     Character,
     DialogueLog,
     DiscordChannel,
     DistrictLore,
     DistrictState,
-    Memory,
     Npc,
     PanemHistoryEntry,
     RelationshipRow,
@@ -42,10 +45,16 @@ from panem_shared.db.models import (
 from panem_shared.enums import ChannelKind, CharacterStatus, OwnerKind, RpMode
 from panem_shared.relationships import relationship_key
 
+logger = structlog.get_logger()
+
 
 class ProxyCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
+        # Strong references to fire-and-forget NPC voice tasks -- the event
+        # loop only keeps weak ones, so an unreferenced task can be garbage
+        # collected mid-flight.
+        self._voice_tasks: set[asyncio.Task[None]] = set()
 
     # ------------------------------------------------------------ commands
 
@@ -238,6 +247,27 @@ class ProxyCog(commands.Cog):
             return
 
         thread = message.channel
+
+        # A Discord voice message has no text of its own: Whisper turns it
+        # into the words the character says, and everything downstream
+        # (NPC replies, hostile-action detection, RP credit) reads that
+        # transcript exactly as if it had been typed. Done *before* the DB
+        # session below opens, since a transcription can take many seconds
+        # and must not hold a connection. A voice message can only be proxied
+        # through an active `/rp` session (there's no text to carry a proxy
+        # tag), so that's checked first to skip transcribing messages that
+        # are about to be ignored anyway.
+        transcript: str | None = None
+        voice_attachment = voice_svc.find_voice_message(message.attachments)
+        if voice_attachment is not None and self.bot.settings.stt_enabled:  # type: ignore[attr-defined]
+            has_session = await self.bot.redis.get(
+                redis_keys.session_key(message.author.id, thread.id)
+            )
+            if has_session is not None:
+                transcript = await self._transcribe_voice_message(thread, message, voice_attachment)
+                if transcript is None:
+                    return  # failure notice already sent; the original stays put
+
         async with self.bot.db() as session:
             forum_registered = (
                 await session.execute(
@@ -317,7 +347,7 @@ class ProxyCog(commands.Cog):
                 await notice.delete(delay=8)
                 return
 
-            content = message.content
+            content = transcript if transcript is not None else message.content
             if target.via_tag:
                 tag = next(tag for tag, cid in user_tags.items() if cid == character.id)
                 content = proxy_svc.strip_tag_prefix(content, tag)
@@ -340,7 +370,8 @@ class ProxyCog(commands.Cog):
         webhook = discord.Webhook.partial(
             webhook_row.webhook_id, webhook_row.webhook_token, client=self.bot
         )
-        chunks = proxy_svc.split_for_webhook(content or "​")
+        display = voice_svc.format_transcript(content) if transcript is not None else content
+        chunks = proxy_svc.split_for_webhook(display or "​")
         # "Engaged" means this scene currently has NPC participants
         # (`/talk`/`/engage` can attach NPCs to *any* scene -- an ambient
         # thread, an open `/scene`, not just a dedicated `SceneKind.
@@ -388,6 +419,71 @@ class ProxyCog(commands.Cog):
                     send=(lambda c=chunk, f=files, last=is_last: send_chunk(c, f, is_last=last)),
                 )
             )
+
+    async def _transcribe_voice_message(
+        self,
+        thread: discord.Thread,
+        message: discord.Message,
+        attachment: voice_svc.VoiceAttachment,
+    ) -> str | None:
+        """Whisper transcript of `message`'s voice attachment, or `None`
+        after telling the author why it couldn't be used (a short-lived
+        notice in the thread -- the same channel-level idiom the proxy uses
+        for `rp_character_required`)."""
+        settings = self.bot.settings  # type: ignore[attr-defined]
+        try:
+            return await voice_svc.transcribe_attachment(attachment, settings)
+        except voice_svc.VoiceTooLong as exc:
+            text = t("voice_too_long", seconds=exc.limit_seconds)
+        except audio.AudioError as exc:
+            logger.warning("stt_failed", error=str(exc))
+            text = t("voice_transcribe_failed")
+        notice = await thread.send(f"{message.author.mention} {text}")
+        await notice.delete(delay=10)
+        return None
+
+    async def _post_npc_voice(
+        self,
+        *,
+        webhook: discord.Webhook,
+        thread: discord.Thread,
+        npc_id: str,
+        npc_name: str,
+        avatar_url: str | None,
+        gender: str | None,
+        district_id: int,
+        reply: str,
+    ) -> None:
+        """Kokoro audio of an NPC's reply, posted as a follow-up message
+        under the NPC's own name once it's ready. Runs as a background task
+        so text replies (and the other NPCs in a group scene) never wait on
+        speech synthesis; every failure is swallowed -- the text already
+        landed."""
+        spoken = await voice_svc.speak_reply(
+            npc_id=npc_id,
+            npc_name=npc_name,
+            gender=gender,
+            district_id=district_id,
+            reply=reply,
+            settings=self.bot.settings,  # type: ignore[attr-defined]
+        )
+        if spoken is None:
+            return
+        try:
+            await webhook.send(
+                "🔊",
+                username=npc_name,
+                avatar_url=avatar_url or discord.utils.MISSING,
+                thread=thread,
+                file=discord.File(io.BytesIO(spoken.audio), filename=spoken.filename),
+            )
+        except discord.HTTPException as exc:
+            logger.warning("tts_post_failed", npc_id=npc_id, error=str(exc))
+
+    def _spawn_voice_task(self, coro: object) -> None:
+        task = asyncio.ensure_future(coro)  # type: ignore[arg-type]
+        self._voice_tasks.add(task)
+        task.add_done_callback(self._voice_tasks.discard)
 
     async def post_engagement_replies(
         self,
@@ -547,16 +643,19 @@ class ProxyCog(commands.Cog):
                 relationship = await session.get(RelationshipRow, key)
                 stance = relationship.stance if relationship is not None else "stranger"
                 known = relationship.summary if relationship is not None else None
-                memory_rows = (
-                    (
-                        await session.execute(
-                            select(Memory).where(
-                                Memory.owner_kind == "npc", Memory.owner_id == npc.id
-                            )
-                        )
-                    )
-                    .scalars()
-                    .all()
+                # Semantic recall: the memories closest in meaning to what
+                # was just said (nomic-embed et al.), falling back to the
+                # old importance/recency pick when embeddings are off or
+                # unreachable -- see `memory_recall`.
+                recalled_memories = await memory_recall_svc.recall(
+                    session,
+                    npc_id=npc.id,
+                    message=message_content,
+                    settings=self.bot.settings,  # type: ignore[attr-defined]
+                    provider=dialogue_svc.resolve_provider(
+                        npc,
+                        self.bot.settings,  # type: ignore[attr-defined]
+                    ),
                 )
 
                 history = [
@@ -597,7 +696,8 @@ class ProxyCog(commands.Cog):
                     location=location,
                     character=speaker,
                     stance=stance,
-                    memories=list(memory_rows),
+                    memories=[],
+                    recalled=recalled_memories,
                     message=message_content,
                     settings=self.bot.settings,  # type: ignore[attr-defined]
                     history=history,
@@ -636,6 +736,22 @@ class ProxyCog(commands.Cog):
                 )
                 session.add(reply_row)
                 history_rows.append(reply_row)
+                if self.bot.settings.tts_enabled and await voice_svc.scene_voice_enabled(  # type: ignore[attr-defined]
+                    self.bot.redis,  # type: ignore[attr-defined]
+                    thread.id,
+                ):
+                    self._spawn_voice_task(
+                        self._post_npc_voice(
+                            webhook=webhook,
+                            thread=thread,
+                            npc_id=npc.id,
+                            npc_name=npc.name,
+                            avatar_url=npc.avatar_url,
+                            gender=npc.gender,
+                            district_id=npc.district_id,
+                            reply=reply,
+                        )
+                    )
                 session.add(
                     DialogueLog(
                         tick=current_tick,

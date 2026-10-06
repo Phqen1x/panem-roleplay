@@ -514,6 +514,17 @@ class Memory(Base):
     text: Mapped[str] = mapped_column(Text, nullable=False)
     tags: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, default=list)
     expires_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Semantic-recall vector (`panem_shared.embeddings`), filled lazily by the
+    # bot the first time this NPC converses -- never by the sim. `deferred`
+    # so the sim's every-tick load of all memories doesn't drag hundreds of
+    # floats per row along; the bot undefers it explicitly when it ranks.
+    # `embedding_model` records which embedder produced it, so swapping the
+    # Lemonade profile (a different model, a different dimension) re-embeds
+    # instead of comparing vectors from two different spaces.
+    embedding: Mapped[list[float] | None] = mapped_column(
+        ARRAY(Float), nullable=True, deferred=True
+    )
+    embedding_model: Mapped[str | None] = mapped_column(String(96), nullable=True)
 
 
 class Inventory(Base):

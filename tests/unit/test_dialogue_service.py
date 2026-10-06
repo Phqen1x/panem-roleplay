@@ -229,6 +229,33 @@ class TestBuildRequestContext:
         assert ctx.speaker == {"name": "Kat", "reputation": "0.0"}
         assert ctx.mode is omni.RequestMode.DIALOGUE
 
+    def test_recalled_memories_are_used_as_given_instead_of_the_importance_pick(self):
+        npc = make_npc()
+        loud = make_memory(text="very important", importance=5)
+        quiet = make_memory(text="on topic", importance=1)
+        ctx = dialogue.build_request_context(
+            npc=npc,
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[loud, quiet],
+            recalled=[quiet],
+        )
+        assert ctx.memories == ("on topic",)
+
+    def test_empty_recalled_list_means_no_memories_not_fall_back(self):
+        ctx = dialogue.build_request_context(
+            npc=make_npc(),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[make_memory()],
+            recalled=[],
+        )
+        assert ctx.memories == ()
+
     def test_present_is_folded_into_the_scene_block_when_given(self):
         ctx = dialogue.build_request_context(
             npc=make_npc(),
@@ -748,7 +775,7 @@ class TestGenerateLlmReply:
 
         messages = captured["body"]["messages"]  # type: ignore[index]
         # System message at 0, then capped history, then latest user message
-        expected_history = oversized[-constants.ENGAGEMENT_HISTORY_WINDOW:]
+        expected_history = oversized[-constants.ENGAGEMENT_HISTORY_WINDOW :]
         assert messages[1:-1] == expected_history
         assert len(messages[1:-1]) == constants.ENGAGEMENT_HISTORY_WINDOW
         assert messages[-1] == {"role": "user", "content": "Latest turn"}
@@ -1024,6 +1051,8 @@ class TestBlackMarketContactDialogue:
 
     def test_template_reply_includes_fence_hint_when_trusted(self):
         npc = make_npc()
-        reply = dialogue.template_reply(npc, "likes", "help me sell stolen goods", is_black_market_contact=True)
+        reply = dialogue.template_reply(
+            npc, "likes", "help me sell stolen goods", is_black_market_contact=True
+        )
         assert isinstance(reply, str)
         assert len(reply) > 0

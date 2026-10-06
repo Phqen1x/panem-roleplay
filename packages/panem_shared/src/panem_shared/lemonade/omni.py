@@ -73,6 +73,11 @@ class OmniProfile:
     # Planner LLM first: lemond picks the first component labelled `chat`.
     components: tuple[str, ...]
     planner_options: Mapping[str, object]
+    # The components the bot calls *directly* by name (not through the
+    # planner): `panem_shared.embeddings` (`/v1/embeddings`) and
+    # `panem_shared.audio.transcribe` (`/v1/audio/transcriptions`).
+    embedding_model: str = ""
+    transcription_model: str = ""
 
     @property
     def planner(self) -> str:
@@ -86,8 +91,8 @@ PROFILES: dict[str, OmniProfile] = {
         summary=(
             "~4.2 GB. Fits a 16 GB machine / 8 GB GPU. Qwen3.5-4B (vision + tool "
             "calling, MTP draft decoding) voices NPCs; Whisper-Base transcribes voice "
-            "messages; nomic-embed powers NPC memory recall. No text-to-speech "
-            "component -- see the README's Profiles section."
+            "messages; nomic-embed powers NPC memory recall. Kokoro "
+            "text-to-speech is a separate optional download -- see the README."
         ),
         components=(
             "Qwen3.5-4B-MTP-GGUF",
@@ -95,26 +100,37 @@ PROFILES: dict[str, OmniProfile] = {
             "nomic-embed-text-v1-GGUF",
         ),
         planner_options={"ctx_size": 16384, "llamacpp_args": PLANNER_NO_THINKING_ARGS},
+        embedding_model="nomic-embed-text-v1-GGUF",
+        transcription_model="Whisper-Base",
     ),
     "halo": OmniProfile(
         key="halo",
         model_name="user.Panem-Omni-Halo",
         summary=(
-            "~26 GB. For Strix Halo / 32 GB+ GPUs. Qwen3.6-35B-A3B (MoE, vision + tool "
+            "~8 GB. For Strix Halo / 16 GB+ GPUs. Qwen3.5-9B (vision + tool "
             "calling, MTP) as the planner; Whisper-Large-v3-Turbo transcribes; "
-            "Qwen3-Embedding-0.6B powers NPC memory recall. No text-to-speech "
-            "component -- see the README's Profiles section."
+            "Qwen3-Embedding-0.6B powers NPC memory recall. Kokoro "
+            "text-to-speech is a separate optional download -- see the README."
         ),
         components=(
-            "Qwen3.6-35B-A3B-MTP-GGUF",
+            "Qwen3.5-9B-MTP-GGUF",
             "Whisper-Large-v3-Turbo",
             "Qwen3-Embedding-0.6B-GGUF",
         ),
         planner_options={"ctx_size": 32768, "llamacpp_args": PLANNER_NO_THINKING_ARGS},
+        embedding_model="Qwen3-Embedding-0.6B-GGUF",
+        transcription_model="Whisper-Large-v3-Turbo",
     ),
 }
 
 DEFAULT_PROFILE = "lite"
+
+# Kokoro is deliberately NOT a component of either collection: lemond loads
+# every component of an omni model together, so one broken download/extract
+# of it used to take dialogue down too (see lemonade/README.md). The bot
+# calls it standalone by this name, `scripts/lemonade_omni.py install
+# --with-tts` pulls it separately, and a failure only ever costs the audio.
+TTS_MODEL = "kokoro-v1"
 
 
 # --------------------------------------------------------------------------- #

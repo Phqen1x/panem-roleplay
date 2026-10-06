@@ -66,6 +66,37 @@ class Settings(BaseSettings):
     lemonade_home: str = ""
     lemonade_embeddable_version: str = "11.9.0"
 
+    # Semantic NPC memory recall (`panem_shared.embeddings`): the embedding
+    # component of the active Lemonade profile (nomic-embed on Lite,
+    # Qwen3-Embedding on Halo) ranks an NPC's memories by how close they are
+    # in meaning to what was just said. Only ever called when a conversation
+    # is actually going through the LLM (`dialogue_provider != "template"`);
+    # any failure falls back to the old importance/recency ordering, so
+    # turning this off (or the embedding server being down) never breaks a
+    # reply. Blank `embedding_model` means "whatever the profile ships".
+    embeddings_enabled: bool = True
+    embedding_model: str = ""
+    embedding_timeout_ms: int = 15000
+
+    # Speech-to-text (`panem_shared.audio.transcribe`): a Discord voice
+    # message posted in a scene is run through Whisper and proxied as the
+    # character's spoken words. Blank `stt_model` means the profile's Whisper
+    # (Base on Lite, Large-v3-Turbo on Halo).
+    stt_enabled: bool = True
+    stt_model: str = ""
+    stt_timeout_ms: int = 60000
+    stt_max_audio_seconds: int = 120
+
+    # Text-to-speech (`panem_shared.audio.synthesize`, Kokoro via Lemonade's
+    # `/v1/audio/speech`). Off by default: it is an extra model to download,
+    # and even when it's on, NPCs only speak aloud in a scene whose
+    # participants turned it on with `/engage voice`.
+    tts_enabled: bool = False
+    tts_model: str = "kokoro-v1"
+    tts_timeout_ms: int = 30000
+    tts_format: str = "mp3"
+    tts_max_chars: int = 500
+
     staff_role_id: DiscordId = 0
     approval_channel_id: DiscordId = 0
     log_channel_id: DiscordId = 0

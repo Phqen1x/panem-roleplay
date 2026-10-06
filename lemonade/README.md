@@ -34,21 +34,34 @@ component carries the `image`/`edit` label, so the OmniRouter never offers
 `generate_image`/`edit_image` and the prompt tells the planner to ignore them
 if one were ever added.
 
-| Role | Why Panem needs it | Lite (`user.Panem-Omni-Lite`, ~4.2 GB) | Halo (`user.Panem-Omni-Halo`, ~26 GB) |
+| Role | Why Panem needs it | Lite (`user.Panem-Omni-Lite`, ~4.2 GB) | Halo (`user.Panem-Omni-Halo`, ~9 GB) |
 |------|--------------------|------------------------------------------|----------------------------------------|
-| Planner LLM (`chat`, `tool-calling`, `vision`) | NPC dialogue, narration, broadcasts, staff review; reads player-posted images directly (vision) | `Qwen3.5-4B-MTP-GGUF` | `Qwen3.6-35B-A3B-MTP-GGUF` |
+| Planner LLM (`chat`, `tool-calling`, `vision`) | NPC dialogue, narration, broadcasts, staff review; reads player-posted images directly (vision) | `Qwen3.5-4B-MTP-GGUF` | `Qwen3.5-9B-MTP-GGUF` |
 | Speech-to-text (`transcription`) | Players' Discord voice messages in scenes | `Whisper-Base` | `Whisper-Large-v3-Turbo` |
 | Embeddings (`embeddings`) | NPC memory retrieval (`MEMORY_CAP_PER_NPC`, `RETRIEVAL_K`) via `/v1/embeddings` | `nomic-embed-text-v1-GGUF` | `Qwen3-Embedding-0.6B-GGUF` |
 
-No text-to-speech component: `kokoro-v1` was dropped from both profiles after
-its archive repeatedly failed to extract on a real machine
-(`model_load_error: Failed to extract archive: .../kokoro_*.tar.gz`), which
-took down the *whole* collection since Lemonade loads every component of an
-omni model together -- one broken component blocked dialogue too, even
-though nothing in `panem_bot` consumes generated speech yet (see the Phase 6
-notes below). Add a `tts`-labelled component back into `PROFILES` in
-`omni.py` and rebuild if you want broadcasts read aloud and can get Kokoro
-(or another `tts` component) to actually download/extract cleanly.
+Text-to-speech (`kokoro-v1`) is deliberately **not** a component of either collection.
+Lemonade loads every component of an omni model together, and when Kokoro's archive failed to
+extract on a real machine (`model_load_error: Failed to extract archive: .../kokoro_*.tar.gz`)
+it took the *whole* collection -- dialogue included -- down with it. It is instead a
+standalone model the bot calls by name: `uv run python scripts/lemonade_omni.py install
+--with-tts` downloads it separately (a failed Kokoro download only costs the NPC voices),
+then set `TTS_ENABLED=true`. The snap's `bsdtar` shadowing (`snap/snapcraft.yaml`) is what
+fixes the extraction failure there.
+
+## How the bot uses each model
+
+| Model | Used for | Where |
+|-------|----------|-------|
+| Planner (Qwen3.5) | NPC dialogue, summaries, narration contract | `panem_bot.services.dialogue` via the `panem-omni` alias |
+| Embeddings (nomic-embed / Qwen3-Embedding) | Ranking an NPC's memories by closeness in meaning to the line just spoken | `panem_shared.embeddings`, `panem_bot.services.memory_recall` |
+| Whisper | Transcribing Discord voice messages posted in a scene | `panem_shared.audio.transcribe`, `ProxyCog.on_message` |
+| Kokoro | NPC replies as audio (opt-in per scene with `/engage voice`) | `panem_shared.audio.synthesize`, `ProxyCog._post_npc_voice` |
+
+Embeddings, Whisper and Kokoro are called **directly by name** (`/v1/embeddings`,
+`/v1/audio/transcriptions`, `/v1/audio/speech`), not through the planner -- the planner only
+calls tools for the request modes that ask for them, so routing speech through it would add a
+model round-trip and a failure mode for nothing.
 
 The planner is loaded with `ctx_size` 16k (Lite) / 32k (Halo) and Qwen's
 thinking phase disabled (`--chat-template-kwargs '{"enable_thinking": false}'`)
@@ -68,7 +81,7 @@ never changes when you switch hardware.
      into `.lemonade/` and runs it (add `--register --download` to do step 3 in the same go)
 2. `cp .env.example .env` -- the defaults already point at `http://127.0.0.1:13305/v1` and
    `LLM_MODEL=panem-omni`. Set `LLM_API_KEY` if your server runs with `LEMONADE_API_KEY`; pick
-   `LEMONADE_PROFILE=halo` on a 32 GB+ GPU.
+   `LEMONADE_PROFILE=halo` on a 16 GB+ GPU.
 3. Register and download:
 
    ```bash

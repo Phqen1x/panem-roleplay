@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from panem_shared.content.loader import load_content
+from panem_shared.lemonade import omni
 from panem_shared.lemonade.omni import (
     ALIAS,
     DEFAULT_BASE_URL,
@@ -262,13 +263,48 @@ def register_collection(api: Lemonade, profile: OmniProfile, *, download: bool) 
         )
 
 
+def register_tts(api: Lemonade, *, download: bool) -> None:
+    """Kokoro as a *standalone* model, deliberately not a component of the
+    collection: lemond loads every component of an omni model together, so a
+    Kokoro archive that fails to extract used to take dialogue down with it.
+    Registered/pulled on its own, a bad Kokoro costs only the NPC voices."""
+    name = omni.TTS_MODEL
+    catalog = load_components_catalog(CATALOG_PATH)
+    if name not in api.models():
+        definition = catalog.get(name)
+        if definition is None:
+            raise SystemExit(f"{name} is not in lemonade/components.json")
+        print(f"registering {name} (not in this Lemonade's catalog)")
+        api.register({**definition, "model_name": f"user.{name}"})
+        name = f"user.{name}"
+    if not download:
+        print(f"registered {name}")
+        return
+    print(
+        f"pulling {name} (text-to-speech, ~{catalog.get(omni.TTS_MODEL, {}).get('size', '?')} GB)"
+    )
+    try:
+        api.pull(
+            {"model_name": name},
+            lambda evt: print("  download complete") if evt.get("event") == "complete" else None,
+        )
+    except LemonadeError as exc:
+        # Not fatal for the rest of the install: dialogue never depends on it.
+        print(
+            f"{name} failed to download ({exc}); dialogue is unaffected, NPC voices just "
+            "stay off until this succeeds -- re-run `install --with-tts`",
+            file=sys.stderr,
+        )
+        return
+    print(f"set TTS_ENABLED=true (and TTS_MODEL={name}) in .env, then `/engage voice` in a scene")
+
+
 def cmd_register(args: argparse.Namespace) -> int:
     settings = get_settings()
-    register_collection(
-        client_from(settings, args),
-        profile_from(settings, args),
-        download=args.download,
-    )
+    api = client_from(settings, args)
+    register_collection(api, profile_from(settings, args), download=args.download)
+    if getattr(args, "with_tts", False):
+        register_tts(api, download=args.download)
     return 0
 
 
@@ -610,10 +646,18 @@ def main(argv: list[str] | None = None) -> int:
 
     p_register = sub.add_parser("register", help="register the collection without downloading")
     add_server_opts(p_register)
+    p_register.add_argument(
+        "--with-tts", action="store_true", help="also register Kokoro (text-to-speech)"
+    )
     p_register.set_defaults(func=cmd_register, download=False)
 
     p_install = sub.add_parser("install", help="register and download every component")
     add_server_opts(p_install)
+    p_install.add_argument(
+        "--with-tts",
+        action="store_true",
+        help="also download Kokoro (text-to-speech) as its own model, outside the collection",
+    )
     p_install.set_defaults(func=cmd_register, download=True)
 
     p_status = sub.add_parser("status", help="show registration and download state")

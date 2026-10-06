@@ -41,8 +41,8 @@
     ],
     "size": 0.0781
   },
-  "Qwen3.6-35B-A3B-MTP-GGUF": {
-    "checkpoint": "unsloth/Qwen3.6-35B-A3B-MTP-GGUF:Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+  "Qwen3.5-9B-MTP-GGUF": {
+    "checkpoint": "unsloth/Qwen3.5-9B-MTP-GGUF:Qwen3.5-9B-UD-Q4_K_XL.gguf",
     "mmproj": "mmproj-F16.gguf",
     "recipe": "llamacpp",
     "labels": [
@@ -51,7 +51,7 @@
       "tool-calling",
       "mtp"
     ],
-    "size": 23.8
+    "size": 5.97
   },
   "Whisper-Large-v3-Turbo": {
     "checkpoints": {

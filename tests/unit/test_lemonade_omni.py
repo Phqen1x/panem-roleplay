@@ -116,6 +116,18 @@ class TestProfiles:
         yet (see the README's Phase 6 notes)."""
         assert "speech" not in omni.roles_covered(omni.PROFILES[key], catalog)
 
+    def test_halo_planner_is_the_9b_model(self, catalog):
+        halo = omni.PROFILES["halo"]
+        assert halo.planner == "Qwen3.5-9B-MTP-GGUF"
+        assert not any("35B" in name for name in halo.components)
+
+    def test_kokoro_is_vendored_but_stays_out_of_every_collection(self, catalog):
+        """TTS is a standalone model (`omni.TTS_MODEL`) so a bad Kokoro
+        download can't take the whole collection down with it."""
+        assert omni.TTS_MODEL in catalog
+        for profile in omni.PROFILES.values():
+            assert omni.TTS_MODEL not in profile.components
+
     @pytest.mark.parametrize("key", sorted(omni.PROFILES))
     def test_no_image_generation_component(self, key, catalog):
         for name in omni.PROFILES[key].components:

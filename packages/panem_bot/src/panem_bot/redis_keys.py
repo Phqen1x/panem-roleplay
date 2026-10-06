@@ -6,6 +6,7 @@ from __future__ import annotations
 SESSION_TTL_S = 6 * 60 * 60
 PROXY_TTL_S = 7 * 24 * 60 * 60
 PRESENCE_TTL_S = 30 * 60
+SCENE_VOICE_TTL_S = 7 * 24 * 60 * 60
 
 
 def session_key(user_id: int, thread_id: int) -> str:
@@ -22,3 +23,9 @@ def scene_presence_key(thread_id: int) -> str:
 
 def talk_window_key(thread_id: int, npc_id: str) -> str:
     return f"talk:{thread_id}:{npc_id}"
+
+
+def scene_voice_key(thread_id: int) -> str:
+    """Set (to "1") while NPCs in this scene should speak their replies
+    aloud -- toggled by `/engage voice`, only ever read when TTS is enabled."""
+    return f"scene:voice:{thread_id}"
