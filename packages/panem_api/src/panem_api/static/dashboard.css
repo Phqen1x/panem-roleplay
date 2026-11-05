@@ -2022,3 +2022,108 @@ svg.ui-icon {
 .sound-actions {
   margin-top: 10px;
 }
+
+/* The Capitol's 3D map (`map3d/city.js`) and everything it opens --
+   customizer, pet store, property interior. */
+
+.map3d-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: relative;
+}
+
+.map3d-toolbar {
+  display: flex;
+  gap: 10px;
+}
+
+.map3d-canvas-wrap {
+  position: relative;
+}
+
+.map3d-canvas {
+  display: block;
+  width: 100%;
+  max-width: 960px;
+  aspect-ratio: 960 / 540;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #1a2230;
+}
+
+.map3d-hud {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  padding: 6px 12px;
+  background: rgba(10, 12, 16, 0.75);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text);
+  pointer-events: none;
+  min-height: 1em;
+}
+
+.map3d-overlay-host:empty {
+  display: none;
+}
+
+.map3d-popup {
+  max-width: 640px;
+}
+
+.map3d-customizer h3 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin: 14px 0 8px;
+}
+
+.map3d-swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 48px);
+  gap: 8px;
+}
+
+.map3d-swatch {
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  border: 2px solid var(--border);
+  background-color: #222;
+  background-size: cover;
+  background-position: center top;
+  cursor: pointer;
+  padding: 0;
+}
+
+.map3d-swatch.active {
+  border-color: var(--accent);
+}
+
+.map3d-swatch-palette {
+  background-size: 300% 300%;
+}
+
+.map3d-interior-layout {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.map3d-interior-sidebar {
+  flex: 1 1 220px;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.map3d-nudge-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 40px);
+  gap: 4px;
+}

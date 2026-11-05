@@ -63,7 +63,7 @@ async function openExternalLink(url) {
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "52";
+const ASSET_VERSION = "53";
 
 // District names mapping for Capitol and Districts 1-12
 const DISTRICT_NAMES = {
@@ -125,6 +125,7 @@ const TABS = [
   "jail",
   "crime",
   "housing",
+  "pets",
 ];
 const TAB_LABELS = {
   home: "Home",
@@ -138,6 +139,7 @@ const TAB_LABELS = {
   jail: "Jail",
   crime: "Crime",
   housing: "Housing",
+  pets: "Pets",
 };
 
 // Only offered when `/identify` reports `is_staff` -- see `visibleTabs()`.

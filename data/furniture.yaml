@@ -1,0 +1,352 @@
+# The housing-interior furniture catalog (`panem_api.map3d_routes`'s
+# `/activity/dashboard/housing3d/*` routes) -- one entry per vendored
+# Furniture Kit asset (`static/assets3d/furniture/{item_key}.glb`).
+# `structural` pieces build a property's fixed room shell
+# (`panem_shared.housing3d.default_layout`) and are never offered in the
+# free-placement catalog a player decorates with; every other piece is.
+- item_key: wall
+  name: Wall
+  category: structural
+  structural: true
+  footprint_w: 2.0
+  footprint_d: 2.0
+- item_key: wallCorner
+  name: Wall Corner
+  category: structural
+  structural: true
+  footprint_w: 1.0
+  footprint_d: 1.0
+- item_key: wallCornerRond
+  name: Wall Corner Rond
+  category: structural
+  structural: true
+  footprint_w: 1.0
+  footprint_d: 1.0
+- item_key: wallHalf
+  name: Wall Half
+  category: structural
+  structural: true
+  footprint_w: 2.0
+  footprint_d: 2.0
+- item_key: wallWindow
+  name: Wall Window
+  category: structural
+  structural: true
+  footprint_w: 2.0
+  footprint_d: 2.0
+- item_key: wallWindowSlide
+  name: Wall Window Slide
+  category: structural
+  structural: true
+  footprint_w: 2.0
+  footprint_d: 2.0
+- item_key: wallDoorway
+  name: Wall Doorway
+  category: structural
+  structural: true
+  footprint_w: 2.0
+  footprint_d: 2.0
+- item_key: wallDoorwayWide
+  name: Wall Doorway Wide
+  category: structural
+  structural: true
+  footprint_w: 3.0
+  footprint_d: 3.0
+- item_key: doorway
+  name: Doorway
+  category: structural
+  structural: true
+  footprint_w: 1.0
+  footprint_d: 1.0
+- item_key: doorwayOpen
+  name: Doorway Open
+  category: structural
+  structural: true
+  footprint_w: 1.0
+  footprint_d: 1.0
+- item_key: floorFull
+  name: Floor Full
+  category: structural
+  structural: true
+  footprint_w: 2.0
+  footprint_d: 2.0
+- item_key: floorHalf
+  name: Floor Half
+  category: structural
+  structural: true
+  footprint_w: 2.0
+  footprint_d: 2.0
+- item_key: floorCorner
+  name: Floor Corner
+  category: structural
+  structural: true
+  footprint_w: 2.0
+  footprint_d: 2.0
+- item_key: floorCornerRound
+  name: Floor Corner Round
+  category: structural
+  structural: true
+  footprint_w: 2.0
+  footprint_d: 2.0
+- item_key: stairs
+  name: Stairs
+  category: structural
+  structural: true
+  footprint_w: 2.0
+  footprint_d: 2.0
+- item_key: stairsCorner
+  name: Stairs Corner
+  category: structural
+  structural: true
+  footprint_w: 2.0
+  footprint_d: 2.0
+- item_key: loungeSofa
+  name: Lounge Sofa
+  category: living_room
+  footprint_w: 2.0
+  footprint_d: 1.0
+- item_key: loungeSofaLong
+  name: Lounge Sofa Long
+  category: living_room
+  footprint_w: 3.0
+  footprint_d: 1.0
+- item_key: loungeSofaCorner
+  name: Lounge Sofa Corner
+  category: living_room
+  footprint_w: 2.0
+  footprint_d: 2.0
+- item_key: loungeChair
+  name: Lounge Chair
+  category: living_room
+  footprint_w: 1.0
+  footprint_d: 1.0
+- item_key: loungeChairRelax
+  name: Lounge Chair Relax
+  category: living_room
+  footprint_w: 1.0
+  footprint_d: 1.5
+- item_key: tableCoffee
+  name: Table Coffee
+  category: living_room
+  footprint_w: 1.2
+  footprint_d: 0.6
+- item_key: tableCoffeeGlass
+  name: Table Coffee Glass
+  category: living_room
+  footprint_w: 1.2
+  footprint_d: 0.6
+- item_key: tableRound
+  name: Table Round
+  category: living_room
+  footprint_w: 1.0
+  footprint_d: 1.0
+- item_key: rugRectangle
+  name: Rug Rectangle
+  category: living_room
+  footprint_w: 2.0
+  footprint_d: 1.4
+- item_key: rugRound
+  name: Rug Round
+  category: living_room
+  footprint_w: 1.5
+  footprint_d: 1.5
+- item_key: bookcaseOpen
+  name: Bookcase Open
+  category: living_room
+  footprint_w: 1.0
+  footprint_d: 0.4
+- item_key: bookcaseClosed
+  name: Bookcase Closed
+  category: living_room
+  footprint_w: 1.0
+  footprint_d: 0.4
+- item_key: bookcaseClosedWide
+  name: Bookcase Closed Wide
+  category: living_room
+  footprint_w: 1.6
+  footprint_d: 0.4
+- item_key: televisionModern
+  name: Television Modern
+  category: living_room
+  footprint_w: 1.2
+  footprint_d: 0.3
+- item_key: cabinetTelevision
+  name: Cabinet Television
+  category: living_room
+  footprint_w: 1.4
+  footprint_d: 0.5
+- item_key: lampSquareFloor
+  name: Lamp Square Floor
+  category: living_room
+  footprint_w: 0.4
+  footprint_d: 0.4
+- item_key: lampRoundFloor
+  name: Lamp Round Floor
+  category: living_room
+  footprint_w: 0.4
+  footprint_d: 0.4
+- item_key: sideTable
+  name: Side Table
+  category: living_room
+  footprint_w: 0.5
+  footprint_d: 0.5
+- item_key: bedSingle
+  name: Bed Single
+  category: bedroom
+  footprint_w: 1.0
+  footprint_d: 2.0
+- item_key: bedDouble
+  name: Bed Double
+  category: bedroom
+  footprint_w: 1.6
+  footprint_d: 2.0
+- item_key: bedBunk
+  name: Bed Bunk
+  category: bedroom
+  footprint_w: 1.0
+  footprint_d: 2.0
+- item_key: cabinetBed
+  name: Cabinet Bed
+  category: bedroom
+  footprint_w: 1.0
+  footprint_d: 0.5
+- item_key: cabinetBedDrawer
+  name: Cabinet Bed Drawer
+  category: bedroom
+  footprint_w: 1.0
+  footprint_d: 0.5
+- item_key: cabinetBedDrawerTable
+  name: Cabinet Bed Drawer Table
+  category: bedroom
+  footprint_w: 0.6
+  footprint_d: 0.5
+- item_key: lampRoundTable
+  name: Lamp Round Table
+  category: bedroom
+  footprint_w: 0.3
+  footprint_d: 0.3
+- item_key: coatRack
+  name: Coat Rack
+  category: bedroom
+  footprint_w: 0.5
+  footprint_d: 0.5
+- item_key: kitchenCabinet
+  name: Kitchen Cabinet
+  category: kitchen
+  footprint_w: 1.0
+  footprint_d: 0.6
+- item_key: kitchenCabinetUpper
+  name: Kitchen Cabinet Upper
+  category: kitchen
+  footprint_w: 1.0
+  footprint_d: 0.4
+- item_key: kitchenCabinetDrawer
+  name: Kitchen Cabinet Drawer
+  category: kitchen
+  footprint_w: 1.0
+  footprint_d: 0.6
+- item_key: kitchenCabinetCornerRound
+  name: Kitchen Cabinet Corner Round
+  category: kitchen
+  footprint_w: 1.0
+  footprint_d: 1.0
+- item_key: kitchenFridge
+  name: Kitchen Fridge
+  category: kitchen
+  footprint_w: 1.0
+  footprint_d: 0.7
+- item_key: kitchenFridgeSmall
+  name: Kitchen Fridge Small
+  category: kitchen
+  footprint_w: 0.6
+  footprint_d: 0.6
+- item_key: kitchenStove
+  name: Kitchen Stove
+  category: kitchen
+  footprint_w: 1.0
+  footprint_d: 0.6
+- item_key: kitchenSink
+  name: Kitchen Sink
+  category: kitchen
+  footprint_w: 1.0
+  footprint_d: 0.6
+- item_key: kitchenBar
+  name: Kitchen Bar
+  category: kitchen
+  footprint_w: 1.6
+  footprint_d: 0.6
+- item_key: chairDesk
+  name: Chair Desk
+  category: kitchen
+  footprint_w: 0.6
+  footprint_d: 0.6
+- item_key: desk
+  name: Desk
+  category: kitchen
+  footprint_w: 1.2
+  footprint_d: 0.6
+- item_key: tableCross
+  name: Table Cross
+  category: kitchen
+  footprint_w: 1.2
+  footprint_d: 1.2
+- item_key: toilet
+  name: Toilet
+  category: bathroom
+  footprint_w: 0.6
+  footprint_d: 0.6
+- item_key: bathroomSink
+  name: Bathroom Sink
+  category: bathroom
+  footprint_w: 0.6
+  footprint_d: 0.5
+- item_key: bathtub
+  name: Bathtub
+  category: bathroom
+  footprint_w: 1.6
+  footprint_d: 0.8
+- item_key: shower
+  name: Shower
+  category: bathroom
+  footprint_w: 0.9
+  footprint_d: 0.9
+- item_key: bathroomMirror
+  name: Bathroom Mirror
+  category: bathroom
+  footprint_w: 0.6
+  footprint_d: 0.1
+- item_key: bathroomCabinet
+  name: Bathroom Cabinet
+  category: bathroom
+  footprint_w: 0.6
+  footprint_d: 0.4
+- item_key: pottedPlant
+  name: Potted Plant
+  category: decor
+  footprint_w: 0.5
+  footprint_d: 0.5
+- item_key: plantSmall1
+  name: Plant Small1
+  category: decor
+  footprint_w: 0.3
+  footprint_d: 0.3
+- item_key: plantSmall2
+  name: Plant Small2
+  category: decor
+  footprint_w: 0.3
+  footprint_d: 0.3
+- item_key: pillow
+  name: Pillow
+  category: decor
+  footprint_w: 0.4
+  footprint_d: 0.4
+- item_key: pillowLong
+  name: Pillow Long
+  category: decor
+  footprint_w: 0.6
+  footprint_d: 0.3
+- item_key: trashcan
+  name: Trashcan
+  category: decor
+  footprint_w: 0.4
+  footprint_d: 0.4

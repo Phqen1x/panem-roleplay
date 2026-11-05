@@ -15,7 +15,15 @@ import yaml
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from panem_shared.content.errors import ContentValidationError
-from panem_shared.content.schemas import District, Good, Job, NpcContent, Route
+from panem_shared.content.schemas import (
+    District,
+    FurniturePiece,
+    Good,
+    Job,
+    NpcContent,
+    PetSpecies,
+    Route,
+)
 
 
 def _read_yaml(path: Path) -> object:
@@ -90,6 +98,39 @@ def load_routes(data_dir: Path) -> list[Route]:
     return _validate_list(path, Route, raw)
 
 
+def load_pets(data_dir: Path) -> dict[str, PetSpecies]:
+    """Optional, same as `load_routes`/`load_npcs` -- a checkout (or test
+    fixture) with no `pets.yaml` simply has no pet store catalog yet."""
+    path = data_dir / "pets.yaml"
+    if not path.exists():
+        return {}
+    raw = _read_yaml(path)
+    pets = _validate_list(path, PetSpecies, raw)
+    by_id: dict[str, PetSpecies] = {}
+    for pet in pets:
+        if pet.id in by_id:
+            raise ContentValidationError(path.as_posix(), f"duplicate pet id {pet.id!r}")
+        by_id[pet.id] = pet
+    return by_id
+
+
+def load_furniture(data_dir: Path) -> dict[str, FurniturePiece]:
+    """Optional, same as `load_pets` above."""
+    path = data_dir / "furniture.yaml"
+    if not path.exists():
+        return {}
+    raw = _read_yaml(path)
+    pieces = _validate_list(path, FurniturePiece, raw)
+    by_key: dict[str, FurniturePiece] = {}
+    for piece in pieces:
+        if piece.item_key in by_key:
+            raise ContentValidationError(
+                path.as_posix(), f"duplicate furniture item_key {piece.item_key!r}"
+            )
+        by_key[piece.item_key] = piece
+    return by_key
+
+
 def load_npcs(data_dir: Path) -> dict[str, NpcContent]:
     """`data/npcs/*.yaml` is optional -- a district with no authored file
     (or a fresh checkout with no `data/npcs/` directory at all) simply has
@@ -115,6 +156,8 @@ class ContentBundle:
     jobs: dict[str, Job]
     routes: list[Route]
     npcs: dict[str, NpcContent] = field(default_factory=dict)
+    pets: dict[str, PetSpecies] = field(default_factory=dict)
+    furniture: dict[str, FurniturePiece] = field(default_factory=dict)
 
     def district(self, district_id: int) -> District:
         try:
@@ -226,6 +269,8 @@ def load_content(data_dir: Path) -> ContentBundle:
         jobs=load_jobs(data_dir),
         routes=load_routes(data_dir),
         npcs=load_npcs(data_dir),
+        pets=load_pets(data_dir),
+        furniture=load_furniture(data_dir),
     )
     _cross_validate(bundle, data_dir, district_paths)
     return bundle

@@ -1,9 +1,24 @@
-// The "Map" tab -- the live schematic district map that used to be the
-// whole of index.html/app.js before the dashboard grew tabs. Behavior is
-// unchanged from that original version: a schematic layout drawn from each
+// The "Map" tab -- the live district map. Every district except the
+// Capitol still gets the original schematic: a layout drawn from each
 // location's map coordinates (no real district map art yet -- see the
-// README), NPCs/characters pushed over a polling WebSocket.
+// README), NPCs/characters pushed over a polling WebSocket. The Capitol
+// (district 0) instead mounts a real 3D city (`../map3d/city.js`) built
+// from the exact same `location_coords` the schematic draws circles from
+// (`panem_shared.map3d_layout`) -- "this city should be the map on the
+// map screen", in the feature request's own words. Other districts get
+// their own 3D city "later" (also the request's own words); the 3D
+// module is written generically enough to support that without changes
+// to it, just a frontend switch here once art direction decides to turn
+// it on for them too.
+//
+// `../map3d/city.js` (and everything it imports -- three.js, GLTFLoader,
+// the vendored Kenney assets) is dynamically imported only the first time
+// the Capitol is actually selected, not on every Map tab open -- most
+// sessions never touch the Capitol, and there's no reason to make them
+// pay for ~1MB of 3D engine + assets just for a schematic they'll never see.
 import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=7";
+
+const CAPITOL_DISTRICT_ID = 0;
 
 function wsUrlFor(districtId) {
   const scheme = location.protocol === "https:" ? "wss:" : "ws:";
@@ -30,12 +45,15 @@ export function mount(root, ctx) {
   districtSelect.disabled = true;
   const countsEl = el("span", { class: "tab-counts" });
   const canvas = el("canvas", { width: "960", height: "600" });
+  const city3DContainer = el("div", {});
+  city3DContainer.hidden = true;
   const panel = el(
     "div",
     { class: "panel map-panel" },
     el("div", { class: "map-toolbar", style: "margin-bottom: 14px;" }, districtSelect, countsEl),
     statusEl,
-    canvas
+    canvas,
+    city3DContainer
   );
   root.append(panel);
 
@@ -43,6 +61,8 @@ export function mount(root, ctx) {
   let districts = [];
   let currentDistrict = null;
   let socket = null;
+  let city3DHandle = null;
+  let switching = false;
 
   function toCanvasX(x) {
     return (x / currentDistrict.map_width) * canvas.width;
@@ -88,17 +108,52 @@ export function mount(root, ctx) {
     countsEl.textContent = `${positions.npcs.length} NPCs, ${positions.characters.length} characters`;
   }
 
-  function connectToDistrict(districtId) {
-    if (socket) socket.close();
-    currentDistrict = districts.find((d) => d.id === districtId) ?? null;
-    if (!currentDistrict) return;
-    socket = new WebSocket(wsUrlFor(districtId));
-    socket.onmessage = (event) => render(JSON.parse(event.data));
-    socket.onerror = () => {
-      setStatusText(statusEl, "Lost connection to the district feed -- retrying on reconnect.", {
-        error: true,
-      });
-    };
+  function teardown3D() {
+    if (city3DHandle) {
+      city3DHandle.unmount();
+      city3DHandle = null;
+    }
+    city3DContainer.hidden = true;
+    city3DContainer.innerHTML = "";
+  }
+
+  async function connectToDistrict(districtId) {
+    if (switching) return;
+    switching = true;
+    try {
+      if (socket) socket.close();
+      socket = null;
+      currentDistrict = districts.find((d) => d.id === districtId) ?? null;
+      if (!currentDistrict) return;
+
+      if (districtId === CAPITOL_DISTRICT_ID) {
+        teardown3D();
+        canvas.hidden = true;
+        city3DContainer.hidden = false;
+        setStatusText(statusEl, "");
+        try {
+          const { mountCity3D } = await import("../map3d/city.js");
+          city3DHandle = await mountCity3D(city3DContainer, ctx, districtId);
+        } catch (err) {
+          setStatusText(statusEl, `Could not load the Capitol's 3D map: ${err.message || err}`, {
+            error: true,
+          });
+        }
+        return;
+      }
+
+      teardown3D();
+      canvas.hidden = false;
+      socket = new WebSocket(wsUrlFor(districtId));
+      socket.onmessage = (event) => render(JSON.parse(event.data));
+      socket.onerror = () => {
+        setStatusText(statusEl, "Lost connection to the district feed -- retrying on reconnect.", {
+          error: true,
+        });
+      };
+    } finally {
+      switching = false;
+    }
   }
 
   (async () => {
@@ -121,6 +176,7 @@ export function mount(root, ctx) {
   return {
     unmount() {
       if (socket) socket.close();
+      teardown3D();
     },
   };
 }

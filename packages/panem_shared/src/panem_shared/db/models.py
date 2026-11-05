@@ -214,6 +214,18 @@ class Character(TimestampMixin, Base):
     x: Mapped[float | None] = mapped_column(Float, nullable=True)
     y: Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    block_outfit: Mapped[str] = mapped_column(String(1), nullable=False, default="a")
+    block_palette: Mapped[str] = mapped_column(String(1), nullable=False, default="a")
+    """The 3D Capitol map's walkable avatar (`panem_api.map3d_routes`'s
+    `/activity/dashboard/map3d/character/*` routes) -- a letter `a`-`r`
+    into the 18 vendored Blocky Characters meshes (`block_outfit`) and the
+    18 vendored recolor textures (`block_palette`), freely mixable since
+    every mesh shares the same UV layout. Separate from `appearance_layers`
+    above on purpose: that's the Picrew-style 2D portrait shown in Discord
+    (an uploaded-art system with no 3D equivalent), this is the character's
+    body on the live map, where there's no staff-uploaded-art option at
+    all -- the only assets to render with are these 18x18 presets."""
+
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     proxy_tag: Mapped[str | None] = mapped_column(String(12), nullable=True)
     theme_profile_id: Mapped[int | None] = mapped_column(
@@ -1153,9 +1165,7 @@ class DistrictLorePerson(TimestampMixin, Base):
     role: Mapped[str] = mapped_column(String(16), nullable=False)
     """`"victor"` or `"mentor"`."""
     name: Mapped[str] = mapped_column(String(80), nullable=False)
-    character_id: Mapped[int | None] = mapped_column(
-        ForeignKey("characters.id"), nullable=True
-    )
+    character_id: Mapped[int | None] = mapped_column(ForeignKey("characters.id"), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
@@ -1176,3 +1186,55 @@ class AmbientTrack(TimestampMixin, Base):
     channel_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_by_staff_discord_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
+
+class Pet(TimestampMixin, Base):
+    """A pet a character bought from the Capitol Market's pet store
+    (`panem_shared.content.schemas.PetSpecies`, `data/pets.yaml`) --
+    purely a possession today (no feeding/needs loop, no 3D-map presence
+    beyond the map3d routes optionally showing it beside its owner): the
+    groundwork the feature asked for, not the full simulation `Character`'s
+    own needs meters get. `species_id` is a plain content-referencing
+    column (no FK), same convention as `Inventory.good_id` -- pets live in
+    content YAML, not a DB table."""
+
+    __tablename__ = "pets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_character_id: Mapped[int] = mapped_column(
+        ForeignKey("characters.id"), nullable=False, index=True
+    )
+    species_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(32), nullable=False)
+    acquired_tick: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    owner: Mapped[Character] = relationship()
+
+
+class PropertyInteriorItem(Base):
+    """One placed piece of furniture inside a `Property`'s interior scene
+    (`panem_shared.content.schemas.FurniturePiece`, `data/furniture.yaml`)
+    -- the 3D map's "enter your house" view. A property with no rows here
+    yet simply hasn't had its default layout generated/persisted --
+    `panem_shared.housing3d.default_layout` builds one from `Property.kind`/
+    `.tier` the first time `GET .../housing3d/{property_id}` is called for
+    it, the same lazy-seed shape `panem_shared.layers`' "nothing uploaded
+    yet" catalog uses rather than a purchase-time hook, so existing
+    properties (seeded long before this feature existed) get a layout too
+    without a backfill migration. `item_key` is a plain content-referencing
+    column (no FK), same convention as `species_id` above."""
+
+    __tablename__ = "property_interior_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    property_id: Mapped[int] = mapped_column(
+        ForeignKey("properties.id"), nullable=False, index=True
+    )
+    item_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    pos_x: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    pos_z: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    rotation_y: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    """Degrees around the vertical axis -- kept in degrees (not radians) so
+    a stored value is human-readable in a DB browser; the frontend converts
+    once on load/save."""
+
+    property_: Mapped[Property] = relationship()

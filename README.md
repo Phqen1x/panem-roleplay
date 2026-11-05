@@ -4118,3 +4118,108 @@ packages/panem_shared/src packages/panem_sim/src` (CI-gated) clean; the `panem_b
 (not CI-gated) stayed at exactly 182 errors before and after (confirmed via `git stash`) -- this pass added
 no new mypy errors at all, gated or not. Full suite: **1467 passed**, the same 1 pre-existing unrelated
 failure as every prior pass (`test_serves_the_vendored_discord_sdk_not_a_cdn_url`).
+
+## A 3D Capitol map: block-character customization, NPCs walking around it, a pet store, and decoratable house/apartment interiors
+
+A feature request asked for something structurally different from anything the dashboard had done before:
+3D block characters players can customize, a real city players and NPCs walk around rather than the
+schematic circles-and-dots the Map tab has always drawn, purchasable pets, and house/apartment interiors
+players can furnish. Assets came from a separate `kenney-assets` checkout (Kenney's free, CC0 asset
+library) -- Blocky Characters (18 rigged, animated character meshes x 18 recolor textures, mixable freely
+since every mesh shares the same UV layout), City Kit - Commercial/Roads (buildings, skyscrapers, road
+tiles), Cube Pets (24 animals), and Furniture Kit (66 pieces, walls/floors/doorways included).
+
+**Worth flagging up front:** this codebase already tried a live 3D character renderer twice (procedural
+geometry, then a rigged Mixamo mesh) and explicitly tore both out in favor of the current Picrew-style 2D
+layered-portrait system (`static/tabs/avatar_creator.js`'s own docstring tells that whole story) -- a
+deliberate move *away* from a renderer-owned asset pipeline. This feature doesn't reverse that decision: the
+2D layered portrait stays exactly as-is for the Discord-facing avatar/profile picture (still the only sane
+option for *that* surface -- Discord has no WebGL). What's new here is a second, separate concern entirely:
+a character's presence on the live map, which the portrait system never addressed and structurally can't
+(a flat image doesn't walk around a city). The two systems don't share any code or data; `Character.
+block_outfit`/`.block_palette` are new columns, independent of `appearance_layers`.
+
+**Asset vendoring.** Three.js (r0.160, `npm pack three` -- CDNs are unreachable from builds in this
+environment per this README's own earlier history, `npm` isn't) plus `GLTFLoader`/`BufferGeometryUtils`/
+`SkeletonUtils`/`OrbitControls` from its `examples/jsm`, with their bare `from 'three'` imports rewritten to
+the vendored relative path -- same reasoning `vendor/discord-embedded-app-sdk.js` already documents, now
+with its own `three.module.min.js.LICENSE.md`. A curated subset of the Kenney packs (not the whole asset
+library -- ~11MB total) landed under `static/assets3d/{characters,city,roads,pets,furniture}/`, cross-
+checked by script against every `data/pets.yaml`/`data/furniture.yaml` entry and every model key
+`panem_shared.map3d_layout`'s building-kind table references, so nothing in content/code points at a file
+that isn't actually vendored.
+
+**The city is generated, not hand-placed.** `panem_shared/map3d_layout.py`'s `build_city_layout(district)`
+takes a `District`'s *existing* `map.location_coords` (the same numbers the schematic canvas has always
+drawn circles from) and produces a 3D layout from them: one building per location (a `LocationKind` ->
+vendored-model-key table, `PUBLIC` locations get an open plaza with no mesh), picked deterministically per
+location id (stable across restarts/reloads), plus a spoke-and-hub road network radiating from whichever
+location sits closest to the map's own center (for the Capitol this lands on Avenue of the Tributes, which
+the content data already places exactly there). Deliberately generic, not Capitol-specific, even though
+only district 0 is wired up to it today (`tabs/map.js` checks for it specifically) -- "we'll do this sort of
+thing for each district later" was the feature request's own words, and turning it on for another district
+later is a frontend one-line change, not new generator code.
+
+**NPC bodies are a stable, honest default, not a costume match.** `panem_shared/block_models.py`'s
+`assign_block_model(npc_id, gender=...)` picks a deterministic outfit/palette per NPC (seeded by the NPC's
+own id, so it never changes across reloads) from a gendered half-split of the 18 outfits with no gender on
+file falling back to the full range. Its docstring is explicit about the limit: the pack's 18 outfits/18
+palettes aren't labeled by role or appearance, so there's no honest way to make "Peacekeeper" or "Stylist
+Assistant" visually mean anything yet -- what this delivers is "every NPC has a stable, visually distinct
+body," which is the groundwork the request asked for; a future pass with someone actually looking at the 18
+preview images could replace the gendered split with a real curated mapping without touching any call site.
+
+**Movement is live but deliberately ephemeral, server-authoritative, in-memory.** `Character.x`/`.y`
+already exist and already mean something -- `panem_sim.systems.time` snaps them to a location's node the
+moment a character's `location_id` changes, and `panem_sim.systems.schedule` does the same for NPCs. Free
+continuous walking around the 3D city is a different thing that system was never built for, and persisting
+it there would fight that snapping logic the instant the sim ticked. So the 3D map's walking position lives
+nowhere in the database at all: `panem_api/map3d_routes.py`'s `Map3DRoom` is a new per-district, in-memory
+room with its own broadcast tick loop, built the same way `party_routes.PartyRoom` already works (a steady
+10Hz full-snapshot broadcast over `/ws/map3d/{district_id}/room`, the frontend easing toward each snapshot
+exactly like `tabs/party.js` already does) -- losing it on a restart is no worse than `PartyRoom` losing an
+in-progress game. NPCs get the same ephemeral, server-authoritative treatment: seeded from their real DB row
+once per room (home position, job title via `content.jobs`, assigned body), then given a small bounded
+wander around that spot each tick so every connected client sees the same NPCs in the same places "walking
+around," without touching `panem_sim`'s own schedule system at all.
+
+**Interaction is proximity-gated (walk up, press E), not click-to-select** -- the same posture
+`party_routes.py`'s own `_near()` already uses for its stations, and far simpler to get right than click-to-
+3D-unprojection. Three outcomes exist: the Capitol Market opens a pet-store popup (`map3d/pets_panel.js`,
+same backend `tabs/pets.js`'s always-available version uses); a residential building, if you own or lease a
+property in that district, lists it and lets you step into its interior; everything else just names itself.
+"Map interaction can be added later" was the feature request's own phrasing -- this is deliberately the
+floor, not the ceiling.
+
+**Pets** (`Pet` table, `data/pets.yaml`'s 24-species catalog, `panem_shared/pets.py`'s `purchase_pet`) are a
+straightforward bought-once possession today -- no feeding/needs loop, no 3D-map presence of their own yet.
+**House/apartment interiors** (`PropertyInteriorItem` table, `data/furniture.yaml`'s 66-piece catalog split
+into structural/non-structural, `panem_shared/housing3d.py`) get a default room shell + starter furniture
+set generated lazily the first time anyone views one (sized by `PropertyKind`, not by tier yet), persisted
+on first view rather than at purchase time so every property ever seeded -- long before this feature existed
+-- gets one too, no backfill migration needed. Editing (`map3d/interior.js`) is nudge-and-rotate rather than
+free mouse-dragging across the floor: add a catalog piece, click it, nudge it a fixed step and rotate it in
+90-degree turns, save. A real drag-across-the-floor tool needs camera-ray/floor-plane intersection math this
+pass didn't need to get right to deliver "allowed to do interior design" -- swapping in true dragging later
+only touches this one file. The structural shell itself is never exposed to the editor (`PUT .../housing3d/
+{id}` only ever replaces non-structural rows) -- you decorate the room, you don't rebuild it.
+
+### Verification
+
+New `tests/unit/test_map3d.py`: `map3d_layout.build_city_layout` (hub selection, building/road generation,
+determinism, the empty-district edge case), `block_models.assign_block_model`/`is_valid_letter`
+(determinism, gender-pool membership, full-range fallback), `housing3d.default_layout`/`room_bounds`/
+`is_resident` (bounds, house-vs-apartment sizing, house-owner/apartment-tenant/inn-is-never-a-residence
+cases), and `pets.validate_pet_name`/`purchase_pet` (happy path debiting money and inserting a row,
+insufficient-funds refusal) against a real `db_session`. Every new/vendored asset reference was cross-
+checked by script against the actual vendored files (zero mismatches in either direction). The full
+`panem_api.map3d_routes` surface (character appearance GET/PATCH with validation, the layout endpoint
+degrading gracefully with no `session_factory` instead of 503ing, the pets catalog/buy/insufficient-funds
+path, the housing3d GET/PUT including the out-of-bounds and structural-item rejections, and the WebSocket
+room's join/move/broadcast loop including NPC wander) was exercised end-to-end against a real local Postgres
+16 + the full Alembic chain (migration verified up cleanly on top of every prior revision), not just unit-
+tested in isolation. `ruff check`/`ruff format --check` clean on every touched/new file (pre-existing drift
+elsewhere in the tree, unrelated to this change, confirmed via a files-only check and left alone). `mypy
+packages/panem_shared/src packages/panem_sim/src` (CI-gated) clean -- every new `panem_shared` module is
+fully typed, no new errors. `ASSET_VERSION` bumped 52 -> 53 (`tabs/map.js`'s 3D branch, new `tabs/pets.js`)
+and `index.html`'s `dashboard.css?v=` 25 -> 26 (new `.map3d-*` rules). Full suite: **1575 passed**.

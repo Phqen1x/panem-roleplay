@@ -247,3 +247,40 @@ class NpcContent(BaseModel):
     system) -- `panem_bot.services.blackmarket.resolve_fence` gates
     `/blackmarket` access behind a character's `RelationshipRow` stance
     with *this specific* NPC, not just anyone in the district."""
+
+
+class PetSpecies(BaseModel):
+    """A purchasable pet species (`data/pets.yaml`) -- the Capitol Market's
+    pet store catalog (`panem_api.map3d_routes`'s `/pets/*` routes). `model`
+    is the vendored Cube Pets asset key (`static/assets3d/pets/animal-
+    {model}.glb`), kept separate from `id` so flavor/pricing can be reskinned
+    without touching the asset reference, though today every species uses
+    its own model 1:1."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name: str
+    model: str
+    price: float = Field(gt=0)
+    description: str = Field(default="", max_length=200)
+
+
+class FurniturePiece(BaseModel):
+    """One vendored Furniture Kit asset (`data/furniture.yaml`) --
+    `static/assets3d/furniture/{item_key}.glb`. `structural` pieces (walls,
+    floors, doorways, stairs) are only ever placed by the default-layout
+    generator (`panem_shared.housing3d.default_layout`) to build a
+    property's fixed room shell; the housing-interior catalog the dashboard
+    offers for free placement (`panem_api.map3d_routes`'s `/housing3d/*`
+    catalog route) excludes them, same split a real interior designer would
+    draw between "the room" and "what's in it"."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    item_key: str
+    name: str
+    category: str
+    structural: bool = False
+    footprint_w: float = Field(default=1.0, gt=0)
+    footprint_d: float = Field(default=1.0, gt=0)

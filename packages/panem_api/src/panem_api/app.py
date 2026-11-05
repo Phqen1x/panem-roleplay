@@ -75,6 +75,7 @@ from panem_api.dashboard_routes import (
     build_vitals_router,
     build_work_router,
 )
+from panem_api.map3d_routes import build_map3d_routers
 from panem_api.party_routes import build_party_router
 from panem_shared import constants, simtime
 from panem_shared.content.loader import ContentBundle
@@ -949,6 +950,8 @@ def create_app(
     )
     app.include_router(build_party_router())
     app.include_router(build_ambient_router(session_factory=session_factory))
+    for map3d_router in build_map3d_routers(content=content, session_factory=session_factory):
+        app.include_router(map3d_router)
 
     uploads_root = static_dir or STATIC_DIR
     if uploads_root != STATIC_DIR:
