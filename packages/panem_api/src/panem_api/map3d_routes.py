@@ -5,7 +5,7 @@ Characters/City Kit/Cube Pets/Furniture Kit assets (`static/assets3d/`).
 This module is the backend half of that, split into four pieces:
 
 - `/map3d/character/*` -- a player's own block-character look (persisted:
-  `Character.block_outfit`/`.block_palette`).
+  `Character.block_parts`, four independently-chosen shape+color parts).
 - `/map3d/{district_id}/layout` -- the generated city (buildings + roads,
   `panem_shared.map3d_layout`), plus the NPCs who live there and their own
   assigned look (`panem_shared.block_models`).
@@ -57,7 +57,7 @@ from panem_shared.db.session import session_scope
 from panem_shared.enums import PropertyKind
 from panem_shared.errors import ServiceError
 from panem_shared.logging import get_logger
-from panem_shared.map3d_layout import CityLayout, build_city_layout
+from panem_shared.map3d_layout import CityLayout, build_city_layout, npc_scatter_offset
 from panem_shared.pets import purchase_pet
 
 logger = get_logger(component="api")
@@ -99,14 +99,28 @@ def _http_from_service_error(exc: ServiceError) -> HTTPException:
 
 
 class BlockAppearance(BaseModel):
-    block_outfit: str
-    block_palette: str
+    """`Character.block_parts`' shape on the wire -- see
+    `panem_shared.block_models.DEFAULT_APPEARANCE` for the exact key set
+    (`head`/`head_color`/`torso`/`torso_color`/`arms`/`arms_color`/`legs`/
+    `legs_color`, each a single `a`-`r` letter)."""
+
+    head: str
+    head_color: str
+    torso: str
+    torso_color: str
+    arms: str
+    arms_color: str
+    legs: str
+    legs_color: str
 
 
 class UpdateBlockAppearanceRequest(BaseModel):
     discord_id: int
-    block_outfit: str
-    block_palette: str
+    parts: dict[str, str]
+
+
+def _block_appearance_out(parts: dict[str, str]) -> BlockAppearance:
+    return BlockAppearance(**parts)
 
 
 def build_appearance_router(
@@ -121,28 +135,24 @@ def build_appearance_router(
             character = await _resolve_owned_character(
                 session, discord_id=discord_id, character_id=character_id
             )
-            return BlockAppearance(
-                block_outfit=character.block_outfit, block_palette=character.block_palette
-            )
+            return _block_appearance_out(character.block_parts)
 
     @router.patch("/{character_id}", response_model=BlockAppearance)
     async def update_appearance(
         character_id: int, body: UpdateBlockAppearanceRequest
     ) -> BlockAppearance:
-        if not block_models.is_valid_letter(body.block_outfit) or not block_models.is_valid_letter(
-            body.block_palette
-        ):
-            raise HTTPException(status_code=400, detail="block_outfit/block_palette must be a-r")
+        if not block_models.is_valid_appearance(body.parts):
+            raise HTTPException(
+                status_code=400,
+                detail="parts must set head/torso/arms/legs and their _color, each a-r",
+            )
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             character = await _resolve_owned_character(
                 session, discord_id=body.discord_id, character_id=character_id
             )
-            character.block_outfit = body.block_outfit
-            character.block_palette = body.block_palette
-            return BlockAppearance(
-                block_outfit=character.block_outfit, block_palette=character.block_palette
-            )
+            character.block_parts = dict(body.parts)
+            return _block_appearance_out(character.block_parts)
 
     return router
 
@@ -151,9 +161,11 @@ def build_appearance_router(
 
 
 class CityBuildingOut(BaseModel):
-    location_id: str
-    name: str
-    kind: str
+    location_id: str | None
+    """`None` for a filler/background building -- there's no real location
+    behind it, so there's nothing to interact with."""
+    name: str | None
+    kind: str | None
     model: str | None
     x: float
     z: float
@@ -173,8 +185,7 @@ class NpcOut(BaseModel):
     job_title: str | None
     home_x: float
     home_z: float
-    block_outfit: str
-    block_palette: str
+    parts: dict[str, str]
 
 
 class CityLayoutOut(BaseModel):
@@ -223,9 +234,15 @@ async def _npcs_for_district(
     rows = await session.execute(select(Npc).where(Npc.district_id == district_id))
     npcs_out: list[NpcOut] = []
     for npc in rows.scalars().all():
-        outfit, palette = block_models.assign_block_model(npc.id, gender=npc.gender)
+        parts = block_models.assign_npc_appearance(npc.id, gender=npc.gender)
         raw_x = npc.x if npc.x is not None else center[0]
         raw_y = npc.y if npc.y is not None else center[1]
+        # Many NPCs in the same district share a `home_location_id` (most
+        # of the Capitol's residents live at "mansions") -- without a
+        # scatter offset, every one of them would render stacked exactly
+        # on top of each other at that one building. See
+        # `map3d_layout.npc_scatter_offset`'s own docstring.
+        scatter_x, scatter_z = npc_scatter_offset(npc.id)
         job_title = None
         if npc.job_id is not None:
             job = content.jobs.get(npc.job_id)
@@ -235,10 +252,9 @@ async def _npcs_for_district(
                 id=npc.id,
                 name=npc.name,
                 job_title=job_title,
-                home_x=(raw_x - center[0]) * scale,
-                home_z=(raw_y - center[1]) * scale,
-                block_outfit=outfit,
-                block_palette=palette,
+                home_x=(raw_x - center[0]) * scale + scatter_x,
+                home_z=(raw_y - center[1]) * scale + scatter_z,
+                parts=parts,
             )
         )
     return npcs_out
@@ -288,8 +304,7 @@ RETARGET_SECONDS = 4.0
 class RoomPlayer:
     character_id: int
     name: str
-    block_outfit: str
-    block_palette: str
+    parts: dict[str, str]
     x: float
     z: float
     facing_deg: float = 0.0
@@ -302,8 +317,7 @@ class RoomNpc:
     npc_id: str
     name: str
     job_title: str | None
-    block_outfit: str
-    block_palette: str
+    parts: dict[str, str]
     home_x: float
     home_z: float
     x: float
@@ -339,8 +353,7 @@ class Map3DRoom:
                 npc_id=npc.id,
                 name=npc.name,
                 job_title=npc.job_title,
-                block_outfit=npc.block_outfit,
-                block_palette=npc.block_palette,
+                parts=npc.parts,
                 home_x=npc.home_x,
                 home_z=npc.home_z,
                 x=npc.home_x,
@@ -350,7 +363,7 @@ class Map3DRoom:
             )
 
     def join(
-        self, websocket: WebSocket, *, character_id: int, name: str, outfit: str, palette: str
+        self, websocket: WebSocket, *, character_id: int, name: str, parts: dict[str, str]
     ) -> WebSocket | None:
         old_ws = self.connections.get(character_id)
         existing = self.players.get(character_id)
@@ -358,13 +371,12 @@ class Map3DRoom:
             self.players[character_id] = RoomPlayer(
                 character_id=character_id,
                 name=name,
-                block_outfit=outfit,
-                block_palette=palette,
+                parts=parts,
                 x=self.layout.spawn_x + self._rng.uniform(-2, 2),
                 z=self.layout.spawn_z + self._rng.uniform(-2, 2),
             )
         else:
-            existing.name, existing.block_outfit, existing.block_palette = name, outfit, palette
+            existing.name, existing.parts = name, parts
         self.connections[character_id] = websocket
         return old_ws if old_ws is not websocket else None
 
@@ -413,8 +425,7 @@ class Map3DRoom:
                 {
                     "character_id": p.character_id,
                     "name": p.name,
-                    "block_outfit": p.block_outfit,
-                    "block_palette": p.block_palette,
+                    "parts": p.parts,
                     "x": round(p.x, 2),
                     "z": round(p.z, 2),
                     "facing_deg": round(p.facing_deg, 1),
@@ -427,8 +438,7 @@ class Map3DRoom:
                     "id": n.npc_id,
                     "name": n.name,
                     "job_title": n.job_title,
-                    "block_outfit": n.block_outfit,
-                    "block_palette": n.block_palette,
+                    "parts": n.parts,
                     "x": round(n.x, 2),
                     "z": round(n.z, 2),
                 }
@@ -508,16 +518,10 @@ def build_room_router(
                 character = await _resolve_owned_character(
                     session, discord_id=discord_id, character_id=character_id
                 )
-                name, outfit, palette = (
-                    character.name,
-                    character.block_outfit,
-                    character.block_palette,
-                )
+                name, parts = character.name, character.block_parts
 
             room = await _get_or_create_room(district_id)
-            old_ws = room.join(
-                websocket, character_id=character_id, name=name, outfit=outfit, palette=palette
-            )
+            old_ws = room.join(websocket, character_id=character_id, name=name, parts=parts)
             if old_ws is not None:
                 with contextlib.suppress(Exception):
                     await old_ws.close(code=4001, reason="Reconnected elsewhere")

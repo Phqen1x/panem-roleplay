@@ -35,6 +35,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from panem_shared import block_models
 from panem_shared.db.base import Base, TimestampMixin
 from panem_shared.enums import (
     CharacterStatus,
@@ -214,17 +215,22 @@ class Character(TimestampMixin, Base):
     x: Mapped[float | None] = mapped_column(Float, nullable=True)
     y: Mapped[float | None] = mapped_column(Float, nullable=True)
 
-    block_outfit: Mapped[str] = mapped_column(String(1), nullable=False, default="a")
-    block_palette: Mapped[str] = mapped_column(String(1), nullable=False, default="a")
+    block_parts: Mapped[dict[str, str]] = mapped_column(
+        JSONB, nullable=False, default=lambda: dict(block_models.DEFAULT_APPEARANCE)
+    )
     """The 3D Capitol map's walkable avatar (`panem_api.map3d_routes`'s
-    `/activity/dashboard/map3d/character/*` routes) -- a letter `a`-`r`
-    into the 18 vendored Blocky Characters meshes (`block_outfit`) and the
-    18 vendored recolor textures (`block_palette`), freely mixable since
-    every mesh shares the same UV layout. Separate from `appearance_layers`
-    above on purpose: that's the Picrew-style 2D portrait shown in Discord
-    (an uploaded-art system with no 3D equivalent), this is the character's
-    body on the live map, where there's no staff-uploaded-art option at
-    all -- the only assets to render with are these 18x18 presets."""
+    `/activity/dashboard/map3d/character/*` routes): `{"head": letter,
+    "head_color": letter, "torso": ..., "arms": ..., "legs": ...}`, each
+    letter `a`-`r` into the 18 vendored Blocky Characters meshes (shape)
+    or the 18 vendored recolor textures (color) -- see `panem_shared.
+    block_models`'s module docstring for why four independently-chosen
+    parts work at all (they share one rig) and `static/map3d/character.js`
+    for where a part actually gets cut from one outfit file and grafted
+    onto another. Separate from `appearance_layers` above on purpose:
+    that's the Picrew-style 2D portrait shown in Discord (an uploaded-art
+    system with no 3D equivalent), this is the character's body on the
+    live map, where there's no staff-uploaded-art option at all -- the
+    only assets to render with are these vendored presets."""
 
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     proxy_tag: Mapped[str | None] = mapped_column(String(12), nullable=True)

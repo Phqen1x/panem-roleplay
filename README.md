@@ -4223,3 +4223,115 @@ elsewhere in the tree, unrelated to this change, confirmed via a files-only chec
 packages/panem_shared/src packages/panem_sim/src` (CI-gated) clean -- every new `panem_shared` module is
 fully typed, no new errors. `ASSET_VERSION` bumped 52 -> 53 (`tabs/map.js`'s 3D branch, new `tabs/pets.js`)
 and `index.html`'s `dashboard.css?v=` 25 -> 26 (new `.map3d-*` rules). Full suite: **1575 passed**.
+
+## Fixing the 3D Capitol map: a real city instead of a sparse spoke, modular body parts instead of 18 presets, NPCs that stacked on top of each other
+
+Live play against the previous pass turned up three real problems, not
+cosmetic nitpicks: the Capitol rendered as a handful of buildings on an
+empty gray field with roads radiating out from the middle ("a circle of
+buildings," not a city); the block-character customizer only let you pick
+one of 18 whole-body presets, which reads as "no real customization" once
+you've clicked through a few; and a dense, ugly pile of overlapping
+character models sat on top of whichever building most NPCs happened to
+share a `home_location_id` with (in the Capitol's case, "The Mansions" --
+most of its authored residents live there).
+
+**The NPC pile.** `panem_sim.systems.schedule` places every NPC at their
+current location's exact `location_coords` point, no jitter -- fine for
+the 2D schematic (dots are cheap to overlap), fatal for 3D models, which
+render as a literal stack of boxy bodies the instant more than one NPC
+shares a spot. Rather than touch `panem_sim` (out of scope, and every
+other consumer of `Npc.x`/`.y` is fine with exact coordinates),
+`panem_shared.map3d_layout.npc_scatter_offset(npc_id)` adds a small,
+deterministic ring-shaped offset purely at the map3d read layer
+(`panem_api.map3d_routes._npcs_for_district`) -- every NPC still renders
+near their actual location, just no longer exactly on top of each other.
+
+**The sparse city.** `panem_shared.map3d_layout.build_city_layout` is a
+full rewrite: instead of one building per named location connected by
+spoke roads to a hub, it now lays out a proper `GRID_RADIUS`-sized
+Manhattan grid of building plots (49 plots at the current radius) with a
+full street grid between them (`road-straight` segments plus `road-
+crossroad` tiles at every intersection -- ~420 road tiles for the
+Capitol, versus ~90 before). Each named location still gets snapped to
+whichever grid plot is nearest its real `location_coords` position (so
+the city's layout still roughly matches the old schematic's arrangement),
+and the grid's exact center plot is always reserved as the open hub
+plaza. Every other plot gets a deterministically-picked filler building
+-- mixing full-detail and the newly-vendored `low-detail-building-*`
+variants (vendored for exactly this, background density, cheaper-looking
+on purpose) with a small chance of a skyscraper and a smaller chance of
+staying empty ground (a city that's 100% wall-to-wall buildings reads as
+a maze, not a place). `CityBuilding.location_id`/`.name`/`.kind` are now
+all `Optional` -- a filler building has no real location behind it, so
+there's nothing for `panem_api.map3d_routes` to attach interaction to,
+and `static/map3d/city.js`'s proximity-interaction check now skips any
+building with no `location_id`.
+
+**Much deeper customization.** Before actually rewriting anything, the
+vendored GLTFLoader was used (in plain Node, with a handful of minimal
+browser-global stubs -- `self`, a no-op `document.createElementNS`, a
+synchronous fake `Image` -- so it never touches a GPU) to *actually parse*
+several outfit files and compare their scene graphs directly, rather than
+assume: every one of the 18 outfits turns out to share one plain (non-
+skinned) rig -- `root` -> [`leg-left`, `leg-right`, `torso`], `torso` ->
+[`arm-left`, `arm-right`, `head`] -- with byte-identical local position/
+quaternion/scale on every single outfit letter, and animation clip tracks
+that target nodes purely by name (`"torso.quaternion"`, etc.), not by
+file-specific identity. That means a part can be cut out of any outfit
+file and grafted onto a freshly-built hierarchy with the same names, and
+any outfit's animation set will still drive it correctly -- confirmed by
+literally doing this in the same Node harness (mixing legs from one file,
+arms from another, head from a third) and watching `AnimationMixer`
+successfully animate the assembled result. `static/map3d/character.js`
+is a full rewrite built on exactly that: `createCharacter(parts)` now
+takes four independent shape choices (head/torso/arms/legs, still `a`-`r`)
+and four independent colors, loads only the distinct outfit files/palette
+textures actually needed, and grafts each part on. `Character.block_parts`
+(new migration `a4c8e1f6b2d9`, replacing the single-outfit-pair columns
+from the previous pass -- a follow-up migration rather than editing the
+already-possibly-applied one in place) and `panem_shared.block_models.
+assign_npc_appearance` carry the same eight-key shape for players and
+NPCs alike. `static/map3d/customizer.js` is a matching rewrite: four
+sections, each a row of 18 lettered shape buttons plus a row of 18 color
+swatches -- 18^4 shape combinations x 18^4 colors, a long way past 18
+whole-body presets. While rewriting `city.js`'s player-appearance-swap
+path, found and fixed a real bug in the previous version too: re-
+customizing a *second* time would dispose of and try to remove an
+already-stale object reference (the closure had captured the *original*
+built character, never updated across rebuilds) rather than the one
+actually on screen.
+
+**Smaller polish, same pass:** a scene fog (cheap distance cue so the
+grid's edge doesn't just pop into view against flat sky) and a faint
+ground `GridHelper` (the flat gray plane alone read as an empty void even
+with buildings on it) -- neither needed a new asset, both vendored-asset-
+free wins given there's no dedicated pavement texture in the curated set.
+
+### Verification
+
+Extended `tests/unit/test_map3d.py`: the city-layout tests now assert the
+grid actually fills (`> 10` filler buildings, `> 100` road tiles, no two
+buildings sharing a plot, building count never exceeding the grid size,
+the hub plot always building-free) rather than just "something got
+generated"; new `TestAssignNpcAppearance` covers all four parts varying
+independently (the previous single-outfit system couldn't even express
+that), gendered pools, and the full key set; new `TestNpcScatterOffset`
+covers determinism and the radius bound; new `TestIsValidAppearance`
+covers the missing-key/extra-key/bad-letter/non-dict rejection paths the
+PATCH endpoint relies on. The full `/map3d/character/*` PATCH (valid
+mixed-part update, and the missing-keys-plus-bad-letter rejection) and
+`/map3d/0/layout` (named-vs-filler building counts, road count) were
+re-verified end-to-end against a real local Postgres, same posture as the
+previous pass. `ruff check`/`ruff format --check`/`mypy packages/
+panem_shared/src packages/panem_sim/src` clean. Full suite: **1590
+passed** (60 in `test_map3d.py` alone, up from 45).
+
+Not fixed in this pass, left as known follow-ups: the ~470 individual
+building/road model instances per Capitol load is comfortably within what
+Three.js/WebGL handles, but `THREE.InstancedMesh` for the repeated road
+tiles would cut that by over half if it ever becomes a real problem on
+low-end hardware; a remote player's appearance change doesn't rebuild
+their already-on-screen 3D model for *other* connected clients mid-session
+(only a fresh join picks up the new look) -- the same limitation the
+single-outfit version had, not a regression, just not solved yet either.

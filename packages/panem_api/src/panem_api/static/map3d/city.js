@@ -79,8 +79,8 @@ export async function mountCity3D(container, ctx, districtId) {
         class: "btn secondary",
         type: "button",
         onclick: () =>
-          openCustomizer(overlayHost, ctx, characterId, (outfit, palette) => {
-            if (localPlayer) localPlayer.setAppearance(outfit, palette);
+          openCustomizer(overlayHost, ctx, characterId, (parts) => {
+            if (localPlayer) localPlayer.setAppearance(parts);
           }),
       },
       "Customize Character"
@@ -105,21 +105,34 @@ export async function mountCity3D(container, ctx, districtId) {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x9fb8c8);
+  const skyColor = 0x9fb8c8;
+  scene.background = new THREE.Color(skyColor);
+  // A city this dense needs a distance cue, or the far edge of the grid
+  // just pops into view against flat sky -- cheap fog does the job
+  // without needing a skybox/horizon asset this pack doesn't have.
+  scene.fog = new THREE.Fog(skyColor, 45, 150);
 
-  const camera = new THREE.PerspectiveCamera(55, CANVAS_WIDTH / CANVAS_HEIGHT, 0.1, 400);
+  const camera = new THREE.PerspectiveCamera(58, CANVAS_WIDTH / CANVAS_HEIGHT, 0.1, 400);
 
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 1.1));
-  const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 1.3));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.3);
   sun.position.set(30, 60, 20);
   scene.add(sun);
 
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(400, 400),
-    new THREE.MeshStandardMaterial({ color: 0x8a8f94 })
+    new THREE.MeshStandardMaterial({ color: 0x75797e })
   );
   ground.rotation.x = -Math.PI / 2;
   scene.add(ground);
+  // A faint pavement grid -- the ground plane alone reads as an empty
+  // void even with buildings on it; this gives it a sense of surface
+  // without needing a dedicated pavement texture.
+  const groundGrid = new THREE.GridHelper(400, 200, 0x5a5e63, 0x5a5e63);
+  groundGrid.position.y = 0.01;
+  groundGrid.material.opacity = 0.25;
+  groundGrid.material.transparent = true;
+  scene.add(groundGrid);
 
   let contextLost = false;
   canvas.addEventListener("webglcontextlost", (event) => {
@@ -138,11 +151,9 @@ export async function mountCity3D(container, ctx, districtId) {
     return { unmount() {} };
   }
 
-  const buildingsByLocation = new Map();
   await Promise.all(
     layout.buildings.map(async (building) => {
-      buildingsByLocation.set(building.location_id, building);
-      if (!building.model) return; // PUBLIC location -- open plaza, no mesh
+      if (!building.model) return; // PUBLIC location or empty filler plot -- open ground, no mesh
       try {
         const { scene: modelScene } = await loadModel(`${ASSETS_BASE}/city/${building.model}.glb`);
         const instance = cloneModel(modelScene);
@@ -177,7 +188,7 @@ export async function mountCity3D(container, ctx, districtId) {
     const appearance = await ctx.apiFetch(
       `/activity/dashboard/map3d/character/${characterId}?discord_id=${encodeURIComponent(discordId)}`
     );
-    const built = await createCharacter(appearance.block_outfit, appearance.block_palette);
+    const built = await createCharacter(appearance);
     built.object3D.position.set(layout.spawn_x, 0, layout.spawn_z);
     scene.add(built.object3D);
     localPlayer = {
@@ -185,18 +196,16 @@ export async function mountCity3D(container, ctx, districtId) {
       x: layout.spawn_x,
       z: layout.spawn_z,
       facingDeg: 0,
-      async setAppearance(outfit, palette) {
-        const rebuilt = await createCharacter(outfit, palette);
-        rebuilt.object3D.position.copy(built.object3D.position);
-        rebuilt.object3D.rotation.y = built.object3D.rotation.y;
-        scene.remove(built.object3D);
-        built.dispose();
-        Object.assign(this, rebuilt, {
-          x: this.x,
-          z: this.z,
-          facingDeg: this.facingDeg,
-          setAppearance: this.setAppearance,
-        });
+      async setAppearance(parts) {
+        const rebuilt = await createCharacter(parts);
+        rebuilt.object3D.position.copy(this.object3D.position);
+        rebuilt.object3D.rotation.y = this.object3D.rotation.y;
+        scene.remove(this.object3D);
+        this.dispose();
+        this.object3D = rebuilt.object3D;
+        this.update = rebuilt.update;
+        this.setMoving = rebuilt.setMoving;
+        this.dispose = rebuilt.dispose;
         scene.add(this.object3D);
       },
     };
@@ -210,7 +219,7 @@ export async function mountCity3D(container, ctx, districtId) {
   await Promise.all(
     layout.npcs.map(async (npc) => {
       try {
-        const built = await createCharacter(npc.block_outfit, npc.block_palette);
+        const built = await createCharacter(npc.parts);
         built.object3D.position.set(npc.home_x, 0, npc.home_z);
         scene.add(built.object3D);
         npcEntities.set(npc.id, {
@@ -235,7 +244,7 @@ export async function mountCity3D(container, ctx, districtId) {
   async function ensureRemotePlayer(meta) {
     let remote = remotePlayers.get(meta.character_id);
     if (remote) return remote;
-    const built = await createCharacter(meta.block_outfit, meta.block_palette);
+    const built = await createCharacter(meta.parts);
     built.object3D.position.set(meta.x, 0, meta.z);
     scene.add(built.object3D);
     remote = { character: built, x: meta.x, z: meta.z, targetX: meta.x, targetZ: meta.z, meta };
@@ -361,6 +370,7 @@ export async function mountCity3D(container, ctx, districtId) {
     let best = null;
     let bestDist = INTERACT_RADIUS;
     for (const building of layout.buildings) {
+      if (!building.location_id) continue; // filler building -- nothing to interact with
       const d = distance2D(localPlayer.x, localPlayer.z, building.x, building.z);
       if (d <= bestDist) {
         best = { kind: "building", data: building };
@@ -521,7 +531,7 @@ export async function mountCity3D(container, ctx, districtId) {
       localPlayer.object3D.rotation.y = THREE.MathUtils.degToRad(localPlayer.facingDeg);
       localPlayer.update(dt);
 
-      camera.position.set(localPlayer.x, 9, localPlayer.z + 9);
+      camera.position.set(localPlayer.x, 11, localPlayer.z + 11);
       camera.lookAt(localPlayer.x, 1.2, localPlayer.z);
 
       const nearest = updateNearest();
