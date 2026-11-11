@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
-from panem_shared.enums import DayPhase, Gender, LocationKind
+from panem_shared.enums import CollectibleRarity, DayPhase, Gender, LocationKind, Season
 
 # Forum tags = one per location + `Open` + `Closed`, capped at 20 tags
 # per Discord forum (Plan §1.3), so at most 18 locations per district.
@@ -284,3 +284,100 @@ class FurniturePiece(BaseModel):
     structural: bool = False
     footprint_w: float = Field(default=1.0, gt=0)
     footprint_d: float = Field(default=1.0, gt=0)
+
+
+class CollectibleDrop(BaseModel):
+    """One `Hobby`'s weighted entry in `data/collectibles.yaml` -- `weight`
+    is relative within the hobby's own table only (never compared across
+    hobbies), and `min_level` (a `JobLevel` value, reused from the job
+    mastery ladder -- see `panem_shared.hobby_levels`) keeps a hobby's
+    rarest/most setting-specific finds out of reach until a character has
+    actually put in sessions, the same way `panem_shared.stealing`'s
+    burgle targets tier by job level."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    collectible_id: str
+    weight: float = Field(gt=0)
+    min_level: str = "apprentice"
+
+
+class Hobby(BaseModel):
+    """A `data/hobbies.yaml` entry -- one of the up to 3 a character may
+    pick (`CharacterHobby`, `panem_shared.hobbies`). `tool_good_id` is a
+    `data/goods.yaml` id (a rod, trowel, mixing bowl, ...): owning at
+    least one unit in `Inventory` raises the timing minigame's margin for
+    error, but it's never required to play at all -- bare-handed always
+    works, just worse (Spec doesn't gate hobbies behind a purchase)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name: str
+    verb: str
+    """Flavors the session prompt, e.g. "cast your line", "turn the
+    soil", "knead the dough" -- `panem_bot.cogs.hobbies` interpolates it
+    directly into the timing-minigame embed."""
+    description: str = Field(default="", max_length=300)
+    tool_good_id: str | None = None
+    drops: list[CollectibleDrop] = Field(default_factory=list)
+    rare_find_chain: str | None = None
+    """A `panem_shared.personal_events` chain kind (e.g. `"lost_item"`) a
+    rare/legendary catch can kick off instead of going straight to
+    inventory -- `None` means this hobby never triggers one."""
+
+
+class Collectible(BaseModel):
+    """A `data/collectibles.yaml` entry -- the museum-displayable item a
+    `CollectibleInstance` row points at by `id`. `hobby_id` is `None` for
+    a collectible only ever granted by a personal/global event, never a
+    plain hobby session roll."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name: str
+    hobby_id: str | None = None
+    rarity: CollectibleRarity = CollectibleRarity.COMMON
+    wing: str = "general"
+    """Default museum grouping (`panem_shared.museum`'s "by_wing" preset)
+    -- a themed room name like "Aquatic Life" or "Oddities & Curiosities"."""
+    description: str = Field(default="", max_length=300)
+    donation_reward: int = Field(default=10, ge=0)
+
+
+class SeasonRange(BaseModel):
+    """One season's `(low, high)` Fahrenheit range for a `DistrictClimate`
+    -- `panem_sim.systems.weather` picks each day's actual forecast
+    uniformly within it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    low: int
+    high: int
+
+
+class DistrictClimate(BaseModel):
+    """A `data/climate.yaml` entry -- one per district, keyed by `Season`
+    rather than month so authoring stays independent of `DAYS_PER_MONTH`/
+    `TICKS_PER_DAY`. `inclement` lists which `WeatherKind`s this
+    district's weather can ever roll and in which seasons -- a district
+    with no winters authored for `flash_flood` simply never gets one in
+    winter, no separate exclusion list needed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    district_id: int = Field(ge=0, le=12)
+    spring: SeasonRange
+    summer: SeasonRange
+    autumn: SeasonRange
+    winter: SeasonRange
+    inclement: dict[Season, list[str]] = Field(default_factory=dict)
+
+    def range_for(self, season: Season) -> SeasonRange:
+        return {
+            Season.SPRING: self.spring,
+            Season.SUMMER: self.summer,
+            Season.AUTUMN: self.autumn,
+            Season.WINTER: self.winter,
+        }[season]

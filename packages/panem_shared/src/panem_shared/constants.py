@@ -911,3 +911,182 @@ characters."""
 TRADE_EXPIRY_CHECK_INTERVAL_MINUTES = 5
 """Same cadence as `ENGAGEMENT_IDLE_CHECK_INTERVAL_MINUTES` -- how often
 the bot's `tasks.loop` scans for trades past `TRADE_OFFER_EXPIRY_MINUTES`."""
+
+# ----------------------------------------------------------------- Hobbies
+
+MAX_HOBBIES_PER_CHARACTER = 3
+
+HOBBY_LEVEL_SESSION_THRESHOLDS: dict[str, int] = {
+    "apprentice": 0,
+    "novice": 10,
+    "journeyman": 30,
+    "master": 60,
+    "expert": 100,
+}
+"""Cumulative `CharacterHobby.sessions_played` (successful sessions only)
+needed to reach each `JobLevel` -- hobbies reuse that same 5-rung ladder
+(`panem_shared.hobby_levels`) rather than a bespoke one, scaled down from
+`JOB_LEVEL_SHIFT_THRESHOLDS` since a hobby is played far more casually
+than a shift job."""
+
+HOBBY_TOOL_SUCCESS_BONUS = 0.15
+"""Added to the timing minigame's base success probability while the
+character owns at least one unit of that hobby's `tool_good_id`."""
+HOBBY_LEVEL_SUCCESS_BONUS: dict[str, float] = {
+    "apprentice": 0.0,
+    "novice": 0.05,
+    "journeyman": 0.10,
+    "master": 0.15,
+    "expert": 0.20,
+}
+"""Added on top of the base + tool bonus, by hobby mastery level."""
+HOBBY_BASE_SUCCESS = 0.55
+HOBBY_SESSION_COOLDOWN_TICKS = 2
+"""Minimum ticks between one character's hobby sessions (any hobby) --
+short enough to play a few times a sim-day, long enough to stop a single
+player from farming one hobby's drop table every tick."""
+HOBBY_RARE_CHAIN_CHANCE = 0.04
+"""Flat chance a *successful* session starts `Hobby.rare_find_chain`
+instead of rolling the normal `drops` table -- skipped outright if the
+character already has an active chain of that kind."""
+
+# ----------------------------------------------------------------- Museum
+
+MUSEUM_PRESETS = ("by_wing", "by_rarity", "by_hobby", "alphabetical", "by_date")
+
+# -------------------------------------------------------- Personal events
+
+LOST_ITEM_CHAIN_EXPIRY_DAYS = 7
+"""A `lost_item` chain abandoned (never investigated/delivered) this many
+in-world days after it started auto-expires (`EventChainStatus.EXPIRED`)
+-- `panem_sim.systems.personal_events` sweeps for these once a day."""
+LOST_ITEM_INVESTIGATE_CANDIDATES = 3
+"""How many district NPCs `panem_shared.personal_events.investigate`
+samples before picking the "likely owner" -- weighted toward an NPC
+sharing a trait with the item's flavor where one exists, otherwise
+uniform, so the clue is never perfectly deterministic from the item alone."""
+LOST_ITEM_REWARD_MONEY = 25
+LOST_ITEM_REWARD_REPUTATION = 5.0
+LOST_ITEM_REWARD_RELATIONSHIP = 10.0
+"""Added to the delivering character's `RelationshipRow.stance_score` with
+the NPC the item belonged to, same scale `panem_shared.relationships`
+already uses for a positive engagement outcome."""
+
+# --------------------------------------------------------- Global events
+
+GLOBAL_EVENT_DEFAULT_DURATION_TICKS = TICKS_PER_DAY
+"""`/staff event create`'s default window when staff don't specify one --
+a full in-world day, long enough to span every phase once."""
+GLOBAL_EVENT_TICKET_REWARD_TOP = 3
+GLOBAL_EVENT_TICKET_REWARD_PARTICIPANT = 1
+"""`event_ticket` (`data/goods.yaml`) granted on `/staff event conclude`:
+the single highest `GlobalEventEntry.score` gets the top reward, every
+other character with at least one recorded attempt gets the participation
+reward -- a Jacob's-Contest-style "show up and you still get something,
+place well and you get more"."""
+GLOBAL_EVENT_MONEY_REWARD_TOP = 60
+GLOBAL_EVENT_MONEY_REWARD_PARTICIPANT = 10
+
+# ------------------------------------------------------------------ Weather
+
+WEATHER_DAILY_INCLEMENT_CHANCE = 0.12
+"""Flat daily-per-district chance of rolling an inclement (severity-rated)
+event on a day that isn't already under one -- Spec: "no more than one
+weather event will happen per day" and, separately, "limited to once an
+in-game week max" for anything other than rain/snow (`WEATHER_EVENT_
+MIN_GAP_DAYS` enforces the latter)."""
+WEATHER_EVENT_MIN_GAP_DAYS = 7
+WEATHER_RAIN_SNOW_CHANCE = 0.35
+"""Independent of `WEATHER_DAILY_INCLEMENT_CHANCE` -- plain rain/snow has
+no severity rating and can still happen on a day an inclement event was
+just rolled (Spec only caps *inclement* events at one/day), falling back
+to whichever of rain/snow matches the day's season (snow in winter, rain
+otherwise)."""
+WEATHER_SEVERITY_WEIGHTS: dict[int, float] = {1: 40, 2: 25, 3: 15, 4: 10, 5: 7, 6: 3}
+"""Relative weight per category 1-6 once an inclement roll succeeds --
+"the higher the number, the worse it is, and the rarer it is to happen"."""
+WEATHER_DURATION_TICKS_RANGE = (1, 18)
+"""Spec: "can last between 1 in-game hour and 18 in-game hours" -- one
+tick is one in-world hour (`TICKS_PER_DAY = 24`)."""
+WEATHER_FORECAST_LEAD_DAYS = 1
+"""How far ahead `panem_sim.systems.weather` generates and announces a
+day's forecast/predicted event -- Spec: meteorologists report a predicted
+start time ahead of it actually happening."""
+WEATHER_START_DRIFT_TICKS = 3
+"""An inclement event's *actual* start can land up to this many ticks
+before or after its predicted start (Spec: "sometimes weather events
+start before or after the predicted time"); `WEATHER_FIZZLE_CHANCE` is
+separately how often it simply never starts at all."""
+WEATHER_FIZZLE_CHANCE = 0.1
+
+WEATHER_HEALTH_DAMAGE_PER_SEVERITY = 4.0
+"""`Character.health` lost per tick a Simulation-mode character spends
+outside (not inside an owned/leased/inn property) while an inclement
+event is `ACTIVE` in their current district, multiplied by its severity.
+Life/Story characters are exempt, matching the existing precedent that
+only Simulation mode carries automatic stat damage (`panem_sim.systems.
+needs`)."""
+WEATHER_PROPERTY_DAMAGE_BASE_CHANCE = 0.5
+"""Per-severity-point chance (so severity 6 is a near-certain roll) that
+an unprepared `Property` in an affected district takes damage once an
+event goes `ACTIVE`, reduced by `Property.weather_prep` for that specific
+`WeatherKind` (`panem_shared.weather.property_damage_chance`)."""
+WEATHER_PROPERTY_DAMAGE_RANGE = (5, 25)
+"""`Property.damage_level` (0-100) gained on an unlucky roll, before the
+prep-level reduction."""
+WEATHER_PREP_MAX_LEVEL = 3
+WEATHER_PREP_MATERIAL_GOOD_ID = "lumber"
+WEATHER_PREP_COST_PER_LEVEL = 15
+"""Flat `lumber` units + money spent raising one `WeatherKind`'s prep
+level by one, up to `WEATHER_PREP_MAX_LEVEL` -- boarding up/reinforcing
+reads the same regardless of which specific inclement kind is being
+prepared for, a simplification noted in `panem_shared.weather`'s module
+docstring."""
+WEATHER_PREP_DAMAGE_REDUCTION_PER_LEVEL = 0.3
+"""Multiplies `WEATHER_PROPERTY_DAMAGE_BASE_CHANCE` down by `(1 - level *
+this)` for the `WeatherKind` being prepared against."""
+WEATHER_REPAIR_COST_PER_POINT = 2
+"""Money cost per point of `Property.damage_level` repaired."""
+
+# ----------------------------------------------------- Reaction events
+
+REACTION_EVENT_CHOICE_SECONDS = 20
+"""How long a `ReactionEvent` pop-up's buttons stay live before it
+auto-resolves as skipped (no archetype effect either way)."""
+ARCHETYPE_SCORE_MIN = -100.0
+ARCHETYPE_SCORE_MAX = 100.0
+ARCHETYPE_GOOD_DELTA = 8.0
+ARCHETYPE_EVIL_DELTA = -8.0
+ARCHETYPE_NEUTRAL_PULL = 0.35
+"""A `ReactionChoice.NEUTRAL` pick multiplies the *current* score toward
+0 by this fraction instead of adding a fixed delta -- Spec: "neutral will
+also diminish people seeing you as good or evil, but by less than
+choosing the opposite." Picking the opposite of an established streak
+applies the full `ARCHETYPE_GOOD_DELTA`/`ARCHETYPE_EVIL_DELTA` (no
+separate "reset", per Spec, just the ordinary delta -- consistency is
+what the asymmetric neutral pull is for)."""
+ARCHETYPE_GOOD_THRESHOLD = 25.0
+ARCHETYPE_EVIL_THRESHOLD = -25.0
+"""`panem_shared.reactions.archetype_label` reads "Good"/"Evil" past
+these, "Neutral" in between."""
+
+# ------------------------------------------------------------------ Rumors
+
+RUMOR_BASE_RELIABILITY_RANGE = (10, 90)
+RUMOR_INVESTIGATE_SHIFT_RANGE = (5, 20)
+"""How much one `/rumor investigate` can move `Rumor.reliability_pct` up
+or down -- the direction is decided by the investigation's own roll
+(`panem_shared.rumors.investigate`), not fixed, and the magnitude is
+random within this range so no two investigations of the same rumor feel
+identical."""
+RUMOR_MAX_INVESTIGATIONS = 5
+"""Diminishing-returns cap -- past this many logged investigations, a
+rumor's reliability is considered settled and further `/rumor
+investigate` calls just report the existing findings."""
+
+# ----------------------------------------------------------------- Bulletin
+
+BULLETIN_REMINDER_LEAD_MINUTES = 30
+"""Default how-long-before DM reminder offered by a `BulletinEntry`'s
+"Remind Me" button when the entry has a concrete `event_tick` -- players
+can still ask for a different lead time via the command form."""

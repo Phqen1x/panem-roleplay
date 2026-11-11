@@ -11,7 +11,7 @@ from __future__ import annotations
 import datetime as dt
 
 from panem_shared import constants
-from panem_shared.enums import DayPhase
+from panem_shared.enums import DayPhase, Season
 
 _PHASE_ORDER = (DayPhase.NIGHT, DayPhase.MORNING, DayPhase.AFTERNOON, DayPhase.EVENING)
 TICKS_PER_PHASE = constants.TICKS_PER_DAY // len(_PHASE_ORDER)
@@ -115,3 +115,35 @@ def seconds_until_next_tick(
     now = now if now is not None else dt.datetime.now(dt.UTC)
     elapsed = (now - updated_at).total_seconds()
     return max(0.0, tick_interval_seconds - elapsed)
+
+
+_SEASON_BY_MONTH: dict[int, Season] = {
+    12: Season.WINTER,
+    1: Season.WINTER,
+    2: Season.WINTER,
+    3: Season.SPRING,
+    4: Season.SPRING,
+    5: Season.SPRING,
+    6: Season.SUMMER,
+    7: Season.SUMMER,
+    8: Season.SUMMER,
+    9: Season.AUTUMN,
+    10: Season.AUTUMN,
+    11: Season.AUTUMN,
+}
+"""Northern-hemisphere ordering (Spec: "same time spans of the year" as
+real life) -- `current`'s 1-indexed `month` maps straight onto it."""
+
+
+def season_for_month(month: int) -> Season:
+    return _SEASON_BY_MONTH[month]
+
+
+def day_index(tick: int) -> int:
+    """The absolute in-world day number `tick` falls on, counting from day
+    0 -- the primary key component `WeatherForecast`/`WeatherEvent` key
+    off, and the unit `panem_sim.systems.weather` uses for its
+    once-per-day/once-per-week cadence math. Same division `current`
+    already does internally to get `day`/`month`, exposed here since
+    weather needs the *absolute* count, not day-within-month."""
+    return tick // constants.TICKS_PER_DAY

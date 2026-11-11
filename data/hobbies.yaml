@@ -1,0 +1,74 @@
+# Hobby catalog (Spec: "Hobbies") -- a character may pick up to 3
+# (`CharacterHobby`, `panem_shared.hobbies.MAX_HOBBIES_PER_CHARACTER`).
+# `drops` weights are relative within one hobby's own table only.
+# `rare_find_chain` names a `panem_shared.personal_events` chain kind a
+# session can kick off *instead* of a normal collectible roll (checked
+# separately, a flat low chance, before the `drops` table is even rolled).
+- id: fishing
+  name: Fishing
+  verb: cast your line
+  description: >-
+    Cast a line into the district's waterways and see what bites -- mostly
+    fish, sometimes something stranger.
+  tool_good_id: fishing_rod
+  rare_find_chain: lost_item
+  drops:
+    - collectible_id: minnow
+      weight: 45
+    - collectible_id: silver_trout
+      weight: 35
+    - collectible_id: river_bass
+      weight: 15
+      min_level: novice
+    - collectible_id: capitol_koi
+      weight: 4
+      min_level: journeyman
+    - collectible_id: ancient_turtle_shell
+      weight: 1
+      min_level: master
+
+- id: gardening
+  name: Gardening
+  verb: tend the soil
+  description: >-
+    Plant, water, and harvest -- patience pays off in rarer blooms and
+    the occasional buried curiosity.
+  tool_good_id: garden_trowel
+  rare_find_chain: lost_item
+  drops:
+    - collectible_id: wildflower_bouquet
+      weight: 45
+    - collectible_id: heirloom_tomato
+      weight: 35
+    - collectible_id: sunpetal_bloom
+      weight: 15
+      min_level: novice
+    - collectible_id: nightshade_bloom
+      weight: 4
+      min_level: journeyman
+    - collectible_id: capitol_rose
+      weight: 1
+      min_level: master
+
+- id: baking
+  name: Baking
+  verb: knead the dough
+  description: >-
+    Measure, mix, and time it just right -- a steady hand earns better
+    bakes and the odd forgotten heirloom recipe.
+  tool_good_id: mixing_bowl
+  rare_find_chain: lost_item
+  drops:
+    - collectible_id: plain_biscuit
+      weight: 45
+    - collectible_id: cinnamon_roll
+      weight: 35
+    - collectible_id: honey_loaf
+      weight: 15
+      min_level: novice
+    - collectible_id: capitol_tart
+      weight: 4
+      min_level: journeyman
+    - collectible_id: golden_crust_cake
+      weight: 1
+      min_level: master

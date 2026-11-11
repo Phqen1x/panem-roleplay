@@ -181,3 +181,102 @@ class DistrictClassification(enum.StrEnum):
 
     INNER = "inner"
     OUTLIER = "outlier"
+
+
+class CollectibleRarity(enum.StrEnum):
+    """A `data/collectibles.yaml` entry's rarity -- weights how often
+    `panem_shared.hobbies` rolls it on a successful session, and sorts a
+    `MuseumSlot`'s default ("by_rarity") preset (`panem_shared.museum`)."""
+
+    COMMON = "common"
+    UNCOMMON = "uncommon"
+    RARE = "rare"
+    LEGENDARY = "legendary"
+
+
+class Season(enum.StrEnum):
+    """Derived purely from the in-world month (`panem_shared.simtime.
+    season_for_month`) -- not its own stored field anywhere. Northern-
+    hemisphere ordering: Dec-Feb winter, Mar-May spring, Jun-Aug summer,
+    Sep-Nov autumn (Spec's "same time spans as real life")."""
+
+    SPRING = "spring"
+    SUMMER = "summer"
+    AUTUMN = "autumn"
+    WINTER = "winter"
+
+
+class WeatherKind(enum.StrEnum):
+    """`WeatherForecast.condition`'s two no-severity values plus every
+    severity-rated (category 1-6) inclement event `panem_sim.systems.
+    weather` can roll. Which kinds are even eligible in a given season is
+    content (`data/climate.yaml`), not hardcoded here -- a flash flood in
+    midwinter is just never in that district's seasonal table."""
+
+    CLEAR = "clear"
+    RAIN = "rain"
+    SNOW = "snow"
+    THUNDERSTORM = "thunderstorm"
+    HAILSTORM = "hailstorm"
+    BLIZZARD = "blizzard"
+    FLASH_FLOOD = "flash_flood"
+    HEATWAVE = "heatwave"
+    WINDSTORM = "windstorm"
+
+
+class WeatherEventStatus(enum.StrEnum):
+    """A `WeatherEvent` row's lifecycle. `FORECAST` -> `ACTIVE` -> `ENDED`
+    is the normal path; `FIZZLED` is the Spec's explicit "or not at all"
+    case -- `panem_sim.systems.weather` rolls a chance each tick of the
+    predicted window for the event to simply not start."""
+
+    FORECAST = "forecast"
+    ACTIVE = "active"
+    ENDED = "ended"
+    FIZZLED = "fizzled"
+
+
+class ReactionChoice(enum.StrEnum):
+    """One of a `ReactionEvent`'s up to-3 buttons (`panem_shared.
+    reactions`) -- never stored as an arbitrary string so archetype math
+    has a fixed, orderable set to reason about."""
+
+    GOOD = "good"
+    NEUTRAL = "neutral"
+    EVIL = "evil"
+
+
+class EventChainStatus(enum.StrEnum):
+    """A `PersonalEventChain` row's lifecycle (`panem_shared.
+    personal_events`)."""
+
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    ABANDONED = "abandoned"
+    EXPIRED = "expired"
+
+
+class GlobalEventStatus(enum.StrEnum):
+    """A `GlobalEvent` row's lifecycle (`panem_shared.global_events`) --
+    `panem_sim.systems.global_events` flips `SCHEDULED` -> `ACTIVE` ->
+    `FINISHED` purely off `starts_tick`/`ends_tick`, no staff action
+    needed once `/staff event create` schedules one."""
+
+    SCHEDULED = "scheduled"
+    ACTIVE = "active"
+    FINISHED = "finished"
+    CANCELLED = "cancelled"
+
+
+class BulletinSourceKind(enum.StrEnum):
+    """What produced a `BulletinEntry` -- purely descriptive (drives its
+    "Admin hosted"/"Player hosted"/... tag and which cog can edit/retract
+    it), never read by the reminder/sort logic itself."""
+
+    ANNOUNCEMENT = "announcement"
+    WEATHER_FORECAST = "weather_forecast"
+    WEATHER_EVENT = "weather_event"
+    GLOBAL_EVENT = "global_event"
+    RUMOR = "rumor"
+    PLAYER_POST = "player_post"
+    NPC_POST = "npc_post"

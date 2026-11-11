@@ -1,0 +1,133 @@
+# Per-district seasonal climate (Spec: "Seasons & Weather Events").
+# Temperatures are degrees Fahrenheit; `panem_sim.systems.weather` picks
+# each in-world day's forecast high/low uniformly within that day's
+# season range. `inclement` lists which `WeatherKind`s (besides the
+# always-available, severity-less rain/snow) this district's season can
+# roll, loosely following each district's real-world-inspired geography.
+- district_id: 0 # The Capitol -- mountain-ringed, mild
+  spring: { low: 50, high: 68 }
+  summer: { low: 65, high: 85 }
+  autumn: { low: 48, high: 66 }
+  winter: { low: 28, high: 45 }
+  inclement:
+    spring: [thunderstorm]
+    summer: [thunderstorm, hailstorm]
+    autumn: [windstorm]
+    winter: [blizzard]
+
+- district_id: 1 # Luxury goods -- temperate hills
+  spring: { low: 48, high: 66 }
+  summer: { low: 62, high: 82 }
+  autumn: { low: 45, high: 64 }
+  winter: { low: 25, high: 42 }
+  inclement:
+    summer: [thunderstorm]
+    winter: [blizzard]
+
+- district_id: 2 # Masonry -- mountainous, cold
+  spring: { low: 38, high: 56 }
+  summer: { low: 55, high: 78 }
+  autumn: { low: 35, high: 54 }
+  winter: { low: 10, high: 30 }
+  inclement:
+    spring: [hailstorm]
+    autumn: [windstorm]
+    winter: [blizzard, windstorm]
+
+- district_id: 3 # Electronics -- industrial, temperate
+  spring: { low: 45, high: 64 }
+  summer: { low: 60, high: 85 }
+  autumn: { low: 42, high: 62 }
+  winter: { low: 20, high: 38 }
+  inclement:
+    summer: [thunderstorm, heatwave]
+    winter: [windstorm]
+
+- district_id: 4 # Fishing -- coastal, humid
+  spring: { low: 55, high: 72 }
+  summer: { low: 70, high: 90 }
+  autumn: { low: 55, high: 74 }
+  winter: { low: 38, high: 55 }
+  inclement:
+    summer: [thunderstorm, flash_flood, heatwave]
+    autumn: [flash_flood]
+    winter: [windstorm]
+
+- district_id: 5 # Power -- riverside, rainy
+  spring: { low: 48, high: 66 }
+  summer: { low: 62, high: 84 }
+  autumn: { low: 46, high: 64 }
+  winter: { low: 25, high: 42 }
+  inclement:
+    spring: [flash_flood]
+    summer: [thunderstorm]
+    winter: [blizzard]
+
+- district_id: 6 # Transport -- open plains
+  spring: { low: 46, high: 66 }
+  summer: { low: 64, high: 88 }
+  autumn: { low: 44, high: 64 }
+  winter: { low: 20, high: 38 }
+  inclement:
+    summer: [thunderstorm, heatwave]
+    winter: [windstorm, blizzard]
+
+- district_id: 7 # Lumber -- forested, cool and wet
+  spring: { low: 42, high: 60 }
+  summer: { low: 58, high: 78 }
+  autumn: { low: 40, high: 58 }
+  winter: { low: 18, high: 34 }
+  inclement:
+    spring: [thunderstorm]
+    summer: [thunderstorm]
+    autumn: [windstorm]
+    winter: [blizzard]
+
+- district_id: 8 # Textiles -- urban, temperate
+  spring: { low: 48, high: 66 }
+  summer: { low: 65, high: 87 }
+  autumn: { low: 46, high: 64 }
+  winter: { low: 24, high: 40 }
+  inclement:
+    summer: [thunderstorm, heatwave]
+    winter: [windstorm]
+
+- district_id: 9 # Grain -- continental plains, wide swings
+  spring: { low: 44, high: 66 }
+  summer: { low: 68, high: 92 }
+  autumn: { low: 42, high: 62 }
+  winter: { low: 10, high: 32 }
+  inclement:
+    spring: [hailstorm, windstorm]
+    summer: [thunderstorm, heatwave]
+    winter: [blizzard]
+
+- district_id: 10 # Livestock -- open range, continental
+  spring: { low: 42, high: 64 }
+  summer: { low: 66, high: 90 }
+  autumn: { low: 40, high: 60 }
+  winter: { low: 8, high: 30 }
+  inclement:
+    spring: [windstorm, hailstorm]
+    summer: [thunderstorm]
+    winter: [blizzard]
+
+- district_id: 11 # Produce -- warm, subtropical
+  spring: { low: 60, high: 78 }
+  summer: { low: 74, high: 95 }
+  autumn: { low: 58, high: 78 }
+  winter: { low: 42, high: 60 }
+  inclement:
+    summer: [thunderstorm, flash_flood, heatwave]
+    autumn: [flash_flood]
+
+- district_id: 12 # Coal -- Appalachian, coldest winters
+  spring: { low: 38, high: 58 }
+  summer: { low: 55, high: 78 }
+  autumn: { low: 36, high: 55 }
+  winter: { low: 5, high: 28 }
+  inclement:
+    spring: [thunderstorm]
+    summer: [thunderstorm]
+    autumn: [windstorm]
+    winter: [blizzard, hailstorm]
