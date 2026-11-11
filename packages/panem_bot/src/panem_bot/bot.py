@@ -64,6 +64,13 @@ COGS = (
     "panem_bot.cogs.engagements",
     "panem_bot.cogs.needs",
     "panem_bot.cogs.trades",
+    "panem_bot.cogs.hobbies",
+    "panem_bot.cogs.museum",
+    "panem_bot.cogs.events",
+    "panem_bot.cogs.weather",
+    "panem_bot.cogs.reactions",
+    "panem_bot.cogs.rumors",
+    "panem_bot.cogs.bulletin",
 )
 
 

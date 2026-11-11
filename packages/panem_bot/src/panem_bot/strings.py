@@ -373,6 +373,89 @@ STRINGS: dict[str, str] = {
     "panem_history_text_required": "The history fact can't be empty.",
     "panem_history_text_too_long": "That history fact is too long (4000 characters max).",
     "panem_history_au_notes_too_long": "Those notes are too long (4000 characters max).",
+    # Hobbies (`panem_shared.hobbies`, `panem_bot.cogs.hobbies`)
+    "hobby_not_found": "That's not a hobby.",
+    "hobby_already_selected": "**{name}** already does **{hobby}**.",
+    "hobby_limit_reached": "A character can only have {limit} hobbies at once -- `/hobby forget` "
+    "one first.",
+    "hobby_not_selected": "**{name}** hasn't picked that hobby.",
+    "hobby_on_cooldown": "Still catching your breath -- try again in a bit.",
+    "hobby_selected": "**{name}** picks up **{hobby}**{tool_note}.",
+    "hobby_tool_note": ", starting with a free {tool}",
+    "hobby_forgotten": "**{name}** sets **{hobby}** aside.",
+    "hobby_not_at_district": "Hobbies are played wherever your character currently is -- you're "
+    "not travelling right now, so this shouldn't happen.",
+    "hobby_session_prompt": "**{name}** readies to {verb}... wait for it...",
+    "hobby_session_ready": "**Now!** Hit the button!",
+    "hobby_session_too_early": "Too eager -- {name} jumped the gun and came up empty.",
+    "hobby_session_too_late": "Too slow -- whatever it was, it got away.",
+    "hobby_session_miss": "{name} tries, but comes up empty this time.",
+    "hobby_session_hit_item": "{name} comes away with **{collectible}**!",
+    "hobby_session_hit_chain": "{name} catches something odd -- not a normal find at all. "
+    "Check `/event mystery` to look into it.",
+    "hobby_level_up": "\n**{name}** is now a {level} at {hobby}!",
+    "hobby_list_empty": "**{name}** hasn't picked any hobbies yet -- `/hobby select`.",
+    # Museum (`panem_shared.museum`, `panem_bot.cogs.museum`)
+    "museum_nothing_to_donate": "**{name}** has nothing undonated to give to the museum.",
+    "museum_donated": "**{name}** donates **{collectible}** to the museum and receives {reward} "
+    "for it. It's part of the collection for good now.",
+    "museum_item_not_found": "That's not one of {name}'s collectibles.",
+    "museum_empty": "**{name}**'s museum is empty so far.",
+    "museum_preset_applied": "**{name}**'s museum is now organized **{preset}**.",
+    "museum_slot_not_found": "That museum piece couldn't be found.",
+    "museum_moved": "Moved to **{wing}**.",
+    "museum_unknown_preset": "Not a valid preset.",
+    # Personal events (`panem_shared.personal_events`, `panem_bot.cogs.events`)
+    "chain_already_investigated": "Already looked into this one.",
+    "chain_no_candidates": "No one around seems like a likely owner right now -- try again later.",
+    "chain_not_investigated": "Investigate it first with `/event mystery`.",
+    "chain_target_gone": "Whoever it belonged to isn't around to ask anymore.",
+    "chain_wrong_district": "The owner lives in District {district_id} -- travel there first.",
+    "chain_none_active": "**{name}** isn't in the middle of anything like that right now.",
+    "chain_mystery_found": "**{name}** found {item_name} ({found_how}). Who does it belong to?",
+    "chain_investigate_result": "A little digging points to **{owner}**. {clue}",
+    "chain_deliver_ok": "**{name}** returns {item_name} to **{npc}**, who's thrilled to have it "
+    "back. (+{money} money, +{reputation} reputation)",
+    # Global events (`panem_shared.global_events`, `panem_bot.cogs.events`)
+    "global_event_not_found": "No event with that name/id.",
+    "global_event_not_active": "That event isn't running right now.",
+    "global_event_wrong_place": "That event is district-only -- you're not in the right one.",
+    "global_event_joined": "**{name}** is in -- play **{hobby}** while **{event}** is running to "
+    "add to your score.",
+    "global_event_created": "Event **{name}** ({hobby}) scheduled.",
+    "global_event_concluded": "**{name}** has concluded. Winner: **{winner}**.",
+    "global_event_no_entries": "Nobody entered **{name}**.",
+    "global_event_leaderboard_empty": "No scores yet.",
+    # Weather (`panem_shared.weather`, `panem_bot.cogs.weather`)
+    "weather_forecast_none": "No forecast on file for your district yet.",
+    "weather_prep_invalid_kind": "Not a weather kind that can be prepared for.",
+    "weather_prep_maxed": "Already as prepared as possible for that.",
+    "weather_prep_insufficient_materials": "Needs {qty} {good} and {money} money on hand.",
+    "weather_prep_ok": "Prepared **{property}** against {kind} (level {level}).",
+    "weather_repair_nothing": "No damage to repair.",
+    "weather_repair_insufficient_money": "Repairing {points} points of damage costs {cost} money.",
+    "weather_repair_ok": "Repaired **{property}** ({points} points, {cost} money).",
+    "weather_no_property": "You don't own or lease a property to prepare/repair.",
+    # Reaction events (`panem_shared.reactions`, `panem_bot.cogs.reactions`)
+    "reaction_none_pending": "Nothing like that is happening for {name} right now.",
+    "reaction_already_answered": "Already decided.",
+    "reaction_archetype": "**{name}** is seen as **{label}** ({score:+.0f}).",
+    # Rumors (`panem_shared.rumors`, `panem_bot.cogs.rumors`)
+    "rumor_not_found": "No rumor with that id.",
+    "rumor_investigated": "{finding} (reliability now {reliability}%)",
+    "rumor_investigate_capped": "This rumor's already been looked into enough -- the findings "
+    "so far stand.",
+    "rumor_list_empty": "No rumors going around in District {district_id} right now.",
+    # Bulletin (`panem_shared.bulletin`, `panem_bot.cogs.bulletin`)
+    "bulletin_entry_not_found": "No bulletin entry with that id.",
+    "bulletin_posted": "Posted to the bulletin.",
+    "bulletin_retracted": "Entry retracted.",
+    "bulletin_not_yours": "You can only retract your own posts.",
+    "bulletin_empty": "Nothing on the board right now.",
+    "bulletin_reminder_set": "You'll get a DM about **{title}**.",
+    "bulletin_reminder_needs_time": "That entry has no scheduled time to remind you ahead of.",
+    "bulletin_interest_marked": "Marked as interested in **{title}**.",
+    "bulletin_interest_unmarked": "No longer marked as interested in **{title}**.",
 }
 
 

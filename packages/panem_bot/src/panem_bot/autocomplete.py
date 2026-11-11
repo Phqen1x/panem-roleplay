@@ -275,6 +275,23 @@ async def any_good(
     ]
 
 
+async def any_hobby(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    bot = interaction.client
+    content = bot.content  # type: ignore[attr-defined]
+    current_lower = current.lower()
+    matches = [
+        hobby
+        for hobby_id, hobby in content.hobbies.items()
+        if current_lower in hobby_id.lower() or current_lower in hobby.name.lower()
+    ]
+    matches.sort(key=lambda h: h.name)
+    return [
+        app_commands.Choice(name=h.name, value=h.id) for h in matches[:MAX_CHOICES]
+    ]
+
+
 async def districts(
     interaction: discord.Interaction, current: str
 ) -> list[app_commands.Choice[int]]:

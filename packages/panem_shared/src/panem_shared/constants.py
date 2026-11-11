@@ -967,10 +967,11 @@ sharing a trait with the item's flavor where one exists, otherwise
 uniform, so the clue is never perfectly deterministic from the item alone."""
 LOST_ITEM_REWARD_MONEY = 25
 LOST_ITEM_REWARD_REPUTATION = 5.0
-LOST_ITEM_REWARD_RELATIONSHIP = 10.0
-"""Added to the delivering character's `RelationshipRow.stance_score` with
-the NPC the item belonged to, same scale `panem_shared.relationships`
-already uses for a positive engagement outcome."""
+LOST_ITEM_REWARD_AFFINITY = 15
+"""Added to the delivering character's `RelationshipRow.affinity` with the
+NPC the item belonged to, via `panem_shared.relationships.apply_affinity_
+delta` -- comfortably past a single ordinary interaction's usual swing,
+since returning a lost keepsake is a genuinely kind, memorable act."""
 
 # --------------------------------------------------------- Global events
 
