@@ -40,20 +40,23 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from panem_api import discord_staff
-from panem_shared import ambient as ambient_svc
 from panem_shared import affliction_types as affliction_types_svc
+from panem_shared import ambient as ambient_svc
 from panem_shared import avatars as avatars_svc
 from panem_shared import blackmarket as blackmarket_svc
+from panem_shared import bulletin as bulletin_svc
 from panem_shared import characters as characters_svc
-from panem_shared import constants, job_levels, simtime
+from panem_shared import constants, hobby_levels, job_levels, simtime
 from panem_shared import crime_log as crime_log_svc
 from panem_shared import district_lore as district_lore_svc
+from panem_shared import hobbies as hobbies_svc
 from panem_shared import housing as housing_svc
 from panem_shared import jail as jail_svc
 from panem_shared import jobs as jobs_svc
 from panem_shared import layers as layers_svc
 from panem_shared import lore as lore_svc
 from panem_shared import market as market_svc
+from panem_shared import museum as museum_svc
 from panem_shared import pay as pay_svc
 from panem_shared import poaching as poaching_svc
 from panem_shared import rp_modes as rp_modes_svc
@@ -63,14 +66,18 @@ from panem_shared import sustenance as sustenance_svc
 from panem_shared import theme as theme_svc
 from panem_shared import trades as trades_svc
 from panem_shared import travel as travel_svc
+from panem_shared import weather as weather_svc
 from panem_shared.content.loader import ContentBundle
 from panem_shared.content.schemas import Location
 from panem_shared.content.traits import speech_tone
 from panem_shared.db.models import (
     AfflictionType,
     ApartmentLease,
+    BulletinEntry,
     Character,
     CharacterAffliction,
+    CharacterHobby,
+    CollectibleInstance,
     DistrictLore,
     DistrictLorePerson,
     DistrictState,
@@ -87,6 +94,8 @@ from panem_shared.db.models import (
     ThemeProfile,
     Trade,
     User,
+    WeatherEvent,
+    WeatherForecast,
     WorldClock,
 )
 from panem_shared.db.session import session_scope
@@ -103,6 +112,7 @@ from panem_shared.enums import (
     SceneStatus,
     Stance,
     TradeStatus,
+    WeatherEventStatus,
 )
 from panem_shared.errors import NotAllowed, NotFound, ServiceError
 from panem_shared.redis_keys import (
@@ -5508,5 +5518,794 @@ def build_ambient_router(
         except Exception as exc:
             logger.warning("Could not fetch ambient tracks (table may not exist yet): %s", exc)
             return []
+
+    return router
+
+
+# ============================================================== Hobbies
+
+
+class HobbySelectedSummary(BaseModel):
+    hobby_id: str
+    name: str
+    verb: str
+    description: str
+    level: str
+    sessions_played: int
+    on_cooldown: bool
+    owns_tool: bool
+    tool_name: str | None = None
+
+
+class HobbyAvailableSummary(BaseModel):
+    hobby_id: str
+    name: str
+    description: str
+    tool_name: str | None = None
+
+
+class HobbiesStatusResponse(BaseModel):
+    max_hobbies: int
+    selected: list[HobbySelectedSummary]
+    available: list[HobbyAvailableSummary]
+
+
+class HobbySelectRequest(BaseModel):
+    discord_id: int
+    hobby_id: str
+
+
+class HobbySelectResponse(BaseModel):
+    hobby_id: str
+    name: str
+    tool_name: str | None = None
+
+
+class HobbyForgetRequest(BaseModel):
+    discord_id: int
+    hobby_id: str
+
+
+class HobbyPlayRequest(BaseModel):
+    discord_id: int
+    hobby_id: str
+
+
+class HobbyPlayResponse(BaseModel):
+    success: bool
+    collectible_name: str | None = None
+    collectible_rarity: str | None = None
+    chain_started: bool = False
+    leveled_up_to: str | None = None
+
+
+def _hobby_summary_rows(
+    content: ContentBundle,
+    owned: list[CharacterHobby],
+    inventory_by_good: dict[str, int],
+    current_tick: int,
+) -> tuple[list[HobbySelectedSummary], list[HobbyAvailableSummary]]:
+    owned_ids = {row.hobby_id for row in owned}
+    selected = []
+    for row in owned:
+        hobby = content.hobbies.get(row.hobby_id)
+        if hobby is None:
+            continue
+        owns_tool = hobbies_svc.has_tool(hobby, inventory_by_good)
+        on_cooldown = (
+            row.last_played_tick is not None
+            and current_tick - row.last_played_tick < constants.HOBBY_SESSION_COOLDOWN_TICKS
+        )
+        tool_name = content.goods[hobby.tool_good_id].name if hobby.tool_good_id else None
+        selected.append(
+            HobbySelectedSummary(
+                hobby_id=hobby.id,
+                name=hobby.name,
+                verb=hobby.verb,
+                description=hobby.description,
+                level=hobby_levels.hobby_level_for_sessions(row.sessions_played).value,
+                sessions_played=row.sessions_played,
+                on_cooldown=on_cooldown,
+                owns_tool=owns_tool,
+                tool_name=tool_name,
+            )
+        )
+    available = [
+        HobbyAvailableSummary(
+            hobby_id=hobby.id,
+            name=hobby.name,
+            description=hobby.description,
+            tool_name=content.goods[hobby.tool_good_id].name if hobby.tool_good_id else None,
+        )
+        for hobby in content.hobbies.values()
+        if hobby.id not in owned_ids
+    ]
+    return selected, available
+
+
+def build_hobbies_router(
+    *, content: ContentBundle, session_factory: async_sessionmaker[AsyncSession] | None
+) -> APIRouter:
+    """The Hobbies tab's REST surface -- mirrors `/hobby select|forget|
+    play` (`panem_shared.hobbies`), minus the Discord-side timing
+    minigame: `play` rolls the same success probability instantly instead
+    of waiting on a button press, the same "always playable without a
+    canvas minigame" shape that module's own docstring already describes
+    for the bare-Discord path."""
+    router = APIRouter(prefix="/activity/dashboard/hobbies", tags=["dashboard"])
+
+    async def _inventory_by_good(session: AsyncSession, character_id: int) -> dict[str, int]:
+        rows = (
+            await session.execute(
+                select(Inventory).where(
+                    Inventory.owner_kind == OwnerKind.CHARACTER.value,
+                    Inventory.owner_id == str(character_id),
+                )
+            )
+        ).scalars().all()
+        return {row.good_id: row.qty for row in rows}
+
+    @router.get("/{character_id}/status", response_model=HobbiesStatusResponse)
+    async def hobbies_status(character_id: int, discord_id: int) -> HobbiesStatusResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            current_tick = await _current_tick(session)
+            owned = await hobbies_svc.selected_hobbies(session, character.id)
+            inventory_by_good = await _inventory_by_good(session, character.id)
+            selected, available = _hobby_summary_rows(
+                content, owned, inventory_by_good, current_tick
+            )
+        return HobbiesStatusResponse(
+            max_hobbies=constants.MAX_HOBBIES_PER_CHARACTER, selected=selected, available=available
+        )
+
+    @router.post("/{character_id}/select", response_model=HobbySelectResponse)
+    async def hobbies_select(character_id: int, body: HobbySelectRequest) -> HobbySelectResponse:
+        factory = _require_session_factory(session_factory)
+        hobby = content.hobbies.get(body.hobby_id)
+        if hobby is None:
+            raise HTTPException(status_code=404, detail="hobby_not_found")
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            try:
+                await hobbies_svc.select_hobby(session, character, body.hobby_id, content)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        tool_name = content.goods[hobby.tool_good_id].name if hobby.tool_good_id else None
+        return HobbySelectResponse(hobby_id=hobby.id, name=hobby.name, tool_name=tool_name)
+
+    @router.post("/{character_id}/forget")
+    async def hobbies_forget(character_id: int, body: HobbyForgetRequest) -> dict[str, bool]:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            try:
+                await hobbies_svc.forget_hobby(session, character, body.hobby_id)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"ok": True}
+
+    @router.post("/{character_id}/play", response_model=HobbyPlayResponse)
+    async def hobbies_play(character_id: int, body: HobbyPlayRequest) -> HobbyPlayResponse:
+        factory = _require_session_factory(session_factory)
+        hobby = content.hobbies.get(body.hobby_id)
+        if hobby is None:
+            raise HTTPException(status_code=404, detail="hobby_not_found")
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            character_hobby = (
+                await session.execute(
+                    select(CharacterHobby).where(
+                        CharacterHobby.character_id == character.id,
+                        CharacterHobby.hobby_id == body.hobby_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if character_hobby is None:
+                raise HTTPException(status_code=400, detail="hobby_not_selected")
+            current_tick = await _current_tick(session)
+            try:
+                hobbies_svc.check_can_play(character_hobby, current_tick)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            inventory_by_good = await _inventory_by_good(session, character.id)
+            owns_tool = hobbies_svc.has_tool(hobby, inventory_by_good)
+            probability = hobbies_svc.session_success_probability(
+                hobby, character_hobby.sessions_played, owns_tool
+            )
+            rng = random.Random()
+            success = rng.random() < probability
+            outcome = await hobbies_svc.resolve_session(
+                session,
+                character=character,
+                character_hobby=character_hobby,
+                hobby=hobby,
+                content=content,
+                current_tick=current_tick,
+                success=success,
+                rng=rng,
+            )
+            collectible_name = outcome.collectible.name if outcome.collectible else None
+            collectible_rarity = outcome.collectible.rarity.value if outcome.collectible else None
+        return HobbyPlayResponse(
+            success=outcome.success,
+            collectible_name=collectible_name,
+            collectible_rarity=collectible_rarity,
+            chain_started=outcome.chain_started,
+            leveled_up_to=outcome.leveled_up_to.value if outcome.leveled_up_to else None,
+        )
+
+    return router
+
+
+# =============================================================== Museum
+
+
+class MuseumSlotSummary(BaseModel):
+    slot_id: int
+    wing: str
+    position: int
+    collectible_id: str
+    name: str
+    rarity: str
+    description: str
+
+
+class MuseumUndonatedSummary(BaseModel):
+    instance_id: int
+    collectible_id: str
+    name: str
+    rarity: str
+    source: str
+
+
+class MuseumResponse(BaseModel):
+    slots: list[MuseumSlotSummary]
+    undonated: list[MuseumUndonatedSummary]
+    presets: list[str]
+
+
+class MuseumDonateRequest(BaseModel):
+    discord_id: int
+    instance_id: int
+
+
+class MuseumDonateResponse(BaseModel):
+    collectible_id: str
+    name: str
+    reward: int
+
+
+class MuseumOrganizeRequest(BaseModel):
+    discord_id: int
+    slot_id: int
+    wing: str
+    position: int = 0
+
+
+class MuseumPresetRequest(BaseModel):
+    discord_id: int
+    preset: str
+
+
+def build_museum_router(
+    *, content: ContentBundle, session_factory: async_sessionmaker[AsyncSession] | None
+) -> APIRouter:
+    """The Museum tab's REST surface (`panem_shared.museum`) -- a
+    character's own collection only; viewing someone else's museum stays
+    a `/museum view` Discord-only feature for now."""
+    router = APIRouter(prefix="/activity/dashboard/museum", tags=["dashboard"])
+
+    @router.get("/{character_id}/status", response_model=MuseumResponse)
+    async def museum_get(character_id: int, discord_id: int) -> MuseumResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            slots = await museum_svc.museum_slots(session, character.id)
+            slot_summaries = []
+            for slot in slots:
+                instance = await session.get(CollectibleInstance, slot.collectible_instance_id)
+                collectible = (
+                    content.collectibles.get(instance.collectible_id) if instance else None
+                )
+                if collectible is None:
+                    continue
+                slot_summaries.append(
+                    MuseumSlotSummary(
+                        slot_id=slot.id,
+                        wing=slot.wing,
+                        position=slot.position,
+                        collectible_id=collectible.id,
+                        name=collectible.name,
+                        rarity=collectible.rarity.value,
+                        description=collectible.description,
+                    )
+                )
+            instances = await museum_svc.undonated_instances(session, character.id)
+            undonated = []
+            for instance in instances:
+                collectible = content.collectibles.get(instance.collectible_id)
+                if collectible is None:
+                    continue
+                undonated.append(
+                    MuseumUndonatedSummary(
+                        instance_id=instance.id,
+                        collectible_id=collectible.id,
+                        name=collectible.name,
+                        rarity=collectible.rarity.value,
+                        source=instance.source,
+                    )
+                )
+        return MuseumResponse(
+            slots=slot_summaries, undonated=undonated, presets=list(constants.MUSEUM_PRESETS)
+        )
+
+    @router.post("/{character_id}/donate", response_model=MuseumDonateResponse)
+    async def museum_donate(character_id: int, body: MuseumDonateRequest) -> MuseumDonateResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            current_tick = await _current_tick(session)
+            try:
+                collectible, reward = await museum_svc.donate(
+                    session,
+                    character=character,
+                    instance_id=body.instance_id,
+                    content=content,
+                    current_tick=current_tick,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return MuseumDonateResponse(
+            collectible_id=collectible.id, name=collectible.name, reward=reward
+        )
+
+    @router.post("/{character_id}/organize")
+    async def museum_organize(character_id: int, body: MuseumOrganizeRequest) -> dict[str, bool]:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            try:
+                await museum_svc.move(
+                    session,
+                    character=character,
+                    slot_id=body.slot_id,
+                    wing=body.wing,
+                    position=body.position,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"ok": True}
+
+    @router.post("/{character_id}/preset")
+    async def museum_preset(character_id: int, body: MuseumPresetRequest) -> dict[str, bool]:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            try:
+                await museum_svc.apply_preset(
+                    session, character_id=character.id, preset=body.preset, content=content
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"ok": True}
+
+    return router
+
+
+# ============================================================== Weather
+
+
+class WeatherDayForecast(BaseModel):
+    day_index: int
+    season: str
+    condition: str
+    temp_low: int
+    temp_high: int
+
+
+class WeatherEventSummary(BaseModel):
+    kind: str
+    severity: int
+    status: str
+    predicted_start_tick: int
+    actual_start_tick: int | None = None
+    actual_end_tick: int | None = None
+
+
+class WeatherPropertySummary(BaseModel):
+    property_id: int
+    kind: str
+    damage_level: int
+    prep: dict[str, int]
+
+
+class WeatherStatusResponse(BaseModel):
+    district_id: int
+    today: WeatherDayForecast | None = None
+    tomorrow: WeatherDayForecast | None = None
+    active_event: WeatherEventSummary | None = None
+    upcoming_event: WeatherEventSummary | None = None
+    property: WeatherPropertySummary | None = None
+
+
+class WeatherPrepareRequest(BaseModel):
+    discord_id: int
+    kind: str
+
+
+class WeatherPrepareResponse(BaseModel):
+    kind: str
+    level: int
+
+
+class WeatherRepairRequest(BaseModel):
+    discord_id: int
+    points: int
+
+
+class WeatherRepairResponse(BaseModel):
+    points: int
+    cost: int
+    damage_level: int
+
+
+def _forecast_summary(row: WeatherForecast, day_index: int) -> WeatherDayForecast:
+    return WeatherDayForecast(
+        day_index=day_index,
+        season=row.season,
+        condition=row.condition,
+        temp_low=row.temp_low,
+        temp_high=row.temp_high,
+    )
+
+
+def _event_summary(row: WeatherEvent) -> WeatherEventSummary:
+    return WeatherEventSummary(
+        kind=row.kind,
+        severity=row.severity,
+        status=row.status,
+        predicted_start_tick=row.predicted_start_tick,
+        actual_start_tick=row.actual_start_tick,
+        actual_end_tick=row.actual_end_tick,
+    )
+
+
+def build_weather_router(*, session_factory: async_sessionmaker[AsyncSession] | None) -> APIRouter:
+    """The Weather tab's REST surface (`panem_shared.weather`) -- forecast
+    lookups plus property prep/repair. Generation itself (forecasts,
+    activating/ending events) stays `panem_bot.cogs.weather`'s poll; this
+    only ever reads what that poll has already written, the same split
+    `/weather forecast` and `/housing prepare|repair` already use on the
+    Discord side."""
+    router = APIRouter(prefix="/activity/dashboard/weather", tags=["dashboard"])
+
+    @router.get("/{character_id}/status", response_model=WeatherStatusResponse)
+    async def weather_status(character_id: int, discord_id: int) -> WeatherStatusResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            district_id = character.current_district_id
+            current_tick = await _current_tick(session)
+            today_index = simtime.day_index(current_tick)
+            lead_index = today_index + constants.WEATHER_FORECAST_LEAD_DAYS
+
+            today_row = await session.get(WeatherForecast, (district_id, today_index))
+            tomorrow_row = await session.get(WeatherForecast, (district_id, lead_index))
+            active = await weather_svc.active_event_for_district(session, district_id)
+            upcoming = (
+                await session.execute(
+                    select(WeatherEvent)
+                    .where(
+                        WeatherEvent.district_id == district_id,
+                        WeatherEvent.status == WeatherEventStatus.FORECAST.value,
+                    )
+                    .order_by(WeatherEvent.actual_start_tick)
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+
+            property_summary = None
+            if character.housing_property_id is not None:
+                home = await session.get(Property, character.housing_property_id)
+                if home is not None:
+                    property_summary = WeatherPropertySummary(
+                        property_id=home.id,
+                        kind=home.kind,
+                        damage_level=home.damage_level,
+                        prep=dict(home.weather_prep),
+                    )
+        return WeatherStatusResponse(
+            district_id=district_id,
+            today=_forecast_summary(today_row, today_index) if today_row else None,
+            tomorrow=_forecast_summary(tomorrow_row, lead_index) if tomorrow_row else None,
+            active_event=_event_summary(active) if active else None,
+            upcoming_event=_event_summary(upcoming) if upcoming else None,
+            property=property_summary,
+        )
+
+    @router.post("/{character_id}/prepare", response_model=WeatherPrepareResponse)
+    async def weather_prepare(
+        character_id: int, body: WeatherPrepareRequest
+    ) -> WeatherPrepareResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            home = (
+                await session.get(Property, character.housing_property_id)
+                if character.housing_property_id is not None
+                else None
+            )
+            if home is None:
+                raise HTTPException(status_code=400, detail="weather_no_property")
+            try:
+                level = await weather_svc.prepare_property(
+                    session, character=character, property_row=home, kind=body.kind
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return WeatherPrepareResponse(kind=body.kind, level=level)
+
+    @router.post("/{character_id}/repair", response_model=WeatherRepairResponse)
+    async def weather_repair(character_id: int, body: WeatherRepairRequest) -> WeatherRepairResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            home = (
+                await session.get(Property, character.housing_property_id)
+                if character.housing_property_id is not None
+                else None
+            )
+            if home is None:
+                raise HTTPException(status_code=400, detail="weather_no_property")
+            try:
+                cost = await weather_svc.repair_property(
+                    session, character=character, property_row=home, points=body.points
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            damage_level = home.damage_level
+        return WeatherRepairResponse(points=body.points, cost=cost, damage_level=damage_level)
+
+    return router
+
+
+# ============================================================= Bulletin
+
+
+class BulletinEntrySummary(BaseModel):
+    entry_id: int
+    tag: str
+    title: str
+    body: str
+    district_id: int | None = None
+    posted_tick: int
+    event_tick: int | None = None
+    requirements: str | None = None
+    danger_level: int | None = None
+    interested: bool = False
+    category: str | None = None
+
+
+class BulletinBoardResponse(BaseModel):
+    entries: list[BulletinEntrySummary]
+
+
+class BulletinPostRequest(BaseModel):
+    discord_id: int
+    title: str
+    body: str = ""
+    event_tick: int | None = None
+    requirements: str | None = None
+    npc_hosted: bool = False
+    world_wide: bool = False
+
+
+class BulletinRetractRequest(BaseModel):
+    discord_id: int
+    entry_id: int
+
+
+class BulletinInterestRequest(BaseModel):
+    discord_id: int
+    entry_id: int
+    interested: bool = True
+
+
+class BulletinRemindRequest(BaseModel):
+    discord_id: int
+    entry_id: int
+    lead_ticks: int = 1
+
+
+class BulletinOrganizeRequest(BaseModel):
+    discord_id: int
+    entry_id: int
+    position: int
+    category: str | None = None
+
+
+class BulletinResetRequest(BaseModel):
+    discord_id: int
+
+
+def build_bulletin_router(*, session_factory: async_sessionmaker[AsyncSession] | None) -> APIRouter:
+    """The Bulletin tab's REST surface (`panem_shared.bulletin`) -- the
+    board itself, posting/retracting, interest marking, reminders, and
+    per-viewer drag-organize. Nothing here ever posts a *system* entry
+    (weather/global-event/rumor) -- those only ever come from `panem_bot.
+    cogs.weather`'s poll, `panem_bot.cogs.rumors`'s spawn loop, and
+    `/staff event create|conclude`."""
+    router = APIRouter(prefix="/activity/dashboard/bulletin", tags=["dashboard"])
+
+    @router.get("/{character_id}/board", response_model=BulletinBoardResponse)
+    async def bulletin_board(character_id: int, discord_id: int) -> BulletinBoardResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            user = await characters_svc.get_or_create_user(session, discord_id)
+            rows = await bulletin_svc.board_for(
+                session, district_id=character.current_district_id, viewer_user_id=user.id
+            )
+            entries = [
+                BulletinEntrySummary(
+                    entry_id=entry.id,
+                    tag=entry.tag,
+                    title=entry.title,
+                    body=entry.body,
+                    district_id=entry.district_id,
+                    posted_tick=entry.posted_tick,
+                    event_tick=entry.event_tick,
+                    requirements=entry.requirements,
+                    danger_level=entry.danger_level,
+                    interested=bool(state.interested) if state is not None else False,
+                    category=state.category if state is not None else None,
+                )
+                for entry, state in rows
+            ]
+        return BulletinBoardResponse(entries=entries)
+
+    @router.post("/{character_id}/post")
+    async def bulletin_post(character_id: int, body: BulletinPostRequest) -> dict[str, bool]:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            user = await characters_svc.get_or_create_user(session, body.discord_id)
+            current_tick = await _current_tick(session)
+            try:
+                await bulletin_svc.post_player_entry(
+                    session,
+                    user=user,
+                    tag="NPC hosted" if body.npc_hosted else "Player hosted",
+                    title=body.title,
+                    body=body.body,
+                    district_id=None if body.world_wide else character.current_district_id,
+                    location_id=None if body.world_wide else character.location_id,
+                    posted_tick=current_tick,
+                    event_tick=body.event_tick,
+                    requirements=body.requirements,
+                    npc_hosted=body.npc_hosted,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"ok": True}
+
+    @router.post("/{character_id}/retract")
+    async def bulletin_retract(character_id: int, body: BulletinRetractRequest) -> dict[str, bool]:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            user = await characters_svc.get_or_create_user(session, body.discord_id)
+            try:
+                await bulletin_svc.retract(session, user=user, entry_id=body.entry_id)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"ok": True}
+
+    @router.post("/{character_id}/interest")
+    async def bulletin_interest(
+        character_id: int, body: BulletinInterestRequest
+    ) -> dict[str, bool]:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            user = await characters_svc.get_or_create_user(session, body.discord_id)
+            try:
+                await bulletin_svc.set_interest(
+                    session, user=user, entry_id=body.entry_id, interested=body.interested
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"ok": True}
+
+    @router.post("/{character_id}/remind")
+    async def bulletin_remind(character_id: int, body: BulletinRemindRequest) -> dict[str, bool]:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            user = await characters_svc.get_or_create_user(session, body.discord_id)
+            entry = await session.get(BulletinEntry, body.entry_id)
+            if entry is None:
+                raise HTTPException(status_code=404, detail="bulletin_entry_not_found")
+            current_tick = await _current_tick(session)
+            try:
+                await bulletin_svc.schedule_reminder(
+                    session,
+                    user=user,
+                    entry=entry,
+                    lead_ticks=body.lead_ticks,
+                    current_tick=current_tick,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"ok": True}
+
+    @router.post("/{character_id}/organize")
+    async def bulletin_organize(
+        character_id: int, body: BulletinOrganizeRequest
+    ) -> dict[str, bool]:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            user = await characters_svc.get_or_create_user(session, body.discord_id)
+            try:
+                await bulletin_svc.move_entry(
+                    session,
+                    user=user,
+                    entry_id=body.entry_id,
+                    position=body.position,
+                    category=body.category,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"ok": True}
+
+    @router.post("/{character_id}/reset-organize")
+    async def bulletin_reset_organize(
+        character_id: int, body: BulletinResetRequest
+    ) -> dict[str, bool]:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            user = await characters_svc.get_or_create_user(session, body.discord_id)
+            await bulletin_svc.reset_organization(session, user_id=user.id)
+        return {"ok": True}
 
     return router
