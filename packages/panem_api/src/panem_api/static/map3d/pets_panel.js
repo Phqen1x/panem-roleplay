@@ -4,7 +4,7 @@
 // always-available version of the same catalog (for browsing/buying
 // without having to walk up to the Market first) and reuses this same
 // backend, just not this popup UI.
-import { el } from "../tabs/_shared.js?v=7";
+import { el } from "../tabs/_shared.js?v=8";
 
 export function openPetStore(overlayHost, ctx, characterId) {
   overlayHost.innerHTML = "";

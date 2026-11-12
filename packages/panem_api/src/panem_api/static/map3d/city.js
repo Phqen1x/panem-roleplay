@@ -19,7 +19,7 @@
 // interaction can be added later" was the feature request's own words,
 // and this is the groundwork that later work plugs into.
 import * as THREE from "../vendor/three.module.min.js";
-import { el } from "../tabs/_shared.js?v=7";
+import { el } from "../tabs/_shared.js?v=8";
 import { loadModel, cloneModel } from "./loader.js";
 import { createCharacter, ASSETS_BASE } from "./character.js";
 import { openCustomizer } from "./customizer.js";

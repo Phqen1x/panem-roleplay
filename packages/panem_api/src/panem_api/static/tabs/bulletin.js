@@ -4,7 +4,7 @@
 // conclude`) alongside player/NPC posts, with per-viewer interest
 // marking, a DM reminder, and drag-free "move to position" organizing
 // (mirrors `/bulletin ...`, `panem_shared.bulletin`).
-import { el, setStatusText } from "./_shared.js?v=7";
+import { el, setStatusText } from "./_shared.js?v=8";
 
 function entryRow(ctx, entry, resultLine, onChanged) {
   const interestBtn = el(

@@ -3,7 +3,7 @@
 // (mirrors `/museum donate|organize|preset`, `panem_shared.museum`).
 // Viewing *another* character's museum stays a Discord-only `/museum
 // view` feature for now -- this tab only ever shows your own.
-import { dropdown, el, setStatusText } from "./_shared.js?v=7";
+import { dropdown, el, setStatusText } from "./_shared.js?v=8";
 
 function undonatedRow(ctx, item, resultLine, onChanged) {
   const donateBtn = el("button", { class: "btn", type: "button" }, "Donate");

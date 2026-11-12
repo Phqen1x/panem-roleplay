@@ -250,6 +250,18 @@ export function renderTabIcon(tabName) {
     history: '<path d="M3 3v5h5"></path><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"></path><path d="M12 7v5l4 2"></path>',
     games: '<rect x="2" y="7" width="20" height="14" rx="3" ry="3"></rect><line x1="7" y1="12" x2="7" y2="16"></line><line x1="5" y1="14" x2="9" y2="14"></line><circle cx="15" cy="12" r="1"></circle><circle cx="18" cy="15" r="1"></circle>',
     pets: '<circle cx="8" cy="8" r="2.2"></circle><circle cx="16" cy="8" r="2.2"></circle><circle cx="5" cy="14" r="2"></circle><circle cx="19" cy="14" r="2"></circle><path d="M12 13c-3.3 0-6 2-6 4.5S8.2 21 12 21s6-1.5 6-3.5S15.3 13 12 13z"></path>',
+    hobbies: '<path d="M7 3v9.5a5 5 0 0 0 10 0"></path><circle cx="7" cy="3" r="1.3"></circle>',
+    museum:
+      '<path d="M2 10l10-6 10 6"></path><path d="M3 21h18"></path><path d="M5 21V10M9.5 21V10M14.5 21V10M19 21V10"></path>',
+    weather: '<path d="M7 18a4 4 0 0 1-.3-8 5 5 0 0 1 9.6-1.5A4.5 4.5 0 0 1 17 18H7z"></path>',
+    bulletin:
+      '<rect x="4.5" y="6" width="15" height="14" rx="1.3"></rect><circle cx="12" cy="3.3" r="1.6"></circle><path d="M12 4.9V6"></path><path d="M8 11h8M8 15h5"></path>',
+    events:
+      '<circle cx="12" cy="8.5" r="5"></circle><path d="M9 12.8l-2 8.2 5-3 5 3-2-8.2"></path>',
+    reactions:
+      '<path d="M12 3v18"></path><path d="M12 7l-6.3 1 3 6a4 4 0 0 0 6.6 0l3-6-6.3-1z"></path><path d="M4 20.5h16"></path>',
+    rumors:
+      '<path d="M21 11.5A8.4 8.4 0 0 1 9.4 19.3L4 20.5l1.6-4.8A8.4 8.4 0 1 1 21 11.5z"></path><path d="M8.3 11.2h7.4M8.3 14h4.7"></path>',
   };
 
   svg.innerHTML = icons[tabName] || icons.map;

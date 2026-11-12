@@ -218,48 +218,106 @@ header {
   50% { opacity: 0.6; transform: scale(0.9); }
 }
 
+/* The launcher shell: a persistent sidebar (`#tab-nav`) alongside the
+   open tab's own content (`#tab-root`), replacing the old header-row
+   tab bar now that there are enough tabs (19, plus 3 staff-only) that a
+   horizontal strip no longer fit without its own horizontal scroller.
+   Below the `max-width: 700px` breakpoint this collapses to a single
+   column with the sidebar hidden entirely -- `#tab-dock` (a small fixed
+   set of shortcuts) and Home's own app grid take over as the way to
+   reach a tab instead, the same "a few pinned apps plus a home screen"
+   split a phone's own launcher uses. */
+#shell-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  align-items: stretch;
+}
+
 #tab-nav {
   display: flex;
-  align-items: center;
-  gap: 5px;
+  flex-direction: column;
+  gap: 3px;
+  width: 220px;
+  flex-shrink: 0;
   background: color-mix(in srgb, var(--bg) 75%, var(--panel));
-  padding: 4px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  /* Staff sees enough extra tabs (Staff, History, ...) that this nav's
-     natural width can outgrow the header -- without `min-width: 0` a flex
-     item never shrinks past its content's own intrinsic width (the same
-     flexbox trap work.css's own `main` rule documents), so `header`'s
-     `flex-wrap: wrap` (style.css) had nowhere to reclaim space from except
-     wrapping everything *after* this nav -- world clock, character select,
-     and the theme picker last of all -- onto a second line, left-aligned
-     under the brand instead of staying pinned to the header's right edge.
-     Letting this nav scroll horizontally instead keeps every later header
-     item on the first line regardless of how many tabs are showing. */
-  min-width: 0;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
+  padding: 14px 10px;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
   scrollbar-width: thin;
+  /* `body` only sets `min-height: 100vh` (not a fixed height), so the
+     page itself -- not some inner panel -- is what actually scrolls once
+     `#tab-root`'s content runs long. `position: sticky` is what keeps
+     this sidebar in view through that scroll without needing to know the
+     header's exact height: it scrolls normally until its own top edge
+     reaches the viewport's top (`top: 0`), then holds there while the
+     rest of the page keeps moving underneath it -- no fragile pixel
+     offset to keep in sync with the header's (variable, safe-area-
+     dependent) real height. `align-self: flex-start` opts this one flex
+     item out of `#shell-body`'s default cross-axis stretch -- stretched
+     to `#tab-root`'s full height, it would already fill the available
+     space with nowhere left to "stick" to. */
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  max-height: 100vh;
 }
 
 #tab-nav button {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 10px;
+  width: 100%;
   background: transparent;
   color: var(--muted);
   border: 1px solid transparent;
-  padding: 7px 14px;
+  padding: 9px 12px;
   border-radius: 6px;
   font-family: var(--font-sans);
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.18s ease;
   white-space: nowrap;
+  text-align: left;
+}
+
+/* The mobile bottom dock (`#tab-dock`) -- hidden entirely on desktop,
+   where the sidebar above already reaches every tab. Shares the same
+   button/icon styling as the sidebar (`#tab-nav button`/`svg` rules
+   above) via this combined selector, just laid out as an icon-over-
+   label column instead of an icon-beside-label row. */
+#tab-dock {
+  display: none;
+}
+
+#tab-dock button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid transparent;
+  padding: 6px 4px;
+  border-radius: 8px;
+  font-family: var(--font-sans);
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+}
+
+#tab-dock button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 #tab-nav button svg,
+#tab-dock button svg,
 .tab-icon {
   width: 15px !important;
   height: 15px !important;
@@ -272,12 +330,14 @@ header {
   transition: opacity 0.18s ease;
 }
 
-#tab-nav button:hover {
+#tab-nav button:hover,
+#tab-dock button:hover {
   color: var(--text);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
-#tab-nav button.active {
+#tab-nav button.active,
+#tab-dock button.active {
   background: linear-gradient(
     180deg,
     color-mix(in srgb, var(--accent) 26%, var(--panel)) 0%,
@@ -289,7 +349,8 @@ header {
   font-weight: 600;
 }
 
-#tab-nav button.active svg {
+#tab-nav button.active svg,
+#tab-dock button.active svg {
   opacity: 1;
   color: var(--accent);
   filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 60%, transparent));
@@ -300,14 +361,19 @@ header {
   max-width: 1460px;
   width: 100%;
   margin: 0 auto;
-  /* `body` is a flex container (style.css), making this a flex item --
-     flex items default to `min-width: auto`, which refuses to shrink
-     below their content's intrinsic size regardless of `width: 100%`
-     above (the classic flexbox "overflow:auto child doesn't actually
-     scroll, it blows out its ancestor instead" trap). Without this, an
-     oversized child (e.g. a wide table.data-table on a narrow phone)
-     would widen this box -- and the whole page -- past the viewport
-     instead of scrolling within its own `overflow-x: auto`. */
+  /* `#shell-body` is a row flex container, making this a flex item on
+     that axis too -- `flex: 1` is what actually claims the width left
+     over after the sidebar's fixed 220px, same as `#shell-body` itself
+     claiming its own share of `body`'s column flex below the header.
+     `min-width: 0` is still needed alongside it: flex items default to
+     `min-width: auto`, which refuses to shrink below their content's
+     intrinsic size regardless of `flex`/`width` above (the classic
+     flexbox "overflow:auto child doesn't actually scroll, it blows out
+     its ancestor instead" trap). Without this, an oversized child (e.g.
+     a wide table.data-table on a narrow phone) would widen this box --
+     and the whole page -- past the viewport instead of scrolling within
+     its own `overflow-x: auto`. */
+  flex: 1;
   min-width: 0;
 }
 
@@ -1758,6 +1824,56 @@ svg.ui-icon {
   max-height: 48px;
 }
 
+/* Home's own app shortcuts ("Jump back in"/"Recent"/"All Apps") -- the
+   same icon+label shape `#tab-nav`/`#tab-dock` buttons use, just laid
+   out as a wrapping grid of tiles instead of a fixed list/row, since
+   this is the one place every tab (not just the dock's curated few) has
+   to be reachable without the desktop sidebar -- see `#shell-body`'s own
+   comment above for why that sidebar is desktop-only. */
+.app-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 10px;
+}
+
+.app-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  background: color-mix(in srgb, var(--bg) 70%, var(--panel));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 6px;
+  color: var(--text);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-align: center;
+  transition: border-color 0.15s ease, transform 0.1s ease;
+}
+
+.app-tile:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.app-tile svg {
+  width: 22px !important;
+  height: 22px !important;
+  max-width: 22px !important;
+  max-height: 22px !important;
+  opacity: 0.85;
+}
+
+.app-tile span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
 .meter-row {
   margin-bottom: 10px;
 }
@@ -1804,18 +1920,46 @@ svg.ui-icon {
 @media (max-width: 700px) {
   #tab-root {
     padding: 16px 14px;
+    /* Room for the fixed `#tab-dock` bar below, same reasoning the dock's
+       own rule documents -- otherwise the last bit of every tab's content
+       sits behind it, reachable only by scrolling the dock itself out of
+       the way (it's fixed, so that never happens). */
+    padding-bottom: calc(76px + var(--safe-bottom));
   }
 
   .panel {
     padding: 16px 16px;
   }
 
+  /* The sidebar is desktop-only -- below this breakpoint, `#tab-dock`'s
+     small fixed set of shortcuts plus Home's own app grid are how a tab
+     gets reached instead (see this file's `#shell-body` comment). */
   #tab-nav {
-    gap: 4px;
-    padding: 3px;
-    width: 100%;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
+    display: none;
+  }
+
+  /* `global-footer`'s district/motto telemetry is a nice-to-have on a
+     wide desktop view; on a phone it would otherwise sit directly above
+     (or, worse, get visually confused with) the fixed dock bar below, so
+     it's dropped here the same way `.brand-subtitle`/`#discord-status-
+     text` already are in style.css's own mobile breakpoint. */
+  #global-footer {
+    display: none;
+  }
+
+  #tab-dock {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 15;
+    justify-content: space-around;
+    background: color-mix(in srgb, var(--bg) 88%, black);
+    border-top: 1px solid var(--border);
+    padding: 8px 6px calc(8px + var(--safe-bottom));
+    padding-left: calc(6px + var(--safe-left));
+    padding-right: calc(6px + var(--safe-right));
   }
 
   #tab-nav button {

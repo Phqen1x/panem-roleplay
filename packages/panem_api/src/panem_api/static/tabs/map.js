@@ -16,7 +16,7 @@
 // the Capitol is actually selected, not on every Map tab open -- most
 // sessions never touch the Capitol, and there's no reason to make them
 // pay for ~1MB of 3D engine + assets just for a schematic they'll never see.
-import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=7";
+import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=8";
 
 const CAPITOL_DISTRICT_ID = 0;
 

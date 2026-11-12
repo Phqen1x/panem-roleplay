@@ -22,7 +22,7 @@
 // Accept/Decline view does -- a recipient discovers a pending offer by
 // reopening this tab (or switching characters, which remounts it), same
 // "poll, don't push" posture the Engagement panel already has.
-import { fetchJson, el, renderIcon, setStatusText } from "./_shared.js?v=7";
+import { fetchJson, el, renderIcon, setStatusText } from "./_shared.js?v=8";
 import { mountAvatar } from "./avatar_creator.js?v=11";
 
 // Same one-shot cache pattern as tabs/character.js's own `loadLayerCatalog`

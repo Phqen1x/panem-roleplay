@@ -18,7 +18,7 @@
 // on top, computed from the Vitals status endpoint's `has_bed`/
 // `max_sleep_ticks`/`fatigue_restore_per_tick` so no round trip is needed
 // per keystroke.
-import { el, watchIframeResize } from "./_shared.js?v=7";
+import { el, watchIframeResize } from "./_shared.js?v=8";
 
 const RESULT_DISPLAY_MS = 4000;
 

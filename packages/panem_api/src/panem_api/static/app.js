@@ -23,7 +23,7 @@
 // every other dashboard endpoint re-validating discord_id+character_id
 // together) -- there's still no cryptographic auth here, same documented
 // gap as the rest of this process.
-import { fetchJson, el, renderTabIcon } from "./tabs/_shared.js?v=7";
+import { fetchJson, el, renderTabIcon } from "./tabs/_shared.js?v=8";
 import { mountThemePicker } from "./theme_picker.js?v=4";
 import { initClickSFX } from "./click_sfx.js?v=53";
 import { mountSoundPicker } from "./sound_picker.js?v=53";
@@ -63,7 +63,7 @@ async function openExternalLink(url) {
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "53";
+const ASSET_VERSION = "54";
 
 // District names mapping for Capitol and Districts 1-12
 const DISTRICT_NAMES = {
@@ -126,6 +126,13 @@ const TABS = [
   "crime",
   "housing",
   "pets",
+  "hobbies",
+  "museum",
+  "weather",
+  "bulletin",
+  "rumors",
+  "events",
+  "reactions",
 ];
 const TAB_LABELS = {
   home: "Home",
@@ -140,7 +147,22 @@ const TAB_LABELS = {
   crime: "Crime",
   housing: "Housing",
   pets: "Pets",
+  hobbies: "Hobbies",
+  museum: "Museum",
+  weather: "Weather",
+  bulletin: "Bulletin",
+  rumors: "Rumors",
+  events: "Events",
+  reactions: "Reactions",
 };
+
+// The mobile bottom dock's curated shortcuts -- everything else (every
+// tab in TABS, grouped) is still one tap away via Home's own app grid,
+// the same "a few pinned apps in the dock, the rest behind the home
+// screen" shape a phone's own launcher uses. Desktop has no dock at all
+// (the sidebar already lists every tab), so this is read only by
+// `setupDock()`.
+const DOCK_TABS = ["home", "map", "bulletin", "character"];
 
 // Only offered when `/identify` reports `is_staff` -- see `visibleTabs()`.
 // Not part of `TABS`/`TAB_LABELS` above: those two arrays are also used as
@@ -170,6 +192,7 @@ const STAFF_ONLY_TAB_LABELS = {
 
 const statusEl = document.getElementById("status");
 const navEl = document.getElementById("tab-nav");
+const dockEl = document.getElementById("tab-dock");
 const tabRootEl = document.getElementById("tab-root");
 const discordIdInput = document.getElementById("discord-id-input");
 const characterToggleEl = document.getElementById("character-select-toggle");
@@ -242,6 +265,33 @@ function writeStorage(key, value) {
   } catch {
     // Private browsing / blocked storage -- selection just won't persist.
   }
+}
+
+// Per-viewer "frequently/recently used" tracking for Home's own app
+// shortcuts (`tabs/home.js`) -- never shared, never read back by
+// anything but this same browser, same spirit as the theme colors
+// mirrored into localStorage above. Read through `ctx.tabUsage()`
+// rather than home.js touching `localStorage` itself, so this stays the
+// one place usage is actually recorded (`showTab()` below).
+const TAB_USAGE_STORAGE_KEY = "panem_tab_usage_v1";
+
+function loadTabUsage() {
+  try {
+    const raw = readStorage(TAB_USAGE_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (parsed && parsed.counts && Array.isArray(parsed.recent)) return parsed;
+  } catch {
+    // Malformed/blocked storage -- fall through to a fresh, empty record.
+  }
+  return { counts: {}, recent: [] };
+}
+
+function recordTabUsage(name) {
+  if (name === "home") return; // the home screen itself isn't "an app" to rank
+  const usage = loadTabUsage();
+  usage.counts[name] = (usage.counts[name] || 0) + 1;
+  usage.recent = [name, ...usage.recent.filter((n) => n !== name)].slice(0, 8);
+  writeStorage(TAB_USAGE_STORAGE_KEY, JSON.stringify(usage));
 }
 
 // Sets the four CSS custom properties `style.css`'s `:root` defines
@@ -658,6 +708,7 @@ async function refreshIdentity() {
     themePickerEl.hidden = true;
     renderCharacterOptions();
     setupNav();
+    setupDock();
     return;
   }
   try {
@@ -698,6 +749,7 @@ async function refreshIdentity() {
     await refreshResolvedTheme();
   }
   setupNav();
+  setupDock();
 }
 
 function buildCtx() {
@@ -712,6 +764,15 @@ function buildCtx() {
     apiFetch: fetchJson,
     refreshIdentity,
     openExternalLink,
+    // Below: what `tabs/home.js` needs to render its own "Apps"/
+    // "Frequently used"/"Recently opened" shortcuts without duplicating
+    // app.js's own TABS/TAB_LABELS/usage-tracking internals.
+    visibleTabs: () => visibleTabs().filter((name) => name !== "home"),
+    tabLabel: (name) => STAFF_ONLY_TAB_LABELS[name] || TAB_LABELS[name] || name,
+    tabUsage: loadTabUsage,
+    goToTab: (name) => {
+      location.hash = `#${name}`;
+    },
   };
 }
 
@@ -740,12 +801,16 @@ let tabGeneration = 0;
 
 async function showTab(name) {
   const generation = ++tabGeneration;
+  recordTabUsage(name);
   if (currentTabHandle && typeof currentTabHandle.unmount === "function") {
     currentTabHandle.unmount();
   }
   currentTabHandle = null;
   tabRootEl.innerHTML = "";
   for (const button of navEl.children) {
+    button.classList.toggle("active", button.dataset.tab === name);
+  }
+  for (const button of dockEl.children) {
     button.classList.toggle("active", button.dataset.tab === name);
   }
   try {
@@ -771,28 +836,44 @@ async function showTab(name) {
   }
 }
 
+function navButton(name, active) {
+  const icon = renderTabIcon(name);
+  const label = el("span", {}, STAFF_ONLY_TAB_LABELS[name] || TAB_LABELS[name]);
+  return el(
+    "button",
+    {
+      "data-tab": name,
+      class: name === active ? "active" : "",
+      onclick: () => {
+        location.hash = `#${name}`;
+      },
+    },
+    icon,
+    label
+  );
+}
+
 function setupNav() {
   if (navBuiltForStaff === state.isStaff) return;
   navBuiltForStaff = state.isStaff;
   navEl.innerHTML = "";
   const active = currentTabName();
   for (const name of visibleTabs()) {
-    const icon = renderTabIcon(name);
-    const label = el("span", {}, STAFF_ONLY_TAB_LABELS[name] || TAB_LABELS[name]);
-    navEl.append(
-      el(
-        "button",
-        {
-          "data-tab": name,
-          class: name === active ? "active" : "",
-          onclick: () => {
-            location.hash = `#${name}`;
-          },
-        },
-        icon,
-        label
-      )
-    );
+    navEl.append(navButton(name, active));
+  }
+}
+
+// The mobile bottom dock -- a fixed, small set of shortcuts (`DOCK_TABS`),
+// never staff-gated, so unlike `setupNav()` it only ever needs building
+// once rather than re-running on every identity refresh.
+let dockBuilt = false;
+function setupDock() {
+  if (dockBuilt) return;
+  dockBuilt = true;
+  dockEl.innerHTML = "";
+  const active = currentTabName();
+  for (const name of DOCK_TABS) {
+    dockEl.append(navButton(name, active));
   }
 }
 

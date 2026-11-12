@@ -1,9 +1,14 @@
-// The dashboard's landing page (Milestone 11 of the RP Modes feature): a
-// character's current RP mode, meters, crime toggle, active afflictions,
-// and a mode-switch control. Reads `/activity/dashboard/mode/{id}/status`
+// The dashboard's landing page: a live weather/event hero if there's
+// anything active worth leading with, a short bulletin preview, this
+// character's own "jump back in"/"recent"/every-tab app shortcuts (the
+// one place every tab is reachable without the desktop sidebar -- see
+// `dashboard.css`'s `#shell-body` comment), and -- predating all of that
+// (Milestone 11 of the RP Modes feature) -- their current RP mode,
+// meters, crime toggle, active afflictions, and a mode-switch control.
+// The mode/meters section reads `/activity/dashboard/mode/{id}/status`
 // (Milestone 6), the same endpoint `/character mode`'s bot-side confirm
 // view is built against, so the two surfaces never drift apart.
-import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=7";
+import { fetchJson, el, dropdown, setStatusText, renderTabIcon } from "./_shared.js?v=8";
 
 const MODE_LABELS = { story: "Story", life: "Life", simulation: "Simulation" };
 const SHIFT_PHASES = ["morning", "afternoon", "evening", "night"];
@@ -312,6 +317,112 @@ function modeSwitchPanel(ctx, status, resultLine, onChanged) {
   return el("div", { class: "panel" }, el("h2", { text: "Change Mode" }), openBtn, confirmHost);
 }
 
+function eventLabel(kind) {
+  return kind
+    .split("_")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+// The one deliberately "live" element on this page -- shown only when
+// there's actually something to lead with (an active or predicted
+// weather event); omitted entirely otherwise rather than a flat "all
+// clear" banner manufacturing excitement that isn't there.
+function heroPanel(weatherStatus) {
+  const event_ = weatherStatus.active_event || weatherStatus.upcoming_event;
+  if (!event_) return null;
+  const isActive = Boolean(weatherStatus.active_event);
+  return el(
+    "div",
+    { class: "panel hero-panel" },
+    el("h2", { text: isActive ? "Happening Now" : "Predicted" }),
+    el(
+      "p",
+      { class: "tab-status" },
+      `${eventLabel(event_.kind)} -- category ${event_.severity}.` +
+        (isActive
+          ? ` Expected to pass around tick ${event_.actual_end_tick}. Take cover if you're outside.`
+          : ` Predicted to start around tick ${event_.predicted_start_tick}.`)
+    )
+  );
+}
+
+function bulletinPreviewPanel(ctx, entries) {
+  if (!entries.length) return null;
+  const rows = entries
+    .slice(0, 3)
+    .map((entry) =>
+      el(
+        "div",
+        { class: "field-row" },
+        el("label", { text: entry.tag }),
+        el("span", { class: "tab-status", text: entry.title })
+      )
+    );
+  const viewBtn = el("button", { class: "btn secondary", type: "button" }, "View board");
+  viewBtn.addEventListener("click", () => ctx.goToTab("bulletin"));
+  return el("div", { class: "panel" }, el("h2", { text: "Bulletin Board" }), ...rows, viewBtn);
+}
+
+function appTile(ctx, name) {
+  const tile = el(
+    "button",
+    { class: "app-tile", type: "button" },
+    renderTabIcon(name),
+    el("span", { text: ctx.tabLabel(name) })
+  );
+  tile.addEventListener("click", () => ctx.goToTab(name));
+  return tile;
+}
+
+// Every tab is reachable from here ("All Apps"), with whatever this
+// character has actually been using pulled to the top -- the desktop
+// sidebar reaches every tab directly, but mobile has no sidebar at all
+// (see `dashboard.css`'s `#shell-body` comment), so this has to be a
+// complete directory, not just a shortlist.
+function appsPanel(ctx) {
+  const usage = ctx.tabUsage();
+  const all = ctx.visibleTabs();
+  const frequent = Object.keys(usage.counts)
+    .filter((name) => all.includes(name))
+    .sort((a, b) => usage.counts[b] - usage.counts[a])
+    .slice(0, 6);
+  const recent = usage.recent
+    .filter((name) => all.includes(name) && !frequent.includes(name))
+    .slice(0, 4);
+
+  const sections = [];
+  if (frequent.length) {
+    sections.push(
+      el(
+        "div",
+        { class: "panel" },
+        el("h2", { text: "Jump Back In" }),
+        el("div", { class: "app-grid" }, ...frequent.map((name) => appTile(ctx, name)))
+      )
+    );
+  }
+  if (recent.length) {
+    sections.push(
+      el(
+        "div",
+        { class: "panel" },
+        el("h2", { text: "Recently Opened" }),
+        el("div", { class: "app-grid" }, ...recent.map((name) => appTile(ctx, name)))
+      )
+    );
+  }
+  sections.push(
+    el(
+      "div",
+      { class: "panel" },
+      el("h2", { text: "All Apps" }),
+      el("div", { class: "app-grid" }, ...all.map((name) => appTile(ctx, name)))
+    )
+  );
+  return sections;
+}
+
 export function mount(root, ctx) {
   const statusLine = el("p", { class: "tab-status" });
   const resultLine = el("p", { class: "result-line" });
@@ -326,12 +437,33 @@ export function mount(root, ctx) {
       setStatusText(statusLine, "Pick a character above first.");
       return;
     }
+    let weatherStatus = null;
+    try {
+      weatherStatus = await ctx.apiFetch(
+        `/activity/dashboard/weather/${characterId}/status?discord_id=${encodeURIComponent(discordId)}`
+      );
+    } catch {
+      // Best-effort -- the hero panel just doesn't show if this fails.
+    }
+    let bulletinEntries = [];
+    try {
+      const board = await ctx.apiFetch(
+        `/activity/dashboard/bulletin/${characterId}/board?discord_id=${encodeURIComponent(discordId)}`
+      );
+      bulletinEntries = board.entries || [];
+    } catch {
+      // Best-effort -- the preview panel just doesn't show if this fails.
+    }
+
     try {
       const status = await ctx.apiFetch(
         `/activity/dashboard/mode/${characterId}/status?discord_id=${encodeURIComponent(discordId)}`
       );
       setStatusText(statusLine, "");
       const panels = [
+        weatherStatus ? heroPanel(weatherStatus) : null,
+        bulletinPreviewPanel(ctx, bulletinEntries),
+        ...appsPanel(ctx),
         modePanel(status),
         metersPanel(status),
         crimeTogglePanel(ctx, status, resultLine, refresh),
