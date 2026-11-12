@@ -1395,10 +1395,10 @@ class GlobalEvent(TimestampMixin, Base):
     `district_id` (or world-wide, if `None`) can join while it's
     `ACTIVE` -- the Hypixel-Jacob's-Contest-style weekly beat, started
     manually via `/staff event create` today; Spec's eventual "happens on
-    a regular basis automatically" is future work for `panem_sim.systems.
-    global_events`, which already flips `SCHEDULED`->`ACTIVE`->`FINISHED`
-    purely off the two tick columns and so needs no change to also pick
-    its own `starts_tick` once that's wanted."""
+    a regular basis automatically" is future work for `panem_bot.cogs.
+    events`'s lifecycle loop, which already flips `SCHEDULED`->`ACTIVE`->
+    `FINISHED` purely off the two tick columns and so needs no change to
+    also pick its own `starts_tick` once that's wanted."""
 
     __tablename__ = "global_events"
 
@@ -1438,9 +1438,9 @@ class GlobalEventEntry(Base):
 class WeatherForecast(Base):
     """One district's daily broadcast forecast -- always present (rain/
     snow/clear have no severity and nothing to prepare for), generated
-    `constants.WEATHER_FORECAST_LEAD_DAYS` ahead by `panem_sim.systems.
-    weather`. `day_index` is `panem_shared.simtime.day_index(tick)`, an
-    absolute day count, not day-within-month."""
+    `constants.WEATHER_FORECAST_LEAD_DAYS` ahead by `panem_bot.cogs.
+    weather`'s poll. `day_index` is `panem_shared.simtime.day_index(tick)`,
+    an absolute day count, not day-within-month."""
 
     __tablename__ = "weather_forecasts"
 

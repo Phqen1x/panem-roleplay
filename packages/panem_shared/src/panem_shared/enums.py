@@ -208,8 +208,8 @@ class Season(enum.StrEnum):
 
 class WeatherKind(enum.StrEnum):
     """`WeatherForecast.condition`'s two no-severity values plus every
-    severity-rated (category 1-6) inclement event `panem_sim.systems.
-    weather` can roll. Which kinds are even eligible in a given season is
+    severity-rated (category 1-6) inclement event `panem_bot.cogs.
+    weather`'s poll can roll. Which kinds are even eligible in a given season is
     content (`data/climate.yaml`), not hardcoded here -- a flash flood in
     midwinter is just never in that district's seasonal table."""
 

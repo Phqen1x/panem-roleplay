@@ -185,8 +185,8 @@ def load_collectibles(data_dir: Path) -> dict[str, Collectible]:
 
 def load_climate(data_dir: Path) -> dict[int, DistrictClimate]:
     """Optional, same as `load_hobbies` above -- a district with no entry
-    here simply never gets a forecast/weather roll (`panem_sim.systems.
-    weather` skips it)."""
+    here simply never gets a forecast/weather roll (`panem_bot.cogs.
+    weather`'s poll skips it)."""
     path = data_dir / "climate.yaml"
     if not path.exists():
         return {}
