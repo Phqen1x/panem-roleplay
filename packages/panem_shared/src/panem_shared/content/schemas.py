@@ -348,8 +348,8 @@ class Collectible(BaseModel):
 
 class SeasonRange(BaseModel):
     """One season's `(low, high)` Fahrenheit range for a `DistrictClimate`
-    -- `panem_sim.systems.weather` picks each day's actual forecast
-    uniformly within it."""
+    -- `panem_shared.weather.generate_forecast_values` picks each day's
+    actual forecast uniformly within it."""
 
     model_config = ConfigDict(extra="forbid")
 

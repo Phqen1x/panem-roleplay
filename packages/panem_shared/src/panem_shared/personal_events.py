@@ -83,9 +83,7 @@ async def start_chain(
     return chain
 
 
-async def _candidate_npcs(
-    session: AsyncSession, district_id: int, rng: random.Random
-) -> list[Npc]:
+async def _candidate_npcs(session: AsyncSession, district_id: int, rng: random.Random) -> list[Npc]:
     result = await session.execute(
         select(Npc).where(Npc.district_id == district_id, Npc.alive.is_(True))
     )
@@ -171,10 +169,8 @@ async def deliver(
     )
 
 
-async def expire_stale_chains(
-    session: AsyncSession, current_tick: int
-) -> list[PersonalEventChain]:
-    """`panem_sim.systems.personal_events`'s daily sweep -- an active
+async def expire_stale_chains(session: AsyncSession, current_tick: int) -> list[PersonalEventChain]:
+    """`panem_bot.cogs.events`'s lifecycle loop sweep -- an active
     chain past its `expires_tick` with no `investigate`/`deliver` just
     quietly expires rather than blocking a fresh one of the same kind
     forever."""

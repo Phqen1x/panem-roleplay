@@ -227,8 +227,8 @@ class WeatherKind(enum.StrEnum):
 class WeatherEventStatus(enum.StrEnum):
     """A `WeatherEvent` row's lifecycle. `FORECAST` -> `ACTIVE` -> `ENDED`
     is the normal path; `FIZZLED` is the Spec's explicit "or not at all"
-    case -- `panem_sim.systems.weather` rolls a chance each tick of the
-    predicted window for the event to simply not start."""
+    case -- decided once, at generation time (`panem_shared.weather.
+    _decide_event`), for the event to simply never start."""
 
     FORECAST = "forecast"
     ACTIVE = "active"
@@ -258,8 +258,8 @@ class EventChainStatus(enum.StrEnum):
 
 class GlobalEventStatus(enum.StrEnum):
     """A `GlobalEvent` row's lifecycle (`panem_shared.global_events`) --
-    `panem_sim.systems.global_events` flips `SCHEDULED` -> `ACTIVE` ->
-    `FINISHED` purely off `starts_tick`/`ends_tick`, no staff action
+    `panem_bot.cogs.events`'s lifecycle loop flips `SCHEDULED` -> `ACTIVE`
+    -> `FINISHED` purely off `starts_tick`/`ends_tick`, no staff action
     needed once `/staff event create` schedules one."""
 
     SCHEDULED = "scheduled"

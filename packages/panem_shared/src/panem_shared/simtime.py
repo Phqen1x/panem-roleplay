@@ -142,7 +142,7 @@ def season_for_month(month: int) -> Season:
 def day_index(tick: int) -> int:
     """The absolute in-world day number `tick` falls on, counting from day
     0 -- the primary key component `WeatherForecast`/`WeatherEvent` key
-    off, and the unit `panem_sim.systems.weather` uses for its
+    off, and the unit `panem_bot.cogs.weather`'s poll uses for its
     once-per-day/once-per-week cadence math. Same division `current`
     already does internally to get `day`/`month`, exposed here since
     weather needs the *absolute* count, not day-within-month."""

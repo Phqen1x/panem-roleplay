@@ -959,7 +959,7 @@ MUSEUM_PRESETS = ("by_wing", "by_rarity", "by_hobby", "alphabetical", "by_date")
 LOST_ITEM_CHAIN_EXPIRY_DAYS = 7
 """A `lost_item` chain abandoned (never investigated/delivered) this many
 in-world days after it started auto-expires (`EventChainStatus.EXPIRED`)
--- `panem_sim.systems.personal_events` sweeps for these once a day."""
+-- `panem_bot.cogs.events`'s lifecycle loop sweeps for these once a day."""
 LOST_ITEM_INVESTIGATE_CANDIDATES = 3
 """How many district NPCs `panem_shared.personal_events.investigate`
 samples before picking the "likely owner" -- weighted toward an NPC
@@ -1010,9 +1010,9 @@ WEATHER_DURATION_TICKS_RANGE = (1, 18)
 """Spec: "can last between 1 in-game hour and 18 in-game hours" -- one
 tick is one in-world hour (`TICKS_PER_DAY = 24`)."""
 WEATHER_FORECAST_LEAD_DAYS = 1
-"""How far ahead `panem_sim.systems.weather` generates and announces a
-day's forecast/predicted event -- Spec: meteorologists report a predicted
-start time ahead of it actually happening."""
+"""How far ahead `panem_bot.cogs.weather`'s poll generates and announces
+a day's forecast/predicted event -- Spec: meteorologists report a
+predicted start time ahead of it actually happening."""
 WEATHER_START_DRIFT_TICKS = 3
 """An inclement event's *actual* start can land up to this many ticks
 before or after its predicted start (Spec: "sometimes weather events

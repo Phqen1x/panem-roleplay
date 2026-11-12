@@ -788,8 +788,8 @@ class Property(Base):
     created_at_tick: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     damage_level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    """0-100, accumulated by `panem_sim.systems.weather` when an unlucky
-    roll lands during an `ACTIVE` `WeatherEvent` in this property's
+    """0-100, accumulated by `panem_bot.cogs.weather`'s poll when an
+    unlucky roll lands during an `ACTIVE` `WeatherEvent` in this property's
     district (`panem_shared.weather`) -- repaired via `/housing repair`
     at `constants.WEATHER_REPAIR_COST_PER_POINT` money/point. Purely
     cosmetic today (no gameplay penalty reads it yet beyond the repair
@@ -1459,7 +1459,7 @@ class WeatherForecast(Base):
 
 class WeatherEvent(TimestampMixin, Base):
     """A predicted-or-happening severity-rated (category 1-6) inclement
-    event for one district/day -- `panem_sim.systems.weather` enforces
+    event for one district/day -- `panem_bot.cogs.weather`'s poll enforces
     "no more than one per district per day" and "other than rain/snow,
     once an in-game week max" by querying this table's own history
     (`WEATHER_EVENT_MIN_GAP_DAYS`) rather than a DB constraint, since the

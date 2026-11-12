@@ -1,6 +1,6 @@
 # Per-district seasonal climate (Spec: "Seasons & Weather Events").
-# Temperatures are degrees Fahrenheit; `panem_sim.systems.weather` picks
-# each in-world day's forecast high/low uniformly within that day's
+# Temperatures are degrees Fahrenheit; `panem_bot.cogs.weather`'s poll
+# picks each in-world day's forecast high/low uniformly within that day's
 # season range. `inclement` lists which `WeatherKind`s (besides the
 # always-available, severity-less rain/snow) this district's season can
 # roll, loosely following each district's real-world-inspired geography.
