@@ -16,8 +16,8 @@ import discord
 from discord import app_commands
 from sqlalchemy import select
 
-from panem_shared.db.models import AfflictionType, Character, Npc, User
-from panem_shared.enums import CharacterStatus
+from panem_shared.db.models import AfflictionType, Character, GlobalEvent, Npc, Rumor, User
+from panem_shared.enums import CharacterStatus, GlobalEventStatus
 
 MAX_CHOICES = 25
 
@@ -124,7 +124,9 @@ async def _characters(
                 )
         _ALL_CHARACTERS_CACHE[cache_key_all] = (now, rows)
         if len(_ALL_CHARACTERS_CACHE) > 1000:
-            expired = [k for k, (ts, _) in _ALL_CHARACTERS_CACHE.items() if (now - ts) >= _CACHE_TTL_S]
+            expired = [
+                k for k, (ts, _) in _ALL_CHARACTERS_CACHE.items() if (now - ts) >= _CACHE_TTL_S
+            ]
             for k in expired:
                 _ALL_CHARACTERS_CACHE.pop(k, None)
 
@@ -287,9 +289,7 @@ async def any_hobby(
         if current_lower in hobby_id.lower() or current_lower in hobby.name.lower()
     ]
     matches.sort(key=lambda h: h.name)
-    return [
-        app_commands.Choice(name=h.name, value=h.id) for h in matches[:MAX_CHOICES]
-    ]
+    return [app_commands.Choice(name=h.name, value=h.id) for h in matches[:MAX_CHOICES]]
 
 
 async def districts(
@@ -305,4 +305,58 @@ async def districts(
     matches.sort(key=lambda d: d.id)
     return [
         app_commands.Choice(name=f"{d.id} - {d.name}", value=d.id) for d in matches[:MAX_CHOICES]
+    ]
+
+
+async def any_global_event(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[int]]:
+    bot = interaction.client
+    current_lower = current.lower()
+    async with bot.db() as session:  # type: ignore[attr-defined]
+        result = await session.execute(
+            select(GlobalEvent)
+            .where(
+                GlobalEvent.status.in_(
+                    (GlobalEventStatus.SCHEDULED.value, GlobalEventStatus.ACTIVE.value)
+                )
+            )
+            .order_by(GlobalEvent.starts_tick)
+            .limit(MAX_CHOICES)
+        )
+        events = result.scalars().all()
+    matches = [e for e in events if current_lower in e.name.lower() or current_lower in e.hobby_id]
+    return [
+        app_commands.Choice(name=f"{e.name} ({e.status})", value=e.id)
+        for e in matches[:MAX_CHOICES]
+    ]
+
+
+async def district_rumor(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[int]]:
+    character_name = getattr(interaction.namespace, "character", None)
+    if not character_name:
+        return []
+    bot = interaction.client
+    async with bot.db() as session:  # type: ignore[attr-defined]
+        from panem_bot import utils
+
+        char = await utils.get_character_case_insensitive(
+            session, interaction.user.id, character_name
+        )
+        if char is None:
+            return []
+        result = await session.execute(
+            select(Rumor)
+            .where(Rumor.district_id == char.current_district_id)
+            .order_by(Rumor.spawned_tick.desc())
+            .limit(MAX_CHOICES)
+        )
+        rumors = result.scalars().all()
+    current_lower = current.lower()
+    matches = [r for r in rumors if current_lower in r.text.lower()]
+    return [
+        app_commands.Choice(name=f"#{r.id} ({r.reliability_pct}%) {r.text[:60]}", value=r.id)
+        for r in matches[:MAX_CHOICES]
     ]

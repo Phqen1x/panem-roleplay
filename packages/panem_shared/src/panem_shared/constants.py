@@ -410,10 +410,10 @@ formula, so a district producing literally nothing today doesn't divide
 by zero -- reads as "effectively empty shelves", not an error."""
 MARKET_MINIMUM_STOCK: dict[str, float] = {
     "livestock": 3.0,  # meat (Meats)
-    "grain": 3.0,      # grain (Grain)
-    "fish": 3.0,       # seafood (Seafood)
-    "produce": 3.0,    # fruits/drinks (Fruits/Drinks)
-    "medicine": 1.0,   # medicine (Medicine)
+    "grain": 3.0,  # grain (Grain)
+    "fish": 3.0,  # seafood (Seafood)
+    "produce": 3.0,  # fruits/drinks (Fruits/Drinks)
+    "medicine": 1.0,  # medicine (Medicine)
     # Display name aliases:
     "meat": 3.0,
     "meats": 3.0,
@@ -1054,6 +1054,16 @@ WEATHER_REPAIR_COST_PER_POINT = 2
 REACTION_EVENT_CHOICE_SECONDS = 20
 """How long a `ReactionEvent` pop-up's buttons stay live before it
 auto-resolves as skipped (no archetype effect either way)."""
+REACTION_EVENT_POLL_MINUTES = 20
+"""How often `panem_bot.cogs.reactions`'s background loop checks whether
+to fire a pop-up at all -- real-time, the same "soon enough, not on an
+exact tick boundary" cadence `panem_shared.weather`'s own poll uses."""
+REACTION_EVENT_TRIGGER_CHANCE = 0.03
+"""Flat per-eligible-character chance, each poll, of being handed a
+pop-up -- Spec: "occasionally." At the default poll cadence that's
+roughly once every six-ish real hours per active character, not
+"constantly," while still keeping the sample random rather than evenly
+spaced."""
 ARCHETYPE_SCORE_MIN = -100.0
 ARCHETYPE_SCORE_MAX = 100.0
 ARCHETYPE_GOOD_DELTA = 8.0
@@ -1084,6 +1094,11 @@ RUMOR_MAX_INVESTIGATIONS = 5
 """Diminishing-returns cap -- past this many logged investigations, a
 rumor's reliability is considered settled and further `/rumor
 investigate` calls just report the existing findings."""
+RUMOR_SPAWN_POLL_MINUTES = 60
+RUMOR_SPAWN_CHANCE = 0.2
+"""Flat per-district chance, each poll, of a fresh free-floating rumor
+(`panem_bot.cogs.rumors`'s spawn loop) -- "sometimes" (Spec), not every
+poll and not every district at once."""
 
 # ----------------------------------------------------------------- Bulletin
 

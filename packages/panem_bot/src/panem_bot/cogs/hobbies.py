@@ -88,7 +88,9 @@ class HobbiesCog(commands.Cog):
     @app_commands.autocomplete(character=autocomplete.own_approved, hobby=autocomplete.any_hobby)
     async def select(self, interaction: discord.Interaction, character: str, hobby: str) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -113,7 +115,9 @@ class HobbiesCog(commands.Cog):
     @app_commands.autocomplete(character=autocomplete.own_approved, hobby=autocomplete.any_hobby)
     async def forget(self, interaction: discord.Interaction, character: str, hobby: str) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -133,7 +137,9 @@ class HobbiesCog(commands.Cog):
     @app_commands.autocomplete(character=autocomplete.own_approved)
     async def list_(self, interaction: discord.Interaction, character: str) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -149,7 +155,9 @@ class HobbiesCog(commands.Cog):
                 hobby_def = content.hobbies.get(row.hobby_id)
                 name = hobby_def.name if hobby_def is not None else row.hobby_id
                 level = hobby_levels.hobby_level_for_sessions(row.sessions_played)
-                lines.append(f"**{name}** -- {level.value.title()} ({row.sessions_played} sessions)")
+                lines.append(
+                    f"**{name}** -- {level.value.title()} ({row.sessions_played} sessions)"
+                )
             embed = discord.Embed(title=f"{char.name}'s hobbies", description="\n".join(lines))
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -164,7 +172,9 @@ class HobbiesCog(commands.Cog):
             return
 
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -233,6 +243,19 @@ class HobbiesCog(commands.Cog):
                 success=success,
                 rng=rng,
             )
+            joined_event_name: str | None = None
+            if outcome.success:
+                from panem_shared import global_events as global_events_svc
+
+                active_events = await global_events_svc.active_events_for(
+                    session, district_id=char.current_district_id, hobby_id=hobby
+                )
+                for active_event in active_events:
+                    _entry, joined_now = await global_events_svc.record_progress(
+                        session, event=active_event, character_id=char_id
+                    )
+                    if joined_now:
+                        joined_event_name = active_event.name
 
         if view.result == "early":
             text = t("hobby_session_too_early", name=char_name)
@@ -249,8 +272,16 @@ class HobbiesCog(commands.Cog):
         else:
             text = t("hobby_session_miss", name=char_name)
         if outcome.leveled_up_to is not None:
-            text += t("hobby_level_up", name=char_name, level=outcome.leveled_up_to.value.title(),
-                      hobby=hobby_def.name)
+            text += t(
+                "hobby_level_up",
+                name=char_name,
+                level=outcome.leveled_up_to.value.title(),
+                hobby=hobby_def.name,
+            )
+        if joined_event_name is not None:
+            text += "\n" + t(
+                "global_event_joined", name=char_name, hobby=hobby_def.name, event=joined_event_name
+            )
         await interaction.followup.send(text)
 
 

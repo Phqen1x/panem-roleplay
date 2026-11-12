@@ -418,6 +418,7 @@ STRINGS: dict[str, str] = {
     "back. (+{money} money, +{reputation} reputation)",
     # Global events (`panem_shared.global_events`, `panem_bot.cogs.events`)
     "global_event_not_found": "No event with that name/id.",
+    "global_event_bad_window": "The event must end after it starts.",
     "global_event_not_active": "That event isn't running right now.",
     "global_event_wrong_place": "That event is district-only -- you're not in the right one.",
     "global_event_joined": "**{name}** is in -- play **{hobby}** while **{event}** is running to "
@@ -456,6 +457,12 @@ STRINGS: dict[str, str] = {
     "bulletin_reminder_needs_time": "That entry has no scheduled time to remind you ahead of.",
     "bulletin_interest_marked": "Marked as interested in **{title}**.",
     "bulletin_interest_unmarked": "No longer marked as interested in **{title}**.",
+    "bulletin_title_required": "A bulletin post needs a title.",
+    "bulletin_moved": "Moved on your own board.",
+    "bulletin_reset": "Your bulletin board is back to the default order.",
+    # Staff: global events (`panem_shared.global_events`, `panem_bot.cogs.staff`)
+    "global_event_cancelled": "**{name}** has been cancelled.",
+    "global_event_already_over": "That event has already finished or been cancelled.",
 }
 
 
