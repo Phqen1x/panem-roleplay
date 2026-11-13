@@ -23,7 +23,7 @@
 // Every textarea on this tab (district notes and both nation-wide panels
 // alike) auto-expands to fit its content via `resizeTextarea`/
 // `setTextareaValue` below, rather than scrolling within a fixed-height box.
-import { el, fetchJson, setStatusText } from "./_shared.js?v=8";
+import { el, fetchJson, setStatusText } from "./_shared.js?v=9";
 
 const DISTRICT_IDS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 

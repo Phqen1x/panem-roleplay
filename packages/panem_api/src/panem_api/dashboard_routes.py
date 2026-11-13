@@ -32,6 +32,7 @@ import random
 import secrets
 import uuid
 from pathlib import Path
+from typing import Literal
 
 import redis.asyncio as redis
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
@@ -49,6 +50,7 @@ from panem_shared import characters as characters_svc
 from panem_shared import constants, hobby_levels, job_levels, simtime
 from panem_shared import crime_log as crime_log_svc
 from panem_shared import district_lore as district_lore_svc
+from panem_shared import global_events as global_events_svc
 from panem_shared import hobbies as hobbies_svc
 from panem_shared import housing as housing_svc
 from panem_shared import jail as jail_svc
@@ -58,8 +60,11 @@ from panem_shared import lore as lore_svc
 from panem_shared import market as market_svc
 from panem_shared import museum as museum_svc
 from panem_shared import pay as pay_svc
+from panem_shared import personal_events as personal_events_svc
 from panem_shared import poaching as poaching_svc
+from panem_shared import reactions as reactions_svc
 from panem_shared import rp_modes as rp_modes_svc
+from panem_shared import rumors as rumors_svc
 from panem_shared import shipments as shipments_svc
 from panem_shared import stealing as stealing_svc
 from panem_shared import sustenance as sustenance_svc
@@ -82,12 +87,15 @@ from panem_shared.db.models import (
     DistrictLorePerson,
     DistrictState,
     EngagementSettings,
+    GlobalEvent,
     Inventory,
     LayerCategory,
     Npc,
     PanemHistoryEntry,
+    PersonalEventChain,
     Property,
     PropertyAuction,
+    ReactionEventLog,
     RelationshipRow,
     Scene,
     StaffAction,
@@ -103,11 +111,13 @@ from panem_shared.enums import (
     CharacterStatus,
     DayPhase,
     Gender,
+    GlobalEventStatus,
     JobLevel,
     LocationKind,
     OwnerKind,
     Position,
     PropertyKind,
+    ReactionChoice,
     RpMode,
     SceneStatus,
     Stance,
@@ -6307,5 +6317,443 @@ def build_bulletin_router(*, session_factory: async_sessionmaker[AsyncSession] |
             user = await characters_svc.get_or_create_user(session, body.discord_id)
             await bulletin_svc.reset_organization(session, user_id=user.id)
         return {"ok": True}
+
+    return router
+
+
+# ============================================================= Reactions
+
+
+class ReactionOptionSummary(BaseModel):
+    choice: str
+    label: str
+
+
+class ReactionPendingSummary(BaseModel):
+    log_id: int
+    scenario_id: str
+    prompt: str
+    options: list[ReactionOptionSummary]
+    expires_in_seconds: float
+
+
+class ReactionsStatusResponse(BaseModel):
+    archetype_score: float
+    archetype_label: str
+    pending: ReactionPendingSummary | None = None
+
+
+class ReactionsRespondRequest(BaseModel):
+    discord_id: int
+    choice: Literal["good", "neutral", "evil"]
+
+
+class ReactionsRespondResponse(BaseModel):
+    archetype_score: float
+    archetype_label: str
+
+
+def _reaction_pending_summary(
+    log: ReactionEventLog, *, now: dt.datetime
+) -> ReactionPendingSummary:
+    scenario = reactions_svc.SCENARIOS[log.scenario_id]
+    expires_at = log.created_at + dt.timedelta(seconds=constants.REACTION_EVENT_CHOICE_SECONDS)
+    return ReactionPendingSummary(
+        log_id=log.id,
+        scenario_id=scenario.id,
+        prompt=scenario.prompt,
+        options=[
+            ReactionOptionSummary(choice=opt.choice.value, label=opt.label)
+            for opt in scenario.options
+        ],
+        expires_in_seconds=max(0.0, (expires_at - now).total_seconds()),
+    )
+
+
+def build_reactions_router(
+    *, session_factory: async_sessionmaker[AsyncSession] | None
+) -> APIRouter:
+    """The Reactions tab's REST surface (`panem_shared.reactions`) -- the
+    character's current archetype standing, plus answering a still-
+    pending pop-up from the dashboard instead of only through the DM'd
+    Discord view. The background trigger loop that *creates* a fresh
+    pop-up (`panem_bot.cogs.reactions`) stays Discord-only -- this only
+    ever reads/answers whatever it already logged, the same split
+    `weather`'s router makes for forecasts/events it never generates
+    itself."""
+    router = APIRouter(prefix="/activity/dashboard/reactions", tags=["dashboard"])
+
+    @router.get("/{character_id}/status", response_model=ReactionsStatusResponse)
+    async def reactions_status(character_id: int, discord_id: int) -> ReactionsStatusResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            archetype_score = character.archetype_score
+            now = dt.datetime.now(dt.UTC)
+            log = await reactions_svc.latest_pending(session, character_id=character.id, now=now)
+            pending = _reaction_pending_summary(log, now=now) if log is not None else None
+        return ReactionsStatusResponse(
+            archetype_score=archetype_score,
+            archetype_label=reactions_svc.archetype_label(archetype_score),
+            pending=pending,
+        )
+
+    @router.post("/{character_id}/respond", response_model=ReactionsRespondResponse)
+    async def reactions_respond(
+        character_id: int, body: ReactionsRespondRequest
+    ) -> ReactionsRespondResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            now = dt.datetime.now(dt.UTC)
+            log = await reactions_svc.latest_pending(session, character_id=character.id, now=now)
+            if log is None:
+                raise HTTPException(status_code=404, detail="reaction_none_pending")
+            try:
+                new_score = await reactions_svc.respond(
+                    session, character=character, log=log, choice=ReactionChoice(body.choice)
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return ReactionsRespondResponse(
+            archetype_score=new_score, archetype_label=reactions_svc.archetype_label(new_score)
+        )
+
+    return router
+
+
+# ================================================================ Events
+
+
+class PersonalEventChainSummary(BaseModel):
+    chain_id: int
+    step: int
+    item_name: str
+    found_how: str
+    found_district_id: int
+    target_npc_name: str | None = None
+    expires_tick: int | None = None
+
+
+class EventsStatusResponse(BaseModel):
+    chain: PersonalEventChainSummary | None = None
+
+
+class EventsMysteryRequest(BaseModel):
+    discord_id: int
+
+
+class EventsMysteryResponse(BaseModel):
+    owner_npc_name: str
+    clue: str
+
+
+class EventsDeliverRequest(BaseModel):
+    discord_id: int
+
+
+class EventsDeliverResponse(BaseModel):
+    npc_name: str
+    money: int
+    reputation: float
+
+
+class GlobalEventSummary(BaseModel):
+    event_id: int
+    hobby_id: str
+    hobby_name: str
+    name: str
+    description: str
+    district_id: int | None = None
+    status: str
+    starts_tick: int
+    ends_tick: int
+    in_range: bool
+
+
+class GlobalEventListResponse(BaseModel):
+    events: list[GlobalEventSummary]
+
+
+class GlobalEventLeaderboardEntry(BaseModel):
+    rank: int
+    character_name: str
+    score: float
+    attempts: int
+
+
+class GlobalEventLeaderboardResponse(BaseModel):
+    event_name: str
+    entries: list[GlobalEventLeaderboardEntry]
+
+
+def _lost_item_chain_summary(chain: PersonalEventChain) -> PersonalEventChainSummary:
+    return PersonalEventChainSummary(
+        chain_id=chain.id,
+        step=chain.step,
+        item_name=chain.state.get("item_name", ""),
+        found_how=chain.state.get("found_how", ""),
+        found_district_id=chain.state.get("found_district_id", 0),
+        target_npc_name=chain.state.get("target_npc_name"),
+        expires_tick=chain.expires_tick,
+    )
+
+
+async def _active_lost_item_chain(
+    session: AsyncSession, character_id: int
+) -> PersonalEventChain | None:
+    for chain in await personal_events_svc.active_chains(session, character_id):
+        if chain.chain_kind == "lost_item":
+            return chain
+    return None
+
+
+def build_events_router(
+    *, content: ContentBundle, session_factory: async_sessionmaker[AsyncSession] | None
+) -> APIRouter:
+    """The Events tab's REST surface -- a character's own personal
+    mystery chain (`panem_shared.personal_events`, currently only the
+    `lost_item` chain hobbies can start) plus the global-event listing/
+    leaderboard (`panem_shared.global_events`). Starting a chain stays a
+    side effect of playing a hobby (`/activity/dashboard/hobbies`) --
+    there's no "start a mystery" button here, same as there's no
+    `/event start` Discord command -- and joining a global event is
+    likewise just playing its hobby while it's `ACTIVE`, not a separate
+    sign-up action."""
+    router = APIRouter(prefix="/activity/dashboard/events", tags=["dashboard"])
+
+    @router.get("/{character_id}/status", response_model=EventsStatusResponse)
+    async def events_status(character_id: int, discord_id: int) -> EventsStatusResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            chain = await _active_lost_item_chain(session, character.id)
+            summary = _lost_item_chain_summary(chain) if chain is not None else None
+        return EventsStatusResponse(chain=summary)
+
+    @router.post("/{character_id}/mystery", response_model=EventsMysteryResponse)
+    async def events_mystery(
+        character_id: int, body: EventsMysteryRequest
+    ) -> EventsMysteryResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            chain = await _active_lost_item_chain(session, character.id)
+            if chain is None:
+                raise HTTPException(status_code=404, detail="chain_none_active")
+            current_tick = await _current_tick(session)
+            try:
+                result = await personal_events_svc.investigate(
+                    session, chain=chain, current_tick=current_tick, rng=random.Random()
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return EventsMysteryResponse(owner_npc_name=result.owner_npc_name, clue=result.clue)
+
+    @router.post("/{character_id}/deliver", response_model=EventsDeliverResponse)
+    async def events_deliver(
+        character_id: int, body: EventsDeliverRequest
+    ) -> EventsDeliverResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            chain = await _active_lost_item_chain(session, character.id)
+            if chain is None:
+                raise HTTPException(status_code=404, detail="chain_none_active")
+            current_tick = await _current_tick(session)
+            try:
+                result = await personal_events_svc.deliver(
+                    session, character=character, chain=chain, current_tick=current_tick
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return EventsDeliverResponse(
+            npc_name=result.npc_name, money=result.money, reputation=result.reputation
+        )
+
+    @router.get("/{character_id}/global", response_model=GlobalEventListResponse)
+    async def events_global_list(character_id: int, discord_id: int) -> GlobalEventListResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            district_id = character.current_district_id
+            rows = (
+                (
+                    await session.execute(
+                        select(GlobalEvent)
+                        .where(
+                            GlobalEvent.status.in_(
+                                (GlobalEventStatus.SCHEDULED.value, GlobalEventStatus.ACTIVE.value)
+                            )
+                        )
+                        .order_by(GlobalEvent.starts_tick)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            summaries = [
+                GlobalEventSummary(
+                    event_id=event.id,
+                    hobby_id=event.hobby_id,
+                    hobby_name=(
+                        content.hobbies[event.hobby_id].name
+                        if event.hobby_id in content.hobbies
+                        else event.hobby_id
+                    ),
+                    name=event.name,
+                    description=event.description,
+                    district_id=event.district_id,
+                    status=event.status,
+                    starts_tick=event.starts_tick,
+                    ends_tick=event.ends_tick,
+                    in_range=event.district_id is None or event.district_id == district_id,
+                )
+                for event in rows
+            ]
+        return GlobalEventListResponse(events=summaries)
+
+    @router.get(
+        "/{character_id}/global/{event_id}/leaderboard",
+        response_model=GlobalEventLeaderboardResponse,
+    )
+    async def events_global_leaderboard(
+        character_id: int, event_id: int, discord_id: int
+    ) -> GlobalEventLeaderboardResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            event = await session.get(GlobalEvent, event_id)
+            if event is None:
+                raise HTTPException(status_code=404, detail="global_event_not_found")
+            event_name = event.name
+            entries = await global_events_svc.leaderboard(session, event_id, limit=10)
+            summaries = []
+            for rank, entry in enumerate(entries, start=1):
+                entry_character = await session.get(Character, entry.character_id)
+                summaries.append(
+                    GlobalEventLeaderboardEntry(
+                        rank=rank,
+                        character_name=(
+                            entry_character.name
+                            if entry_character is not None
+                            else f"#{entry.character_id}"
+                        ),
+                        score=entry.score,
+                        attempts=entry.attempts,
+                    )
+                )
+        return GlobalEventLeaderboardResponse(event_name=event_name, entries=summaries)
+
+    return router
+
+
+# ================================================================ Rumors
+
+
+class RumorSummary(BaseModel):
+    rumor_id: int
+    text: str
+    origin: str
+    reliability_pct: int
+    investigation_count: int
+    investigations_remaining: int
+
+
+class RumorBoardResponse(BaseModel):
+    district_id: int
+    rumors: list[RumorSummary]
+
+
+class RumorInvestigateRequest(BaseModel):
+    discord_id: int
+    rumor_id: int
+
+
+class RumorInvestigateResponse(BaseModel):
+    rumor_id: int
+    finding: str
+    reliability_pct: int
+    reliability_delta: int
+
+
+def build_rumors_router(*, session_factory: async_sessionmaker[AsyncSession] | None) -> APIRouter:
+    """The Rumors tab's REST surface (`panem_shared.rumors`) -- every
+    rumor currently floating around the character's own current
+    district, and investigating one. Spawning stays `panem_bot.cogs.
+    rumors`'s hourly background loop -- there's no "start a rumor"
+    player action to mirror here, same as Discord has none."""
+    router = APIRouter(prefix="/activity/dashboard/rumors", tags=["dashboard"])
+
+    @router.get("/{character_id}/board", response_model=RumorBoardResponse)
+    async def rumors_board(character_id: int, discord_id: int) -> RumorBoardResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            district_id = character.current_district_id
+            rows = await rumors_svc.district_rumors(session, district_id)
+            summaries = []
+            for rumor in rows:
+                count = await rumors_svc.investigation_count(session, rumor.id)
+                summaries.append(
+                    RumorSummary(
+                        rumor_id=rumor.id,
+                        text=rumor.text,
+                        origin=rumor.origin,
+                        reliability_pct=rumor.reliability_pct,
+                        investigation_count=count,
+                        investigations_remaining=max(
+                            0, constants.RUMOR_MAX_INVESTIGATIONS - count
+                        ),
+                    )
+                )
+        return RumorBoardResponse(district_id=district_id, rumors=summaries)
+
+    @router.post("/{character_id}/investigate", response_model=RumorInvestigateResponse)
+    async def rumors_investigate(
+        character_id: int, body: RumorInvestigateRequest
+    ) -> RumorInvestigateResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            try:
+                rumor = await rumors_svc.get_rumor(session, body.rumor_id)
+                current_tick = await _current_tick(session)
+                log = await rumors_svc.investigate(
+                    session,
+                    character_id=character.id,
+                    rumor=rumor,
+                    current_tick=current_tick,
+                    rng=random.Random(),
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            reliability_pct = rumor.reliability_pct
+            finding = log.finding
+            reliability_delta = log.reliability_delta
+        return RumorInvestigateResponse(
+            rumor_id=body.rumor_id,
+            finding=finding,
+            reliability_pct=reliability_pct,
+            reliability_delta=reliability_delta,
+        )
 
     return router

@@ -1,7 +1,7 @@
 // The "Travel" tab: mirrors `/travel` (both its location and
 // cross-district sub-flows) and `/where` (folded into the status panel
 // below rather than a separate action).
-import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=8";
+import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=9";
 
 export function mount(root, ctx) {
   const statusEl = el("p", { class: "tab-status" });

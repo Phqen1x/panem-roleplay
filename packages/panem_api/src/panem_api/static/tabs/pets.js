@@ -2,7 +2,7 @@
 // a character's pets, without having to walk up to the Market on the
 // Capitol's 3D map first (`../map3d/pets_panel.js` is the in-map popup
 // version of this same flow, reached that way instead).
-import { el, setStatusText } from "./_shared.js?v=8";
+import { el, setStatusText } from "./_shared.js?v=9";
 
 function ownedPanel(pets) {
   if (pets.length === 0) {

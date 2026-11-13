@@ -6,7 +6,7 @@
 // button-press window on this tab yet, the same "always playable without
 // one" shape `panem_shared.hobbies`'s own module docstring describes for
 // the bare-Discord path.
-import { el, setStatusText } from "./_shared.js?v=8";
+import { el, setStatusText } from "./_shared.js?v=9";
 
 function levelLabel(level) {
   return level.charAt(0).toUpperCase() + level.slice(1);

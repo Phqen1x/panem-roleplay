@@ -16,7 +16,7 @@
 // exponential ease towards each snapshot's `x`/`y`) so movement doesn't
 // look like it's teleporting between 100ms updates -- everything else
 // (scores, timers, reveals) is shown exactly as the server sends it.
-import { el } from "./_shared.js?v=8";
+import { el } from "./_shared.js?v=9";
 
 const MOVE_KEYS = {
   w: "up",

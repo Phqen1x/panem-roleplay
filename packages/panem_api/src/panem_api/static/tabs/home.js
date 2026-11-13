@@ -8,7 +8,7 @@
 // The mode/meters section reads `/activity/dashboard/mode/{id}/status`
 // (Milestone 6), the same endpoint `/character mode`'s bot-side confirm
 // view is built against, so the two surfaces never drift apart.
-import { fetchJson, el, dropdown, setStatusText, renderTabIcon } from "./_shared.js?v=8";
+import { fetchJson, el, dropdown, setStatusText, renderTabIcon } from "./_shared.js?v=9";
 
 const MODE_LABELS = { story: "Story", life: "Life", simulation: "Simulation" };
 const SHIFT_PHASES = ["morning", "afternoon", "evening", "night"];
@@ -328,7 +328,7 @@ function eventLabel(kind) {
 // there's actually something to lead with (an active or predicted
 // weather event); omitted entirely otherwise rather than a flat "all
 // clear" banner manufacturing excitement that isn't there.
-function heroPanel(weatherStatus) {
+function heroPanel(ctx, weatherStatus) {
   const event_ = weatherStatus.active_event || weatherStatus.upcoming_event;
   if (!event_) return null;
   const isActive = Boolean(weatherStatus.active_event);
@@ -341,8 +341,8 @@ function heroPanel(weatherStatus) {
       { class: "tab-status" },
       `${eventLabel(event_.kind)} -- category ${event_.severity}.` +
         (isActive
-          ? ` Expected to pass around tick ${event_.actual_end_tick}. Take cover if you're outside.`
-          : ` Predicted to start around tick ${event_.predicted_start_tick}.`)
+          ? ` Expected to pass around ${ctx.formatTick(event_.actual_end_tick)}. Take cover if you're outside.`
+          : ` Predicted to start around ${ctx.formatTick(event_.predicted_start_tick)}.`)
     )
   );
 }
@@ -461,7 +461,7 @@ export function mount(root, ctx) {
       );
       setStatusText(statusLine, "");
       const panels = [
-        weatherStatus ? heroPanel(weatherStatus) : null,
+        weatherStatus ? heroPanel(ctx, weatherStatus) : null,
         bulletinPreviewPanel(ctx, bulletinEntries),
         ...appsPanel(ctx),
         modePanel(status),

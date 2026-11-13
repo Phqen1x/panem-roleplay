@@ -23,7 +23,7 @@
 // every other dashboard endpoint re-validating discord_id+character_id
 // together) -- there's still no cryptographic auth here, same documented
 // gap as the rest of this process.
-import { fetchJson, el, renderTabIcon } from "./tabs/_shared.js?v=8";
+import { fetchJson, el, renderTabIcon } from "./tabs/_shared.js?v=9";
 import { mountThemePicker } from "./theme_picker.js?v=4";
 import { initClickSFX } from "./click_sfx.js?v=53";
 import { mountSoundPicker } from "./sound_picker.js?v=53";
@@ -63,7 +63,7 @@ async function openExternalLink(url) {
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "54";
+const ASSET_VERSION = "55";
 
 // District names mapping for Capitol and Districts 1-12
 const DISTRICT_NAMES = {
@@ -762,6 +762,7 @@ function buildCtx() {
       state.districtMottos[String(id)] || DEFAULT_DISTRICT_MOTTOS[String(id)] || "Excellence Endures",
     districtName: (id) => DISTRICT_NAMES[id] || `District ${id}`,
     apiFetch: fetchJson,
+    formatTick: formatSimMoment,
     refreshIdentity,
     openExternalLink,
     // Below: what `tabs/home.js` needs to render its own "Apps"/
@@ -947,6 +948,46 @@ let worldTimeBaseline = null; // { tick, updatedAtMs, tickIntervalSeconds, ticks
 
 function capitalize(word) {
   return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+// Fallbacks for `panem_shared.constants.TICKS_PER_DAY`/`DAYS_PER_MONTH` --
+// only used for the brief window before `refreshWorldTime`'s first
+// `/world/time` response lands (a tab mounted immediately at startup could
+// otherwise call `formatSimMoment` with no baseline yet); once it lands,
+// the real (possibly `tuning.yaml`-overridden) values from the server take
+// over.
+const DEFAULT_TICKS_PER_DAY = 24;
+const DEFAULT_DAYS_PER_MONTH = 30;
+
+// Converts an absolute tick (e.g. a `WeatherEvent.predicted_start_tick`, a
+// bulletin entry's `event_tick`) into the same "simulation time" shape the
+// world-clock header renders for *now* -- mirrors `panem_shared.simtime`'s
+// tick -> hour/day/month/phase math exactly like `renderWorldClock` below
+// does, but for an arbitrary tick rather than the live, interpolated one.
+// Used wherever a tab used to show a bare "tick 1234" to players, who have
+// no reason to know what a "tick" is.
+function formatSimMoment(tick) {
+  const ticksPerDay = worldTimeBaseline ? worldTimeBaseline.ticksPerDay : DEFAULT_TICKS_PER_DAY;
+  const daysPerMonth = worldTimeBaseline ? worldTimeBaseline.daysPerMonth : DEFAULT_DAYS_PER_MONTH;
+
+  const hourOfDay = tick % ticksPerDay;
+  const dayIndex = Math.floor(tick / ticksPerDay);
+  const day = (dayIndex % daysPerMonth) + 1;
+  const month = (Math.floor(dayIndex / daysPerMonth) % 12) + 1;
+  const year = Math.floor(dayIndex / (daysPerMonth * 12)) + 1;
+
+  const totalMinutes = (hourOfDay * 24 * 60) / ticksPerDay;
+  const hour24 = Math.floor(totalMinutes / 60) % 24;
+  const minute = Math.floor(totalMinutes % 60);
+  const period = hour24 < 12 ? "AM" : "PM";
+  const hour12 = hour24 % 12 || 12;
+  const timeStr = `${hour12}:${String(minute).padStart(2, "0")} ${period}`;
+
+  const ticksPerPhase = ticksPerDay / PHASE_ORDER.length;
+  const phaseIndex = Math.min(PHASE_ORDER.length - 1, Math.floor(hourOfDay / ticksPerPhase));
+  const phase = PHASE_ORDER[phaseIndex];
+
+  return `${timeStr} on Month ${month}, Day ${day}, Year ${year} (${capitalize(phase)} shift)`;
 }
 
 function renderWorldClock() {

@@ -4,7 +4,7 @@
 // conclude`) alongside player/NPC posts, with per-viewer interest
 // marking, a DM reminder, and drag-free "move to position" organizing
 // (mirrors `/bulletin ...`, `panem_shared.bulletin`).
-import { el, setStatusText } from "./_shared.js?v=8";
+import { el, setStatusText } from "./_shared.js?v=9";
 
 function entryRow(ctx, entry, resultLine, onChanged) {
   const interestBtn = el(
@@ -39,7 +39,7 @@ function entryRow(ctx, entry, resultLine, onChanged) {
       ? el("p", { class: "tab-status" }, `Danger: category ${entry.danger_level}`)
       : null,
     entry.event_tick != null
-      ? el("p", { class: "tab-status" }, `Happens around tick ${entry.event_tick}.`)
+      ? el("p", { class: "tab-status" }, `Happens around ${ctx.formatTick(entry.event_tick)}.`)
       : null,
   ].filter(Boolean);
 

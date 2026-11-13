@@ -8,7 +8,7 @@
 // live 3D model (via `onChange`, `city.js`'s `localPlayer.setAppearance`)
 // and persists it right away too -- there's nothing to lose by committing
 // a cosmetic pick the instant it's made.
-import { el } from "../tabs/_shared.js?v=8";
+import { el } from "../tabs/_shared.js?v=9";
 import { ASSETS_BASE } from "./character.js";
 
 const LETTERS = "abcdefghijklmnopqr".split("");

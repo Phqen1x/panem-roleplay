@@ -2,7 +2,7 @@
 // Three panels: your own status (home, fatigue, sleep controls), what
 // you own (per-property sell/refinance/rent-out/auction actions), and
 // what's for sale/rent in your current district (buy/rent/inn-stay).
-import { fetchJson, el, setStatusText } from "./_shared.js?v=8";
+import { fetchJson, el, setStatusText } from "./_shared.js?v=9";
 
 function priceLabelSuffix(label) {
   if (label === "night") return "/night";

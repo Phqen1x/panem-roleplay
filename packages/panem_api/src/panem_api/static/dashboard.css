@@ -158,6 +158,14 @@ header {
   right: 0;
 }
 
+/* Added by `tabs/_shared.js`'s `dropdown()` when there isn't enough room
+   below the toggle to show the menu in full -- opens upward from the
+   toggle's top edge instead of spilling down past the viewport. */
+.custom-select-menu.open-up {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
 .custom-select-menu button {
   display: block;
   width: 100%;

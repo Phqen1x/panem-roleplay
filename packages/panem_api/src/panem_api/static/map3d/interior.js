@@ -16,7 +16,7 @@
 // dragging later only touches this one file.
 import * as THREE from "../vendor/three.module.min.js";
 import { OrbitControls } from "../vendor/OrbitControls.js";
-import { el } from "../tabs/_shared.js?v=8";
+import { el } from "../tabs/_shared.js?v=9";
 import { loadModel, cloneModel } from "./loader.js";
 
 const ASSETS_BASE = "/assets3d";

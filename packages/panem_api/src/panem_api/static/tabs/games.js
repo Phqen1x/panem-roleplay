@@ -9,7 +9,7 @@
 // pitch for now. Only offered by `app.js` when `/identify` reports
 // `is_staff` (same gating as `staff.js`), while the concept is reviewed
 // before any of it is built out further for players.
-import { el } from "./_shared.js?v=8";
+import { el } from "./_shared.js?v=9";
 
 // Bump whenever party.js changes -- same cache-busting reasoning as
 // app.js's own ASSET_VERSION (see that file's module docstring), just

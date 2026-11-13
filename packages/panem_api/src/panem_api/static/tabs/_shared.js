@@ -126,7 +126,24 @@ export function dropdown(initialOptions) {
 
   toggle.addEventListener("click", () => {
     if (toggle.disabled) return;
+    const opening = menu.hidden;
     menu.hidden = !menu.hidden;
+    if (!opening) return;
+    // Flip the menu to open upward instead of its default downward spill
+    // when there isn't enough room below the toggle to show it in full --
+    // without this, a dropdown low in a long panel (e.g. the Museum tab's
+    // first field-row, which can still sit near the bottom of a short
+    // Activity iframe) rendered its tail end past the viewport's bottom
+    // edge, which reads identically to "the dropdown is cut off" even
+    // though the content is technically still there to scroll to.
+    menu.classList.remove("open-up");
+    const toggleRect = toggle.getBoundingClientRect();
+    const menuHeight = menu.getBoundingClientRect().height;
+    const spaceBelow = window.innerHeight - toggleRect.bottom;
+    const spaceAbove = toggleRect.top;
+    if (menuHeight > spaceBelow && spaceAbove > spaceBelow) {
+      menu.classList.add("open-up");
+    }
   });
   document.addEventListener("click", (event) => {
     if (!menu.hidden && !event.composedPath().includes(wrapper)) close();
