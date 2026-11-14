@@ -1160,6 +1160,37 @@ table.data-table .stock-empty {
   transform: translateY(0);
 }
 
+/* Reaction-event pop-up (`panem_shared.reactions`, `app.js`'s own global
+   poll) -- shares `.modal-overlay` above (fixed/centered/backdrop) but
+   isn't the dossier's header+avatar layout, just a prompt, a countdown,
+   and up to 3 choice buttons, so it gets its own plain card instead of
+   `.dossier-card`. Not closeable by clicking outside it (no close
+   button, no overlay click handler) -- answering it, or letting it time
+   out, is the point. */
+.reaction-modal-card {
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  box-shadow: 0 0 30px rgba(0, 0, 0, 0.8), 0 0 20px color-mix(in srgb, var(--accent) 25%, transparent);
+  border-radius: 12px;
+  width: 90%;
+  max-width: 480px;
+  padding: 22px 24px;
+  transform: translateY(20px);
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.modal-overlay.open .reaction-modal-card {
+  transform: translateY(0);
+}
+
+.reaction-modal-card h2 {
+  margin-top: 0;
+  font-family: var(--font-serif);
+  font-size: 17px;
+  font-weight: 700;
+  color: #fff;
+}
+
 .dossier-header {
   padding: 18px 24px;
   background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 14%, var(--panel)) 0%, var(--panel) 100%);

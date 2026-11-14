@@ -63,7 +63,7 @@ async function openExternalLink(url) {
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "55";
+const ASSET_VERSION = "56";
 
 // District names mapping for Capitol and Districts 1-12
 const DISTRICT_NAMES = {
@@ -646,6 +646,9 @@ async function selectCharacter(id) {
   closeCharacterMenu();
   if (id === state.characterId) return;
   state.characterId = id;
+  // Any pop-up still showing belonged to the character being switched
+  // away from -- answering it now would silently apply to the wrong one.
+  if (reactionOverlay) reactionOverlay.close();
   writeStorage("panem_character_id", String(id));
   const chosen = state.characters.find((c) => c.id === id);
   if (chosen) {
@@ -1044,6 +1047,137 @@ async function refreshWorldTime() {
   }
 }
 
+// Reaction-event pop-ups (`panem_shared.reactions`) -- no more DM from a
+// Discord-side background loop; the *only* place a fresh one ever gets
+// rolled now is this poll's own call to `/activity/dashboard/reactions/
+// .../status` (see that route's docstring), which only runs while this
+// page is actually open, so "pops up occasionally while the Activity is
+// open" falls out of polling itself rather than needing its own
+// presence check. Floats above whichever tab is currently showing --
+// unlike the Reactions tab's own (read-only) archetype panel, this isn't
+// scoped to that one tab, since a pop-up can land while the player is on
+// any of them. `REACTION_EVENT_DASHBOARD_POLL_SECONDS`'s own docstring
+// is the other half of this interval's math -- keep the two in sync.
+const REACTIONS_POLL_INTERVAL_MS = 5000;
+let reactionOverlay = null;
+let reactionPollInFlight = false;
+
+function buildReactionOverlay() {
+  const overlay = el("div", { class: "modal-overlay reaction-modal-overlay" });
+  const promptEl = el("p", { class: "tab-status" });
+  const countdownEl = el("p", { class: "tab-status" });
+  const buttonsHost = el("div", { class: "field-row" });
+  const resultEl = el("p", { class: "result-line" });
+  const card = el(
+    "div",
+    { class: "reaction-modal-card", onclick: (event) => event.stopPropagation() },
+    el("h2", { text: "Something's Happening" }),
+    promptEl,
+    countdownEl,
+    buttonsHost,
+    resultEl
+  );
+  overlay.append(card);
+
+  let currentLogId = null;
+  let countdownTimer = null;
+  let answered = false;
+
+  function stopCountdown() {
+    if (countdownTimer) {
+      clearInterval(countdownTimer);
+      countdownTimer = null;
+    }
+  }
+
+  function close() {
+    stopCountdown();
+    overlay.classList.remove("open");
+    currentLogId = null;
+  }
+
+  function renderCountdown(expiresAtMs) {
+    stopCountdown();
+    const tick = () => {
+      const secondsLeft = Math.max(0, Math.round((expiresAtMs - Date.now()) / 1000));
+      countdownEl.textContent =
+        secondsLeft > 0
+          ? `You have about ${secondsLeft}s left to answer.`
+          : "This pop-up is about to expire.";
+      if (secondsLeft <= 0) {
+        stopCountdown();
+        if (!answered) close();
+      }
+    };
+    tick();
+    countdownTimer = setInterval(tick, 1000);
+  }
+
+  async function choose(choice, buttons) {
+    if (answered) return;
+    answered = true;
+    for (const button of buttons) button.disabled = true;
+    try {
+      const result = await fetchJson(`/activity/dashboard/reactions/${state.characterId}/respond`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ discord_id: getDiscordId(), choice }),
+      });
+      resultEl.className = "result-line win";
+      resultEl.textContent = `Reading now: ${result.archetype_label} (score ${result.archetype_score.toFixed(1)}).`;
+      stopCountdown();
+      setTimeout(close, 2500);
+    } catch (err) {
+      resultEl.className = "result-line lose";
+      resultEl.textContent = err.message;
+      answered = false;
+      for (const button of buttons) button.disabled = false;
+    }
+  }
+
+  function show(pending) {
+    // Already showing this exact pop-up (or mid-answer on it) -- a later
+    // poll finding the same still-pending log shouldn't re-render out
+    // from under an in-progress click, or restart its countdown.
+    if (currentLogId === pending.log_id && overlay.classList.contains("open")) return;
+
+    answered = false;
+    currentLogId = pending.log_id;
+    promptEl.textContent = pending.prompt;
+    resultEl.textContent = "";
+    resultEl.className = "result-line";
+    buttonsHost.innerHTML = "";
+    const buttons = [];
+    for (const option of pending.options) {
+      const button = el("button", { class: "btn", type: "button" }, option.label);
+      button.addEventListener("click", () => choose(option.choice, buttons));
+      buttons.push(button);
+      buttonsHost.append(button);
+    }
+    renderCountdown(Date.now() + pending.expires_in_seconds * 1000);
+    overlay.classList.add("open");
+  }
+
+  return { element: overlay, show, close };
+}
+
+async function refreshReactions() {
+  if (!state.characterId || !getDiscordId() || reactionPollInFlight) return;
+  reactionPollInFlight = true;
+  try {
+    const status = await fetchJson(
+      `/activity/dashboard/reactions/${state.characterId}/status?discord_id=${encodeURIComponent(getDiscordId())}`
+    );
+    if (status.pending && reactionOverlay) {
+      reactionOverlay.show(status.pending);
+    }
+  } catch (err) {
+    console.warn("Could not poll reaction status:", err);
+  } finally {
+    reactionPollInFlight = false;
+  }
+}
+
 async function main() {
   initClickSFX();
   const soundPickerEl = document.getElementById("sound-picker");
@@ -1064,6 +1198,11 @@ async function main() {
   refreshWorldTime();
   setInterval(refreshWorldTime, WORLD_TIME_POLL_INTERVAL_MS);
   setInterval(renderWorldClock, WORLD_CLOCK_RENDER_INTERVAL_MS);
+
+  reactionOverlay = buildReactionOverlay();
+  document.body.append(reactionOverlay.element);
+  refreshReactions();
+  setInterval(refreshReactions, REACTIONS_POLL_INTERVAL_MS);
 
   state.discordUser = await authenticateWithDiscord();
   if (!state.discordUser) {

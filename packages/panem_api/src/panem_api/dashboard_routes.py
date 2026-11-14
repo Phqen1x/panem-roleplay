@@ -6374,13 +6374,17 @@ def build_reactions_router(
     *, session_factory: async_sessionmaker[AsyncSession] | None
 ) -> APIRouter:
     """The Reactions tab's REST surface (`panem_shared.reactions`) -- the
-    character's current archetype standing, plus answering a still-
-    pending pop-up from the dashboard instead of only through the DM'd
-    Discord view. The background trigger loop that *creates* a fresh
-    pop-up (`panem_bot.cogs.reactions`) stays Discord-only -- this only
-    ever reads/answers whatever it already logged, the same split
-    `weather`'s router makes for forecasts/events it never generates
-    itself."""
+    character's current archetype standing, plus triggering/answering a
+    pop-up. Unlike `weather`'s router, this one *does* generate fresh
+    state of its own: `/status` is also the one place a brand new pop-up
+    ever gets rolled (`reactions_svc.maybe_trigger_from_dashboard`), on
+    the theory that a player only ever polls this while the Activity
+    dashboard is actually open in front of them -- there is no more
+    `panem_bot.cogs.reactions` background loop DMing one to someone who
+    isn't there to see it. `app.js`'s own global poll (not the Reactions
+    tab specifically -- a pop-up can land while any tab is open) is what
+    calls `/status` on a timer; answering happens through the floating
+    window that poll opens, which posts to `/respond` below."""
     router = APIRouter(prefix="/activity/dashboard/reactions", tags=["dashboard"])
 
     @router.get("/{character_id}/status", response_model=ReactionsStatusResponse)
@@ -6393,6 +6397,18 @@ def build_reactions_router(
             archetype_score = character.archetype_score
             now = dt.datetime.now(dt.UTC)
             log = await reactions_svc.latest_pending(session, character_id=character.id, now=now)
+            if log is None:
+                # This poll only ever runs while the Activity dashboard is
+                # open (see `maybe_trigger_from_dashboard`'s own docstring)
+                # -- the one and only place a fresh pop-up can still come
+                # from, now that the old DM-pushing background loop is
+                # gone.
+                current_tick = await _current_tick(session)
+                log = await reactions_svc.maybe_trigger_from_dashboard(
+                    session, character=character, current_tick=current_tick, rng=random.Random()
+                )
+                if log is not None:
+                    await session.flush()
             pending = _reaction_pending_summary(log, now=now) if log is not None else None
         return ReactionsStatusResponse(
             archetype_score=archetype_score,

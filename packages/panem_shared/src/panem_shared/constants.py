@@ -1052,18 +1052,35 @@ WEATHER_REPAIR_COST_PER_POINT = 2
 # ----------------------------------------------------- Reaction events
 
 REACTION_EVENT_CHOICE_SECONDS = 20
-"""How long a `ReactionEvent` pop-up's buttons stay live before it
+"""How long a `ReactionEvent` pop-up's window stays live before it
 auto-resolves as skipped (no archetype effect either way)."""
 REACTION_EVENT_POLL_MINUTES = 20
-"""How often `panem_bot.cogs.reactions`'s background loop checks whether
-to fire a pop-up at all -- real-time, the same "soon enough, not on an
-exact tick boundary" cadence `panem_shared.weather`'s own poll uses."""
+"""Not a real poll cadence of its own -- purely the other half of
+`REACTION_EVENT_TRIGGER_CHANCE`'s "once every ~X real minutes, on
+average" framing, which `panem_shared.reactions._DASHBOARD_TRIGGER_
+CHANCE` divides back out into a per-`/activity/dashboard/reactions/.../
+status`-poll probability (see `REACTION_EVENT_DASHBOARD_POLL_SECONDS`).
+Kept as a "minutes" constant rather than folding the ratio into
+`REACTION_EVENT_TRIGGER_CHANCE` directly because it's the number a
+designer actually wants to tune ("how often, roughly") without doing the
+poll-interval division by hand."""
 REACTION_EVENT_TRIGGER_CHANCE = 0.03
-"""Flat per-eligible-character chance, each poll, of being handed a
-pop-up -- Spec: "occasionally." At the default poll cadence that's
-roughly once every six-ish real hours per active character, not
-"constantly," while still keeping the sample random rather than evenly
-spaced."""
+"""Spec: "occasionally" -- roughly once every `REACTION_EVENT_POLL_
+MINUTES` real minutes, on average, for a character whose owner actively
+has the Activity dashboard open (closing the dashboard stops the polling
+that's the only thing still capable of rolling this -- there is no
+background loop handing these out to someone who isn't there to see
+one). Scaled down to a per-poll probability by `panem_shared.reactions.
+_DASHBOARD_TRIGGER_CHANCE` rather than applied flat on every poll, which
+polls far more often than once every `REACTION_EVENT_POLL_MINUTES`."""
+REACTION_EVENT_DASHBOARD_POLL_SECONDS = 5
+"""How often `app.js`'s own global poll calls `/activity/dashboard/
+reactions/.../status` while the Activity is open -- purely the other
+input `panem_shared.reactions._DASHBOARD_TRIGGER_CHANCE` needs to turn
+`REACTION_EVENT_TRIGGER_CHANCE`/`REACTION_EVENT_POLL_MINUTES`'s "roughly
+once every ~X minutes" into a per-poll probability; the frontend's own
+poll interval must stay this value (or this constant must move to
+wherever it actually changes) for that math to hold."""
 ARCHETYPE_SCORE_MIN = -100.0
 ARCHETYPE_SCORE_MAX = 100.0
 ARCHETYPE_GOOD_DELTA = 8.0

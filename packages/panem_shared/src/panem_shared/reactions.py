@@ -195,3 +195,32 @@ async def respond(
     log.choice = choice.value
     log.archetype_score_after = new_score
     return new_score
+
+
+# Turns `REACTION_EVENT_TRIGGER_CHANCE`'s "roughly once every
+# `REACTION_EVENT_POLL_MINUTES` real minutes" framing into a per-poll
+# probability for `maybe_trigger_from_dashboard` below, so the *expected*
+# real-world wait stays the same no matter how often `app.js`'s own
+# global poll actually calls the status endpoint (`REACTION_EVENT_
+# DASHBOARD_POLL_SECONDS`'s own docstring is the other half of this).
+_DASHBOARD_TRIGGER_CHANCE = constants.REACTION_EVENT_TRIGGER_CHANCE * (
+    constants.REACTION_EVENT_DASHBOARD_POLL_SECONDS / (constants.REACTION_EVENT_POLL_MINUTES * 60)
+)
+
+
+async def maybe_trigger_from_dashboard(
+    session: AsyncSession, *, character: Character, current_tick: int, rng: random.Random
+) -> ReactionEventLog | None:
+    """Replaces the old DM-pushing background loop: there's no longer any
+    way for a character to get a pop-up handed to them while nobody's
+    actually looking at the Activity dashboard, because the dashboard's
+    own poll of `/activity/dashboard/reactions/{character_id}/status` is
+    now the *only* place this ever gets rolled, and that poll only ever
+    runs while the dashboard is open. The caller is expected to call this
+    exactly when that status poll finds nothing already pending (there's
+    never more than one live pop-up per character at a time). Returns
+    `None` on a miss, same shape `trigger` itself would need a caller to
+    check for anyway."""
+    if rng.random() >= _DASHBOARD_TRIGGER_CHANCE:
+        return None
+    return await trigger(session, character=character, current_tick=current_tick, rng=rng)
