@@ -50,6 +50,11 @@ _INVESTIGATE_DOUBTING = (
     "{name} hasn't heard anything like that, and seems sure they would have.",
     "Someone else tells a completely different, incompatible version.",
 )
+_INVESTIGATE_EMPTY_HANDED = (
+    "You ask around, but come up empty -- nobody's talking today.",
+    "No one you find has anything useful to say about it.",
+    "You lose the thread before finding anyone worth asking.",
+)
 
 
 def random_flavor(rng: random.Random, *, from_paper: bool) -> tuple[str, str]:
@@ -70,10 +75,16 @@ async def spawn_rumor(
     origin: str = "overheard",
     related_kind: str | None = None,
     related_id: int | None = None,
+    expires_tick: int | None = None,
 ) -> Rumor:
     if text is None:
         text, origin = random_flavor(rng, from_paper=origin == "paper")
     reliability = rng.randint(*constants.RUMOR_BASE_RELIABILITY_RANGE)
+    if expires_tick is None:
+        # Default: 1 simulation month. An explicit `expires_tick` lets a
+        # caller tie a rumor's lifespan to whatever it's actually about
+        # instead (e.g. not outliving the `WeatherEvent` it's rumoring).
+        expires_tick = current_tick + constants.DAYS_PER_MONTH * constants.TICKS_PER_DAY
     rumor = Rumor(
         district_id=district_id,
         text=text,
@@ -82,6 +93,7 @@ async def spawn_rumor(
         related_id=related_id,
         origin=origin,
         spawned_tick=current_tick,
+        expires_tick=expires_tick,
     )
     session.add(rumor)
     return rumor
@@ -110,15 +122,38 @@ async def investigate(
     rumor: Rumor,
     current_tick: int,
     rng: random.Random,
+    success: bool = True,
 ) -> RumorInvestigation:
     """Raises `NotAllowed` once `constants.RUMOR_MAX_INVESTIGATIONS` logged
     investigations already exist for this rumor -- past that it's
     considered settled. Otherwise rolls a signed shift within
     `constants.RUMOR_INVESTIGATE_SHIFT_RANGE`, clamps `reliability_pct` to
-    0-100, and logs the exact delta applied alongside a flavor finding."""
+    0-100, and logs the exact delta applied alongside a flavor finding.
+
+    `success` is the dashboard's own "Spot the Odd One Out" minigame
+    result (`static/games/odd_one_out.js`, via `static/rumor_investigate.
+    js`) -- losing it still consumes one of the capped investigation
+    slots (asking around takes the attempt whether or not it pans out),
+    but skips the reliability roll entirely and logs a flavor "came up
+    empty" finding instead. Discord's `/rumor investigate` has no
+    minigame of its own and always passes the default `True`, the same
+    "always playable without one" shape every other dashboard-only
+    minigame's Discord-side command keeps."""
     count = await investigation_count(session, rumor.id)
     if count >= constants.RUMOR_MAX_INVESTIGATIONS:
         raise NotAllowed("rumor_investigate_capped")
+
+    if not success:
+        finding = rng.choice(_INVESTIGATE_EMPTY_HANDED)
+        log = RumorInvestigation(
+            rumor_id=rumor.id,
+            character_id=character_id,
+            finding=finding,
+            reliability_delta=0,
+            tick=current_tick,
+        )
+        session.add(log)
+        return log
 
     supports = rng.random() < (rumor.reliability_pct / 100)
     magnitude = rng.randint(*constants.RUMOR_INVESTIGATE_SHIFT_RANGE)
@@ -146,3 +181,38 @@ async def get_rumor(session: AsyncSession, rumor_id: int) -> Rumor:
     if rumor is None:
         raise NotFound("rumor_not_found")
     return rumor
+
+
+async def delete_rumor(session: AsyncSession, rumor_id: int) -> None:
+    """A player's own "Delete" action on the Rumors tab -- unlike
+    `panem_shared.bulletin`'s per-viewer hide, a rumor has no per-viewer
+    anything (investigating one is district-wide, not character-owned),
+    so this is a real delete of the one shared row, for everyone. Deletes
+    its `RumorInvestigation` log rows first -- that FK has no `ondelete=
+    CASCADE` in the migration that created it, so leaving them would
+    violate the constraint."""
+    await session.execute(
+        RumorInvestigation.__table__.delete().where(RumorInvestigation.rumor_id == rumor_id)
+    )
+    rumor = await session.get(Rumor, rumor_id)
+    if rumor is not None:
+        await session.delete(rumor)
+
+
+async def expire_stale_rumors(session: AsyncSession, current_tick: int) -> list[int]:
+    """`panem_bot.cogs.rumors`'s spawn loop sweep -- a rumor past its
+    `expires_tick` (1 simulation month by default, see `spawn_rumor`)
+    just quietly disappears rather than sitting stale on the board
+    forever. Unlike `panem_shared.personal_events.expire_stale_chains`,
+    there's no status column to flip to EXPIRED: a `Rumor` is either
+    live or gone, so this really deletes the row (and its investigation
+    log rows, same as `delete_rumor`). Returns the deleted ids."""
+    result = await session.execute(
+        select(Rumor.id).where(
+            Rumor.expires_tick.is_not(None), Rumor.expires_tick <= current_tick
+        )
+    )
+    expired_ids = [row[0] for row in result.all()]
+    for rumor_id in expired_ids:
+        await delete_rumor(session, rumor_id)
+    return expired_ids

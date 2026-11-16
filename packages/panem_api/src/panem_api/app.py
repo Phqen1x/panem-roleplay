@@ -930,7 +930,7 @@ def create_app(
     app.include_router(build_bulletin_router(session_factory=session_factory))
     app.include_router(build_reactions_router(session_factory=session_factory))
     app.include_router(build_events_router(content=content, session_factory=session_factory))
-    app.include_router(build_rumors_router(session_factory=session_factory))
+    app.include_router(build_rumors_router(content=content, session_factory=session_factory))
     app.include_router(
         build_rp_mode_router(session_factory=session_factory, redis_client=redis_client)
     )

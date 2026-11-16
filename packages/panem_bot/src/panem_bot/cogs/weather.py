@@ -25,9 +25,19 @@ from panem_bot import autocomplete, utils
 from panem_bot.strings import t
 from panem_shared import bulletin as bulletin_svc
 from panem_shared import constants, simtime
+from panem_shared import rumors as rumors_svc
 from panem_shared import weather as weather_svc
 from panem_shared.db.models import Character, WeatherEvent, WeatherForecast, WorldClock
 from panem_shared.enums import BulletinSourceKind, WeatherEventStatus
+
+_RUMOR_FLAVOR_BY_KIND = {
+    "thunderstorm": "Talk of a storm brewing on the horizon.",
+    "hailstorm": "Word that hail's been seen further out, moving this way.",
+    "blizzard": "Whispers about a cold snap settling in soon.",
+    "flash_flood": "Someone's heard the waterways are about to run high.",
+    "heatwave": "A warning that the heat's about to get a lot worse.",
+    "windstorm": "Chatter about the wind picking up something fierce.",
+}
 
 _POLL_SECONDS = 120
 
@@ -169,6 +179,32 @@ class WeatherCog(commands.Cog):
                             event_tick=event.predicted_start_tick,
                             danger_level=event.severity,
                         )
+                        # A freshly-decided severe event is real, concrete
+                        # advance notice (Spec: "prior warning to collect
+                        # materials") -- tying a rumor to it with `related_
+                        # kind`/`related_id` is what lets investigating it
+                        # actually resolve to something true, instead of
+                        # every rumor being free-floating flavor with
+                        # nothing behind it (this module's own docstring
+                        # already names this exact spawn site as the
+                        # intended source). Not every event gets one --
+                        # same `RUMOR_SPAWN_CHANCE` roll the ordinary
+                        # free-floating spawn loop uses, so a rumored storm
+                        # stays the exception, not the rule.
+                        if rng.random() < constants.RUMOR_SPAWN_CHANCE:
+                            await rumors_svc.spawn_rumor(
+                                session,
+                                district_id=district_id,
+                                current_tick=step_tick,
+                                rng=rng,
+                                text=_RUMOR_FLAVOR_BY_KIND.get(
+                                    event.kind, f"Talk of {_kind_label(event.kind).lower()} coming."
+                                ),
+                                origin="overheard",
+                                related_kind="weather_event",
+                                related_id=event.id,
+                                expires_tick=event.predicted_start_tick,
+                            )
 
                 # The bulletin should only ever show *today's* forecast,
                 # swapped for the new day's the instant one begins --

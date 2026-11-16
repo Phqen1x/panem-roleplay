@@ -1535,6 +1535,13 @@ class Rumor(TimestampMixin, Base):
     """Display-only flavor for where it surfaced -- "overheard", "a
     scrap of paper on the ground", an NPC's name, ..."""
     spawned_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+    expires_tick: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    """`panem_bot.cogs.rumors`'s spawn loop sweeps (deletes) a rumor past
+    this tick -- `panem_shared.rumors.spawn_rumor` defaults it to 1
+    simulation month out, same as every other default-expiry window this
+    codebase uses a plain tick column for (`PersonalEventChain.expires_
+    tick`, ...). `None` means it never expires on its own (not currently
+    used by anything, but left open rather than a backfilled sentinel)."""
 
 
 class RumorInvestigation(TimestampMixin, Base):

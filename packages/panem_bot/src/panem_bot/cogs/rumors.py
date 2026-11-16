@@ -116,6 +116,12 @@ class RumorsCog(commands.Cog):
                     await rumors_svc.spawn_rumor(
                         session, district_id=district_id, current_tick=current_tick, rng=rng
                     )
+            # Same cadence as the spawn roll above, one `tasks.loop` body
+            # doing two unrelated things per iteration rather than a
+            # second loop just for this -- a rumor past its own
+            # `expires_tick` (1 sim month by default) quietly disappears
+            # instead of sitting on the board forever.
+            await rumors_svc.expire_stale_rumors(session, current_tick)
 
     @spawn_loop.before_loop
     async def _before_spawn_loop(self) -> None:

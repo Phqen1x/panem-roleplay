@@ -97,6 +97,7 @@ from panem_shared.db.models import (
     PropertyAuction,
     ReactionEventLog,
     RelationshipRow,
+    Rumor,
     Scene,
     StaffAction,
     ThemeProfile,
@@ -6770,6 +6771,22 @@ def build_events_router(
 # ================================================================ Rumors
 
 
+class RumorRelatedSummary(BaseModel):
+    """What a rumor is actually about, if anything -- only ever surfaced
+    on `RumorSummary.resolution` once a rumor is fully investigated (see
+    that field's own comment), never before, so a resolution is a payoff
+    for exhausting the investigation, not a spoiler available for free."""
+
+    kind: str  # "weather_event" | "global_event"
+    name: str
+    district_id: int | None = None
+    status: str
+    severity: int | None = None  # weather_event only
+    predicted_start_tick: int | None = None  # weather_event only
+    hobby_name: str | None = None  # global_event only
+    starts_tick: int | None = None  # global_event only
+
+
 class RumorSummary(BaseModel):
     rumor_id: int
     text: str
@@ -6777,6 +6794,15 @@ class RumorSummary(BaseModel):
     reliability_pct: int
     investigation_count: int
     investigations_remaining: int
+    expires_tick: int | None = None
+    # Populated only once `investigations_remaining <= 0` -- the "clear
+    # instructions for how to resolve it" the fully-investigated rumor
+    # earns. `None` at that cap either means the rumor was pure
+    # free-floating flavor with nothing concrete behind it to begin with
+    # (most rumors), or that `reliability_pct` landed too low/ambiguous
+    # to call it either way -- the frontend tells those two cases apart
+    # via `reliability_pct` itself, already in hand.
+    resolution: RumorRelatedSummary | None = None
 
 
 class RumorBoardResponse(BaseModel):
@@ -6787,6 +6813,14 @@ class RumorBoardResponse(BaseModel):
 class RumorInvestigateRequest(BaseModel):
     discord_id: int
     rumor_id: int
+    # The dashboard's "Spot the Odd One Out" minigame result (`static/
+    # rumor_investigate.js` + `games/odd_one_out.js`) -- required, not
+    # defaulted, the same AND-gate every other dashboard minigame's
+    # result field already enforces (see `HobbyPlayRequest.timing_hit`).
+    # Losing it still consumes one of the capped investigation slots
+    # (`panem_shared.rumors.investigate`'s own docstring) but never moves
+    # `reliability_pct`.
+    success: bool
 
 
 class RumorInvestigateResponse(BaseModel):
@@ -6796,12 +6830,59 @@ class RumorInvestigateResponse(BaseModel):
     reliability_delta: int
 
 
-def build_rumors_router(*, session_factory: async_sessionmaker[AsyncSession] | None) -> APIRouter:
+class RumorDeleteRequest(BaseModel):
+    discord_id: int
+    rumor_id: int
+
+
+def _related_kind_label(kind: str) -> str:
+    return kind.replace("_", " ").title()
+
+
+async def _rumor_resolution(
+    session: AsyncSession, rumor: Rumor, content: ContentBundle
+) -> RumorRelatedSummary | None:
+    if rumor.related_kind == "weather_event" and rumor.related_id is not None:
+        event = await session.get(WeatherEvent, rumor.related_id)
+        if event is None:
+            return None
+        return RumorRelatedSummary(
+            kind="weather_event",
+            name=_related_kind_label(event.kind),
+            district_id=event.district_id,
+            status=event.status,
+            severity=event.severity,
+            predicted_start_tick=event.predicted_start_tick,
+        )
+    if rumor.related_kind == "global_event" and rumor.related_id is not None:
+        event = await session.get(GlobalEvent, rumor.related_id)
+        if event is None:
+            return None
+        hobby = content.hobbies.get(event.hobby_id)
+        return RumorRelatedSummary(
+            kind="global_event",
+            name=event.name,
+            district_id=event.district_id,
+            status=event.status,
+            hobby_name=hobby.name if hobby is not None else event.hobby_id,
+            starts_tick=event.starts_tick,
+        )
+    return None
+
+
+def build_rumors_router(
+    *, content: ContentBundle, session_factory: async_sessionmaker[AsyncSession] | None
+) -> APIRouter:
     """The Rumors tab's REST surface (`panem_shared.rumors`) -- every
     rumor currently floating around the character's own current
-    district, and investigating one. Spawning stays `panem_bot.cogs.
-    rumors`'s hourly background loop -- there's no "start a rumor"
-    player action to mirror here, same as Discord has none."""
+    district, investigating one (via the dashboard's own minigame, see
+    `RumorInvestigateRequest.success`), and deleting one outright (a real
+    delete of the one shared row -- a rumor has no per-viewer anything to
+    hide the way a bulletin entry does). Spawning stays `panem_bot.cogs.
+    weather`'s poll (for a rumor tied to a real event) and `panem_bot.
+    cogs.rumors`'s spawn loop (for a free-floating one) -- there's no
+    "start a rumor" player action to mirror here, same as Discord has
+    none."""
     router = APIRouter(prefix="/activity/dashboard/rumors", tags=["dashboard"])
 
     @router.get("/{character_id}/board", response_model=RumorBoardResponse)
@@ -6816,6 +6897,10 @@ def build_rumors_router(*, session_factory: async_sessionmaker[AsyncSession] | N
             summaries = []
             for rumor in rows:
                 count = await rumors_svc.investigation_count(session, rumor.id)
+                remaining = max(0, constants.RUMOR_MAX_INVESTIGATIONS - count)
+                resolution = (
+                    await _rumor_resolution(session, rumor, content) if remaining <= 0 else None
+                )
                 summaries.append(
                     RumorSummary(
                         rumor_id=rumor.id,
@@ -6823,9 +6908,9 @@ def build_rumors_router(*, session_factory: async_sessionmaker[AsyncSession] | N
                         origin=rumor.origin,
                         reliability_pct=rumor.reliability_pct,
                         investigation_count=count,
-                        investigations_remaining=max(
-                            0, constants.RUMOR_MAX_INVESTIGATIONS - count
-                        ),
+                        investigations_remaining=remaining,
+                        expires_tick=rumor.expires_tick,
+                        resolution=resolution,
                     )
                 )
         return RumorBoardResponse(district_id=district_id, rumors=summaries)
@@ -6848,6 +6933,7 @@ def build_rumors_router(*, session_factory: async_sessionmaker[AsyncSession] | N
                     rumor=rumor,
                     current_tick=current_tick,
                     rng=random.Random(),
+                    success=body.success,
                 )
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
@@ -6860,5 +6946,23 @@ def build_rumors_router(*, session_factory: async_sessionmaker[AsyncSession] | N
             reliability_pct=reliability_pct,
             reliability_delta=reliability_delta,
         )
+
+    @router.post("/{character_id}/delete")
+    async def rumors_delete(character_id: int, body: RumorDeleteRequest) -> dict[str, bool]:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            # 404s on an already-gone rumor via `get_rumor` rather than a
+            # silent no-op -- consistent with every other dashboard
+            # delete-ish action (`bulletin_retract`, ...) treating "gone
+            # already" as not found, not success.
+            try:
+                await rumors_svc.get_rumor(session, body.rumor_id)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            await rumors_svc.delete_rumor(session, body.rumor_id)
+        return {"ok": True}
 
     return router
