@@ -60,6 +60,9 @@ function entryRow(ctx, entry, resultLine, onChanged) {
 
   const children = [
     el("h2", { text: `${entry.title} (${entry.tag})` }),
+    entry.image_url
+      ? el("img", { class: "bulletin-entry-image", src: entry.image_url, alt: entry.title })
+      : null,
     entry.body ? el("p", { class: "tab-status" }, entry.body) : null,
     entry.requirements ? el("p", { class: "tab-status" }, `Requires: ${entry.requirements}`) : null,
     entry.danger_level != null
@@ -143,6 +146,7 @@ function postPanel(ctx, resultLine, onChanged) {
   const bodyInput = el("textarea", { rows: "3", placeholder: "Details" });
   const eventTickInput = el("input", { type: "number", placeholder: "When it happens (tick), optional" });
   const requirementsInput = el("input", { type: "text", placeholder: "Requirements, optional" });
+  const imageUrlInput = el("input", { type: "text", placeholder: "Image URL (https://...), optional" });
   const npcHostedInput = el("input", { type: "checkbox" });
   const worldWideInput = el("input", { type: "checkbox" });
 
@@ -166,6 +170,7 @@ function postPanel(ctx, resultLine, onChanged) {
           requirements: requirementsInput.value.trim() || null,
           npc_hosted: npcHostedInput.checked,
           world_wide: worldWideInput.checked,
+          image_url: imageUrlInput.value.trim() || null,
         }),
       });
       resultLine.className = "result-line win";
@@ -174,6 +179,7 @@ function postPanel(ctx, resultLine, onChanged) {
       bodyInput.value = "";
       eventTickInput.value = "";
       requirementsInput.value = "";
+      imageUrlInput.value = "";
       npcHostedInput.checked = false;
       worldWideInput.checked = false;
       onChanged();
@@ -191,6 +197,7 @@ function postPanel(ctx, resultLine, onChanged) {
     el("div", { class: "field-row" }, el("label", { text: "Details" }), bodyInput),
     el("div", { class: "field-row" }, el("label", { text: "When" }), eventTickInput),
     el("div", { class: "field-row" }, el("label", { text: "Requirements" }), requirementsInput),
+    el("div", { class: "field-row" }, el("label", { text: "Image" }), imageUrlInput),
     el("div", { class: "field-row" }, el("label", { text: "NPC hosted?" }), npcHostedInput),
     el("div", { class: "field-row" }, el("label", { text: "World-wide?" }), worldWideInput),
     postBtn

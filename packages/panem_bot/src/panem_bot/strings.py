@@ -458,6 +458,7 @@ STRINGS: dict[str, str] = {
     "bulletin_interest_marked": "Marked as interested in **{title}**.",
     "bulletin_interest_unmarked": "No longer marked as interested in **{title}**.",
     "bulletin_title_required": "A bulletin post needs a title.",
+    "bulletin_image_url_invalid": "That doesn't look like a valid image link (must start with http:// or https://).",
     "bulletin_moved": "Moved on your own board.",
     "bulletin_reset": "Your bulletin board is back to the default order.",
     # Staff: global events (`panem_shared.global_events`, `panem_bot.cogs.staff`)

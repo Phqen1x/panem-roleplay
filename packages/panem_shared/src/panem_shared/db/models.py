@@ -1602,6 +1602,12 @@ class BulletinEntry(TimestampMixin, Base):
     """`None` for a system-generated entry (weather/global-event/rumor) --
     only set for `source_kind = "player_post"` (`/bulletin post`)."""
     retracted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    image_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    """An optional image a player attaches when posting (`/bulletin
+    post`'s own image option) -- a plain URL, the same `String(512)`
+    shape `Character.avatar_url`/`User.avatar_url`/`Npc.avatar_url`
+    already use for an image reference rather than storing bytes
+    in-process; there's no upload pipeline for this to go through."""
 
 
 class BulletinUserState(Base):

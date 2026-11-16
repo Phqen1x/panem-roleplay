@@ -6179,6 +6179,7 @@ class BulletinEntrySummary(BaseModel):
     interested: bool = False
     category: str | None = None
     hidden: bool = False
+    image_url: str | None = None
     # Every entry's owner-ness, surfaced so the frontend can tell "Retract"
     # (the real, owner-only removal -- only ever true for a player's own
     # post) apart from "Hide" (the per-viewer removal everyone else, and
@@ -6198,6 +6199,7 @@ class BulletinPostRequest(BaseModel):
     requirements: str | None = None
     npc_hosted: bool = False
     world_wide: bool = False
+    image_url: str | None = None
 
 
 class BulletinRetractRequest(BaseModel):
@@ -6269,6 +6271,7 @@ def build_bulletin_router(*, session_factory: async_sessionmaker[AsyncSession] |
                     category=state.category if state is not None else None,
                     hidden=bool(state.hidden) if state is not None else False,
                     is_own_post=entry.posted_by_user_id == user.id,
+                    image_url=entry.image_url,
                 )
                 for entry, state in rows
             ]
@@ -6296,6 +6299,7 @@ def build_bulletin_router(*, session_factory: async_sessionmaker[AsyncSession] |
                     event_tick=body.event_tick,
                     requirements=body.requirements,
                     npc_hosted=body.npc_hosted,
+                    image_url=body.image_url,
                 )
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc

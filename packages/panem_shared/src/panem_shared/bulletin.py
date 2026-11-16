@@ -78,14 +78,21 @@ async def post_player_entry(
     event_tick: int | None,
     requirements: str | None,
     npc_hosted: bool = False,
+    image_url: str | None = None,
 ) -> BulletinEntry:
     """Raises `ValidationFailed` for an empty title. `npc_hosted` just
     picks `NPC_POST` over `PLAYER_POST` for the stored `source_kind` --
     staff posting *as* an NPC host, not a separate permission check
     (`/bulletin post` is open to every player; staff pick the NPC flavor
-    themselves when narrating on an NPC's behalf)."""
+    themselves when narrating on an NPC's behalf). `image_url` is taken
+    as-is, same trust level every other plain-URL field in this codebase
+    (`Character.avatar_url`, ...) already has -- there's no upload
+    pipeline or fetch-and-validate step here."""
     if not title.strip():
         raise ValidationFailed("bulletin_title_required")
+    clean_image_url = image_url.strip() if image_url and image_url.strip() else None
+    if clean_image_url is not None and not clean_image_url.startswith(("http://", "https://")):
+        raise ValidationFailed("bulletin_image_url_invalid")
     entry = BulletinEntry(
         source_kind=(
             BulletinSourceKind.NPC_POST if npc_hosted else BulletinSourceKind.PLAYER_POST
@@ -100,6 +107,7 @@ async def post_player_entry(
         event_tick=event_tick,
         requirements=requirements,
         posted_by_user_id=user.id,
+        image_url=clean_image_url,
     )
     session.add(entry)
     return entry

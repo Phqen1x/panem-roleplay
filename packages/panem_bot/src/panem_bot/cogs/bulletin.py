@@ -99,6 +99,7 @@ class BulletinCog(commands.Cog):
         requirements="Who can join / what's needed, if any",
         npc_hosted="Tag as NPC-hosted",
         world_wide="Post for every district, not just your character's",
+        image="Image URL to attach, if any",
     )
     @app_commands.autocomplete(character=autocomplete.own_approved)
     async def post(
@@ -111,6 +112,7 @@ class BulletinCog(commands.Cog):
         requirements: str | None = None,
         npc_hosted: bool = False,
         world_wide: bool = False,
+        image: str | None = None,
     ) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
             char = await utils.get_character_case_insensitive(
@@ -134,6 +136,7 @@ class BulletinCog(commands.Cog):
                     event_tick=event_tick,
                     requirements=requirements,
                     npc_hosted=npc_hosted,
+                    image_url=image,
                 )
             except ServiceError as exc:
                 await interaction.response.send_message(
