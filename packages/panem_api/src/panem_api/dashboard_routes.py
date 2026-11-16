@@ -5579,6 +5579,13 @@ class HobbyForgetRequest(BaseModel):
 class HobbyPlayRequest(BaseModel):
     discord_id: int
     hobby_id: str
+    # Whether the canvas minigame (`static/hobby.js` + `games/fishing.js`/
+    # `games/gardening.js`/`games/bake.js`) landed its own win condition --
+    # required (not defaulted) on purpose, the same AND-gate `/hobby play`'s
+    # Discord-side `HobbyTimingView` already enforces: a session can only
+    # succeed if *both* the minigame and the probability roll below hit,
+    # so there's no way to skip straight to the roll by omitting this.
+    timing_hit: bool
 
 
 class HobbyPlayResponse(BaseModel):
@@ -5637,11 +5644,12 @@ def build_hobbies_router(
     *, content: ContentBundle, session_factory: async_sessionmaker[AsyncSession] | None
 ) -> APIRouter:
     """The Hobbies tab's REST surface -- mirrors `/hobby select|forget|
-    play` (`panem_shared.hobbies`), minus the Discord-side timing
-    minigame: `play` rolls the same success probability instantly instead
-    of waiting on a button press, the same "always playable without a
-    canvas minigame" shape that module's own docstring already describes
-    for the bare-Discord path."""
+    play` (`panem_shared.hobbies`). `/play` requires `timing_hit` (the
+    dashboard's own canvas minigame result, from `static/hobby.js` +
+    `games/fishing.js`/`games/gardening.js`/`games/bake.js`) exactly the
+    same way Discord's `/hobby play` requires its `HobbyTimingView`
+    button press to land first -- success is `timing_hit AND` the usual
+    probability roll, never the roll alone."""
     router = APIRouter(prefix="/activity/dashboard/hobbies", tags=["dashboard"])
 
     async def _inventory_by_good(session: AsyncSession, character_id: int) -> dict[str, int]:
@@ -5733,7 +5741,7 @@ def build_hobbies_router(
                 hobby, character_hobby.sessions_played, owns_tool
             )
             rng = random.Random()
-            success = rng.random() < probability
+            success = body.timing_hit and rng.random() < probability
             outcome = await hobbies_svc.resolve_session(
                 session,
                 character=character,

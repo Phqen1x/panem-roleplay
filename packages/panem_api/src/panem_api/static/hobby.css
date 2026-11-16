@@ -1,0 +1,63 @@
+/* The Hobbies tab's minigame page (`hobby.html`/`hobby.js`) -- loads
+   `crime.css` for `.board-lockpick`'s canvas-centering layout (reused by
+   `games/fishing.js`) and `vitals.css` for `.board-cookbake` (reused by
+   `games/bake.js`) alongside this file, the same "load whichever other
+   page's board styles a shared game module needs" precedent `vitals.
+   html` already sets (it loads both `work.css` and its own `vitals.css`
+   for the same reason). Only Gardening's board is new enough to need its
+   own rules here.
+*/
+
+.garden-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  max-width: 420px;
+  margin: 0 auto 12px;
+  color: var(--muted);
+  font-size: 14px;
+  flex-wrap: wrap;
+}
+
+.garden-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+  max-width: 420px;
+  margin: 0 auto;
+}
+
+.garden-cell {
+  aspect-ratio: 1;
+  background: color-mix(in srgb, var(--bg) 70%, var(--panel));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 22px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.15s ease, transform 0.15s ease;
+}
+
+.garden-cell:hover:not(:disabled) {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.garden-cell:disabled {
+  cursor: default;
+}
+
+.garden-cell.pulled {
+  background: color-mix(in srgb, #7cd992 25%, var(--panel));
+  border-color: #7cd992;
+  opacity: 0.6;
+}
+
+.garden-cell.wrong {
+  background: color-mix(in srgb, #e0736b 25%, var(--panel));
+  border-color: #e0736b;
+  opacity: 0.6;
+}

@@ -1,50 +1,33 @@
 // The "Hobbies" tab -- pick up to 3 hobbies, play one for a chance at a
 // collectible (`/museum`) or a personal event chain (mirrors `/hobby
-// select|forget|play` exactly, `panem_shared.hobbies`). `play` here rolls
-// the same success probability instantly instead of waiting on the
-// Discord-side timing minigame -- there's no canvas equivalent of that
-// button-press window on this tab yet, the same "always playable without
-// one" shape `panem_shared.hobbies`'s own module docstring describes for
-// the bare-Discord path.
-import { el, setStatusText } from "./_shared.js?v=9";
+// select|forget|play`, `panem_shared.hobbies`). Playing now opens an
+// embedded `hobby.html` minigame (fishing/gardening/baking, each hobby's
+// own `games/*.js` module) the same way the Crime/Work/Vitals tabs embed
+// theirs -- success requires landing that minigame AND the usual
+// probability roll, mirroring the Discord side's `HobbyTimingView`
+// button-press requirement exactly instead of skipping straight to the
+// roll.
+import { el, setStatusText, watchIframeResize } from "./_shared.js?v=9";
+
+// How long hobby.html's own result text stays visible before this tab
+// clears the iframe -- same fix/reasoning as tabs/crime.js's identical
+// constant (closing the minigame the instant it announces its result
+// reads as the dashboard eating the message, not showing it).
+const RESULT_DISPLAY_MS = 5000;
 
 function levelLabel(level) {
   return level.charAt(0).toUpperCase() + level.slice(1);
 }
 
-function selectedRow(ctx, hobby, resultLine, onChanged) {
+function selectedRow(ctx, hobby, resultLine, onMinigame, onChanged) {
   const playBtn = el(
     "button",
     { class: "btn", type: "button", disabled: hobby.on_cooldown ? "disabled" : undefined },
     hobby.on_cooldown ? "Resting..." : `Play (${hobby.verb})`
   );
-  playBtn.addEventListener("click", async () => {
+  playBtn.addEventListener("click", () => {
     resultLine.textContent = "";
-    try {
-      const outcome = await ctx.apiFetch(`/activity/dashboard/hobbies/${ctx.characterId()}/play`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ discord_id: ctx.discordId(), hobby_id: hobby.hobby_id }),
-      });
-      resultLine.className = `result-line ${outcome.success ? "win" : "lose"}`;
-      if (!outcome.success) {
-        resultLine.textContent = "Nothing this time.";
-      } else if (outcome.chain_started) {
-        resultLine.textContent =
-          "Something odd turned up -- not a normal find. Ask around in Discord with /event mystery.";
-      } else if (outcome.collectible_name) {
-        resultLine.textContent = `Found: ${outcome.collectible_name} (${outcome.collectible_rarity}).`;
-      } else {
-        resultLine.textContent = "A successful session, but nothing to show for it.";
-      }
-      if (outcome.leveled_up_to) {
-        resultLine.textContent += ` Leveled up to ${levelLabel(outcome.leveled_up_to)}!`;
-      }
-      onChanged();
-    } catch (err) {
-      resultLine.className = "result-line lose";
-      resultLine.textContent = err.message;
-    }
+    onMinigame(hobby.hobby_id);
   });
 
   const forgetBtn = el("button", { class: "btn secondary", type: "button" }, "Forget");
@@ -117,7 +100,61 @@ export function mount(root, ctx) {
   const statusLine = el("p", { class: "tab-status" });
   const resultLine = el("p", { class: "result-line" });
   const host = el("div", {});
-  root.append(statusLine, host, resultLine);
+  const iframeHost = el("div", {});
+  root.append(statusLine, host, resultLine, iframeHost);
+
+  let messageListener = null;
+  let closeResultTimer = null;
+  let stopResizeWatch = null;
+
+  function stopListening() {
+    if (messageListener) {
+      window.removeEventListener("message", messageListener);
+      messageListener = null;
+    }
+    if (stopResizeWatch) {
+      stopResizeWatch();
+      stopResizeWatch = null;
+    }
+  }
+
+  function clearCloseTimer() {
+    if (closeResultTimer) {
+      clearTimeout(closeResultTimer);
+      closeResultTimer = null;
+    }
+  }
+
+  function playMinigame(hobbyId) {
+    const characterId = ctx.characterId();
+    const discordId = ctx.discordId();
+    clearCloseTimer();
+    iframeHost.innerHTML = "";
+    const iframe = el("iframe", {
+      class: "minigame-frame",
+      src:
+        `/hobby.html?kind=${encodeURIComponent(hobbyId)}` +
+        `&character_id=${encodeURIComponent(characterId)}` +
+        `&discord_id=${encodeURIComponent(discordId)}` +
+        `&hobby_id=${encodeURIComponent(hobbyId)}`,
+    });
+    iframeHost.append(iframe);
+    iframe.scrollIntoView({ behavior: "smooth", block: "start" });
+    stopListening();
+    stopResizeWatch = watchIframeResize(iframe);
+    messageListener = (event) => {
+      if (event.data && event.data.source === "panem-activity" && event.data.type === "hobby-result") {
+        stopListening();
+        clearCloseTimer();
+        closeResultTimer = setTimeout(() => {
+          closeResultTimer = null;
+          iframeHost.innerHTML = "";
+        }, RESULT_DISPLAY_MS);
+        refresh();
+      }
+    };
+    window.addEventListener("message", messageListener);
+  }
 
   async function refresh() {
     const characterId = ctx.characterId();
@@ -135,7 +172,7 @@ export function mount(root, ctx) {
       const maxed = status.selected.length >= status.max_hobbies;
 
       const selectedPanels = status.selected.length
-        ? status.selected.map((hobby) => selectedRow(ctx, hobby, resultLine, refresh))
+        ? status.selected.map((hobby) => selectedRow(ctx, hobby, resultLine, playMinigame, refresh))
         : [
             el(
               "div",
@@ -165,5 +202,10 @@ export function mount(root, ctx) {
 
   refresh();
 
-  return {};
+  return {
+    unmount() {
+      stopListening();
+      clearCloseTimer();
+    },
+  };
 }
