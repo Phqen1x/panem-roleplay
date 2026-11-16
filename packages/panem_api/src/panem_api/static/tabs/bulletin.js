@@ -2,9 +2,36 @@
 // (weather, global events, rumors -- posted by `panem_bot.cogs.weather`'s
 // poll, `panem_bot.cogs.rumors`'s spawn loop, `/staff event create|
 // conclude`) alongside player/NPC posts, with per-viewer interest
-// marking, a DM reminder, and drag-free "move to position" organizing
-// (mirrors `/bulletin ...`, `panem_shared.bulletin`).
+// marking, a DM reminder, drag-free "move to position" organizing, and a
+// per-viewer hide ("Delete") any entry can be removed from *your own*
+// board with -- `Retract` stays the separate, real, owner-only removal
+// of a player's own post (mirrors `/bulletin ...`, `panem_shared.
+// bulletin`).
 import { el, setStatusText } from "./_shared.js?v=9";
+
+function hiddenRow(ctx, entry, resultLine, onChanged) {
+  const unhideBtn = el("button", { class: "btn secondary", type: "button" }, "Unhide");
+  unhideBtn.addEventListener("click", async () => {
+    resultLine.textContent = "";
+    try {
+      await ctx.apiFetch(`/activity/dashboard/bulletin/${ctx.characterId()}/hide`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ discord_id: ctx.discordId(), entry_id: entry.entry_id, hidden: false }),
+      });
+      onChanged();
+    } catch (err) {
+      resultLine.className = "result-line lose";
+      resultLine.textContent = err.message;
+    }
+  });
+  return el(
+    "div",
+    { class: "field-row" },
+    el("label", { text: `${entry.title} (${entry.tag})` }),
+    unhideBtn
+  );
+}
 
 function entryRow(ctx, entry, resultLine, onChanged) {
   const interestBtn = el(
@@ -65,7 +92,7 @@ function entryRow(ctx, entry, resultLine, onChanged) {
     actions.push(remindBtn);
   }
 
-  if (entry.tag === "Player hosted" || entry.tag === "NPC hosted") {
+  if (entry.is_own_post) {
     const retractBtn = el("button", { class: "btn secondary", type: "button" }, "Retract");
     retractBtn.addEventListener("click", async () => {
       resultLine.textContent = "";
@@ -76,7 +103,7 @@ function entryRow(ctx, entry, resultLine, onChanged) {
           body: JSON.stringify({ discord_id: ctx.discordId(), entry_id: entry.entry_id }),
         });
         resultLine.className = "result-line win";
-        resultLine.textContent = "Entry retracted.";
+        resultLine.textContent = "Entry retracted for everyone.";
         onChanged();
       } catch (err) {
         resultLine.className = "result-line lose";
@@ -85,6 +112,27 @@ function entryRow(ctx, entry, resultLine, onChanged) {
     });
     actions.push(retractBtn);
   }
+
+  // Every entry (including system ones, which an ordinary player has no
+  // way to actually delete for everyone else) can still be removed from
+  // just this viewer's own board -- the one "delete" action available
+  // universally, distinct from the owner-only Retract above.
+  const hideBtn = el("button", { class: "btn secondary", type: "button" }, "Delete");
+  hideBtn.addEventListener("click", async () => {
+    resultLine.textContent = "";
+    try {
+      await ctx.apiFetch(`/activity/dashboard/bulletin/${ctx.characterId()}/hide`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ discord_id: ctx.discordId(), entry_id: entry.entry_id, hidden: true }),
+      });
+      onChanged();
+    } catch (err) {
+      resultLine.className = "result-line lose";
+      resultLine.textContent = err.message;
+    }
+  });
+  actions.push(hideBtn);
 
   children.push(el("div", { class: "field-row" }, ...actions));
   return el("div", { class: "panel" }, ...children);
@@ -168,8 +216,10 @@ export function mount(root, ctx) {
         `/activity/dashboard/bulletin/${characterId}/board?discord_id=${encodeURIComponent(discordId)}`
       );
       setStatusText(statusLine, "");
-      const entryPanels = board.entries.length
-        ? board.entries.map((entry) => entryRow(ctx, entry, resultLine, refresh))
+      const shown = board.entries.filter((entry) => !entry.hidden);
+      const hidden = board.entries.filter((entry) => entry.hidden);
+      const entryPanels = shown.length
+        ? shown.map((entry) => entryRow(ctx, entry, resultLine, refresh))
         : [
             el(
               "div",
@@ -178,7 +228,19 @@ export function mount(root, ctx) {
               el("p", { class: "tab-status" }, "Nothing on the board right now.")
             ),
           ];
-      host.append(postPanel(ctx, resultLine, refresh), ...entryPanels);
+      const hiddenPanel = hidden.length
+        ? el(
+            "div",
+            { class: "panel" },
+            el("h2", { text: `Hidden (${hidden.length})` }),
+            ...hidden.map((entry) => hiddenRow(ctx, entry, resultLine, refresh))
+          )
+        : null;
+      host.append(
+        postPanel(ctx, resultLine, refresh),
+        ...entryPanels,
+        ...(hiddenPanel ? [hiddenPanel] : [])
+      );
     } catch (err) {
       setStatusText(statusLine, `Could not load the bulletin: ${err.message}`, { error: true });
     }

@@ -1619,6 +1619,14 @@ class BulletinUserState(Base):
     re-sort (`panem_bot.cogs.bulletin`'s "reset to default" button) just
     clears every row for that user back to `None` rather than computing
     new positions for a sort the query can already do unassisted."""
+    hidden: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    """Per-viewer "Delete"/"Hide" -- the one removal action available on
+    *every* entry, not just a player's own posts (`retract` stays the
+    separate, real, owner-only removal of the one shared row). `board_for`
+    still returns a hidden entry (with this flag set) rather than
+    filtering it out server-side, so the dashboard can show a "N hidden"
+    disclosure a player can reopen, the same non-destructive spirit
+    `interested` already has."""
 
 
 class BulletinReminder(Base):

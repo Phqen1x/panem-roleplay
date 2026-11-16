@@ -6126,6 +6126,12 @@ class BulletinEntrySummary(BaseModel):
     danger_level: int | None = None
     interested: bool = False
     category: str | None = None
+    hidden: bool = False
+    # Every entry's owner-ness, surfaced so the frontend can tell "Retract"
+    # (the real, owner-only removal -- only ever true for a player's own
+    # post) apart from "Hide" (the per-viewer removal everyone else, and
+    # system entries, get instead).
+    is_own_post: bool = False
 
 
 class BulletinBoardResponse(BaseModel):
@@ -6151,6 +6157,12 @@ class BulletinInterestRequest(BaseModel):
     discord_id: int
     entry_id: int
     interested: bool = True
+
+
+class BulletinHideRequest(BaseModel):
+    discord_id: int
+    entry_id: int
+    hidden: bool = True
 
 
 class BulletinRemindRequest(BaseModel):
@@ -6203,6 +6215,8 @@ def build_bulletin_router(*, session_factory: async_sessionmaker[AsyncSession] |
                     danger_level=entry.danger_level,
                     interested=bool(state.interested) if state is not None else False,
                     category=state.category if state is not None else None,
+                    hidden=bool(state.hidden) if state is not None else False,
+                    is_own_post=entry.posted_by_user_id == user.id,
                 )
                 for entry, state in rows
             ]
@@ -6262,6 +6276,22 @@ def build_bulletin_router(*, session_factory: async_sessionmaker[AsyncSession] |
             try:
                 await bulletin_svc.set_interest(
                     session, user=user, entry_id=body.entry_id, interested=body.interested
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"ok": True}
+
+    @router.post("/{character_id}/hide")
+    async def bulletin_hide(character_id: int, body: BulletinHideRequest) -> dict[str, bool]:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            user = await characters_svc.get_or_create_user(session, body.discord_id)
+            try:
+                await bulletin_svc.set_hidden(
+                    session, user=user, entry_id=body.entry_id, hidden=body.hidden
                 )
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc

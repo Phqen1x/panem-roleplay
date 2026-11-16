@@ -118,6 +118,28 @@ async def retract(session: AsyncSession, *, user: User, entry_id: int) -> Bullet
     return entry
 
 
+async def retract_system_entries_for(
+    session: AsyncSession, *, source_kind: BulletinSourceKind, district_id: int | None
+) -> None:
+    """Bulk-retracts every still-live system entry of `source_kind` in
+    `district_id` (or world-wide, if `district_id` is `None`) -- unlike
+    `retract` above, this has no owner to check since a system entry's
+    `posted_by_user_id` is always `None`. Used by `panem_bot.cogs.
+    weather`'s poll to clear out the *previous* day's forecast entry
+    right before posting the new one, so the board only ever shows one
+    weather-forecast entry per district at a time instead of
+    accumulating a fresh one every sim day forever."""
+    result = await session.execute(
+        select(BulletinEntry).where(
+            BulletinEntry.source_kind == source_kind.value,
+            BulletinEntry.district_id == district_id,
+            BulletinEntry.retracted.is_(False),
+        )
+    )
+    for entry in result.scalars().all():
+        entry.retracted = True
+
+
 async def _user_states(
     session: AsyncSession, user_id: int, entry_ids: list[int]
 ) -> dict[int, BulletinUserState]:
@@ -183,6 +205,25 @@ async def set_interest(
         raise NotFound("bulletin_entry_not_found")
     state = await _get_or_create_state(session, user_id=user.id, entry_id=entry_id)
     state.interested = interested
+    return entry
+
+
+async def set_hidden(
+    session: AsyncSession, *, user: User, entry_id: int, hidden: bool
+) -> BulletinEntry:
+    """Per-viewer hide -- the "Delete"/"Hide" action every entry offers
+    (not just a player's own posts, unlike `retract`): a system entry
+    (weather, a global event, a rumor) is one shared row every other
+    viewer still needs, so there's nothing for an ordinary player to
+    really delete there -- hiding it from just their own board view is
+    the only thing that action can honestly mean. Mirrors `set_interest`
+    exactly, just a different per-viewer flag on the same `BulletinUserState`
+    row."""
+    entry = await session.get(BulletinEntry, entry_id)
+    if entry is None or entry.retracted:
+        raise NotFound("bulletin_entry_not_found")
+    state = await _get_or_create_state(session, user_id=user.id, entry_id=entry_id)
+    state.hidden = hidden
     return entry
 
 
