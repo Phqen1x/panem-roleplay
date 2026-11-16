@@ -809,6 +809,31 @@ table.data-table tr.clickable-row:hover {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
+/* A plain `<input>` dropped straight into a `table.data-table` cell (e.g.
+   the Museum tab's "Wing"/"Position" fields, `tabs/museum.js`) had no
+   themed ancestor to match -- unlike a `.field-row`'s own inputs (see
+   that rule above), a table cell is neither, so these rendered as a
+   stock white browser box against the dark panel. `.qty-input` below
+   (Market's Qty column) already carries its own narrower override, which
+   wins on specificity regardless of rule order, so this stays the
+   general-purpose default for everything else. */
+table.data-table input:not([type="checkbox"]):not([type="radio"]) {
+  background: color-mix(in srgb, var(--bg) 75%, var(--panel));
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  transition: border-color 0.2s, box-shadow 0.2s, background-color 0.2s;
+}
+
+table.data-table input:not([type="checkbox"]):not([type="radio"]):focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
 table.data-table .qty-input {
   width: 56px;
   background: color-mix(in srgb, var(--bg) 75%, var(--panel));
