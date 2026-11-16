@@ -33,8 +33,27 @@ function forecastRow(dayLabel, forecast) {
     el(
       "span",
       { class: "tab-status" },
-      `${label(forecast.condition)}, ${forecast.temp_low}°-${forecast.temp_high}°`
+      `${label(forecast.condition)}, ${forecast.temp_low}°F-${forecast.temp_high}°F`
     )
+  );
+}
+
+// `forecast.condition` is already a fully-decided outcome (`panem_shared.
+// weather` commits to clear/rain/snow at generation time, not a genuine
+// per-day probability) -- rather than inventing a fake "N% chance" figure
+// the engine has no real number behind, this states plainly what's
+// actually predicted for the day: the day's own condition, plus any
+// still-forecast severe event (thunderstorm/blizzard/etc) landing on it.
+function tenDayRow(ctx, day) {
+  const parts = [`${label(day.condition)}, ${day.temp_low}°F-${day.temp_high}°F`];
+  if (day.event) {
+    parts.push(`${label(day.event.kind)} expected (category ${day.event.severity})`);
+  }
+  return el(
+    "div",
+    { class: "field-row" },
+    el("label", { text: ctx.formatDay(day.day_index) }),
+    el("span", { class: "tab-status" }, parts.join(" -- "))
   );
 }
 
@@ -147,6 +166,14 @@ export function mount(root, ctx) {
           !status.today && !status.tomorrow
             ? el("p", { class: "tab-status" }, "No forecast on file yet.")
             : null
+        ),
+        el(
+          "div",
+          { class: "panel" },
+          el("h2", { text: "10-Day Forecast" }),
+          status.forecast_days && status.forecast_days.length
+            ? status.forecast_days.map((day) => tenDayRow(ctx, day))
+            : el("p", { class: "tab-status" }, "No forecast on file yet.")
         ),
         status.active_event ? eventPanel(ctx, "Happening Now", status.active_event) : null,
         status.upcoming_event ? eventPanel(ctx, "Predicted", status.upcoming_event) : null,

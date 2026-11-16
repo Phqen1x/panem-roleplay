@@ -63,7 +63,7 @@ async function openExternalLink(url) {
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "58";
+const ASSET_VERSION = "59";
 
 // District names mapping for Capitol and Districts 1-12
 const DISTRICT_NAMES = {
@@ -766,6 +766,7 @@ function buildCtx() {
     districtName: (id) => DISTRICT_NAMES[id] || `District ${id}`,
     apiFetch: fetchJson,
     formatTick: formatSimMoment,
+    formatDay: formatSimDay,
     refreshIdentity,
     openExternalLink,
     // Below: what `tabs/home.js` needs to render its own "Apps"/
@@ -991,6 +992,19 @@ function formatSimMoment(tick) {
   const phase = PHASE_ORDER[phaseIndex];
 
   return `${timeStr} on Month ${month}, Day ${day}, Year ${year} (${capitalize(phase)} shift)`;
+}
+
+// A date-only sibling of `formatSimMoment` above for displays keyed to a
+// whole sim *day* rather than one exact moment (e.g. the Weather tab's
+// 10-day forecast, one row per `WeatherForecast.day_index` with no
+// specific hour of its own) -- same month/day/year math, minus the
+// time-of-day/shift half nothing on a given day needs yet.
+function formatSimDay(dayIndex) {
+  const daysPerMonth = worldTimeBaseline ? worldTimeBaseline.daysPerMonth : DEFAULT_DAYS_PER_MONTH;
+  const day = (dayIndex % daysPerMonth) + 1;
+  const month = (Math.floor(dayIndex / daysPerMonth) % 12) + 1;
+  const year = Math.floor(dayIndex / (daysPerMonth * 12)) + 1;
+  return `Month ${month}, Day ${day}, Year ${year}`;
 }
 
 function renderWorldClock() {

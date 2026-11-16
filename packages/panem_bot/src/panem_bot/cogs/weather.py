@@ -68,9 +68,12 @@ class WeatherCog(commands.Cog):
             current_tick = await self._current_tick(session)
             today = simtime.day_index(current_tick)
             today_forecast = await session.get(WeatherForecast, (district_id, today))
-            lead_forecast = await session.get(
-                WeatherForecast, (district_id, today + constants.WEATHER_FORECAST_LEAD_DAYS)
-            )
+            # Literal `+ 1` ("tomorrow"), not `+ constants.WEATHER_
+            # FORECAST_LEAD_DAYS` -- that constant now governs how far
+            # ahead the rolling forecast *generation*/display window
+            # reaches (10 days, for the dashboard's 10-day view), not
+            # what counts as "tomorrow" in this one-day-ahead embed.
+            lead_forecast = await session.get(WeatherForecast, (district_id, today + 1))
             active_event = await weather_svc.active_event_for_district(session, district_id)
             upcoming = (
                 await session.execute(
@@ -93,14 +96,14 @@ class WeatherCog(commands.Cog):
                 embed.add_field(
                     name="Today",
                     value=f"{_kind_label(today_forecast.condition)}, "
-                    f"{today_forecast.temp_low}°-{today_forecast.temp_high}°",
+                    f"{today_forecast.temp_low}°F-{today_forecast.temp_high}°F",
                     inline=False,
                 )
             if lead_forecast is not None:
                 embed.add_field(
                     name="Tomorrow",
                     value=f"{_kind_label(lead_forecast.condition)}, "
-                    f"{lead_forecast.temp_low}°-{lead_forecast.temp_high}°",
+                    f"{lead_forecast.temp_low}°F-{lead_forecast.temp_high}°F",
                     inline=False,
                 )
             if active_event is not None:
@@ -134,25 +137,21 @@ class WeatherCog(commands.Cog):
 
             for step_tick in range(start_tick, tick + 1):
                 for district_id, climate in content.climate.items():
-                    forecast, event = await weather_svc.ensure_forecast(
+                    # `ensure_forecast` is a no-op once a given target day
+                    # already has a row, so calling it every tick is what
+                    # keeps a rolling `WEATHER_FORECAST_LEAD_DAYS`-day-ahead
+                    # window of forecasts (and any event that window's
+                    # worth of lead time decides) filled at all times --
+                    # the bulletin post below is a separate concern (once
+                    # per *day*, announcing *today's* forecast, not every
+                    # time a new day gets generated).
+                    _forecast, event = await weather_svc.ensure_forecast(
                         session,
                         district_id=district_id,
                         climate=climate,
                         current_tick=step_tick,
                         rng=rng,
                     )
-                    if forecast is not None:
-                        await bulletin_svc.record_system_entry(
-                            session,
-                            source_kind=BulletinSourceKind.WEATHER_FORECAST,
-                            source_id=None,
-                            tag="Weather",
-                            title=f"District {district_id} forecast: {_kind_label(forecast.condition)}",
-                            body=f"High {forecast.temp_high}°, low {forecast.temp_low}°.",
-                            district_id=district_id,
-                            posted_tick=step_tick,
-                            event_tick=forecast.day_index * constants.TICKS_PER_DAY,
-                        )
                     if event is not None and event.status == WeatherEventStatus.FORECAST.value:
                         await bulletin_svc.record_system_entry(
                             session,
@@ -169,6 +168,50 @@ class WeatherCog(commands.Cog):
                             posted_tick=step_tick,
                             event_tick=event.predicted_start_tick,
                             danger_level=event.severity,
+                        )
+
+                # The bulletin should only ever show *today's* forecast,
+                # swapped for the new day's the instant one begins --
+                # never accumulating one entry per day forever (the bug
+                # the old forecast-generation-triggered post above had:
+                # it fired once per day forever with nothing retracting
+                # the previous day's entry). Gated on the exact first tick
+                # of a sim day rather than every tick so this fires
+                # exactly once per day per district, not once per poll.
+                if step_tick % constants.TICKS_PER_DAY == 0:
+                    today_index = simtime.day_index(step_tick)
+                    for district_id in content.climate:
+                        today_forecast = await session.get(
+                            WeatherForecast, (district_id, today_index)
+                        )
+                        if today_forecast is None:
+                            # Cold-start gap: a freshly-deployed world only
+                            # has forecasts from day `WEATHER_FORECAST_
+                            # LEAD_DAYS` onward until the rolling window
+                            # above has had that many days to fill in --
+                            # nothing to post yet for this district/day.
+                            continue
+                        await bulletin_svc.retract_system_entries_for(
+                            session,
+                            source_kind=BulletinSourceKind.WEATHER_FORECAST,
+                            district_id=district_id,
+                        )
+                        await bulletin_svc.record_system_entry(
+                            session,
+                            source_kind=BulletinSourceKind.WEATHER_FORECAST,
+                            source_id=None,
+                            tag="Weather",
+                            title=(
+                                f"District {district_id} forecast: "
+                                f"{_kind_label(today_forecast.condition)}"
+                            ),
+                            body=(
+                                f"High {today_forecast.temp_high}°F, "
+                                f"low {today_forecast.temp_low}°F."
+                            ),
+                            district_id=district_id,
+                            posted_tick=step_tick,
+                            event_tick=today_index * constants.TICKS_PER_DAY,
                         )
 
                 newly_active, newly_ended = await weather_svc.activate_and_end_events(

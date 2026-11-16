@@ -5931,14 +5931,6 @@ def build_museum_router(
 # ============================================================== Weather
 
 
-class WeatherDayForecast(BaseModel):
-    day_index: int
-    season: str
-    condition: str
-    temp_low: int
-    temp_high: int
-
-
 class WeatherEventSummary(BaseModel):
     kind: str
     severity: int
@@ -5946,6 +5938,21 @@ class WeatherEventSummary(BaseModel):
     predicted_start_tick: int
     actual_start_tick: int | None = None
     actual_end_tick: int | None = None
+
+
+class WeatherDayForecast(BaseModel):
+    day_index: int
+    season: str
+    condition: str
+    temp_low: int
+    temp_high: int
+    # Any still-`FORECAST`-status event (thunderstorm/blizzard/etc) whose
+    # `predicted_start_tick` falls on this day -- `None` on an ordinary
+    # clear/rain/snow day. Separate from `WeatherStatusResponse.active_
+    # event`/`upcoming_event` below (which stay singular for `home.js`'s
+    # hero panel): this is what lets the 10-day forecast list show each
+    # day's own predicted event inline instead of just one at a time.
+    event: WeatherEventSummary | None = None
 
 
 class WeatherPropertySummary(BaseModel):
@@ -5962,6 +5969,11 @@ class WeatherStatusResponse(BaseModel):
     active_event: WeatherEventSummary | None = None
     upcoming_event: WeatherEventSummary | None = None
     property: WeatherPropertySummary | None = None
+    # Today plus the next 9 days (10 total, matching `constants.WEATHER_
+    # FORECAST_LEAD_DAYS`'s rolling generation window) -- `today`/
+    # `tomorrow` above stay as they were for whatever already reads them,
+    # this is purely additive for the Weather tab's own 10-day view.
+    forecast_days: list[WeatherDayForecast] = Field(default_factory=list)
 
 
 class WeatherPrepareRequest(BaseModel):
@@ -5985,13 +5997,16 @@ class WeatherRepairResponse(BaseModel):
     damage_level: int
 
 
-def _forecast_summary(row: WeatherForecast, day_index: int) -> WeatherDayForecast:
+def _forecast_summary(
+    row: WeatherForecast, day_index: int, event: WeatherEvent | None = None
+) -> WeatherDayForecast:
     return WeatherDayForecast(
         day_index=day_index,
         season=row.season,
         condition=row.condition,
         temp_low=row.temp_low,
         temp_high=row.temp_high,
+        event=_event_summary(event) if event is not None else None,
     )
 
 
@@ -6025,7 +6040,11 @@ def build_weather_router(*, session_factory: async_sessionmaker[AsyncSession] | 
             district_id = character.current_district_id
             current_tick = await _current_tick(session)
             today_index = simtime.day_index(current_tick)
-            lead_index = today_index + constants.WEATHER_FORECAST_LEAD_DAYS
+            # Literal `+ 1` ("tomorrow"), not `+ constants.WEATHER_
+            # FORECAST_LEAD_DAYS` -- see that constant's own docstring
+            # (it now governs the 10-day generation/display window below,
+            # not what counts as "the actual next calendar day" here).
+            lead_index = today_index + 1
 
             today_row = await session.get(WeatherForecast, (district_id, today_index))
             tomorrow_row = await session.get(WeatherForecast, (district_id, lead_index))
@@ -6037,10 +6056,41 @@ def build_weather_router(*, session_factory: async_sessionmaker[AsyncSession] | 
                         WeatherEvent.district_id == district_id,
                         WeatherEvent.status == WeatherEventStatus.FORECAST.value,
                     )
-                    .order_by(WeatherEvent.actual_start_tick)
+                    .order_by(WeatherEvent.day_index)
                     .limit(1)
                 )
             ).scalar_one_or_none()
+
+            # The 10-day-ahead view: today plus the next 9 days, each with
+            # whatever `FORECAST`-status event (if any) lands on it --
+            # `WEATHER_FORECAST_LEAD_DAYS`'s own rolling-window generation
+            # (see `panem_bot.cogs.weather`'s poll) is what keeps all of
+            # these rows already sitting ready; a day missing a row just
+            # doesn't get an entry (the same cold-start/just-deployed gap
+            # that constant's docstring already documents).
+            day_indices = list(range(today_index, today_index + constants.WEATHER_FORECAST_LEAD_DAYS))
+            window_rows = (
+                await session.execute(
+                    select(WeatherForecast).where(
+                        WeatherForecast.district_id == district_id,
+                        WeatherForecast.day_index.in_(day_indices),
+                    )
+                )
+            ).scalars().all()
+            window_events = (
+                await session.execute(
+                    select(WeatherEvent).where(
+                        WeatherEvent.district_id == district_id,
+                        WeatherEvent.status == WeatherEventStatus.FORECAST.value,
+                        WeatherEvent.day_index.in_(day_indices),
+                    )
+                )
+            ).scalars().all()
+            events_by_day = {event.day_index: event for event in window_events}
+            forecast_days = [
+                _forecast_summary(row, row.day_index, events_by_day.get(row.day_index))
+                for row in sorted(window_rows, key=lambda row: row.day_index)
+            ]
 
             property_summary = None
             if character.housing_property_id is not None:
@@ -6059,6 +6109,7 @@ def build_weather_router(*, session_factory: async_sessionmaker[AsyncSession] | 
             active_event=_event_summary(active) if active else None,
             upcoming_event=_event_summary(upcoming) if upcoming else None,
             property=property_summary,
+            forecast_days=forecast_days,
         )
 
     @router.post("/{character_id}/prepare", response_model=WeatherPrepareResponse)

@@ -1009,10 +1009,20 @@ WEATHER_SEVERITY_WEIGHTS: dict[int, float] = {1: 40, 2: 25, 3: 15, 4: 10, 5: 7, 
 WEATHER_DURATION_TICKS_RANGE = (1, 18)
 """Spec: "can last between 1 in-game hour and 18 in-game hours" -- one
 tick is one in-world hour (`TICKS_PER_DAY = 24`)."""
-WEATHER_FORECAST_LEAD_DAYS = 1
-"""How far ahead `panem_bot.cogs.weather`'s poll generates and announces
-a day's forecast/predicted event -- Spec: meteorologists report a
-predicted start time ahead of it actually happening."""
+WEATHER_FORECAST_LEAD_DAYS = 10
+"""How far ahead `panem_bot.cogs.weather`'s poll generates each day's
+forecast/predicted event -- Spec: meteorologists report a predicted
+start time ahead of it actually happening. Also doubles as the
+dashboard Weather tab's 10-day-ahead display window: since `ensure_
+forecast` only ever generates the single day `today + this`, and is a
+no-op once that day already has a row, running it every tick
+(regardless of this constant's value) naturally keeps a rolling window
+of exactly this many days' forecasts/event-decisions sitting ready at
+all times -- bump this and both the lead time and the display horizon
+move together. `/weather forecast`'s own "Tomorrow" field and the
+dashboard's `weather_status.tomorrow` field are NOT this -- both use a
+literal `+ 1` for "the actual next calendar day," independent of
+however far the generation/display window itself reaches."""
 WEATHER_START_DRIFT_TICKS = 3
 """An inclement event's *actual* start can land up to this many ticks
 before or after its predicted start (Spec: "sometimes weather events
