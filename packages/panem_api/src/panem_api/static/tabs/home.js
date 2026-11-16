@@ -364,13 +364,47 @@ function bulletinPreviewPanel(ctx, entries) {
   return el("div", { class: "panel" }, el("h2", { text: "Bulletin Board" }), ...rows, viewBtn);
 }
 
+// Every app tile gets its own solid accent color instead of the uniform
+// dark card every other panel here uses -- "apps should pop out rather
+// than all dark." Picked per-tab (not strictly per-category) so
+// neighboring tiles in the same section still read as visually distinct
+// from each other, the same way a phone's own home screen app icons are
+// each their own color rather than one shared tint. A tab with no entry
+// here (a newly added one, until this map catches up) falls back to the
+// plain uncolored card.
+const TAB_TILE_COLORS = {
+  map: "#3d6ea8",
+  character: "#9c3b4a",
+  vitals: "#3f7a52",
+  work: "#b4821f",
+  market: "#2e7d6b",
+  travel: "#3d5a80",
+  social: "#9c3b4a",
+  jail: "#6b3030",
+  crime: "#5c2a2a",
+  housing: "#3d6ea8",
+  pets: "#c07830",
+  hobbies: "#4a8a4a",
+  museum: "#2e7d6b",
+  weather: "#3d8aa8",
+  bulletin: "#3f7a52",
+  rumors: "#6b4e9c",
+  events: "#b4821f",
+  reactions: "#a14e6b",
+  staff: "#5a5f6b",
+  history: "#5a5f6b",
+  games: "#9c3b4a",
+};
+
 function appTile(ctx, name) {
+  const color = TAB_TILE_COLORS[name];
   const tile = el(
     "button",
-    { class: "app-tile", type: "button" },
+    { class: color ? "app-tile app-tile-colored" : "app-tile", type: "button" },
     renderTabIcon(name),
     el("span", { text: ctx.tabLabel(name) })
   );
+  if (color) tile.style.backgroundColor = color;
   tile.addEventListener("click", () => ctx.goToTab(name));
   return tile;
 }

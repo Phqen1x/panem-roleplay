@@ -1931,6 +1931,28 @@ svg.ui-icon {
   opacity: 0.85;
 }
 
+/* Home's own app-grid tiles (`tabs/home.js`'s `TAB_TILE_COLORS`) -- a
+   solid per-app color instead of the plain dark card every other
+   `.app-tile` (and everything else on this page) uses, so the grid
+   actually pops the way a phone's own home-screen icons do rather than
+   reading as one more uniformly dark panel. `color: #fff` here is what
+   turns the icon white too -- `renderTabIcon`'s SVGs stroke in
+   `currentColor`, which resolves against this. */
+.app-tile.app-tile-colored {
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+.app-tile.app-tile-colored:hover {
+  border-color: rgba(255, 255, 255, 0.5);
+  filter: brightness(1.12);
+}
+
+.app-tile.app-tile-colored svg {
+  opacity: 1;
+}
+
 .app-tile span {
   overflow: hidden;
   text-overflow: ellipsis;
