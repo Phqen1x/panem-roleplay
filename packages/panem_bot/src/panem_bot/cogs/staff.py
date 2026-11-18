@@ -27,6 +27,7 @@ from panem_bot.views import GENDER_LABELS
 from panem_shared import ambient as ambient_svc
 from panem_shared import bulletin as bulletin_svc
 from panem_shared import constants, job_levels
+from panem_shared import feature_flags as feature_flags_svc
 from panem_shared import global_events as global_events_svc
 from panem_shared import lore as lore_svc
 from panem_shared.content.traits import speech_tone
@@ -55,6 +56,18 @@ from panem_shared.enums import (
 )
 
 MESSAGE_LINK_RE = re.compile(r"/channels/(\d+)/(\d+)/(\d+)$")
+
+_FEATURE_STATE_CHOICES = [
+    app_commands.Choice(name="Enabled -- everyone", value=feature_flags_svc.FlagState.ENABLED.value),
+    app_commands.Choice(
+        name="Staff only -- blocked/hidden for everyone else",
+        value=feature_flags_svc.FlagState.STAFF_ONLY.value,
+    ),
+    app_commands.Choice(
+        name="Disabled -- blocked/hidden for everyone, staff included",
+        value=feature_flags_svc.FlagState.DISABLED.value,
+    ),
+]
 
 
 async def _is_staff(interaction: discord.Interaction) -> bool:
@@ -103,6 +116,11 @@ class StaffCog(commands.Cog):
     event_group = app_commands.Group(
         name="event",
         description="Schedule and manage global (hobby-competition) events",
+        parent=group,
+    )
+    feature_group = app_commands.Group(
+        name="feature",
+        description="Toggle beta tabs/commands/systems for players without a redeploy",
         parent=group,
     )
 
@@ -1492,6 +1510,86 @@ class StaffCog(commands.Cog):
                 payload={},
             )
         await interaction.response.send_message(t("global_event_cancelled", name=name))
+
+    @feature_group.command(
+        name="set", description="Set a tab/command/system's access level for players"
+    )
+    @app_commands.describe(
+        key=(
+            "Which tab/command/system -- e.g. npc_interaction, tab:map, "
+            "or any other tab:<name>/command:<name> key"
+        ),
+        mode="Who can still use/see it",
+    )
+    @app_commands.choices(mode=_FEATURE_STATE_CHOICES)
+    @app_commands.check(_is_staff)
+    async def feature_set(
+        self,
+        interaction: discord.Interaction,
+        key: str,
+        mode: app_commands.Choice[str],
+    ) -> None:
+        clean_key = key.strip()
+        if not clean_key:
+            await interaction.response.send_message("Enter a flag key.", ephemeral=True)
+            return
+        state = feature_flags_svc.FlagState(mode.value)
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            await feature_flags_svc.set_state(
+                session, clean_key, state, updated_by_discord_id=interaction.user.id
+            )
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="feature_set",
+                target=clean_key,
+                payload={"state": state.value},
+            )
+        await interaction.response.send_message(
+            f"`{clean_key}` is now **{mode.name}**.", ephemeral=True
+        )
+
+    @feature_set.autocomplete("key")
+    async def feature_set_key_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        current_lower = current.lower()
+        matches = [
+            k
+            for k, desc in feature_flags_svc.KNOWN_FLAGS.items()
+            if current_lower in k.lower() or current_lower in desc.lower()
+        ]
+        return [
+            app_commands.Choice(
+                name=f"{k} -- {feature_flags_svc.KNOWN_FLAGS[k]}"[:100], value=k
+            )
+            for k in matches[:25]
+        ]
+
+    @feature_group.command(
+        name="list", description="Show every known tab/command flag and its current state"
+    )
+    @app_commands.check(_is_staff)
+    async def feature_list(self, interaction: discord.Interaction) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            overrides = await feature_flags_svc.list_states(session)
+        lines = [
+            f"`{key}` -- **{overrides.get(key, feature_flags_svc.FlagState.ENABLED).value}** ({description})"
+            for key, description in feature_flags_svc.KNOWN_FLAGS.items()
+        ]
+        # A key that's been set but isn't one of the known tabs/systems
+        # above (e.g. a free-typed command: key) still shows up here
+        # rather than silently disappearing from the list.
+        lines += [
+            f"`{key}` -- **{state.value}**"
+            for key, state in overrides.items()
+            if key not in feature_flags_svc.KNOWN_FLAGS
+        ]
+        text = "\n".join(lines) or "No flags defined."
+        if len(text) > 1900:
+            text = text[:1900] + "\n… (truncated)"
+        await interaction.response.send_message(text, ephemeral=True)
 
 
 async def setup(bot: commands.Bot) -> None:

@@ -63,7 +63,7 @@ async function openExternalLink(url) {
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "62";
+const ASSET_VERSION = "63";
 
 // District names mapping for Capitol and Districts 1-12
 const DISTRICT_NAMES = {
@@ -209,6 +209,11 @@ const state = {
   characterId: null,
   isStaff: false,
   isDonor: false,
+  // Bare tab names (e.g. "map") this account shouldn't see right now --
+  // `/identify`'s `hidden_tabs`, already resolved server-side against
+  // `feature_flags` + `is_staff` (`dashboard_routes._hidden_tabs`). See
+  // `visibleTabs()`/`setupDock()` below for where this is applied.
+  hiddenTabs: [],
   theme: DEFAULT_THEME,
   themeProfiles: [],
   // The account's general/default profile id (independent of whatever the
@@ -704,6 +709,7 @@ async function refreshIdentity() {
     state.characters = [];
     state.isStaff = false;
     state.isDonor = false;
+    state.hiddenTabs = [];
     state.theme = DEFAULT_THEME;
     state.themeProfiles = [];
     state.activeThemeProfileId = null;
@@ -723,6 +729,7 @@ async function refreshIdentity() {
     state.characters = body.characters;
     state.isStaff = Boolean(body.is_staff);
     state.isDonor = Boolean(body.is_donor);
+    state.hiddenTabs = body.hidden_tabs || [];
     // `body.theme` here has no character context (`/identify` doesn't
     // know which one's selected) -- it's the account's general theme, so
     // its `profile_id` is exactly the account's general default.
@@ -738,6 +745,7 @@ async function refreshIdentity() {
     state.characters = [];
     state.isStaff = false;
     state.isDonor = false;
+    state.hiddenTabs = [];
     state.theme = DEFAULT_THEME;
     state.themeProfiles = [];
     state.activeThemeProfileId = null;
@@ -782,7 +790,8 @@ function buildCtx() {
 }
 
 function visibleTabs() {
-  return state.isStaff ? [...TABS, ...STAFF_ONLY_TABS] : TABS;
+  const base = state.isStaff ? [...TABS, ...STAFF_ONLY_TABS] : TABS;
+  return base.filter((name) => !state.hiddenTabs.includes(name));
 }
 
 function currentTabName() {
@@ -877,7 +886,11 @@ function setupDock() {
   dockBuilt = true;
   dockEl.innerHTML = "";
   const active = currentTabName();
-  for (const name of DOCK_TABS) {
+  // Unlike `visibleTabs()` this never staff-gates (see DOCK_TABS' own
+  // comment), but it still has to respect an admin's `hidden_tabs` --
+  // otherwise a disabled tab (e.g. Map, mid-beta) would stay one tap away
+  // here even though the nav bar and Home's app grid both hide it.
+  for (const name of DOCK_TABS.filter((n) => !state.hiddenTabs.includes(n))) {
     dockEl.append(navButton(name, active));
   }
 }

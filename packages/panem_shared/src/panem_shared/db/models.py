@@ -1564,6 +1564,28 @@ class RumorInvestigation(TimestampMixin, Base):
     tick: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+# ============================================================ Feature flags
+
+
+class FeatureFlag(TimestampMixin, Base):
+    """Admin-toggleable kill switch for a beta-stage tab/command/system --
+    `panem_shared.feature_flags` is the only reader/writer; `/staff feature
+    set` (`panem_bot.cogs.staff`) and the Staff tab's flags panel
+    (`dashboard_routes.py`) are its two editors. One row per `key`
+    (`panem_shared.feature_flags.NPC_INTERACTION`, `tab:<name>`,
+    `command:<name>`, ...); an absent row reads as ENABLED
+    (`panem_shared.feature_flags.get_state`'s default), so this table only
+    ever needs a row for a flag that's actually been changed away from
+    that default. `state` is a plain string rather than a DB enum column
+    so a new `FlagState` value never needs a migration of its own."""
+
+    __tablename__ = "feature_flags"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="enabled")
+    updated_by_discord_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+
 # ============================================================ Bulletin
 
 

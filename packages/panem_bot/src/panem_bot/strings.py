@@ -175,6 +175,11 @@ STRINGS: dict[str, str] = {
         "**{name}** doesn't have access to the housing system in their current RP mode."
     ),
     "npc_interaction_mode_forbidden": "**{name}** is in Story mode and can't interact with NPCs.",
+    # Server-wide NPC interaction kill switch (/staff feature set npc_interaction)
+    "npc_interaction_disabled": "NPC roleplay interaction is currently disabled on this server.",
+    "npc_interaction_staff_only": (
+        "NPC roleplay interaction is currently restricted to staff while this is in beta."
+    ),
     # RP-mode switching & crime toggle (/character mode, /character crime)
     "mode_already_active": "This character is already in {mode} mode.",
     "mode_switch_on_cooldown": (

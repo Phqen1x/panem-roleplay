@@ -50,6 +50,7 @@ from panem_shared import characters as characters_svc
 from panem_shared import constants, hobby_levels, job_levels, simtime
 from panem_shared import crime_log as crime_log_svc
 from panem_shared import district_lore as district_lore_svc
+from panem_shared import feature_flags as feature_flags_svc
 from panem_shared import global_events as global_events_svc
 from panem_shared import hobbies as hobbies_svc
 from panem_shared import housing as housing_svc
@@ -206,6 +207,14 @@ class IdentifyResponse(BaseModel):
     theme: DashboardTheme = Field(default_factory=DashboardTheme)
     # Empty for a non-donor/lapsed donor, same surfacing rule as `theme`.
     theme_profiles: list[ThemeProfileSummary] = Field(default_factory=list)
+    # Bare tab names (`"map"`, not `"tab:map"`) this caller shouldn't see,
+    # already resolved server-side against `feature_flags` + `is_staff`
+    # above -- `app.js`'s `visibleTabs()` just filters these out, the same
+    # "server decides, client never re-derives a privilege decision" shape
+    # `is_staff`/`is_donor` already follow here. Covers any tab an admin
+    # has flagged `staff_only`/`disabled` via `/staff feature set`, not
+    # just the Map tab that motivated adding this.
+    hidden_tabs: list[str] = Field(default_factory=list)
 
 
 def _require_session_factory(
@@ -295,6 +304,21 @@ async def _resolve_theme(
     return _theme_for_profile(profile)
 
 
+async def _hidden_tabs(session: AsyncSession, *, is_staff: bool) -> list[str]:
+    """Every `panem_shared.feature_flags.ACTIVITY_TABS` entry this caller
+    shouldn't see -- `tab:<name>` flagged `disabled` (hidden from
+    everyone, staff included) or `staff_only` (hidden from everyone but
+    staff). A tab with no row at all (the common case) stays visible, same
+    `get_state`'s "absent == ENABLED" default."""
+    overrides = await feature_flags_svc.list_states(session)
+    hidden: list[str] = []
+    for tab_name in feature_flags_svc.ACTIVITY_TABS:
+        state = overrides.get(feature_flags_svc.tab_key(tab_name), feature_flags_svc.FlagState.ENABLED)
+        if not feature_flags_svc.is_allowed(state, is_staff=is_staff):
+            hidden.append(tab_name)
+    return hidden
+
+
 def build_identify_router(
     *,
     session_factory: async_sessionmaker[AsyncSession] | None,
@@ -339,10 +363,13 @@ def build_identify_router(
         )
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
+            hidden_tabs = await _hidden_tabs(session, is_staff=is_staff)
             user_row = await session.execute(select(User).where(User.discord_id == body.discord_id))
             user = user_row.scalar_one_or_none()
             if user is None:
-                return IdentifyResponse(characters=[], is_staff=is_staff, is_donor=is_donor)
+                return IdentifyResponse(
+                    characters=[], is_staff=is_staff, is_donor=is_donor, hidden_tabs=hidden_tabs
+                )
             rows = await session.execute(
                 select(Character)
                 .where(
@@ -399,6 +426,7 @@ def build_identify_router(
                     else DashboardTheme()
                 ),
                 theme_profiles=theme_profiles,
+                hidden_tabs=hidden_tabs,
             )
 
     return router
@@ -3665,6 +3693,22 @@ class StaffJailResponse(BaseModel):
     jailed_until_tick: int
 
 
+class FeatureFlagSummary(BaseModel):
+    key: str
+    description: str | None = None
+    state: str
+
+
+class FeatureFlagsResponse(BaseModel):
+    flags: list[FeatureFlagSummary]
+
+
+class FeatureFlagSetRequest(BaseModel):
+    discord_id: int
+    key: str
+    state: str
+
+
 class StaffAddStockRequest(BaseModel):
     discord_id: int
     district_id: int
@@ -5128,6 +5172,55 @@ def build_staff_router(
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
         return {"deleted": True}
+
+    @router.get("/flags", response_model=FeatureFlagsResponse)
+    async def list_feature_flags(discord_id: int) -> FeatureFlagsResponse:
+        """Backs the Staff tab's flags panel -- same `/staff feature list`
+        catalog `panem_bot.cogs.staff` serves, so either surface can be
+        used interchangeably to toggle a beta tab/command/system."""
+        await _require_staff(discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            overrides = await feature_flags_svc.list_states(session)
+        flags = [
+            FeatureFlagSummary(
+                key=key,
+                description=description,
+                state=overrides.get(key, feature_flags_svc.FlagState.ENABLED).value,
+            )
+            for key, description in feature_flags_svc.KNOWN_FLAGS.items()
+        ]
+        flags += [
+            FeatureFlagSummary(key=key, description=None, state=state.value)
+            for key, state in overrides.items()
+            if key not in feature_flags_svc.KNOWN_FLAGS
+        ]
+        return FeatureFlagsResponse(flags=flags)
+
+    @router.post("/flags/set")
+    async def set_feature_flag(body: FeatureFlagSetRequest) -> dict[str, bool]:
+        await _require_staff(body.discord_id)
+        clean_key = body.key.strip()
+        if not clean_key:
+            raise HTTPException(status_code=400, detail="invalid_key")
+        try:
+            state = feature_flags_svc.FlagState(body.state)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="invalid_state") from exc
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            await feature_flags_svc.set_state(
+                session, clean_key, state, updated_by_discord_id=body.discord_id
+            )
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="feature_set",
+                    target=clean_key,
+                    payload={"state": state.value},
+                )
+            )
+        return {"ok": True}
 
     return router
 
