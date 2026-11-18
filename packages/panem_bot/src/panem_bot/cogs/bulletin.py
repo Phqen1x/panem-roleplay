@@ -20,8 +20,25 @@ from panem_bot.errors import ServiceError
 from panem_bot.services import characters as characters_svc
 from panem_bot.strings import t
 from panem_shared import bulletin as bulletin_svc
+from panem_shared import feature_flags as feature_flags_svc
 from panem_shared.db.models import BulletinEntry, WorldClock
 from panem_shared.enums import BulletinSourceKind
+
+
+async def _require_bulletin_access(
+    session, bot: commands.Bot, interaction: discord.Interaction
+) -> None:  # type: ignore[no-untyped-def]
+    is_staff = isinstance(interaction.user, discord.Member) and await bot.is_staff(
+        interaction.user
+    )
+    await feature_flags_svc.require_allowed(
+        session,
+        feature_flags_svc.tab_key("bulletin"),
+        is_staff=is_staff,
+        reason_disabled="feature_tab_disabled",
+        reason_staff_only="feature_tab_staff_only",
+        tab="Bulletin",
+    )
 
 _SOURCE_TAGS: dict[str, str] = {
     BulletinSourceKind.ANNOUNCEMENT.value: "Announcement",
@@ -124,6 +141,7 @@ class BulletinCog(commands.Cog):
             user = await characters_svc.get_or_create_user(session, interaction.user.id)
             current_tick = await self._current_tick(session)
             try:
+                await _require_bulletin_access(session, self.bot, interaction)
                 await bulletin_svc.post_player_entry(
                     session,
                     user=user,
@@ -151,6 +169,7 @@ class BulletinCog(commands.Cog):
         async with self.bot.db() as session:  # type: ignore[attr-defined]
             user = await characters_svc.get_or_create_user(session, interaction.user.id)
             try:
+                await _require_bulletin_access(session, self.bot, interaction)
                 await bulletin_svc.retract(session, user=user, entry_id=entry)
             except ServiceError as exc:
                 await interaction.response.send_message(
@@ -167,6 +186,7 @@ class BulletinCog(commands.Cog):
         async with self.bot.db() as session:  # type: ignore[attr-defined]
             user = await characters_svc.get_or_create_user(session, interaction.user.id)
             try:
+                await _require_bulletin_access(session, self.bot, interaction)
                 entry_row = await bulletin_svc.set_interest(
                     session, user=user, entry_id=entry, interested=interested
                 )
@@ -193,6 +213,7 @@ class BulletinCog(commands.Cog):
         async with self.bot.db() as session:  # type: ignore[attr-defined]
             user = await characters_svc.get_or_create_user(session, interaction.user.id)
             try:
+                await _require_bulletin_access(session, self.bot, interaction)
                 await bulletin_svc.move_entry(
                     session, user=user, entry_id=entry, position=position, category=category
                 )
@@ -209,6 +230,13 @@ class BulletinCog(commands.Cog):
     async def reset_organize(self, interaction: discord.Interaction) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
             user = await characters_svc.get_or_create_user(session, interaction.user.id)
+            try:
+                await _require_bulletin_access(session, self.bot, interaction)
+            except ServiceError as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
             await bulletin_svc.reset_organization(session, user_id=user.id)
         await interaction.response.send_message(t("bulletin_reset"), ephemeral=True)
 
@@ -227,6 +255,7 @@ class BulletinCog(commands.Cog):
             user = await characters_svc.get_or_create_user(session, interaction.user.id)
             current_tick = await self._current_tick(session)
             try:
+                await _require_bulletin_access(session, self.bot, interaction)
                 await bulletin_svc.schedule_reminder(
                     session,
                     user=user,

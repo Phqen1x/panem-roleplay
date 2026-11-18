@@ -21,7 +21,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from sqlalchemy import select
 
-from panem_bot import autocomplete, utils
+from panem_bot import autocomplete, feature_gate, utils
 from panem_bot.strings import t
 from panem_shared import bulletin as bulletin_svc
 from panem_shared import constants, simtime
@@ -145,6 +145,21 @@ class WeatherCog(commands.Cog):
             content = self.bot.content  # type: ignore[attr-defined]
             rng = random.Random()
 
+            # Beta-gating (`/staff feature set tab:weather ...`): a
+            # character whose owner currently lacks Weather tab access
+            # takes none of this poll's exposure/property damage --
+            # `feature_gate.disallowed_character_ids` is a no-op query
+            # returning an empty set in the overwhelmingly common
+            # ENABLED case, so this costs nothing once the tab's out of
+            # beta. Computed once per poll call (not per tick/event
+            # below), since the flag can't change mid-call.
+            all_character_ids = (
+                await session.execute(select(Character.id))
+            ).scalars().all()
+            weather_excluded = await feature_gate.disallowed_character_ids(
+                self.bot, session, "weather", all_character_ids
+            )
+
             for step_tick in range(start_tick, tick + 1):
                 for district_id, climate in content.climate.items():
                     # `ensure_forecast` is a no-op once a given target day
@@ -251,7 +266,10 @@ class WeatherCog(commands.Cog):
                         )
 
                 newly_active, newly_ended = await weather_svc.activate_and_end_events(
-                    session, current_tick=step_tick, rng=rng
+                    session,
+                    current_tick=step_tick,
+                    rng=rng,
+                    excluded_character_ids=weather_excluded,
                 )
                 for event in newly_active:
                     await bulletin_svc.record_system_entry(
@@ -303,7 +321,10 @@ class WeatherCog(commands.Cog):
                         .all()
                     )
                     weather_svc.apply_exposure_damage(
-                        list(exposed_candidates), district=district, event=event
+                        list(exposed_candidates),
+                        district=district,
+                        event=event,
+                        excluded_character_ids=weather_excluded,
                     )
 
             self._last_tick = tick

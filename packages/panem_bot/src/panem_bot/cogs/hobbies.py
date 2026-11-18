@@ -16,10 +16,27 @@ from sqlalchemy import select
 from panem_bot import autocomplete, utils
 from panem_bot.errors import ServiceError
 from panem_bot.strings import t
+from panem_shared import feature_flags as feature_flags_svc
 from panem_shared import hobbies as hobbies_svc
 from panem_shared import hobby_levels
 from panem_shared.db.models import Character, CharacterHobby, Inventory, WorldClock
 from panem_shared.enums import OwnerKind
+
+
+async def _require_hobbies_access(
+    session, bot: commands.Bot, interaction: discord.Interaction
+) -> None:  # type: ignore[no-untyped-def]
+    is_staff = isinstance(interaction.user, discord.Member) and await bot.is_staff(
+        interaction.user
+    )
+    await feature_flags_svc.require_allowed(
+        session,
+        feature_flags_svc.tab_key("hobbies"),
+        is_staff=is_staff,
+        reason_disabled="feature_tab_disabled",
+        reason_staff_only="feature_tab_staff_only",
+        tab="Hobbies",
+    )
 
 _WINDOW_SECONDS = 2.5
 _MIN_DELAY_SECONDS = 2.0
@@ -96,6 +113,7 @@ class HobbiesCog(commands.Cog):
                 return
             content = self.bot.content  # type: ignore[attr-defined]
             try:
+                await _require_hobbies_access(session, self.bot, interaction)
                 await hobbies_svc.select_hobby(session, char, hobby, content)
             except ServiceError as exc:
                 await interaction.response.send_message(
@@ -122,6 +140,7 @@ class HobbiesCog(commands.Cog):
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
             try:
+                await _require_hobbies_access(session, self.bot, interaction)
                 await hobbies_svc.forget_hobby(session, char, hobby)
             except ServiceError as exc:
                 await interaction.response.send_message(
@@ -191,6 +210,7 @@ class HobbiesCog(commands.Cog):
                 return
             current_tick = await self._current_tick(session)
             try:
+                await _require_hobbies_access(session, self.bot, interaction)
                 hobbies_svc.check_can_play(char_hobby, current_tick)
             except ServiceError as exc:
                 await interaction.response.send_message(
@@ -247,15 +267,31 @@ class HobbiesCog(commands.Cog):
             if outcome.success:
                 from panem_shared import global_events as global_events_svc
 
-                active_events = await global_events_svc.active_events_for(
-                    session, district_id=char.current_district_id, hobby_id=hobby
+                # A separate flag from "hobbies" above: a character can
+                # keep playing their hobby normally while beta-locked out
+                # of the Events tab specifically -- they just don't join
+                # or score against whatever global competition happens to
+                # be running, the same "this tab's effects don't reach
+                # you until you can see it" rule the Weather tab's damage
+                # exclusion applies.
+                is_staff = isinstance(
+                    interaction.user, discord.Member
+                ) and await self.bot.is_staff(  # type: ignore[attr-defined]
+                    interaction.user
                 )
-                for active_event in active_events:
-                    _entry, joined_now = await global_events_svc.record_progress(
-                        session, event=active_event, character_id=char_id
+                events_state = await feature_flags_svc.get_state(
+                    session, feature_flags_svc.tab_key("events")
+                )
+                if feature_flags_svc.is_allowed(events_state, is_staff=is_staff):
+                    active_events = await global_events_svc.active_events_for(
+                        session, district_id=char.current_district_id, hobby_id=hobby
                     )
-                    if joined_now:
-                        joined_event_name = active_event.name
+                    for active_event in active_events:
+                        _entry, joined_now = await global_events_svc.record_progress(
+                            session, event=active_event, character_id=char_id
+                        )
+                        if joined_now:
+                            joined_event_name = active_event.name
 
         if view.result == "early":
             text = t("hobby_session_too_early", name=char_name)

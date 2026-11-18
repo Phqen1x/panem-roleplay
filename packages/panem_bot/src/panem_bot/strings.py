@@ -180,6 +180,11 @@ STRINGS: dict[str, str] = {
     "npc_interaction_staff_only": (
         "NPC roleplay interaction is currently restricted to staff while this is in beta."
     ),
+    # Generic per-tab kill switch (/staff feature set tab:<name>) -- shared
+    # by every command whose matching Activity tab can be beta-gated
+    # (hobbies, bulletin, rumors, ...); `{tab}` is the tab's display name.
+    "feature_tab_disabled": "{tab} is currently disabled on this server.",
+    "feature_tab_staff_only": "{tab} is currently restricted to staff while this is in beta.",
     # RP-mode switching & crime toggle (/character mode, /character crime)
     "mode_already_active": "This character is already in {mode} mode.",
     "mode_switch_on_cooldown": (

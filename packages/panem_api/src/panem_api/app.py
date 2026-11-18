@@ -924,13 +924,43 @@ def create_app(
     )
     app.include_router(build_housing_router(content=content, session_factory=session_factory))
     app.include_router(build_vitals_router(content=content, session_factory=session_factory))
-    app.include_router(build_hobbies_router(content=content, session_factory=session_factory))
+    app.include_router(
+        build_hobbies_router(
+            content=content,
+            session_factory=session_factory,
+            discord_token=discord_token,
+            discord_guild_id=discord_guild_id,
+            staff_role_id=staff_role_id,
+        )
+    )
     app.include_router(build_museum_router(content=content, session_factory=session_factory))
     app.include_router(build_weather_router(session_factory=session_factory))
-    app.include_router(build_bulletin_router(session_factory=session_factory))
-    app.include_router(build_reactions_router(session_factory=session_factory))
+    app.include_router(
+        build_bulletin_router(
+            session_factory=session_factory,
+            discord_token=discord_token,
+            discord_guild_id=discord_guild_id,
+            staff_role_id=staff_role_id,
+        )
+    )
+    app.include_router(
+        build_reactions_router(
+            session_factory=session_factory,
+            discord_token=discord_token,
+            discord_guild_id=discord_guild_id,
+            staff_role_id=staff_role_id,
+        )
+    )
     app.include_router(build_events_router(content=content, session_factory=session_factory))
-    app.include_router(build_rumors_router(content=content, session_factory=session_factory))
+    app.include_router(
+        build_rumors_router(
+            content=content,
+            session_factory=session_factory,
+            discord_token=discord_token,
+            discord_guild_id=discord_guild_id,
+            staff_role_id=staff_role_id,
+        )
+    )
     app.include_router(
         build_rp_mode_router(session_factory=session_factory, redis_client=redis_client)
     )

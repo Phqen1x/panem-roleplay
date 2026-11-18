@@ -17,8 +17,25 @@ from panem_bot import autocomplete, utils
 from panem_bot.errors import ServiceError
 from panem_bot.strings import t
 from panem_shared import constants
+from panem_shared import feature_flags as feature_flags_svc
 from panem_shared import rumors as rumors_svc
 from panem_shared.db.models import WorldClock
+
+
+async def _require_rumors_access(
+    session, bot: commands.Bot, interaction: discord.Interaction
+) -> None:  # type: ignore[no-untyped-def]
+    is_staff = isinstance(interaction.user, discord.Member) and await bot.is_staff(
+        interaction.user
+    )
+    await feature_flags_svc.require_allowed(
+        session,
+        feature_flags_svc.tab_key("rumors"),
+        is_staff=is_staff,
+        reason_disabled="feature_tab_disabled",
+        reason_staff_only="feature_tab_staff_only",
+        tab="Rumors",
+    )
 
 
 class RumorsCog(commands.Cog):
@@ -86,6 +103,7 @@ class RumorsCog(commands.Cog):
                 return
             current_tick = await self._current_tick(session)
             try:
+                await _require_rumors_access(session, self.bot, interaction)
                 log = await rumors_svc.investigate(
                     session,
                     character_id=char.id,

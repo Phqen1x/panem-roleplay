@@ -319,6 +319,36 @@ async def _hidden_tabs(session: AsyncSession, *, is_staff: bool) -> list[str]:
     return hidden
 
 
+async def _require_tab_access(
+    session: AsyncSession,
+    *,
+    discord_id: int,
+    tab_name: str,
+    discord_token: str,
+    discord_guild_id: int,
+    staff_role_id: int,
+) -> None:
+    """Server-side enforcement mirroring `/identify`'s `hidden_tabs`: a
+    mutating action behind a `staff_only`/`disabled` tab (`/staff feature
+    set tab:<tab_name> ...`) is refused here too, not just hidden from
+    the UI -- the same "never trust the client with a privilege decision"
+    posture `_resolve_owned_character` already applies to ownership.
+    Read-only status/board/listing routes deliberately don't call this
+    (matching what `hidden_tabs` already hides from them is enough
+    there); only a route that *changes* something behind a flagged tab
+    does, so a disabled tab's effects can't be reached by calling the API
+    directly once its button is gone from the UI."""
+    is_staff = await discord_staff.fetch_is_staff(
+        discord_id,
+        bot_token=discord_token,
+        guild_id=discord_guild_id,
+        staff_role_id=staff_role_id,
+    )
+    state = await feature_flags_svc.get_state(session, feature_flags_svc.tab_key(tab_name))
+    if not feature_flags_svc.is_allowed(state, is_staff=is_staff):
+        raise HTTPException(status_code=403, detail="tab_disabled")
+
+
 def build_identify_router(
     *,
     session_factory: async_sessionmaker[AsyncSession] | None,
@@ -5735,7 +5765,12 @@ def _hobby_summary_rows(
 
 
 def build_hobbies_router(
-    *, content: ContentBundle, session_factory: async_sessionmaker[AsyncSession] | None
+    *,
+    content: ContentBundle,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    discord_token: str = "",
+    discord_guild_id: int = 0,
+    staff_role_id: int = 0,
 ) -> APIRouter:
     """The Hobbies tab's REST surface -- mirrors `/hobby select|forget|
     play` (`panem_shared.hobbies`). `/play` requires `timing_hit` (the
@@ -5784,6 +5819,14 @@ def build_hobbies_router(
             character = await _resolve_owned_character(
                 session, discord_id=body.discord_id, character_id=character_id
             )
+            await _require_tab_access(
+                session,
+                discord_id=body.discord_id,
+                tab_name="hobbies",
+                discord_token=discord_token,
+                discord_guild_id=discord_guild_id,
+                staff_role_id=staff_role_id,
+            )
             try:
                 await hobbies_svc.select_hobby(session, character, body.hobby_id, content)
             except ServiceError as exc:
@@ -5797,6 +5840,14 @@ def build_hobbies_router(
         async with session_scope(factory) as session:
             character = await _resolve_owned_character(
                 session, discord_id=body.discord_id, character_id=character_id
+            )
+            await _require_tab_access(
+                session,
+                discord_id=body.discord_id,
+                tab_name="hobbies",
+                discord_token=discord_token,
+                discord_guild_id=discord_guild_id,
+                staff_role_id=staff_role_id,
             )
             try:
                 await hobbies_svc.forget_hobby(session, character, body.hobby_id)
@@ -5824,6 +5875,14 @@ def build_hobbies_router(
             ).scalar_one_or_none()
             if character_hobby is None:
                 raise HTTPException(status_code=400, detail="hobby_not_selected")
+            await _require_tab_access(
+                session,
+                discord_id=body.discord_id,
+                tab_name="hobbies",
+                discord_token=discord_token,
+                discord_guild_id=discord_guild_id,
+                staff_role_id=staff_role_id,
+            )
             current_tick = await _current_tick(session)
             try:
                 hobbies_svc.check_can_play(character_hobby, current_tick)
@@ -6329,7 +6388,13 @@ class BulletinResetRequest(BaseModel):
     discord_id: int
 
 
-def build_bulletin_router(*, session_factory: async_sessionmaker[AsyncSession] | None) -> APIRouter:
+def build_bulletin_router(
+    *,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    discord_token: str = "",
+    discord_guild_id: int = 0,
+    staff_role_id: int = 0,
+) -> APIRouter:
     """The Bulletin tab's REST surface (`panem_shared.bulletin`) -- the
     board itself, posting/retracting, interest marking, reminders, and
     per-viewer drag-organize. Nothing here ever posts a *system* entry
@@ -6378,6 +6443,14 @@ def build_bulletin_router(*, session_factory: async_sessionmaker[AsyncSession] |
                 session, discord_id=body.discord_id, character_id=character_id
             )
             user = await characters_svc.get_or_create_user(session, body.discord_id)
+            await _require_tab_access(
+                session,
+                discord_id=body.discord_id,
+                tab_name="bulletin",
+                discord_token=discord_token,
+                discord_guild_id=discord_guild_id,
+                staff_role_id=staff_role_id,
+            )
             current_tick = await _current_tick(session)
             try:
                 await bulletin_svc.post_player_entry(
@@ -6406,6 +6479,14 @@ def build_bulletin_router(*, session_factory: async_sessionmaker[AsyncSession] |
                 session, discord_id=body.discord_id, character_id=character_id
             )
             user = await characters_svc.get_or_create_user(session, body.discord_id)
+            await _require_tab_access(
+                session,
+                discord_id=body.discord_id,
+                tab_name="bulletin",
+                discord_token=discord_token,
+                discord_guild_id=discord_guild_id,
+                staff_role_id=staff_role_id,
+            )
             try:
                 await bulletin_svc.retract(session, user=user, entry_id=body.entry_id)
             except ServiceError as exc:
@@ -6422,6 +6503,14 @@ def build_bulletin_router(*, session_factory: async_sessionmaker[AsyncSession] |
                 session, discord_id=body.discord_id, character_id=character_id
             )
             user = await characters_svc.get_or_create_user(session, body.discord_id)
+            await _require_tab_access(
+                session,
+                discord_id=body.discord_id,
+                tab_name="bulletin",
+                discord_token=discord_token,
+                discord_guild_id=discord_guild_id,
+                staff_role_id=staff_role_id,
+            )
             try:
                 await bulletin_svc.set_interest(
                     session, user=user, entry_id=body.entry_id, interested=body.interested
@@ -6438,6 +6527,14 @@ def build_bulletin_router(*, session_factory: async_sessionmaker[AsyncSession] |
                 session, discord_id=body.discord_id, character_id=character_id
             )
             user = await characters_svc.get_or_create_user(session, body.discord_id)
+            await _require_tab_access(
+                session,
+                discord_id=body.discord_id,
+                tab_name="bulletin",
+                discord_token=discord_token,
+                discord_guild_id=discord_guild_id,
+                staff_role_id=staff_role_id,
+            )
             try:
                 await bulletin_svc.set_hidden(
                     session, user=user, entry_id=body.entry_id, hidden=body.hidden
@@ -6457,6 +6554,14 @@ def build_bulletin_router(*, session_factory: async_sessionmaker[AsyncSession] |
             entry = await session.get(BulletinEntry, body.entry_id)
             if entry is None:
                 raise HTTPException(status_code=404, detail="bulletin_entry_not_found")
+            await _require_tab_access(
+                session,
+                discord_id=body.discord_id,
+                tab_name="bulletin",
+                discord_token=discord_token,
+                discord_guild_id=discord_guild_id,
+                staff_role_id=staff_role_id,
+            )
             current_tick = await _current_tick(session)
             try:
                 await bulletin_svc.schedule_reminder(
@@ -6480,6 +6585,14 @@ def build_bulletin_router(*, session_factory: async_sessionmaker[AsyncSession] |
                 session, discord_id=body.discord_id, character_id=character_id
             )
             user = await characters_svc.get_or_create_user(session, body.discord_id)
+            await _require_tab_access(
+                session,
+                discord_id=body.discord_id,
+                tab_name="bulletin",
+                discord_token=discord_token,
+                discord_guild_id=discord_guild_id,
+                staff_role_id=staff_role_id,
+            )
             try:
                 await bulletin_svc.move_entry(
                     session,
@@ -6502,6 +6615,14 @@ def build_bulletin_router(*, session_factory: async_sessionmaker[AsyncSession] |
                 session, discord_id=body.discord_id, character_id=character_id
             )
             user = await characters_svc.get_or_create_user(session, body.discord_id)
+            await _require_tab_access(
+                session,
+                discord_id=body.discord_id,
+                tab_name="bulletin",
+                discord_token=discord_token,
+                discord_guild_id=discord_guild_id,
+                staff_role_id=staff_role_id,
+            )
             await bulletin_svc.reset_organization(session, user_id=user.id)
         return {"ok": True}
 
@@ -6558,7 +6679,11 @@ def _reaction_pending_summary(
 
 
 def build_reactions_router(
-    *, session_factory: async_sessionmaker[AsyncSession] | None
+    *,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    discord_token: str = "",
+    discord_guild_id: int = 0,
+    staff_role_id: int = 0,
 ) -> APIRouter:
     """The Reactions tab's REST surface (`panem_shared.reactions`) -- the
     character's current archetype standing, plus triggering/answering a
@@ -6589,13 +6714,33 @@ def build_reactions_router(
                 # open (see `maybe_trigger_from_dashboard`'s own docstring)
                 # -- the one and only place a fresh pop-up can still come
                 # from, now that the old DM-pushing background loop is
-                # gone.
-                current_tick = await _current_tick(session)
-                log = await reactions_svc.maybe_trigger_from_dashboard(
-                    session, character=character, current_tick=current_tick, rng=random.Random()
+                # gone. `app.js` polls this unconditionally (not gated on
+                # the Reactions tab being hidden -- a pop-up floats above
+                # whichever tab is open), so a beta-locked-out player
+                # still calls this every few seconds; rather than 403 that
+                # noisily, just never roll them a fresh one -- the same
+                # "this tab's effects don't reach you until you can see
+                # it" rule as every other beta-gated system, applied here
+                # as a quiet no-op instead of a refusal.
+                reactions_state = await feature_flags_svc.get_state(
+                    session, feature_flags_svc.tab_key("reactions")
                 )
-                if log is not None:
-                    await session.flush()
+                is_staff = await discord_staff.fetch_is_staff(
+                    discord_id,
+                    bot_token=discord_token,
+                    guild_id=discord_guild_id,
+                    staff_role_id=staff_role_id,
+                )
+                if feature_flags_svc.is_allowed(reactions_state, is_staff=is_staff):
+                    current_tick = await _current_tick(session)
+                    log = await reactions_svc.maybe_trigger_from_dashboard(
+                        session,
+                        character=character,
+                        current_tick=current_tick,
+                        rng=random.Random(),
+                    )
+                    if log is not None:
+                        await session.flush()
             pending = _reaction_pending_summary(log, now=now) if log is not None else None
         return ReactionsStatusResponse(
             archetype_score=archetype_score,
@@ -6968,7 +7113,12 @@ async def _rumor_resolution(
 
 
 def build_rumors_router(
-    *, content: ContentBundle, session_factory: async_sessionmaker[AsyncSession] | None
+    *,
+    content: ContentBundle,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    discord_token: str = "",
+    discord_guild_id: int = 0,
+    staff_role_id: int = 0,
 ) -> APIRouter:
     """The Rumors tab's REST surface (`panem_shared.rumors`) -- every
     rumor currently floating around the character's own current
@@ -7021,6 +7171,14 @@ def build_rumors_router(
             character = await _resolve_owned_character(
                 session, discord_id=body.discord_id, character_id=character_id
             )
+            await _require_tab_access(
+                session,
+                discord_id=body.discord_id,
+                tab_name="rumors",
+                discord_token=discord_token,
+                discord_guild_id=discord_guild_id,
+                staff_role_id=staff_role_id,
+            )
             try:
                 rumor = await rumors_svc.get_rumor(session, body.rumor_id)
                 current_tick = await _current_tick(session)
@@ -7050,6 +7208,14 @@ def build_rumors_router(
         async with session_scope(factory) as session:
             await _resolve_owned_character(
                 session, discord_id=body.discord_id, character_id=character_id
+            )
+            await _require_tab_access(
+                session,
+                discord_id=body.discord_id,
+                tab_name="rumors",
+                discord_token=discord_token,
+                discord_guild_id=discord_guild_id,
+                staff_role_id=staff_role_id,
             )
             # 404s on an already-gone rumor via `get_rumor` rather than a
             # silent no-op -- consistent with every other dashboard

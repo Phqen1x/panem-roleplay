@@ -60,23 +60,31 @@ def is_exposed(character: Character, location: object) -> bool:
 
 
 def apply_exposure_damage(
-    characters: list[Character], *, district: District, event: WeatherEvent
+    characters: list[Character],
+    *,
+    district: District,
+    event: WeatherEvent,
+    excluded_character_ids: frozenset[int] = frozenset(),
 ) -> list[Character]:
     """Simulation-mode characters standing exposed (`is_exposed`) in
     `district` while `event` is `ACTIVE` lose `constants.WEATHER_HEALTH_
     DAMAGE_PER_SEVERITY * event.severity` health -- Spec: "being outside
     or travelling somewhere during a weather event can damage you."
     Life/Story characters are exempt, the same carve-out `panem_sim.
-    systems.needs` uses for its own automatic stat damage. Called once per
-    tick `panem_bot.cogs.weather`'s poll advances through (never per real-
-    time poll interval, so the total damage over an event's duration
-    doesn't depend on how often the bot happens to poll). Returns the
-    characters actually hit, for the caller to decide whether to warn
-    them."""
+    systems.needs` uses for its own automatic stat damage; a character in
+    `excluded_character_ids` (beta-locked out of the Weather tab -- see
+    `activate_and_end_events`'s own docstring) is exempt the same way.
+    Called once per tick `panem_bot.cogs.weather`'s poll advances through
+    (never per real-time poll interval, so the total damage over an
+    event's duration doesn't depend on how often the bot happens to
+    poll). Returns the characters actually hit, for the caller to decide
+    whether to warn them."""
     damage = constants.WEATHER_HEALTH_DAMAGE_PER_SEVERITY * event.severity
     hit: list[Character] = []
     for character in characters:
         if character.rp_mode != RpMode.SIMULATION.value:
+            continue
+        if character.id in excluded_character_ids:
             continue
         location = next(
             (loc for loc in district.locations if loc.id == character.location_id), None
@@ -241,11 +249,24 @@ def roll_property_damage(
 
 
 async def activate_and_end_events(
-    session: AsyncSession, *, current_tick: int, rng: random.Random
+    session: AsyncSession,
+    *,
+    current_tick: int,
+    rng: random.Random,
+    excluded_character_ids: frozenset[int] = frozenset(),
 ) -> tuple[list[WeatherEvent], list[WeatherEvent]]:
     """Flips due `WeatherEvent`s between states and, on activation, rolls
-    damage once against every `Property` in that district. Returns
-    `(newly_active, newly_ended)` for the caller to announce."""
+    damage once against every `Property` in that district -- except one
+    owned by a character in `excluded_character_ids`, which
+    `panem_bot.cogs.weather`'s poll populates from `panem_bot.
+    feature_gate.disallowed_character_ids` when the Weather tab isn't
+    plain ENABLED, so a player beta-locked out of the tab that would
+    explain this damage and let them prepare/repair against it doesn't
+    take it at all. An NPC- or nobody-owned property is never excluded --
+    this is specifically about shielding a *player* from a mechanic
+    they can't currently see or act on, not a blanket pause on weather
+    damage. Returns `(newly_active, newly_ended)` for the caller to
+    announce."""
     newly_active: list[WeatherEvent] = []
     due = (
         (
@@ -273,6 +294,11 @@ async def activate_and_end_events(
             .all()
         )
         for property_row in properties:
+            if (
+                property_row.owner_kind == OwnerKind.CHARACTER.value
+                and property_row.owner_id in excluded_character_ids
+            ):
+                continue
             damage = roll_property_damage(
                 property_row, kind=event.kind, severity=event.severity, rng=rng
             )
