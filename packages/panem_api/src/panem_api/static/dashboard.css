@@ -1379,13 +1379,120 @@ table.data-table .btn {
   width: 100%;
   max-width: 320px;
   aspect-ratio: 3 / 4;
-  border-radius: 8px;
+  border-radius: 12px;
   background: #171a20;
   overflow: hidden;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border);
 }
 
 .avatar-preview.small {
   max-width: 160px;
+}
+
+.avatar-portrait-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+  border-radius: inherit;
+  transition: opacity 0.2s ease;
+}
+
+.avatar-portrait-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  color: var(--text-muted, #8e95a5);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+  border-radius: inherit;
+  text-align: center;
+  user-select: none;
+}
+
+.avatar-portrait-placeholder svg {
+  width: 36px;
+  height: 36px;
+  opacity: 0.6;
+}
+
+.avatar-portrait-placeholder span {
+  font-size: 11.5px;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+  opacity: 0.85;
+}
+
+.avatar-upload-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0 12px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.avatar-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.avatar-file-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.avatar-file-label {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  user-select: none;
+}
+
+.avatar-file-label svg {
+  width: 15px;
+  height: 15px;
+  stroke: currentColor;
+}
+
+.avatar-file-name {
+  font-size: 12px;
+  color: var(--text-muted, #8e95a5);
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.avatar-file-name.has-file {
+  color: var(--text, #e2e8f0);
+  font-weight: 500;
+}
+
+.avatar-file-name.is-uploaded {
+  color: #10b981;
+  font-weight: 500;
 }
 
 .layer-stack {

@@ -46,6 +46,100 @@ function loadLayerCatalog(ctx) {
   return catalogPromise;
 }
 
+function createSvgIcon(name) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.75");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+
+  if (name === "user") {
+    const path1 = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path1.setAttribute("d", "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2");
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("cx", "12");
+    circle.setAttribute("cy", "7");
+    circle.setAttribute("r", "4");
+    svg.append(path1, circle);
+  } else if (name === "upload") {
+    const path1 = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path1.setAttribute("d", "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4");
+    const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    polyline.setAttribute("points", "17 8 12 3 7 8");
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    line.setAttribute("x1", "12");
+    line.setAttribute("y1", "3");
+    line.setAttribute("x2", "12");
+    line.setAttribute("y2", "15");
+    svg.append(path1, polyline, line);
+  }
+  return svg;
+}
+
+// Shows the character's uploaded picture as their primary portrait in
+// both viewing and creation until fully custom layered characters are
+// deployed. Supports instant local file preview, URL input updates, and
+// graceful fallback placeholders.
+function characterPortrait(initialUrl, { small = false, placeholderText = "No picture uploaded" } = {}) {
+  const container = el("div", { class: small ? "avatar-preview small" : "avatar-preview" });
+  let currentUrl = initialUrl || null;
+  let activeBlobUrl = null;
+
+  function render(url) {
+    container.innerHTML = "";
+    if (url && typeof url === "string" && url.trim()) {
+      const img = el("img", {
+        class: "avatar-portrait-img",
+        src: url.trim(),
+        alt: "Character portrait",
+      });
+      img.addEventListener("error", () => {
+        renderPlaceholder("Could not load image");
+      });
+      container.append(img);
+    } else {
+      renderPlaceholder(placeholderText);
+    }
+  }
+
+  function renderPlaceholder(msg) {
+    container.innerHTML = "";
+    const placeholder = el(
+      "div",
+      { class: "avatar-portrait-placeholder" },
+      createSvgIcon("user"),
+      el("span", { text: msg })
+    );
+    container.append(placeholder);
+  }
+
+  render(currentUrl);
+
+  return {
+    el: container,
+    setUrl(url, isBlob = false) {
+      if (activeBlobUrl && activeBlobUrl !== url) {
+        URL.revokeObjectURL(activeBlobUrl);
+        activeBlobUrl = null;
+      }
+      if (isBlob) activeBlobUrl = url;
+      currentUrl = url;
+      render(url);
+    },
+    getUrl() {
+      return currentUrl;
+    },
+    dispose() {
+      if (activeBlobUrl) {
+        URL.revokeObjectURL(activeBlobUrl);
+        activeBlobUrl = null;
+      }
+    },
+  };
+}
+
 // One </> row per category that actually has artwork uploaded yet -- a
 // category with zero options has nothing to cycle through, so it's left
 // out entirely rather than showing a picker that can only ever say
@@ -137,29 +231,68 @@ function characterCard(ctx, character, catalog, { onChanged }) {
     character.status === "dead" && character.death_cause
       ? el("p", { class: "tab-status" }, `Cause of death: ${character.death_cause}`)
       : null;
-  const avatarInput = el("input", { type: "text", value: character.avatar_url || "", placeholder: "https://..." });
+
+  // The primary character image shown at the top of the card is the uploaded portrait.
+  const portrait = characterPortrait(character.avatar_url, {
+    small: true,
+    placeholderText: "No portrait uploaded",
+  });
+
+  const avatarInput = el("input", {
+    type: "text",
+    value: character.avatar_url || "",
+    placeholder: "https://...",
+  });
+  avatarInput.addEventListener("input", () => {
+    portrait.setUrl(avatarInput.value);
+  });
+
   const tagInput = el("input", { type: "text", value: character.proxy_tag || "", placeholder: "tag::" });
   const resultLine = el("p", { class: "result-line" });
 
-  // A file upload alongside the URL field -- typing or finding a hosted
-  // image URL is real friction, and this stores the actual bytes
-  // (`panem_shared.avatars`) rather than only a URL, unlike `/character
-  // avatar`'s Discord-attachment option which just took Discord's own
-  // ~24h-expiring CDN URL. A stopgap until the Picrew-style customizer
-  // below covers every character's primary portrait, not just layered
-  // appearance art.
-  const avatarFileInput = el("input", { type: "file", accept: "image/png,image/jpeg,image/webp,image/gif" });
-  const avatarUploadResult = el("span", { class: "result-line" });
+  const avatarFileInput = el("input", {
+    type: "file",
+    class: "avatar-file-hidden",
+    accept: "image/png,image/jpeg,image/webp,image/gif",
+  });
+  const avatarFileLabel = el(
+    "label",
+    { class: "btn secondary avatar-file-label" },
+    createSvgIcon("upload"),
+    el("span", { text: "Choose picture" }),
+    avatarFileInput
+  );
+  const avatarFileName = el("span", {
+    class: character.avatar_url ? "avatar-file-name is-uploaded" : "avatar-file-name",
+    text: character.avatar_url ? "Active picture uploaded" : "No file chosen",
+  });
   const avatarUploadBtn = el("button", { class: "btn secondary", type: "button" }, "Upload image");
-  avatarUploadBtn.addEventListener("click", async () => {
+  avatarUploadBtn.disabled = true;
+  const avatarUploadResult = el("span", { class: "result-line" });
+
+  let chosenFile = null;
+  avatarFileInput.addEventListener("change", () => {
     const file = avatarFileInput.files && avatarFileInput.files[0];
+    if (!file) return;
+    chosenFile = file;
+    const blobUrl = URL.createObjectURL(file);
+    portrait.setUrl(blobUrl, true);
+    avatarFileName.className = "avatar-file-name has-file";
+    avatarFileName.textContent = `Selected: ${file.name}`;
+    avatarUploadBtn.disabled = false;
+    avatarUploadResult.textContent = "";
+  });
+
+  avatarUploadBtn.addEventListener("click", async () => {
+    const file = chosenFile || (avatarFileInput.files && avatarFileInput.files[0]);
     if (!file) {
       avatarUploadResult.className = "result-line lose";
       avatarUploadResult.textContent = "Choose a file first.";
       return;
     }
-    avatarUploadResult.textContent = "Uploading…";
+    avatarUploadBtn.disabled = true;
     avatarUploadResult.className = "result-line";
+    avatarUploadResult.textContent = "Uploading…";
     const formData = new FormData();
     formData.append("discord_id", String(ctx.discordId()));
     formData.append("file", file);
@@ -168,19 +301,20 @@ function characterCard(ctx, character, catalog, { onChanged }) {
         `/activity/dashboard/characters/${character.id}/avatar-upload`,
         { method: "POST", body: formData }
       );
+      character.avatar_url = updated.avatar_url;
       avatarInput.value = updated.avatar_url || "";
-      avatarFileInput.value = "";
+      portrait.setUrl(updated.avatar_url);
+      avatarFileName.className = "avatar-file-name is-uploaded";
+      avatarFileName.textContent = `✓ Current: ${file.name}`;
       avatarUploadResult.className = "result-line win";
-      avatarUploadResult.textContent = "Uploaded.";
-      onChanged();
+      avatarUploadResult.textContent = "Uploaded successfully!";
+      avatarUploadBtn.disabled = true;
     } catch (err) {
+      avatarUploadBtn.disabled = false;
       avatarUploadResult.className = "result-line lose";
       avatarUploadResult.textContent = err.message;
     }
   });
-
-  const previewContainer = el("div", { class: "avatar-preview small" });
-  const previewAvatar = mountAvatar(previewContainer, catalog, character.appearance_layers || {});
 
   const saveBtn = el("button", { class: "btn secondary", type: "button" }, "Save");
   saveBtn.addEventListener("click", async () => {
@@ -195,9 +329,11 @@ function characterCard(ctx, character, catalog, { onChanged }) {
           proxy_tag: tagInput.value || null,
         }),
       });
+      character.avatar_url = avatarInput.value || null;
+      character.proxy_tag = tagInput.value || null;
+      portrait.setUrl(character.avatar_url);
       resultLine.className = "result-line win";
       resultLine.textContent = "Saved.";
-      onChanged();
     } catch (err) {
       resultLine.className = "result-line lose";
       resultLine.textContent = err.message;
@@ -241,7 +377,6 @@ function characterCard(ctx, character, catalog, { onChanged }) {
         });
         appearanceResult.className = "result-line win";
         appearanceResult.textContent = "Saved.";
-        previewAvatar.update(editor.getSelection());
       } catch (err) {
         appearanceResult.className = "result-line lose";
         appearanceResult.textContent = err.message;
@@ -250,23 +385,23 @@ function characterCard(ctx, character, catalog, { onChanged }) {
     customizeContainer.append(editor.el, saveAppearanceBtn, appearanceResult);
   });
 
+  const uploadBox = el(
+    "div",
+    { class: "avatar-upload-box" },
+    el("div", { class: "avatar-upload-row" }, avatarFileLabel, avatarUploadBtn, avatarFileName),
+    avatarUploadResult
+  );
+
   const cardEl = el(
     "div",
     { class: "panel" },
     el("h2", { text: `${character.name} (${character.district_name})` }),
-    previewContainer,
+    portrait.el,
     statusLine,
     deathCauseLine,
     el("p", { class: "tab-status" }, `${character.job_title || "no job"} -- ${character.money} money`),
     el("div", { class: "field-row" }, el("label", { text: "Avatar URL" }), avatarInput),
-    el(
-      "div",
-      { class: "field-row" },
-      el("label", { text: "Or upload an image" }),
-      avatarFileInput,
-      avatarUploadBtn
-    ),
-    avatarUploadResult,
+    el("div", { class: "field-row" }, el("label", { text: "Upload image" }), uploadBox),
     el("div", { class: "field-row" }, el("label", { text: "Proxy tag" }), tagInput),
     el("div", { class: "field-row" }, saveBtn, retireBtn, customizeBtn),
     resultLine,
@@ -276,7 +411,7 @@ function characterCard(ctx, character, catalog, { onChanged }) {
   return {
     el: cardEl,
     dispose: () => {
-      previewAvatar.dispose();
+      portrait.dispose();
       if (editor) editor.dispose();
     },
   };
@@ -293,7 +428,99 @@ function createForm(ctx, catalog, { onCreated }) {
   const appearanceInput = el("textarea", { rows: "2", maxlength: "400" });
   const backstoryInput = el("textarea", { rows: "3", maxlength: "1500" });
   const resultLine = el("p", { class: "result-line" });
-  const editor = appearanceEditor(catalog, {});
+
+  // For the time being, until fully custom characters are added, make the
+  // character image in character creation show the uploaded picture that is
+  // used for profile picture where the custom character would be.
+  const portrait = characterPortrait(null, {
+    small: false,
+    placeholderText: "Upload or choose character picture",
+  });
+
+  const avatarUrlInput = el("input", {
+    type: "text",
+    placeholder: "https://... or choose a file below",
+  });
+  avatarUrlInput.addEventListener("input", () => {
+    portrait.setUrl(avatarUrlInput.value);
+  });
+
+  const avatarFileInput = el("input", {
+    type: "file",
+    class: "avatar-file-hidden",
+    accept: "image/png,image/jpeg,image/webp,image/gif",
+  });
+  const avatarFileLabel = el(
+    "label",
+    { class: "btn secondary avatar-file-label" },
+    createSvgIcon("upload"),
+    el("span", { text: "Choose picture" }),
+    avatarFileInput
+  );
+  const avatarFileName = el("span", { class: "avatar-file-name", text: "No file chosen" });
+  const avatarUploadBtn = el("button", { class: "btn secondary", type: "button" }, "Upload picture");
+  avatarUploadBtn.disabled = true;
+  const avatarUploadResult = el("span", { class: "result-line" });
+
+  let chosenFile = null;
+  avatarFileInput.addEventListener("change", () => {
+    const file = avatarFileInput.files && avatarFileInput.files[0];
+    if (!file) return;
+    chosenFile = file;
+    const blobUrl = URL.createObjectURL(file);
+    portrait.setUrl(blobUrl, true);
+    avatarFileName.className = "avatar-file-name has-file";
+    avatarFileName.textContent = `Selected: ${file.name}`;
+    avatarUploadBtn.disabled = false;
+    avatarUploadResult.textContent = "";
+  });
+
+  async function uploadSelectedImage() {
+    const file = chosenFile || (avatarFileInput.files && avatarFileInput.files[0]);
+    if (!file) return null;
+    avatarUploadBtn.disabled = true;
+    avatarUploadResult.className = "result-line";
+    avatarUploadResult.textContent = "Uploading…";
+    const formData = new FormData();
+    formData.append("discord_id", String(ctx.discordId()));
+    formData.append("file", file);
+    try {
+      const res = await ctx.apiFetch("/activity/dashboard/characters/avatar-upload", {
+        method: "POST",
+        body: formData,
+      });
+      avatarUrlInput.value = res.avatar_url || "";
+      portrait.setUrl(res.avatar_url);
+      avatarFileName.className = "avatar-file-name is-uploaded";
+      avatarFileName.textContent = `✓ Current: ${file.name}`;
+      avatarUploadResult.className = "result-line win";
+      avatarUploadResult.textContent = "Uploaded and ready!";
+      avatarUploadBtn.disabled = true;
+      return res.avatar_url;
+    } catch (err) {
+      avatarUploadBtn.disabled = false;
+      avatarUploadResult.className = "result-line lose";
+      avatarUploadResult.textContent = err.message;
+      throw err;
+    }
+  }
+
+  avatarUploadBtn.addEventListener("click", () => {
+    uploadSelectedImage().catch(() => {});
+  });
+
+  const uploadBox = el(
+    "div",
+    { class: "avatar-upload-box" },
+    el("div", { class: "avatar-upload-row" }, avatarFileLabel, avatarUploadBtn, avatarFileName),
+    avatarUploadResult
+  );
+
+  const hasLayerOptions = catalog && catalog.some((cat) => cat.options && cat.options.length > 0);
+  let editor = null;
+  if (hasLayerOptions) {
+    editor = appearanceEditor(catalog, {});
+  }
 
   const jobRow = el("div", { class: "field-row" }, el("label", { text: "Job title" }), jobInput);
   const shiftRow = el("div", { class: "field-row" }, el("label", { text: "Shift" }), phaseSelect);
@@ -317,7 +544,18 @@ function createForm(ctx, catalog, { onCreated }) {
   submitBtn.addEventListener("click", async () => {
     resultLine.textContent = "";
     const isStory = modeSelect.value === "story";
+    submitBtn.disabled = true;
     try {
+      let finalAvatarUrl = avatarUrlInput.value || null;
+      if (chosenFile && !finalAvatarUrl) {
+        try {
+          finalAvatarUrl = await uploadSelectedImage();
+        } catch {
+          submitBtn.disabled = false;
+          return;
+        }
+      }
+
       await ctx.apiFetch("/activity/dashboard/characters", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -329,10 +567,11 @@ function createForm(ctx, catalog, { onCreated }) {
           appearance: appearanceInput.value,
           backstory: backstoryInput.value,
           rp_mode: modeSelect.value,
+          avatar_url: finalAvatarUrl,
           job_title: isStory ? null : jobInput.value,
           shift_phase: isStory ? null : phaseSelect.value,
           job_is_illicit: isStory ? false : illicitInput.checked,
-          appearance_layers: editor.getSelection(),
+          appearance_layers: editor ? editor.getSelection() : null,
         }),
       });
       resultLine.className = "result-line win";
@@ -340,12 +579,31 @@ function createForm(ctx, catalog, { onCreated }) {
       nameInput.value = "";
       appearanceInput.value = "";
       backstoryInput.value = "";
+      avatarUrlInput.value = "";
+      avatarFileInput.value = "";
+      chosenFile = null;
+      portrait.setUrl(null);
+      avatarFileName.className = "avatar-file-name";
+      avatarFileName.textContent = "No file chosen";
+      avatarUploadBtn.disabled = true;
+      avatarUploadResult.textContent = "";
       onCreated();
     } catch (err) {
       resultLine.className = "result-line lose";
       resultLine.textContent = err.message;
+    } finally {
+      submitBtn.disabled = false;
     }
   });
+
+  const lookChildren = [
+    portrait.el,
+    el("div", { class: "field-row" }, el("label", { text: "Avatar picture" }), uploadBox),
+    el("div", { class: "field-row" }, el("label", { text: "Or image URL" }), avatarUrlInput),
+  ];
+  if (editor) {
+    lookChildren.push(editor.el);
+  }
 
   const formEl = el(
     "div",
@@ -361,12 +619,18 @@ function createForm(ctx, catalog, { onCreated }) {
     el("div", { class: "field-row" }, el("label", { text: "Appearance" }), appearanceInput),
     el("div", { class: "field-row" }, el("label", { text: "Backstory" }), backstoryInput),
     el("h2", { text: "Look" }),
-    editor.el,
+    ...lookChildren,
     submitBtn,
     resultLine
   );
 
-  return { el: formEl, dispose: () => editor.dispose() };
+  return {
+    el: formEl,
+    dispose: () => {
+      portrait.dispose();
+      if (editor) editor.dispose();
+    },
+  };
 }
 
 export function mount(root, ctx) {

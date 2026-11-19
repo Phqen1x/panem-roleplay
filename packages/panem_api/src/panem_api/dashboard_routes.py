@@ -989,6 +989,26 @@ def build_characters_router(
             current_tick = await _current_tick(session)
             return _character_detail(character, content=content, current_tick=current_tick)
 
+    @router.post("/avatar-upload")
+    async def upload_character_avatar(
+        discord_id: int = Form(...),
+        file: UploadFile = File(...),  # noqa: B008
+    ) -> dict[str, str]:
+        """Uploads an avatar image before a character exists (e.g. during character creation)."""
+        if not activity_public_url:
+            raise HTTPException(
+                status_code=400,
+                detail="Avatar uploads aren't configured on this server (no public URL set).",
+            )
+        data = await file.read()
+        try:
+            relative_path = avatars_svc.save_avatar_image(
+                content_type=file.content_type or "", data=data, static_dir=static_dir
+            )
+        except ServiceError as exc:
+            raise _http_from_service_error(exc) from exc
+        return {"avatar_url": f"{activity_public_url.rstrip('/')}/{relative_path}"}
+
     @router.post("/{character_id}/avatar-upload", response_model=CharacterDetail)
     async def upload_my_character_avatar(
         character_id: int,
