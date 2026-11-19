@@ -8,7 +8,7 @@
 // The mode/meters section reads `/activity/dashboard/mode/{id}/status`
 // (Milestone 6), the same endpoint `/character mode`'s bot-side confirm
 // view is built against, so the two surfaces never drift apart.
-import { fetchJson, el, dropdown, setStatusText, renderTabIcon } from "./_shared.js?v=9";
+import { fetchJson, el, dropdown, setStatusText, renderTabIcon } from "./_shared.js?v=10";
 
 const MODE_LABELS = { story: "Story", life: "Life", simulation: "Simulation" };
 const SHIFT_PHASES = ["morning", "afternoon", "evening", "night"];
@@ -364,97 +364,407 @@ function bulletinPreviewPanel(ctx, entries) {
   return el("div", { class: "panel" }, el("h2", { text: "Bulletin Board" }), ...rows, viewBtn);
 }
 
-// Every app tile gets its own solid accent color instead of the uniform
-// dark card every other panel here uses -- "apps should pop out rather
-// than all dark." Picked per-tab (not strictly per-category) so
-// neighboring tiles in the same section still read as visually distinct
-// from each other, the same way a phone's own home screen app icons are
-// each their own color rather than one shared tint. A tab with no entry
-// here (a newly added one, until this map catches up) falls back to the
-// plain uncolored card.
-const TAB_TILE_COLORS = {
-  map: "#3d6ea8",
-  character: "#9c3b4a",
-  vitals: "#3f7a52",
-  work: "#b4821f",
-  market: "#2e7d6b",
-  travel: "#3d5a80",
-  social: "#9c3b4a",
-  jail: "#6b3030",
-  crime: "#5c2a2a",
-  housing: "#3d6ea8",
-  pets: "#c07830",
-  hobbies: "#4a8a4a",
-  museum: "#2e7d6b",
-  weather: "#3d8aa8",
-  bulletin: "#3f7a52",
-  rumors: "#6b4e9c",
-  events: "#b4821f",
-  reactions: "#a14e6b",
-  staff: "#5a5f6b",
-  history: "#5a5f6b",
-  games: "#9c3b4a",
+const APP_METADATA = {
+  character: {
+    title: "Character",
+    subtitle: "Profile, inventory, and belongings",
+    category: "daily",
+    categoryName: "Daily Life",
+    color: "#8a3243",
+  },
+  vitals: {
+    title: "Vitals",
+    subtitle: "Health, hunger, thirst, and needs",
+    category: "daily",
+    categoryName: "Daily Life",
+    color: "#1e5338",
+  },
+  work: {
+    title: "Work",
+    subtitle: "Jobs, labor shifts, and daily earnings",
+    category: "daily",
+    categoryName: "Daily Life",
+    color: "#a06f1d",
+  },
+  housing: {
+    title: "Housing",
+    subtitle: "Your home, residence, and interior",
+    category: "daily",
+    categoryName: "Daily Life",
+    color: "#2c4c70",
+  },
+  pets: {
+    title: "Pets",
+    subtitle: "Your companions and pet care",
+    category: "daily",
+    categoryName: "Daily Life",
+    color: "#945324",
+  },
+  hobbies: {
+    title: "Hobbies",
+    subtitle: "Crafting, skills, and recreation",
+    category: "daily",
+    categoryName: "Daily Life",
+    color: "#366345",
+  },
+  map: {
+    title: "Map",
+    subtitle: "Interactive 3D district navigator",
+    category: "explore",
+    categoryName: "Explore",
+    color: "#27548a",
+  },
+  travel: {
+    title: "Travel",
+    subtitle: "Transit, checkpoints, and journeys",
+    category: "explore",
+    categoryName: "Explore",
+    color: "#253b59",
+  },
+  market: {
+    title: "Market",
+    subtitle: "Buy, sell, trade, and merchants",
+    category: "explore",
+    categoryName: "Explore",
+    color: "#1a5347",
+  },
+  museum: {
+    title: "Museum",
+    subtitle: "District artifacts and historical heritage",
+    category: "explore",
+    categoryName: "Explore",
+    color: "#6e5219",
+  },
+  weather: {
+    title: "Weather",
+    subtitle: "Current conditions and forecasts",
+    category: "explore",
+    categoryName: "Explore",
+    color: "#255b70",
+  },
+  social: {
+    title: "Social",
+    subtitle: "Citizens, relationships, and contacts",
+    category: "community",
+    categoryName: "Community",
+    color: "#802b3c",
+  },
+  bulletin: {
+    title: "Bulletin",
+    subtitle: "Public notices and official announcements",
+    category: "community",
+    categoryName: "Community",
+    color: "#245738",
+  },
+  rumors: {
+    title: "Rumors",
+    subtitle: "Whispers, hearsay, and investigations",
+    category: "community",
+    categoryName: "Community",
+    color: "#523970",
+  },
+  events: {
+    title: "Activities & Events",
+    subtitle: "Mystery chains, festivals, and gatherings",
+    category: "community",
+    categoryName: "Community",
+    color: "#8c601c",
+  },
+  reactions: {
+    title: "Reactions",
+    subtitle: "District sentiments and citizen morale",
+    category: "community",
+    categoryName: "Community",
+    color: "#7d344d",
+  },
+  crime: {
+    title: "Crime",
+    subtitle: "Underworld rackets, theft, and illicit deeds",
+    category: "more",
+    categoryName: "More",
+    color: "#542626",
+  },
+  jail: {
+    title: "Jail",
+    subtitle: "Detention records, bail, and sentences",
+    category: "more",
+    categoryName: "More",
+    color: "#52252c",
+  },
+  games: {
+    title: "Games",
+    subtitle: "Panem party pack & recreational matches",
+    category: "more",
+    categoryName: "More",
+    color: "#783042",
+  },
+  history: {
+    title: "History",
+    subtitle: "District archives and historical records",
+    category: "more",
+    categoryName: "More",
+    color: "#4a4e58",
+  },
+  staff: {
+    title: "Staff",
+    subtitle: "Administrative controls and moderation",
+    category: "more",
+    categoryName: "More",
+    color: "#3f444e",
+  },
 };
 
-function appTile(ctx, name) {
-  const color = TAB_TILE_COLORS[name];
-  const tile = el(
-    "button",
-    { class: color ? "app-tile app-tile-colored" : "app-tile", type: "button" },
-    renderTabIcon(name),
-    el("span", { text: ctx.tabLabel(name) })
-  );
-  if (color) tile.style.backgroundColor = color;
-  tile.addEventListener("click", () => ctx.goToTab(name));
-  return tile;
-}
+const CATEGORIES = [
+  { id: "all", label: "All" },
+  { id: "daily", label: "Daily life" },
+  { id: "explore", label: "Explore" },
+  { id: "community", label: "Community" },
+  { id: "more", label: "More" },
+];
 
-// Every tab is reachable from here ("All Apps"), with whatever this
-// character has actually been using pulled to the top -- the desktop
-// sidebar reaches every tab directly, but mobile has no sidebar at all
-// (see `dashboard.css`'s `#shell-body` comment), so this has to be a
-// complete directory, not just a shortlist.
-function appsPanel(ctx) {
+function homeLauncherPanel(ctx) {
+  const container = el("div", { class: "home-launcher-container" });
+  const allVisible = ctx.visibleTabs();
+
+  // 1. Welcoming Header
+  const char = typeof ctx.currentCharacter === "function" ? ctx.currentCharacter() : null;
+  const charName = char && char.name ? char.name : "Citizen";
+  const districtId = char ? char.district_id : 1;
+  const districtName = char && char.district_name ? char.district_name : ctx.districtName(districtId);
+  const motto = ctx.districtMotto(districtId);
+
+  const welcomeHeader = el(
+    "div",
+    { class: "home-welcome-header" },
+    el("h1", { class: "home-welcome-title", text: `Welcome back, ${charName}` }),
+    el("p", { class: "home-welcome-sub", text: `${districtName} • ${motto}` })
+  );
+
+  // 2. Search Bar
+  let searchQuery = "";
+  const searchInput = el("input", {
+    type: "text",
+    class: "home-search-input",
+    placeholder: "Find an app or activity...",
+  });
+  const searchClear = el("button", {
+    type: "button",
+    class: "home-search-clear",
+    text: "✕",
+  });
+  searchClear.hidden = true;
+
+  const searchIconSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  searchIconSvg.setAttribute("viewBox", "0 0 24 24");
+  searchIconSvg.setAttribute("fill", "none");
+  searchIconSvg.setAttribute("stroke", "currentColor");
+  searchIconSvg.setAttribute("stroke-width", "2");
+  searchIconSvg.classList.add("home-search-icon");
+  searchIconSvg.innerHTML = '<circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>';
+
+  const searchBar = el("div", { class: "home-search-bar" }, searchIconSvg, searchInput, searchClear);
+
+  // 3. Recently Opened Shelf (Icon-only on desktop per spec)
   const usage = ctx.tabUsage();
-  const all = ctx.visibleTabs();
-  const frequent = Object.keys(usage.counts)
-    .filter((name) => all.includes(name))
-    .sort((a, b) => usage.counts[b] - usage.counts[a])
+  const recentTabs = (usage.recent || [])
+    .filter((name) => allVisible.includes(name))
     .slice(0, 6);
-  const recent = usage.recent
-    .filter((name) => all.includes(name) && !frequent.includes(name))
-    .slice(0, 4);
 
-  const sections = [];
-  if (frequent.length) {
-    sections.push(
-      el(
-        "div",
-        { class: "panel" },
-        el("h2", { text: "Jump Back In" }),
-        el("div", { class: "app-grid" }, ...frequent.map((name) => appTile(ctx, name)))
-      )
+  const recentHost = el("div", { class: "home-recent-section" });
+  if (recentTabs.length > 0) {
+    const recentGrid = el("div", { class: "home-recent-shelf" });
+    for (const name of recentTabs) {
+      const meta = APP_METADATA[name] || {
+        title: ctx.tabLabel(name),
+        subtitle: "",
+        color: "#3d6ea8",
+      };
+      const iconWrap = el("div", { class: "home-recent-icon-wrap" }, renderTabIcon(name));
+      iconWrap.style.backgroundColor = meta.color;
+
+      const tile = el(
+        "button",
+        {
+          type: "button",
+          class: "home-recent-tile",
+          title: `${meta.title}${meta.subtitle ? " — " + meta.subtitle : ""}`,
+        },
+        iconWrap,
+        el("span", { class: "home-recent-label", text: meta.title })
+      );
+      tile.addEventListener("click", () => ctx.goToTab(name));
+      recentGrid.append(tile);
+    }
+
+    recentHost.append(
+      el("div", { class: "home-section-header" }, el("h2", { text: "Recently opened" })),
+      recentGrid
     );
   }
-  if (recent.length) {
-    sections.push(
-      el(
-        "div",
-        { class: "panel" },
-        el("h2", { text: "Recently Opened" }),
-        el("div", { class: "app-grid" }, ...recent.map((name) => appTile(ctx, name)))
-      )
-    );
-  }
-  sections.push(
-    el(
+
+  // 4. Categories Tabs (Browse)
+  let activeCategory = "all";
+  const catBar = el("div", { class: "home-category-bar" });
+  const catButtons = {};
+
+  const rowsHost = el("div", { class: "home-rows-container" });
+
+  function renderAppRow(name) {
+    const meta = APP_METADATA[name] || {
+      title: ctx.tabLabel(name),
+      subtitle: "",
+      color: "#3d6ea8",
+    };
+
+    const iconWrap = el("div", { class: "home-app-icon" }, renderTabIcon(name));
+    iconWrap.style.backgroundColor = meta.color;
+
+    const infoWrap = el(
       "div",
-      { class: "panel" },
-      el("h2", { text: "All Apps" }),
-      el("div", { class: "app-grid" }, ...all.map((name) => appTile(ctx, name)))
-    )
+      { class: "home-app-info" },
+      el("span", { class: "home-app-title", text: meta.title }),
+      el("span", { class: "home-app-subtitle", text: meta.subtitle })
+    );
+
+    const chevron = el("span", { class: "home-app-chevron", text: "›" });
+
+    const row = el(
+      "button",
+      {
+        type: "button",
+        class: "home-app-row",
+      },
+      iconWrap,
+      infoWrap,
+      chevron
+    );
+    row.addEventListener("click", () => ctx.goToTab(name));
+    return row;
+  }
+
+  function renderRows() {
+    rowsHost.innerHTML = "";
+    const query = searchQuery.trim().toLowerCase();
+
+    if (activeCategory === "all" && !query) {
+      const grid = el("div", { class: "home-category-grid" });
+      const groups = [
+        { id: "daily", name: "Daily Life" },
+        { id: "explore", name: "Explore" },
+        { id: "community", name: "Community" },
+        { id: "more", name: "More" },
+      ];
+
+      for (const group of groups) {
+        const groupTabs = allVisible.filter((name) => {
+          const meta = APP_METADATA[name] || { category: "more" };
+          return meta.category === group.id;
+        });
+
+        if (groupTabs.length === 0) continue;
+
+        const card = el(
+          "div",
+          { class: "home-category-card" },
+          el(
+            "div",
+            { class: "home-category-card-header" },
+            el("span", { class: "home-category-card-title", text: group.name }),
+            el("span", { class: "home-category-card-count", text: `${groupTabs.length} apps` })
+          )
+        );
+
+        for (const name of groupTabs) {
+          card.append(renderAppRow(name));
+        }
+        grid.append(card);
+      }
+      rowsHost.append(grid);
+      return;
+    }
+
+    // Filter apps based on category, search, and strict staff visibility
+    const filtered = allVisible.filter((name) => {
+      const meta = APP_METADATA[name] || {
+        title: ctx.tabLabel(name),
+        subtitle: "",
+        category: "more",
+        categoryName: "More",
+      };
+      if (activeCategory !== "all" && meta.category !== activeCategory) {
+        return false;
+      }
+      if (query) {
+        const titleMatch = (meta.title || "").toLowerCase().includes(query);
+        const subMatch = (meta.subtitle || "").toLowerCase().includes(query);
+        const catMatch = (meta.categoryName || "").toLowerCase().includes(query);
+        return titleMatch || subMatch || catMatch;
+      }
+      return true;
+    });
+
+    if (filtered.length === 0) {
+      rowsHost.append(
+        el("div", { class: "home-empty-search" }, `No applications found matching "${searchQuery}".`)
+      );
+      return;
+    }
+
+    // Group rows into a single card when filtering
+    const card = el("div", { class: "home-category-card" });
+    for (const name of filtered) {
+      card.append(renderAppRow(name));
+    }
+    rowsHost.append(card);
+  }
+
+  for (const cat of CATEGORIES) {
+    const btn = el("button", {
+      type: "button",
+      class: cat.id === activeCategory ? "home-category-tab active" : "home-category-tab",
+      text: cat.label,
+    });
+    btn.addEventListener("click", () => {
+      activeCategory = cat.id;
+      for (const [id, b] of Object.entries(catButtons)) {
+        b.classList.toggle("active", id === activeCategory);
+      }
+      renderRows();
+    });
+    catButtons[cat.id] = btn;
+    catBar.append(btn);
+  }
+
+  // Search input listeners
+  searchInput.addEventListener("input", () => {
+    searchQuery = searchInput.value;
+    searchClear.hidden = !searchQuery;
+    renderRows();
+  });
+  searchClear.addEventListener("click", () => {
+    searchInput.value = "";
+    searchQuery = "";
+    searchClear.hidden = true;
+    renderRows();
+  });
+
+  const browseHeader = el(
+    "div",
+    { class: "home-section-header browse-header" },
+    el("h2", { text: "Browse" })
   );
-  return sections;
+
+  container.append(
+    welcomeHeader,
+    searchBar,
+    recentHost,
+    browseHeader,
+    catBar,
+    rowsHost
+  );
+
+  renderRows();
+  return container;
 }
 
 export function mount(root, ctx) {
@@ -495,9 +805,9 @@ export function mount(root, ctx) {
       );
       setStatusText(statusLine, "");
       const panels = [
+        homeLauncherPanel(ctx),
         weatherStatus ? heroPanel(ctx, weatherStatus) : null,
         bulletinPreviewPanel(ctx, bulletinEntries),
-        ...appsPanel(ctx),
         modePanel(status),
         metersPanel(status),
         crimeTogglePanel(ctx, status, resultLine, refresh),

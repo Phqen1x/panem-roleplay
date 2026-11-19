@@ -63,7 +63,7 @@ async function openExternalLink(url) {
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "63";
+const ASSET_VERSION = "64";
 
 // District names mapping for Capitol and Districts 1-12
 const DISTRICT_NAMES = {
@@ -162,7 +162,13 @@ const TAB_LABELS = {
 // screen" shape a phone's own launcher uses. Desktop has no dock at all
 // (the sidebar already lists every tab), so this is read only by
 // `setupDock()`.
-const DOCK_TABS = ["home", "map", "bulletin", "character"];
+const DOCK_TABS = ["home", "map", "events", "character"];
+const DOCK_TAB_LABELS = {
+  home: "Home",
+  map: "Map",
+  events: "Activities",
+  character: "Character",
+};
 
 // Only offered when `/identify` reports `is_staff` -- see `visibleTabs()`.
 // Not part of `TABS`/`TAB_LABELS` above: those two arrays are also used as
@@ -768,6 +774,7 @@ function buildCtx() {
     discordId: getDiscordId,
     characterId: () => state.characterId,
     characters: () => state.characters,
+    currentCharacter: currentCharacter,
     districtNames: DISTRICT_NAMES,
     districtMotto: (id) =>
       state.districtMottos[String(id)] || DEFAULT_DISTRICT_MOTTOS[String(id)] || "Excellence Endures",
@@ -850,9 +857,9 @@ async function showTab(name) {
   }
 }
 
-function navButton(name, active) {
+function navButton(name, active, labelOverride = null) {
   const icon = renderTabIcon(name);
-  const label = el("span", {}, STAFF_ONLY_TAB_LABELS[name] || TAB_LABELS[name]);
+  const label = el("span", {}, labelOverride || STAFF_ONLY_TAB_LABELS[name] || TAB_LABELS[name]);
   return el(
     "button",
     {
@@ -891,7 +898,7 @@ function setupDock() {
   // otherwise a disabled tab (e.g. Map, mid-beta) would stay one tap away
   // here even though the nav bar and Home's app grid both hide it.
   for (const name of DOCK_TABS.filter((n) => !state.hiddenTabs.includes(n))) {
-    dockEl.append(navButton(name, active));
+    dockEl.append(navButton(name, active, DOCK_TAB_LABELS[name]));
   }
 }
 
