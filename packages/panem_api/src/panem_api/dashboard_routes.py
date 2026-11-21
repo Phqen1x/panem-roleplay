@@ -26,6 +26,7 @@ crime, work, market, travel, residents, housing, characters) adds its own
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import json
 import random
@@ -71,6 +72,7 @@ from panem_shared.db.models import (
     ApartmentLease,
     Character,
     CharacterAffliction,
+    DiscordChannel,
     DistrictLore,
     DistrictLorePerson,
     DistrictState,
@@ -91,6 +93,7 @@ from panem_shared.db.models import (
 )
 from panem_shared.db.session import session_scope
 from panem_shared.enums import (
+    ChannelKind,
     CharacterStatus,
     DayPhase,
     Gender,
@@ -3659,6 +3662,27 @@ class StaffAddStockResponse(BaseModel):
     new_supply: float
 
 
+class StaffChannelAccessEntry(BaseModel):
+    channel_id: int
+    district_id: int
+    label: str
+    kind: str
+    # `None` means the Discord lookup failed (see `discord_staff.fetch_
+    # role_can_view_channel`) -- the frontend shows "unknown" rather than
+    # rendering a toggle it can't trust the state of.
+    locked: bool | None
+
+
+class StaffChannelAccessListResponse(BaseModel):
+    roleplay_role_id: int
+    channels: list[StaffChannelAccessEntry]
+
+
+class StaffChannelAccessRequest(BaseModel):
+    discord_id: int
+    locked: bool
+
+
 class CreateLayerCategoryRequest(BaseModel):
     discord_id: int
     name: str
@@ -4160,6 +4184,7 @@ def build_staff_router(
     discord_guild_id: int = 0,
     staff_role_id: int = 0,
     log_channel_id: int = 0,
+    roleplay_role_id: int = 0,
 ) -> APIRouter:
     """The Staff tab's REST surface -- the dashboard equivalent of `/staff
     jail`. Staff-only: every route here re-checks `discord_staff.fetch_is_
@@ -4278,6 +4303,131 @@ def build_staff_router(
             ),
         )
         return response
+
+    # ---- Channel lock/unlock (dashboard counterpart to `/staff channel
+    # lock`/`unlock`) ------------------------------------------------------
+    # Operates on exactly the channels `scripts/setup_guild.py` locked down
+    # to staff-only at creation: each district's forum and the guild-wide
+    # `#ooc` (`DiscordChannel` rows of kind FORUM/OOC) -- not the approval/
+    # log channels, which stay staff-only permanently, and not individual
+    # ambient/board threads, since a Discord thread always inherits its
+    # parent channel's view permissions. Unlike `/staff channel lock`/
+    # `unlock` in Discord (which takes any role), this always targets the
+    # one role configured as `ROLEPLAY_ROLE_ID` -- a toggle needs a single,
+    # known target, and that's the point of the setting.
+
+    def _channel_label(district_id: int, kind: str) -> str:
+        if kind == ChannelKind.OOC.value:
+            return "#ooc (guild-wide)"
+        district_name = (
+            content.district(district_id).name
+            if district_id in content.districts
+            else f"district {district_id}"
+        )
+        return f"{district_name} forum"
+
+    @router.get("/channels", response_model=StaffChannelAccessListResponse)
+    async def list_channel_access(discord_id: int) -> StaffChannelAccessListResponse:
+        await _require_staff(discord_id)
+        if not roleplay_role_id:
+            raise HTTPException(status_code=409, detail="roleplay_role_not_configured")
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(DiscordChannel).where(
+                            DiscordChannel.kind.in_(
+                                [ChannelKind.FORUM.value, ChannelKind.OOC.value]
+                            )
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            row_data = [(row.channel_id, row.district_id, row.kind) for row in rows]
+        locked_states = await asyncio.gather(
+            *(
+                discord_staff.fetch_role_can_view_channel(
+                    channel_id, roleplay_role_id, bot_token=discord_token
+                )
+                for channel_id, _district_id, _kind in row_data
+            )
+        )
+        channels = [
+            StaffChannelAccessEntry(
+                channel_id=channel_id,
+                district_id=district_id,
+                label=_channel_label(district_id, kind),
+                kind=kind,
+                locked=None if can_view is None else not can_view,
+            )
+            for (channel_id, district_id, kind), can_view in zip(
+                row_data, locked_states, strict=True
+            )
+        ]
+        channels.sort(key=lambda c: (c.kind != ChannelKind.OOC.value, c.district_id))
+        return StaffChannelAccessListResponse(
+            roleplay_role_id=roleplay_role_id, channels=channels
+        )
+
+    @router.post("/channels/{channel_id}/access", response_model=StaffChannelAccessEntry)
+    async def set_channel_access(
+        channel_id: int, body: StaffChannelAccessRequest
+    ) -> StaffChannelAccessEntry:
+        await _require_staff(body.discord_id)
+        if not roleplay_role_id:
+            raise HTTPException(status_code=409, detail="roleplay_role_not_configured")
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            row = (
+                await session.execute(
+                    select(DiscordChannel).where(
+                        DiscordChannel.channel_id == channel_id,
+                        DiscordChannel.kind.in_(
+                            [ChannelKind.FORUM.value, ChannelKind.OOC.value]
+                        ),
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                raise HTTPException(status_code=404, detail="channel_not_found")
+            district_id, kind = row.district_id, row.kind
+        ok = await discord_staff.set_role_channel_locked(
+            channel_id,
+            roleplay_role_id,
+            bot_token=discord_token,
+            locked=body.locked,
+            is_forum=(kind == ChannelKind.FORUM.value),
+        )
+        if not ok:
+            raise HTTPException(status_code=502, detail="discord_permission_edit_failed")
+        async with session_scope(factory) as session:
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="channel_lock" if body.locked else "channel_unlock",
+                    target=str(channel_id),
+                    payload={"role_id": roleplay_role_id},
+                )
+            )
+        await discord_staff.post_staff_log(
+            channel_id=log_channel_id,
+            bot_token=discord_token,
+            content=(
+                f"**Staff action:** <@{body.discord_id}> "
+                f"`{'channel_lock' if body.locked else 'channel_unlock'}` -> <#{channel_id}> "
+                f"for <@&{roleplay_role_id}>"
+            ),
+        )
+        return StaffChannelAccessEntry(
+            channel_id=channel_id,
+            district_id=district_id,
+            label=_channel_label(district_id, kind),
+            kind=kind,
+            locked=body.locked,
+        )
 
     # ---- Layer management (Picrew-style customizer admin) --------------
     # The upload flow this feature was actually asked for: staff add a

@@ -373,6 +373,7 @@ def create_app(
     staff_role_id: int = 0,
     donor_role_ids: frozenset[int] = frozenset(),
     log_channel_id: int = 0,
+    roleplay_role_id: int = 0,
     # Where staff-uploaded layer images get written/read (build_staff_
     # router's layer-catalog endpoints); defaults to the real bundled
     # `static/` dir. Overridable so tests can point it at a tmp_path
@@ -937,6 +938,7 @@ def create_app(
             discord_guild_id=discord_guild_id,
             staff_role_id=staff_role_id,
             log_channel_id=log_channel_id,
+            roleplay_role_id=roleplay_role_id,
         )
     )
     app.include_router(

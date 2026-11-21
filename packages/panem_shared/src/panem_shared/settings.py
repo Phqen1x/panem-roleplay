@@ -70,6 +70,18 @@ class Settings(BaseSettings):
     approval_channel_id: DiscordId = 0
     log_channel_id: DiscordId = 0
 
+    # The role the Activity's Staff tab grants/revokes when staff flip a
+    # channel's lock/unlock toggle there (`StaffChannelAccessEntry` in
+    # `panem_api.dashboard_routes`) -- deliberately a single configured
+    # role rather than always `@everyone`, since "open to players" means
+    # a different role per server (a general roleplaying role from
+    # onboarding, say). Unset (0) means the toggle is disabled in the
+    # Activity; staff can still grant/revoke any role, including this one,
+    # per-channel via Discord's own `/staff channel lock`/`unlock`
+    # (`panem_bot.cogs.staff.StaffCog`), which always takes an explicit
+    # role rather than reading this setting.
+    roleplay_role_id: DiscordId = 0
+
     # Comma-separated Discord role snowflake ids (e.g. "111,222") -- a
     # donor perk unlike `staff_role_id` above is commonly granted by more
     # than one role tier (multiple donation levels), so this is a list

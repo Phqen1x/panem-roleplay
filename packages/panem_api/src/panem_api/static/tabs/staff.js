@@ -1656,11 +1656,106 @@ function ambientMusicPanel(ctx) {
   );
 }
 
+// The dashboard counterpart to Discord's `/staff channel lock`/`unlock`:
+// one checkbox per roleplay channel (each district's forum + the
+// guild-wide `#ooc`, exactly the `DiscordChannel` rows `scripts/
+// setup_guild.py` locks to staff-only at creation). Unlike the Discord
+// command, this always targets whichever single role the server
+// configured as `ROLEPLAY_ROLE_ID` -- a toggle needs one known target,
+// not a role picker -- so the whole panel just explains that and shows
+// an error (via `GET .../channels`' 409) if nothing's configured yet.
+function channelAccessPanel(ctx) {
+  const listEl = el("div", {});
+  const statusEl = el("p", { class: "tab-status" });
+
+  async function refreshChannels() {
+    listEl.innerHTML = "";
+    setStatusText(statusEl, "Loading channels…");
+    let body;
+    try {
+      body = await fetchJson(`/activity/dashboard/staff/channels?discord_id=${ctx.discordId()}`);
+    } catch (err) {
+      setStatusText(statusEl, `Could not load: ${err.message}`, { error: true });
+      return;
+    }
+    if (body.channels.length === 0) {
+      setStatusText(statusEl, "No roleplay channels found yet -- run scripts/setup_guild.py first.");
+      return;
+    }
+    setStatusText(
+      statusEl,
+      `Unlocking grants view + post access to <@&${body.roleplay_role_id}>, this server's configured roleplay role.`
+    );
+
+    const rows = body.channels.map((channel) => {
+      const checkbox = el("input", { type: "checkbox" });
+      checkbox.checked = channel.locked === false;
+      checkbox.disabled = channel.locked === null;
+      const noteEl = el(
+        "span",
+        { class: "tab-status", style: "margin-left: 10px;" },
+        channel.locked === null ? "(current state unknown)" : ""
+      );
+
+      checkbox.addEventListener("change", async () => {
+        const wantUnlocked = checkbox.checked;
+        checkbox.disabled = true;
+        noteEl.textContent = "Saving…";
+        try {
+          await fetchJson(`/activity/dashboard/staff/channels/${channel.channel_id}/access`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ discord_id: ctx.discordId(), locked: !wantUnlocked }),
+          });
+          noteEl.textContent = "";
+        } catch (err) {
+          checkbox.checked = !wantUnlocked;
+          noteEl.textContent = err.message;
+          noteEl.classList.add("error");
+        } finally {
+          checkbox.disabled = false;
+        }
+      });
+
+      return el(
+        "div",
+        {
+          class: "field-row",
+          style:
+            "justify-content: space-between; align-items: center; " +
+            "border-bottom: 1px solid var(--border-color, rgba(197, 160, 89, 0.2)); padding: 6px 0;",
+        },
+        el("label", {}, checkbox, ` ${channel.label}`),
+        noteEl
+      );
+    });
+    listEl.append(...rows);
+  }
+
+  refreshChannels();
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "Channel Access" }),
+    el(
+      "p",
+      { class: "tab-status" },
+      "Lock or unlock a district's roleplay forum (or #ooc) for the server's roleplay role. " +
+        "Approval/log channels always stay staff-only, and threads inside a forum follow its " +
+        "own lock state automatically."
+    ),
+    statusEl,
+    listEl
+  );
+}
+
 export function mount(root, ctx) {
   root.append(
     jailPanel(ctx),
     givePanel(ctx),
     characterActionsPanel(ctx),
+    channelAccessPanel(ctx),
     districtAdminPanel(ctx),
     npcAdminPanel(ctx),
     ambientMusicPanel(ctx),

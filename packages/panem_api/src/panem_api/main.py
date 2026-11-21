@@ -36,6 +36,7 @@ def main() -> None:
         staff_role_id=settings.staff_role_id,
         donor_role_ids=settings.donor_role_id_set(),
         log_channel_id=settings.log_channel_id,
+        roleplay_role_id=settings.roleplay_role_id,
         static_dir=Path(settings.static_uploads_dir) if settings.static_uploads_dir else None,
         activity_public_url=settings.activity_public_url,
         tick_interval_seconds=settings.tick_interval_seconds,
