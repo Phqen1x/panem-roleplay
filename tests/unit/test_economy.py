@@ -776,4 +776,3 @@ class TestMinimumStock:
         economy.run(state, make_ctx(content, tick=24))
 
         assert state.market_prices[(1, "medicine")].supply >= 1.0
-

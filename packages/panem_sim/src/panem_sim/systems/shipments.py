@@ -51,10 +51,7 @@ def run(state: WorldState, ctx: TickContext) -> list[AnyWorldEvent]:
             Bulletin(
                 tick=ctx.tick,
                 district_id=district.id,
-                text=(
-                    f"A supply train has stopped at {station.name} -- "
-                    "guards look thin tonight."
-                ),
+                text=(f"A supply train has stopped at {station.name} -- guards look thin tonight."),
             )
         )
 

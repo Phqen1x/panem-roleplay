@@ -27,13 +27,11 @@ from __future__ import annotations
 import discord
 from discord import app_commands
 from discord.ext import commands
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from panem_bot import autocomplete, utils
 from panem_bot.errors import ServiceError
 from panem_bot.services import afflictions as afflictions_svc
-from panem_bot.services import characters as characters_svc
 from panem_bot.services import sustenance as sustenance_svc
 from panem_bot.strings import t
 from panem_shared.db.models import Character, WorldClock
@@ -66,7 +64,9 @@ class NeedsCog(commands.Cog):
         if not character_name:
             return []
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character_name)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character_name
+            )
             if char is None:
                 return []
             content = self.bot.content  # type: ignore[attr-defined]
@@ -96,7 +96,9 @@ class NeedsCog(commands.Cog):
     @app_commands.autocomplete(character=autocomplete.own_approved)
     async def eat(self, interaction: discord.Interaction, character: str, good: str) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -134,7 +136,9 @@ class NeedsCog(commands.Cog):
     @app_commands.autocomplete(character=autocomplete.own_approved)
     async def drink(self, interaction: discord.Interaction, character: str, good: str) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -173,7 +177,9 @@ class NeedsCog(commands.Cog):
     @app_commands.autocomplete(character=autocomplete.own_approved)
     async def heal(self, interaction: discord.Interaction, character: str, good: str) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -206,13 +212,16 @@ class NeedsCog(commands.Cog):
         return await self._consumable_choices(interaction, current, healable=True)
 
     @app_commands.command(
-        name="use", description="Use an owned consumable good (e.g. medicine to heal) (Simulation mode)"
+        name="use",
+        description="Use an owned consumable good (e.g. medicine to heal) (Simulation mode)",
     )
     @app_commands.describe(character="Character name", good="A consumable good you own")
     @app_commands.autocomplete(character=autocomplete.own_approved)
     async def use(self, interaction: discord.Interaction, character: str, good: str) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -261,7 +270,9 @@ class NeedsCog(commands.Cog):
         if not character_name:
             return []
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character_name)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character_name
+            )
             if char is None:
                 return []
             content = self.bot.content  # type: ignore[attr-defined]
@@ -282,7 +293,9 @@ class NeedsCog(commands.Cog):
     @app_commands.autocomplete(character=autocomplete.own_approved)
     async def entertain(self, interaction: discord.Interaction, character: str) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return

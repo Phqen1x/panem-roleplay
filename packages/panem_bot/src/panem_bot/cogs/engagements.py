@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -344,7 +344,9 @@ class EngagementCog(commands.Cog):
         assert interaction.guild is not None
         await interaction.response.defer(ephemeral=True, thinking=True)
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.followup.send(t("character_not_found"), ephemeral=True)
                 return
@@ -426,9 +428,7 @@ class EngagementCog(commands.Cog):
                 return
 
             if matched_npcs:
-                is_staff = isinstance(
-                    interaction.user, discord.Member
-                ) and await self.bot.is_staff(  # type: ignore[attr-defined]
+                is_staff = isinstance(interaction.user, discord.Member) and await self.bot.is_staff(  # type: ignore[attr-defined]
                     interaction.user
                 )
                 flag_state = await feature_flags_svc.get_state(
@@ -696,7 +696,9 @@ class EngagementCog(commands.Cog):
         matches = [
             loc
             for loc in district.locations
-            if not current_lower or current_lower in loc.name.lower() or current_lower in loc.id.lower()
+            if not current_lower
+            or current_lower in loc.name.lower()
+            or current_lower in loc.id.lower()
         ]
         return [
             app_commands.Choice(name=f"{loc.name} ({loc.id})", value=loc.id) for loc in matches[:25]
@@ -855,7 +857,9 @@ class EngagementCog(commands.Cog):
                     "Not a registered engagement.", ephemeral=True
                 )
                 return
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return

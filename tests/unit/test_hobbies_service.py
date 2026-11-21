@@ -62,8 +62,11 @@ def make_content() -> ContentBundle:
         collectibles={
             "minnow": Collectible(id="minnow", name="Minnow", hobby_id="fishing"),
             "ancient_turtle_shell": Collectible(
-                id="ancient_turtle_shell", name="Ancient Turtle Shell", hobby_id="fishing",
-                rarity="legendary", donation_reward=100,
+                id="ancient_turtle_shell",
+                name="Ancient Turtle Shell",
+                hobby_id="fishing",
+                rarity="legendary",
+                donation_reward=100,
             ),
         },
     )
@@ -175,18 +178,14 @@ class TestRollDrop:
         hobby = content.hobbies["fishing"]
         rng = random.Random(0)
         # Apprentice-level character should never roll the master-gated drop.
-        seen = {
-            hobbies_svc.roll_drop(hobby, content.collectibles, 0, rng).id for _ in range(200)
-        }
+        seen = {hobbies_svc.roll_drop(hobby, content.collectibles, 0, rng).id for _ in range(200)}
         assert seen == {"minnow"}
 
     def test_master_level_can_roll_the_rare_drop(self):
         content = make_content()
         hobby = content.hobbies["fishing"]
         rng = random.Random(1)
-        seen = {
-            hobbies_svc.roll_drop(hobby, content.collectibles, 999, rng).id for _ in range(500)
-        }
+        seen = {hobbies_svc.roll_drop(hobby, content.collectibles, 999, rng).id for _ in range(500)}
         assert "ancient_turtle_shell" in seen
 
 

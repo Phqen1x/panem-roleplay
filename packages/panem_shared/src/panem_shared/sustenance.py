@@ -142,9 +142,7 @@ def check_can_heal(character: Character, good: Good, qty_owned: int) -> None:
         raise NotAllowed("sustenance_no_inventory", name=character.name, good=good.name)
 
 
-async def heal(
-    session: AsyncSession, character: Character, good: Good, current_tick: int
-) -> float:
+async def heal(session: AsyncSession, character: Character, good: Good, current_tick: int) -> float:
     """Consumes one unit of `good`, restores `health` by its `heal_value`,
     clamped to `constants.HEALTH_MAX`. Returns the character's new `health`."""
     qty_owned = await _owned_qty(session, character, good.id)

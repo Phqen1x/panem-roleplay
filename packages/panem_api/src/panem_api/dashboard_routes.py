@@ -27,6 +27,7 @@ crime, work, market, travel, residents, housing, characters) adds its own
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import datetime as dt
 import json
 import random
@@ -130,6 +131,7 @@ from panem_shared.enums import (
     WeatherEventStatus,
 )
 from panem_shared.errors import NotAllowed, NotFound, ServiceError
+from panem_shared.logging import get_logger
 from panem_shared.redis_keys import (
     CHARACTER_MODE_SWITCH_PENDING_CHANNEL,
     CHARACTER_PENDING_CHANNEL,
@@ -144,6 +146,8 @@ from panem_shared.shifts import (
     has_job,
     start_shift_game,
 )
+
+logger = get_logger(component="api")
 
 
 class DashboardCharacterSummary(BaseModel):
@@ -316,7 +320,9 @@ async def _hidden_tabs(session: AsyncSession, *, is_staff: bool) -> list[str]:
     overrides = await feature_flags_svc.list_states(session)
     hidden: list[str] = []
     for tab_name in feature_flags_svc.ACTIVITY_TABS:
-        state = overrides.get(feature_flags_svc.tab_key(tab_name), feature_flags_svc.FlagState.ENABLED)
+        state = overrides.get(
+            feature_flags_svc.tab_key(tab_name), feature_flags_svc.FlagState.ENABLED
+        )
         if not feature_flags_svc.is_allowed(state, is_staff=is_staff):
             hidden.append(tab_name)
     return hidden
@@ -419,18 +425,14 @@ def build_identify_router(
                     .where(ThemeProfile.user_id == user.id)
                     .order_by(ThemeProfile.id)
                 )
-                theme_profiles = [
-                    _theme_profile_summary(p) for p in profile_rows.scalars().all()
-                ]
+                theme_profiles = [_theme_profile_summary(p) for p in profile_rows.scalars().all()]
             return IdentifyResponse(
                 characters=[
                     DashboardCharacterSummary(
                         id=c.id,
                         name=c.name,
                         avatar_url=c.avatar_url,
-                        appearance_layers=layers_svc.sanitize_stored_selection(
-                            c.appearance_layers
-                        ),
+                        appearance_layers=layers_svc.sanitize_stored_selection(c.appearance_layers),
                         district_id=c.district_id,
                         current_district_id=c.current_district_id,
                         district_name=(
@@ -589,9 +591,7 @@ def build_theme_router(
         await _require_donor(body.discord_id)
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
-            user_row = await session.execute(
-                select(User).where(User.discord_id == body.discord_id)
-            )
+            user_row = await session.execute(select(User).where(User.discord_id == body.discord_id))
             user = user_row.scalar_one_or_none()
             if user is None:
                 return ThemeProfileListResponse(profiles=[], active_profile_id=None)
@@ -612,7 +612,9 @@ def build_theme_router(
         async with session_scope(factory) as session:
             user = await characters_svc.get_or_create_user(session, body.discord_id)
             count_row = await session.execute(
-                select(func.count()).select_from(ThemeProfile).where(ThemeProfile.user_id == user.id)
+                select(func.count())
+                .select_from(ThemeProfile)
+                .where(ThemeProfile.user_id == user.id)
             )
             if count_row.scalar_one() >= MAX_THEME_PROFILES_PER_USER:
                 raise HTTPException(status_code=400, detail="theme_profile_limit_reached")
@@ -1096,9 +1098,7 @@ def _layer_category_response(category: LayerCategory) -> LayerCategoryResponse:
     )
 
 
-def build_layers_router(
-    *, session_factory: async_sessionmaker[AsyncSession] | None
-) -> APIRouter:
+def build_layers_router(*, session_factory: async_sessionmaker[AsyncSession] | None) -> APIRouter:
     """The Picrew-style customizer's read side: every category (in render
     order) and its options. No `discord_id` needed -- like the old
     `appearance-options` endpoint this replaces, it's static, non-sensitive
@@ -1519,17 +1519,21 @@ def build_crime_router(
                 # id keeps which house gets targeted stable across repeated attempts
                 # rather than depending on the database's unspecified row order.
                 house = (
-                    await session.execute(
-                        select(Property)
-                        .where(
-                            Property.kind == PropertyKind.HOUSE.value,
-                            Property.owner_kind == OwnerKind.CHARACTER.value,
-                            Property.owner_id == owner_char.id,
-                            Property.district_id == character.current_district_id,
+                    (
+                        await session.execute(
+                            select(Property)
+                            .where(
+                                Property.kind == PropertyKind.HOUSE.value,
+                                Property.owner_kind == OwnerKind.CHARACTER.value,
+                                Property.owner_id == owner_char.id,
+                                Property.district_id == character.current_district_id,
+                            )
+                            .order_by(Property.id)
                         )
-                        .order_by(Property.id)
                     )
-                ).scalars().first()
+                    .scalars()
+                    .first()
+                )
             if house is None:
                 raise HTTPException(status_code=404, detail="burgle_owner_not_found")
 
@@ -1937,9 +1941,7 @@ def build_blackmarket_router(
                     continue
                 price = await blackmarket_svc.get_price(session, district.id, good)
                 stock = await blackmarket_svc.get_supply(session, district.id, good_id)
-                prices.append(
-                    GoodPrice(good_id=good_id, name=good.name, price=price, stock=stock)
-                )
+                prices.append(GoodPrice(good_id=good_id, name=good.name, price=price, stock=stock))
             trusted = False
             try:
                 fence = blackmarket_svc.resolve_fence(district.id, content.npcs)
@@ -2642,7 +2644,9 @@ class TradeActionRequest(BaseModel):
     discord_id: int
 
 
-def _trade_summary(trade: Trade, *, initiator_name: str, recipient_name: str, viewer_id: int) -> TradeSummary:
+def _trade_summary(
+    trade: Trade, *, initiator_name: str, recipient_name: str, viewer_id: int
+) -> TradeSummary:
     return TradeSummary(
         id=trade.id,
         initiator_character_id=trade.initiator_character_id,
@@ -3124,8 +3128,7 @@ def build_housing_router(
                 mortgage_terms=HousingMortgageTerms(
                     down_payment_pct=constants.MORTGAGE_DOWN_PAYMENT_PCT,
                     interest_rate=constants.MORTGAGE_INTEREST_RATE,
-                    term_days=constants.MORTGAGE_TERM_TICKS_DEFAULT
-                    // constants.TICKS_PER_DAY,
+                    term_days=constants.MORTGAGE_TERM_TICKS_DEFAULT // constants.TICKS_PER_DAY,
                     max_ltv=constants.MORTGAGE_MAX_LTV,
                     misses_to_foreclose=constants.MORTGAGE_MISSES_TO_FORECLOSE,
                 ),
@@ -4229,7 +4232,9 @@ def build_rp_mode_router(
                 session, discord_id=body.discord_id, character_id=character_id
             )
             try:
-                rp_modes_svc.check_can_switch_mode(character, body.new_mode, dt.datetime.now(dt.UTC))
+                rp_modes_svc.check_can_switch_mode(
+                    character, body.new_mode, dt.datetime.now(dt.UTC)
+                )
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
             if rp_modes_svc.mode_switch_needs_job_info(character, body.new_mode):
@@ -4483,9 +4488,7 @@ def build_staff_router(
             )
         ]
         channels.sort(key=lambda c: (c.kind != ChannelKind.OOC.value, c.district_id))
-        return StaffChannelAccessListResponse(
-            roleplay_role_id=roleplay_role_id, channels=channels
-        )
+        return StaffChannelAccessListResponse(roleplay_role_id=roleplay_role_id, channels=channels)
 
     @router.post("/channels/{channel_id}/access", response_model=StaffChannelAccessEntry)
     async def set_channel_access(
@@ -4500,9 +4503,7 @@ def build_staff_router(
                 await session.execute(
                     select(DiscordChannel).where(
                         DiscordChannel.channel_id == channel_id,
-                        DiscordChannel.kind.in_(
-                            [ChannelKind.FORUM.value, ChannelKind.OOC.value]
-                        ),
+                        DiscordChannel.kind.in_([ChannelKind.FORUM.value, ChannelKind.OOC.value]),
                     )
                 )
             ).scalar_one_or_none()
@@ -4603,9 +4604,7 @@ def build_staff_router(
                 raise _http_from_service_error(exc) from exc
         return {"deleted": True}
 
-    @router.post(
-        "/layers/categories/{category_id}/options", response_model=LayerOptionResponse
-    )
+    @router.post("/layers/categories/{category_id}/options", response_model=LayerOptionResponse)
     async def create_layer_option(
         category_id: int,
         discord_id: int = Form(...),
@@ -4820,7 +4819,10 @@ def build_staff_router(
                 )
             )
         return StaffGiveItemResponse(
-            character_name=body.character_name, good_id=good.id, good_name=good.name, new_qty=new_qty
+            character_name=body.character_name,
+            good_id=good.id,
+            good_name=good.name,
+            new_qty=new_qty,
         )
 
     @router.post("/give/position", response_model=StaffGivePositionResponse)
@@ -4945,7 +4947,9 @@ def build_staff_router(
         return {"logged": True}
 
     @router.post("/character/delete-pending", response_model=StaffDeletePendingResponse)
-    async def delete_pending_character(body: StaffDeletePendingRequest) -> StaffDeletePendingResponse:
+    async def delete_pending_character(
+        body: StaffDeletePendingRequest,
+    ) -> StaffDeletePendingResponse:
         await _require_staff(body.discord_id)
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
@@ -4991,9 +4995,7 @@ def build_staff_router(
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             row = (
-                await session.execute(
-                    select(User).where(User.discord_id == body.target_discord_id)
-                )
+                await session.execute(select(User).where(User.discord_id == body.target_discord_id))
             ).scalar_one_or_none()
             if row is None:
                 row = User(discord_id=body.target_discord_id)
@@ -5320,24 +5322,27 @@ def build_staff_router(
         district_id: str | None = Form(None),
         location_id: str | None = Form(None),
         channel_id: str | None = Form(None),
-        file: UploadFile = File(...),
+        file: UploadFile = File(...),  # noqa: B008 -- FastAPI's own sentinel-default idiom
     ) -> AmbientTrackResponse:
         await _require_staff(discord_id)
         factory = _require_session_factory(session_factory)
 
         parsed_district_id: int | None = None
         if district_id is not None and str(district_id).strip():
-            try:
+            with contextlib.suppress(ValueError):
                 parsed_district_id = int(str(district_id).strip())
-            except ValueError:
-                pass
 
         clean_location_id = location_id.strip() if location_id and location_id.strip() else None
         clean_channel_id = channel_id.strip() if channel_id and channel_id.strip() else None
 
         file_bytes = await file.read()
-        uploads_root = static_dir or STATIC_DIR
-        rel_path = ambient_svc.save_ambient_audio_bytes(file_bytes, file.filename or "track.mp3", uploads_root)
+        # `static_dir` (this router's own parameter) is already resolved to
+        # `STATIC_DIR` by `create_app` when the caller passes none -- no
+        # second fallback needed, and `STATIC_DIR` isn't defined in this
+        # module anyway (it's `app.py`'s own constant).
+        rel_path = ambient_svc.save_ambient_audio_bytes(
+            file_bytes, file.filename or "track.mp3", static_dir
+        )
         async with session_scope(factory) as session:
             try:
                 track = await ambient_svc.create_ambient_track(
@@ -5363,7 +5368,9 @@ def build_staff_router(
             )
 
     @router.post("/ambient/{track_id}/delete")
-    async def delete_staff_ambient_track(track_id: int, body: DeleteAmbientTrackRequest) -> dict[str, bool]:
+    async def delete_staff_ambient_track(
+        track_id: int, body: DeleteAmbientTrackRequest
+    ) -> dict[str, bool]:
         await _require_staff(body.discord_id)
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
@@ -5732,7 +5739,9 @@ def build_district_lore_router(
             )
 
     @router.post("/panem-history", response_model=PanemHistoryEntryResponse)
-    async def create_panem_history(body: CreatePanemHistoryEntryRequest) -> PanemHistoryEntryResponse:
+    async def create_panem_history(
+        body: CreatePanemHistoryEntryRequest,
+    ) -> PanemHistoryEntryResponse:
         await _require_staff(body.discord_id)
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
@@ -5790,9 +5799,7 @@ def build_district_lore_router(
     return router
 
 
-def build_ambient_router(
-    *, session_factory: async_sessionmaker[AsyncSession] | None
-) -> APIRouter:
+def build_ambient_router(*, session_factory: async_sessionmaker[AsyncSession] | None) -> APIRouter:
     router = APIRouter(prefix="/activity/dashboard/ambient", tags=["dashboard"])
 
     @router.get("/tracks", response_model=list[AmbientTrackResponse])
@@ -5953,13 +5960,17 @@ def build_hobbies_router(
 
     async def _inventory_by_good(session: AsyncSession, character_id: int) -> dict[str, int]:
         rows = (
-            await session.execute(
-                select(Inventory).where(
-                    Inventory.owner_kind == OwnerKind.CHARACTER.value,
-                    Inventory.owner_id == str(character_id),
+            (
+                await session.execute(
+                    select(Inventory).where(
+                        Inventory.owner_kind == OwnerKind.CHARACTER.value,
+                        Inventory.owner_id == str(character_id),
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         return {row.good_id: row.qty for row in rows}
 
     @router.get("/{character_id}/status", response_model=HobbiesStatusResponse)
@@ -6391,24 +6402,34 @@ def build_weather_router(*, session_factory: async_sessionmaker[AsyncSession] | 
             # these rows already sitting ready; a day missing a row just
             # doesn't get an entry (the same cold-start/just-deployed gap
             # that constant's docstring already documents).
-            day_indices = list(range(today_index, today_index + constants.WEATHER_FORECAST_LEAD_DAYS))
+            day_indices = list(
+                range(today_index, today_index + constants.WEATHER_FORECAST_LEAD_DAYS)
+            )
             window_rows = (
-                await session.execute(
-                    select(WeatherForecast).where(
-                        WeatherForecast.district_id == district_id,
-                        WeatherForecast.day_index.in_(day_indices),
+                (
+                    await session.execute(
+                        select(WeatherForecast).where(
+                            WeatherForecast.district_id == district_id,
+                            WeatherForecast.day_index.in_(day_indices),
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             window_events = (
-                await session.execute(
-                    select(WeatherEvent).where(
-                        WeatherEvent.district_id == district_id,
-                        WeatherEvent.status == WeatherEventStatus.FORECAST.value,
-                        WeatherEvent.day_index.in_(day_indices),
+                (
+                    await session.execute(
+                        select(WeatherEvent).where(
+                            WeatherEvent.district_id == district_id,
+                            WeatherEvent.status == WeatherEventStatus.FORECAST.value,
+                            WeatherEvent.day_index.in_(day_indices),
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             events_by_day = {event.day_index: event for event in window_events}
             forecast_days = [
                 _forecast_summary(row, row.day_index, events_by_day.get(row.day_index))
@@ -6460,7 +6481,9 @@ def build_weather_router(*, session_factory: async_sessionmaker[AsyncSession] | 
         return WeatherPrepareResponse(kind=body.kind, level=level)
 
     @router.post("/{character_id}/repair", response_model=WeatherRepairResponse)
-    async def weather_repair(character_id: int, body: WeatherRepairRequest) -> WeatherRepairResponse:
+    async def weather_repair(
+        character_id: int, body: WeatherRepairRequest
+    ) -> WeatherRepairResponse:
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             character = await _resolve_owned_character(
@@ -6831,9 +6854,7 @@ class ReactionsRespondResponse(BaseModel):
     archetype_label: str
 
 
-def _reaction_pending_summary(
-    log: ReactionEventLog, *, now: dt.datetime
-) -> ReactionPendingSummary:
+def _reaction_pending_summary(log: ReactionEventLog, *, now: dt.datetime) -> ReactionPendingSummary:
     scenario = reactions_svc.SCENARIOS[log.scenario_id]
     expires_at = log.created_at + dt.timedelta(seconds=constants.REACTION_EVENT_CHOICE_SECONDS)
     return ReactionPendingSummary(

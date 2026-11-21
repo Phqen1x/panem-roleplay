@@ -12,12 +12,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from panem_bot import activity_launch, autocomplete, utils
 from panem_bot.errors import ServiceError
-from panem_bot.services import characters as characters_svc
 from panem_bot.services import stealing as stealing_svc
 from panem_bot.strings import t
 from panem_shared import constants
 from panem_shared import crime_log as crime_log_svc
-from panem_shared.db.models import Character, CrimeLog, DistrictState, Npc, Property, User, WorldClock
+from panem_shared.db.models import (
+    Character,
+    CrimeLog,
+    DistrictState,
+    Npc,
+    Property,
+    User,
+    WorldClock,
+)
 from panem_shared.enums import CharacterStatus, OwnerKind, PropertyKind, RpMode
 from panem_shared.stealing import StealResult, StealVictim
 
@@ -167,7 +174,9 @@ class StealingCog(commands.Cog):
     @app_commands.autocomplete(character=autocomplete.own_approved)
     async def steal(self, interaction: discord.Interaction, character: str, target: str) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -324,7 +333,9 @@ class StealingCog(commands.Cog):
     @app_commands.autocomplete(character=autocomplete.own_approved)
     async def burgle(self, interaction: discord.Interaction, character: str, owner: str) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -411,7 +422,9 @@ class StealingCog(commands.Cog):
     @app_commands.autocomplete(character=autocomplete.own_approved)
     async def crimelog(self, interaction: discord.Interaction, character: str) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return

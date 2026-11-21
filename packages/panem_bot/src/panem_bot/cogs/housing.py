@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from panem_bot import autocomplete, utils
 from panem_bot.errors import ServiceError
-from panem_bot.services import characters as characters_svc
 from panem_bot.services import housing as housing_svc
 from panem_bot.strings import t
 from panem_shared import constants, simtime

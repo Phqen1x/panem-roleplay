@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import random
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from panem_shared import constants
@@ -191,9 +191,7 @@ async def delete_rumor(session: AsyncSession, rumor_id: int) -> None:
     its `RumorInvestigation` log rows first -- that FK has no `ondelete=
     CASCADE` in the migration that created it, so leaving them would
     violate the constraint."""
-    await session.execute(
-        RumorInvestigation.__table__.delete().where(RumorInvestigation.rumor_id == rumor_id)
-    )
+    await session.execute(delete(RumorInvestigation).where(RumorInvestigation.rumor_id == rumor_id))
     rumor = await session.get(Rumor, rumor_id)
     if rumor is not None:
         await session.delete(rumor)
@@ -208,9 +206,7 @@ async def expire_stale_rumors(session: AsyncSession, current_tick: int) -> list[
     live or gone, so this really deletes the row (and its investigation
     log rows, same as `delete_rumor`). Returns the deleted ids."""
     result = await session.execute(
-        select(Rumor.id).where(
-            Rumor.expires_tick.is_not(None), Rumor.expires_tick <= current_tick
-        )
+        select(Rumor.id).where(Rumor.expires_tick.is_not(None), Rumor.expires_tick <= current_tick)
     )
     expired_ids = [row[0] for row in result.all()]
     for rumor_id in expired_ids:

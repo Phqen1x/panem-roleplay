@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import uuid
 import logging
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -36,6 +36,7 @@ class _AutocompleteNotFoundFilter(logging.Filter):
                 if code in (10062, 40060):
                     return False
         return True
+
 
 INTENTS = discord.Intents.default()
 INTENTS.message_content = True
@@ -143,7 +144,9 @@ class PanemBot(commands.Bot):
             return
 
         original = error.original if isinstance(error, app_commands.CommandInvokeError) else error
-        if isinstance(original, (discord.NotFound, discord.HTTPException)) and getattr(original, "code", None) in (10062, 40060):
+        if isinstance(original, (discord.NotFound, discord.HTTPException)) and getattr(
+            original, "code", None
+        ) in (10062, 40060):
             # Expired/superseded interaction token -- occurs naturally when
             # users type quickly in Discord or duplicate responses race.
             return

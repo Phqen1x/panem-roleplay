@@ -28,9 +28,7 @@ from panem_shared.enums import BulletinSourceKind
 async def _require_bulletin_access(
     session, bot: commands.Bot, interaction: discord.Interaction
 ) -> None:  # type: ignore[no-untyped-def]
-    is_staff = isinstance(interaction.user, discord.Member) and await bot.is_staff(
-        interaction.user
-    )
+    is_staff = isinstance(interaction.user, discord.Member) and await bot.is_staff(interaction.user)
     await feature_flags_svc.require_allowed(
         session,
         feature_flags_svc.tab_key("bulletin"),
@@ -39,6 +37,7 @@ async def _require_bulletin_access(
         reason_staff_only="feature_tab_staff_only",
         tab="Bulletin",
     )
+
 
 _SOURCE_TAGS: dict[str, str] = {
     BulletinSourceKind.ANNOUNCEMENT.value: "Announcement",

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import discord
 import pytest
@@ -144,8 +144,9 @@ async def test_any_good_and_districts_autocomplete():
 
 @pytest.mark.asyncio
 async def test_bot_suppresses_unknown_and_acknowledged_interaction_errors():
-    from panem_bot.bot import _AutocompleteNotFoundFilter
     import logging
+
+    from panem_bot.bot import _AutocompleteNotFoundFilter
 
     settings = Settings()
     bot = PanemBot(settings=settings, data_dir=Path("data"))
@@ -178,22 +179,44 @@ async def test_bot_suppresses_unknown_and_acknowledged_interaction_errors():
 
     # Test logging filter
     log_filter = _AutocompleteNotFoundFilter()
-    rec_10062 = logging.LogRecord("discord.app_commands.tree", logging.ERROR, "", 0, "msg", (), (type(not_found), not_found, None))
-    rec_40060 = logging.LogRecord("discord.app_commands.tree", logging.ERROR, "", 0, "msg", (), (type(already_ack), already_ack, None))
-    rec_other = logging.LogRecord("discord.app_commands.tree", logging.ERROR, "", 0, "msg", (), (RuntimeError, RuntimeError("boom"), None))
+    rec_10062 = logging.LogRecord(
+        "discord.app_commands.tree",
+        logging.ERROR,
+        "",
+        0,
+        "msg",
+        (),
+        (type(not_found), not_found, None),
+    )
+    rec_40060 = logging.LogRecord(
+        "discord.app_commands.tree",
+        logging.ERROR,
+        "",
+        0,
+        "msg",
+        (),
+        (type(already_ack), already_ack, None),
+    )
+    rec_other = logging.LogRecord(
+        "discord.app_commands.tree",
+        logging.ERROR,
+        "",
+        0,
+        "msg",
+        (),
+        (RuntimeError, RuntimeError("boom"), None),
+    )
 
     assert not log_filter.filter(rec_10062)
     assert not log_filter.filter(rec_40060)
     assert log_filter.filter(rec_other)
 
 
-
-
 @pytest.mark.asyncio
 async def test_cog_autocompletes(db_session, db_session_factory):
-    from panem_bot.cogs.travel import TravelCog
-    from panem_bot.cogs.stealing import StealingCog
     from panem_bot.cogs.engagements import EngagementCog
+    from panem_bot.cogs.stealing import StealingCog
+    from panem_bot.cogs.travel import TravelCog
 
     user = User(discord_id=999002)
     db_session.add(user)
@@ -239,4 +262,3 @@ async def test_cog_autocompletes(db_session, db_session_factory):
     assert len(eng_locs) > 0
     eng_parts = await engagement_cog.start_participant_autocomplete(interaction, "")
     assert isinstance(eng_parts, list)
-

@@ -58,9 +58,7 @@ async def select_hobby(
     if any(row.hobby_id == hobby_id for row in owned):
         raise ValidationFailed("hobby_already_selected", name=character.name, hobby=hobby.name)
     if len(owned) >= constants.MAX_HOBBIES_PER_CHARACTER:
-        raise LimitReached(
-            "hobby_limit_reached", limit=constants.MAX_HOBBIES_PER_CHARACTER
-        )
+        raise LimitReached("hobby_limit_reached", limit=constants.MAX_HOBBIES_PER_CHARACTER)
     row = CharacterHobby(character_id=character.id, hobby_id=hobby_id)
     session.add(row)
     if hobby.tool_good_id is not None:
@@ -93,9 +91,7 @@ async def forget_hobby(session: AsyncSession, character: Character, hobby_id: st
     await session.delete(row)
 
 
-def check_can_play(
-    character_hobby: CharacterHobby, current_tick: int
-) -> None:
+def check_can_play(character_hobby: CharacterHobby, current_tick: int) -> None:
     """Raises `NotAllowed` on cooldown."""
     if (
         character_hobby.last_played_tick is not None
@@ -124,7 +120,9 @@ def roll_drop(
     happen with shipped content -- every hobby's cheapest drop requires
     Apprentice, the floor every character starts at)."""
     eligible = [
-        drop for drop in hobby.drops if hobby_levels.meets_min_level(sessions_played, drop.min_level)
+        drop
+        for drop in hobby.drops
+        if hobby_levels.meets_min_level(sessions_played, drop.min_level)
     ]
     if not eligible:
         return None
@@ -177,9 +175,7 @@ async def resolve_session(
     if hobby.rare_find_chain is not None and rng.random() < constants.HOBBY_RARE_CHAIN_CHANCE:
         from panem_shared import personal_events
 
-        if not await personal_events.has_active_chain(
-            session, character.id, hobby.rare_find_chain
-        ):
+        if not await personal_events.has_active_chain(session, character.id, hobby.rare_find_chain):
             await personal_events.start_chain(
                 session,
                 character=character,

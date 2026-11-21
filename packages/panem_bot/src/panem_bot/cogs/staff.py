@@ -59,7 +59,9 @@ from panem_shared.enums import (
 MESSAGE_LINK_RE = re.compile(r"/channels/(\d+)/(\d+)/(\d+)$")
 
 _FEATURE_STATE_CHOICES = [
-    app_commands.Choice(name="Enabled -- everyone", value=feature_flags_svc.FlagState.ENABLED.value),
+    app_commands.Choice(
+        name="Enabled -- everyone", value=feature_flags_svc.FlagState.ENABLED.value
+    ),
     app_commands.Choice(
         name="Staff only -- blocked/hidden for everyone else",
         value=feature_flags_svc.FlagState.STAFF_ONLY.value,
@@ -883,9 +885,7 @@ class StaffCog(commands.Cog):
     async def dialogue_disable(self, interaction: discord.Interaction) -> None:
         await self._set_dialogue_enabled(interaction, enabled=False)
 
-    @dialogue_group.command(
-        name="enable", description="Undo /staff dialogue disable"
-    )
+    @dialogue_group.command(name="enable", description="Undo /staff dialogue disable")
     @app_commands.check(_is_staff)
     async def dialogue_enable(self, interaction: discord.Interaction) -> None:
         await self._set_dialogue_enabled(interaction, enabled=True)
@@ -918,7 +918,9 @@ class StaffCog(commands.Cog):
         if isinstance(target, discord.ForumChannel):
             overwrite.send_messages_in_threads = True
         await target.set_permissions(
-            role, overwrite=overwrite, reason=f"Unlocked by {interaction.user} ({interaction.user.id})"
+            role,
+            overwrite=overwrite,
+            reason=f"Unlocked by {interaction.user} ({interaction.user.id})",
         )
         async with self.bot.db() as session:  # type: ignore[attr-defined]
             await log_staff_action(
@@ -933,9 +935,7 @@ class StaffCog(commands.Cog):
             f"{role.mention} can now see and post in {target.mention}.", ephemeral=True
         )
 
-    @channel_group.command(
-        name="lock", description="Hide a channel or forum from a role again"
-    )
+    @channel_group.command(name="lock", description="Hide a channel or forum from a role again")
     @app_commands.describe(
         channel="The channel, forum, or category to lock",
         role="The role to revoke view/post access from",
@@ -958,7 +958,9 @@ class StaffCog(commands.Cog):
         overwrite.send_messages = None
         overwrite.send_messages_in_threads = None
         await target.set_permissions(
-            role, overwrite=overwrite, reason=f"Locked by {interaction.user} ({interaction.user.id})"
+            role,
+            overwrite=overwrite,
+            reason=f"Locked by {interaction.user} ({interaction.user.id})",
         )
         async with self.bot.db() as session:  # type: ignore[attr-defined]
             await log_staff_action(
@@ -1465,15 +1467,15 @@ class StaffCog(commands.Cog):
             )
             return
         lines = []
-        for t in tracks:
+        for track in tracks:
             target_str = ""
-            if t.scope == "location":
-                target_str = f" [Location: {t.location_id}]"
-            elif t.scope == "district":
-                target_str = f" [District: {t.district_id}]"
-            elif t.scope == "channel":
-                target_str = f" [Channel: {t.channel_id}]"
-            lines.append(f"**#{t.id}** -- **{t.title}** (`{t.scope}`{target_str})")
+            if track.scope == "location":
+                target_str = f" [Location: {track.location_id}]"
+            elif track.scope == "district":
+                target_str = f" [District: {track.district_id}]"
+            elif track.scope == "channel":
+                target_str = f" [Channel: {track.channel_id}]"
+            lines.append(f"**#{track.id}** -- **{track.title}** (`{track.scope}`{target_str})")
 
         embed = discord.Embed(
             title="Activity Ambient Music Tracks", description="\n".join(lines[:20])
@@ -1698,9 +1700,7 @@ class StaffCog(commands.Cog):
             if current_lower in k.lower() or current_lower in desc.lower()
         ]
         return [
-            app_commands.Choice(
-                name=f"{k} -- {feature_flags_svc.KNOWN_FLAGS[k]}"[:100], value=k
-            )
+            app_commands.Choice(name=f"{k} -- {feature_flags_svc.KNOWN_FLAGS[k]}"[:100], value=k)
             for k in matches[:25]
         ]
 

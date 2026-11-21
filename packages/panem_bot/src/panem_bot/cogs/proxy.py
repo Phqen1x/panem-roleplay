@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from panem_bot import redis_keys
 from panem_bot.errors import NotAllowed
 from panem_bot.outbound import OutboundMessage, SendPriority
-from panem_bot.services import characters as characters_svc
 from panem_bot.services import dialogue as dialogue_svc
 from panem_bot.services import engagements as engagements_svc
 from panem_bot.services import housing as housing_svc

@@ -69,15 +69,11 @@ def upgrade() -> None:
     # so there is nothing for old rows' data to map onto. Every character
     # just starts uncustomized again under the new system, same as the
     # column's existing "never customized" null convention.
-    op.alter_column(
-        "characters", "appearance_traits", new_column_name="appearance_layers"
-    )
+    op.alter_column("characters", "appearance_traits", new_column_name="appearance_layers")
 
 
 def downgrade() -> None:
-    op.alter_column(
-        "characters", "appearance_layers", new_column_name="appearance_traits"
-    )
+    op.alter_column("characters", "appearance_layers", new_column_name="appearance_traits")
     op.drop_index("ix_layer_options_category_id", table_name="layer_options")
     op.drop_table("layer_options")
     op.drop_table("layer_categories")

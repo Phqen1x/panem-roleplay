@@ -121,7 +121,7 @@ async def apply_preset(
         if preset == "by_hobby":
             return (collectible.hobby_id or "" if collectible else "", slot.id)
         if preset == "alphabetical":
-            return (collectible.name if collectible else "", )
+            return (collectible.name if collectible else "",)
         if preset == "by_date":
             return (slot.donated_tick,)
         return (slot.id,)

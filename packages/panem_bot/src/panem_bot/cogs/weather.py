@@ -153,9 +153,7 @@ class WeatherCog(commands.Cog):
             # ENABLED case, so this costs nothing once the tab's out of
             # beta. Computed once per poll call (not per tick/event
             # below), since the flag can't change mid-call.
-            all_character_ids = (
-                await session.execute(select(Character.id))
-            ).scalars().all()
+            all_character_ids = (await session.execute(select(Character.id))).scalars().all()
             weather_excluded = await feature_gate.disallowed_character_ids(
                 self.bot, session, "weather", all_character_ids
             )

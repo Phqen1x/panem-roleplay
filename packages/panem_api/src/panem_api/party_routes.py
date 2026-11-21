@@ -123,7 +123,7 @@ TRIVIA_QUESTIONS: list[dict[str, object]] = [
         "correct": 0,
     },
     {
-        "prompt": "Which district's motto is \"From the Deep, We Rise\"?",
+        "prompt": 'Which district\'s motto is "From the Deep, We Rise"?',
         "options": ["District Nine", "District Two", "District Four", "District Twelve"],
         "correct": 2,
     },
@@ -149,9 +149,9 @@ CAPITOL_ACTIONS: list[dict[str, str]] = [
 PARCEL_OUTCOMES: list[dict[str, str]] = [
     {"kind": "prize", "text": "A tin of Capitol chocolates!"},
     {"kind": "prize", "text": "A handful of shiny sponsor tokens!"},
-    {"kind": "prize", "text": "A badge that reads \"Games Champion\"!"},
+    {"kind": "prize", "text": 'A badge that reads "Games Champion"!'},
     {"kind": "prank", "text": "A sneeze-powder puff -- everyone nearby achoos!"},
-    {"kind": "prank", "text": "It's empty, except for a note: \"Better luck next round!\""},
+    {"kind": "prank", "text": 'It\'s empty, except for a note: "Better luck next round!"'},
     {"kind": "challenge", "text": "Do your best Capitol accent until the next round starts!"},
     {"kind": "challenge", "text": "Sing your district's anthem, badly, right now!"},
     {"kind": "challenge", "text": "Walk backwards until the next round starts!"},
@@ -281,7 +281,9 @@ class PartyRoom:
             self.parcel.music_playing = False
             self.parcel.x = STATIONS["parcel"]["x"]
             self.parcel.y = STATIONS["parcel"]["y"]
-            self.parcel.last_event = f"{player.name if player else 'Someone'} dropped the parcel and left!"
+            self.parcel.last_event = (
+                f"{player.name if player else 'Someone'} dropped the parcel and left!"
+            )
         self.players.pop(discord_id, None)
 
     # --------------------------------------------------------- movement
@@ -298,8 +300,12 @@ class PartyRoom:
             player.moving = False
             return
         nx, ny = dx / length, dy / length
-        player.x = min(max(player.x + nx * PLAYER_SPEED * elapsed, PLAYER_RADIUS), ROOM_WIDTH - PLAYER_RADIUS)
-        player.y = min(max(player.y + ny * PLAYER_SPEED * elapsed, PLAYER_RADIUS), ROOM_HEIGHT - PLAYER_RADIUS)
+        player.x = min(
+            max(player.x + nx * PLAYER_SPEED * elapsed, PLAYER_RADIUS), ROOM_WIDTH - PLAYER_RADIUS
+        )
+        player.y = min(
+            max(player.y + ny * PLAYER_SPEED * elapsed, PLAYER_RADIUS), ROOM_HEIGHT - PLAYER_RADIUS
+        )
         player.moving = True
         player.facing = (
             ("right" if nx > 0 else "left") if abs(nx) > abs(ny) else ("down" if ny > 0 else "up")
@@ -374,7 +380,10 @@ class PartyRoom:
             c.answered = set()
             return
         if now >= c.deadline:
-            c.reveal = {"correct_action": CAPITOL_ACTIONS[c.action_index]["key"], "winner_name": None}
+            c.reveal = {
+                "correct_action": CAPITOL_ACTIONS[c.action_index]["key"],
+                "winner_name": None,
+            }
             c.reveal_until = now + CAPITOL_REVEAL_SECONDS
 
     def handle_capitol_action(self, discord_id: str, action_key: str) -> None:
@@ -558,7 +567,11 @@ def build_party_router() -> APIRouter:
         discord_id: str | None = None
         try:
             first = await websocket.receive_json()
-            if not isinstance(first, dict) or first.get("type") != "join" or not first.get("discord_id"):
+            if (
+                not isinstance(first, dict)
+                or first.get("type") != "join"
+                or not first.get("discord_id")
+            ):
                 await websocket.close(code=4000, reason="Expected a join message")
                 return
             discord_id = str(first["discord_id"])
@@ -577,7 +590,9 @@ def build_party_router() -> APIRouter:
                 kind = message.get("type")
                 if kind == "move":
                     room.handle_move(
-                        discord_id, float(message.get("dx", 0) or 0), float(message.get("dy", 0) or 0)
+                        discord_id,
+                        float(message.get("dx", 0) or 0),
+                        float(message.get("dy", 0) or 0),
                     )
                 elif kind == "trivia_answer":
                     room.handle_trivia_answer(discord_id, int(message.get("index", -1)))

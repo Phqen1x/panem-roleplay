@@ -25,9 +25,7 @@ from panem_shared.db.models import WorldClock
 async def _require_rumors_access(
     session, bot: commands.Bot, interaction: discord.Interaction
 ) -> None:  # type: ignore[no-untyped-def]
-    is_staff = isinstance(interaction.user, discord.Member) and await bot.is_staff(
-        interaction.user
-    )
+    is_staff = isinstance(interaction.user, discord.Member) and await bot.is_staff(interaction.user)
     await feature_flags_svc.require_allowed(
         session,
         feature_flags_svc.tab_key("rumors"),

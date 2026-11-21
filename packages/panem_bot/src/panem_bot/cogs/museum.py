@@ -37,7 +37,9 @@ async def _undonated_choices(
         return []
     bot = interaction.client
     async with bot.db() as session:  # type: ignore[attr-defined]
-        char = await utils.get_character_case_insensitive(session, interaction.user.id, character_name)
+        char = await utils.get_character_case_insensitive(
+            session, interaction.user.id, character_name
+        )
         if char is None:
             return []
         content = bot.content  # type: ignore[attr-defined]
@@ -50,9 +52,7 @@ async def _undonated_choices(
         if current_lower in name.lower():
             choices.append((name, instance.id))
     choices.sort(key=lambda pair: pair[0])
-    return [
-        app_commands.Choice(name=f"{name} (#{iid})", value=iid) for name, iid in choices[:25]
-    ]
+    return [app_commands.Choice(name=f"{name} (#{iid})", value=iid) for name, iid in choices[:25]]
 
 
 async def _own_slot_choices(
@@ -63,7 +63,9 @@ async def _own_slot_choices(
         return []
     bot = interaction.client
     async with bot.db() as session:  # type: ignore[attr-defined]
-        char = await utils.get_character_case_insensitive(session, interaction.user.id, character_name)
+        char = await utils.get_character_case_insensitive(
+            session, interaction.user.id, character_name
+        )
         if char is None:
             return []
         content = bot.content  # type: ignore[attr-defined]
@@ -105,7 +107,9 @@ class MuseumCog(commands.Cog):
         self, interaction: discord.Interaction, character: str, collectible: int
     ) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -164,7 +168,9 @@ class MuseumCog(commands.Cog):
 
     @group.command(name="organize", description="Move one donated piece to a different wing/spot")
     @app_commands.describe(
-        character="Character name", slot="Which piece to move", wing="New wing name",
+        character="Character name",
+        slot="Which piece to move",
+        wing="New wing name",
         position="Order within the wing (lower = earlier)",
     )
     @app_commands.autocomplete(character=autocomplete.own_approved)
@@ -178,12 +184,16 @@ class MuseumCog(commands.Cog):
         position: int = 0,
     ) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
             try:
-                await museum_svc.move(session, character=char, slot_id=slot, wing=wing, position=position)
+                await museum_svc.move(
+                    session, character=char, slot_id=slot, wing=wing, position=position
+                )
             except ServiceError as exc:
                 await interaction.response.send_message(
                     t(exc.reason_key, **exc.fmt), ephemeral=True
@@ -195,11 +205,16 @@ class MuseumCog(commands.Cog):
     @app_commands.describe(character="Character name", preset="How to sort it")
     @app_commands.autocomplete(character=autocomplete.own_approved)
     @app_commands.choices(
-        preset=[app_commands.Choice(name=p.replace("_", " ").title(), value=p) for p in constants.MUSEUM_PRESETS]
+        preset=[
+            app_commands.Choice(name=p.replace("_", " ").title(), value=p)
+            for p in constants.MUSEUM_PRESETS
+        ]
     )
     async def preset(self, interaction: discord.Interaction, character: str, preset: str) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return

@@ -25,9 +25,7 @@ def upgrade() -> None:
     op.create_table(
         "personal_event_chains",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column(
-            "character_id", sa.Integer(), sa.ForeignKey("characters.id"), nullable=False
-        ),
+        sa.Column("character_id", sa.Integer(), sa.ForeignKey("characters.id"), nullable=False),
         sa.Column("chain_kind", sa.String(length=32), nullable=False),
         sa.Column("status", sa.String(length=16), nullable=False, server_default="active"),
         sa.Column("step", sa.Integer(), nullable=False, server_default="0"),
@@ -75,12 +73,8 @@ def upgrade() -> None:
 
     op.create_table(
         "global_event_entries",
-        sa.Column(
-            "event_id", sa.Integer(), sa.ForeignKey("global_events.id"), primary_key=True
-        ),
-        sa.Column(
-            "character_id", sa.Integer(), sa.ForeignKey("characters.id"), primary_key=True
-        ),
+        sa.Column("event_id", sa.Integer(), sa.ForeignKey("global_events.id"), primary_key=True),
+        sa.Column("character_id", sa.Integer(), sa.ForeignKey("characters.id"), primary_key=True),
         sa.Column("score", sa.Float(), nullable=False, server_default="0"),
         sa.Column("attempts", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("rewarded", sa.Boolean(), nullable=False, server_default=sa.false()),

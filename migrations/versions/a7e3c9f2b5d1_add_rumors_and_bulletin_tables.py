@@ -45,9 +45,7 @@ def upgrade() -> None:
         "rumor_investigations",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column("rumor_id", sa.Integer(), sa.ForeignKey("rumors.id"), nullable=False),
-        sa.Column(
-            "character_id", sa.Integer(), sa.ForeignKey("characters.id"), nullable=False
-        ),
+        sa.Column("character_id", sa.Integer(), sa.ForeignKey("characters.id"), nullable=False),
         sa.Column("finding", sa.String(length=300), nullable=False),
         sa.Column("reliability_delta", sa.Integer(), nullable=False),
         sa.Column("tick", sa.Integer(), nullable=False),
@@ -93,9 +91,7 @@ def upgrade() -> None:
     op.create_table(
         "bulletin_user_state",
         sa.Column("user_id", sa.Integer(), sa.ForeignKey("users.id"), primary_key=True),
-        sa.Column(
-            "entry_id", sa.Integer(), sa.ForeignKey("bulletin_entries.id"), primary_key=True
-        ),
+        sa.Column("entry_id", sa.Integer(), sa.ForeignKey("bulletin_entries.id"), primary_key=True),
         sa.Column("interested", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column("category", sa.String(length=32), nullable=True),
         sa.Column("sort_position", sa.Integer(), nullable=True),
@@ -106,9 +102,7 @@ def upgrade() -> None:
         "bulletin_reminders",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column("user_id", sa.Integer(), sa.ForeignKey("users.id"), nullable=False),
-        sa.Column(
-            "entry_id", sa.Integer(), sa.ForeignKey("bulletin_entries.id"), nullable=False
-        ),
+        sa.Column("entry_id", sa.Integer(), sa.ForeignKey("bulletin_entries.id"), nullable=False),
         sa.Column("remind_at_tick", sa.Integer(), nullable=False),
         sa.UniqueConstraint("user_id", "entry_id", name="uq_bulletin_reminder_once_per_user"),
     )

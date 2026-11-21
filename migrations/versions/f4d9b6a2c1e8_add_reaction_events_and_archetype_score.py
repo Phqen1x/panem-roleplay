@@ -30,9 +30,7 @@ def upgrade() -> None:
     op.create_table(
         "reaction_event_log",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column(
-            "character_id", sa.Integer(), sa.ForeignKey("characters.id"), nullable=False
-        ),
+        sa.Column("character_id", sa.Integer(), sa.ForeignKey("characters.id"), nullable=False),
         sa.Column("scenario_id", sa.String(length=64), nullable=False),
         sa.Column("choice", sa.String(length=16), nullable=True),
         sa.Column("tick", sa.Integer(), nullable=False),

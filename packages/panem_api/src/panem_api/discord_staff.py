@@ -167,9 +167,7 @@ async def set_role_channel_locked(
                 headers={"Authorization": f"Bot {bot_token}"},
             )
         except httpx.HTTPError as exc:
-            logger.warning(
-                "channel_permission_edit_failed", channel_id=channel_id, error=str(exc)
-            )
+            logger.warning("channel_permission_edit_failed", channel_id=channel_id, error=str(exc))
             return False
     if response.status_code not in (200, 204):
         logger.warning(

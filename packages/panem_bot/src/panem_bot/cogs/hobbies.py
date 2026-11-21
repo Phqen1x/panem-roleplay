@@ -26,9 +26,7 @@ from panem_shared.enums import OwnerKind
 async def _require_hobbies_access(
     session, bot: commands.Bot, interaction: discord.Interaction
 ) -> None:  # type: ignore[no-untyped-def]
-    is_staff = isinstance(interaction.user, discord.Member) and await bot.is_staff(
-        interaction.user
-    )
+    is_staff = isinstance(interaction.user, discord.Member) and await bot.is_staff(interaction.user)
     await feature_flags_svc.require_allowed(
         session,
         feature_flags_svc.tab_key("hobbies"),
@@ -37,6 +35,7 @@ async def _require_hobbies_access(
         reason_staff_only="feature_tab_staff_only",
         tab="Hobbies",
     )
+
 
 _WINDOW_SECONDS = 2.5
 _MIN_DELAY_SECONDS = 2.0
@@ -274,9 +273,7 @@ class HobbiesCog(commands.Cog):
                 # be running, the same "this tab's effects don't reach
                 # you until you can see it" rule the Weather tab's damage
                 # exclusion applies.
-                is_staff = isinstance(
-                    interaction.user, discord.Member
-                ) and await self.bot.is_staff(  # type: ignore[attr-defined]
+                is_staff = isinstance(interaction.user, discord.Member) and await self.bot.is_staff(  # type: ignore[attr-defined]
                     interaction.user
                 )
                 events_state = await feature_flags_svc.get_state(

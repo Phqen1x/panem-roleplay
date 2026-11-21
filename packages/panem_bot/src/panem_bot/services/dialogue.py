@@ -294,7 +294,9 @@ def template_reply(
     openers = _STANCE_OPENERS.get(stance, _STANCE_OPENERS["stranger"])
     lines = list(_TONE_LINES.get(tone, _TONE_LINES["plain"]))
     if is_black_market_contact and stance in ("likes", "loves"):
-        lines.append('"Keep your voice down... if you\'ve got illegal goods or pilfered valuables to sell, find me at the outskirts at night."')
+        lines.append(
+            '"Keep your voice down... if you\'ve got illegal goods or pilfered valuables to sell, find me at the outskirts at night."'
+        )
     rng = random.Random(hash((npc.id, message)))
     opener = rng.choice(openers)
     line = rng.choice(lines)
@@ -337,7 +339,7 @@ async def generate_llm_reply(
     base_url = settings.llm_base_url or omni.DEFAULT_BASE_URL
     model = settings.llm_model or omni.PROFILES[settings.lemonade_profile].model_name
     if len(history) > constants.ENGAGEMENT_HISTORY_WINDOW:
-        history = history[-constants.ENGAGEMENT_HISTORY_WINDOW:]
+        history = history[-constants.ENGAGEMENT_HISTORY_WINDOW :]
     body: dict[str, object] = {
         "model": model,
         "messages": omni.build_messages(ctx, [*history, {"role": "user", "content": message}]),

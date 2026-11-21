@@ -8,16 +8,14 @@ import random
 import discord
 from discord import app_commands
 from discord.ext import commands
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from panem_bot import autocomplete, utils
 from panem_bot.errors import ServiceError
 from panem_bot.services import blackmarket as blackmarket_svc
-from panem_bot.services import characters as characters_svc
 from panem_bot.strings import t
 from panem_shared import constants
-from panem_shared.db.models import Character, WorldClock
+from panem_shared.db.models import WorldClock
 
 
 class BlackMarketCog(commands.Cog):
@@ -37,7 +35,9 @@ class BlackMarketCog(commands.Cog):
     @app_commands.autocomplete(character=autocomplete.own_approved)
     async def prices(self, interaction: discord.Interaction, character: str) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -46,7 +46,11 @@ class BlackMarketCog(commands.Cog):
             district = content.district(char.current_district_id)
 
             fence = next(
-                (npc for npc in content.npcs.values() if npc.district == district.id and npc.black_market_contact),
+                (
+                    npc
+                    for npc in content.npcs.values()
+                    if npc.district == district.id and npc.black_market_contact
+                ),
                 None,
             )
             is_trusted = False
@@ -59,9 +63,13 @@ class BlackMarketCog(commands.Cog):
 
             lines = []
             if is_trusted and fence:
-                lines.append(f"Black Market Contact: **{fence.name}** (Location: Outskirts, Time: Night)\n")
+                lines.append(
+                    f"Black Market Contact: **{fence.name}** (Location: Outskirts, Time: Night)\n"
+                )
             elif fence:
-                lines.append(f"Befriend **{fence.name}** (reach Likes/Loves standing) to trade illegal wares at the Outskirts at night.\n")
+                lines.append(
+                    f"Befriend **{fence.name}** (reach Likes/Loves standing) to trade illegal wares at the Outskirts at night.\n"
+                )
 
             lines.append("**Illicit Goods**")
             for good_id in district.illicit_produces:
@@ -109,7 +117,9 @@ class BlackMarketCog(commands.Cog):
             return
 
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -155,7 +165,9 @@ class BlackMarketCog(commands.Cog):
         if not character_name:
             return []
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character_name)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character_name
+            )
             if char is None:
                 return []
             content = self.bot.content  # type: ignore[attr-defined]

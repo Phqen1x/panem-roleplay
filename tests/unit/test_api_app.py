@@ -145,7 +145,9 @@ def make_stolen_goods() -> dict[str, Good]:
         | set(constants.SHIPMENT_LOOT_GOOD_IDS)
     )
     return {
-        good_id: Good(id=good_id, name=good_id.replace("_", " ").title(), base_price=10.0, category="stolen")
+        good_id: Good(
+            id=good_id, name=good_id.replace("_", " ").title(), base_price=10.0, category="stolen"
+        )
         for good_id in good_ids
     }
 
@@ -304,7 +306,9 @@ async def seed_layer_category(
         option_ids = []
         for option_name in option_names or []:
             option = LayerOption(
-                category_id=category.id, name=option_name, image_path=f"uploads/layers/{option_name}.png"
+                category_id=category.id,
+                name=option_name,
+                image_path=f"uploads/layers/{option_name}.png",
             )
             session.add(option)
             await session.flush()
@@ -1258,7 +1262,9 @@ class TestCrimeAttemptStatus:
         assert 0.0 <= body["difficulty"] <= 1.0
 
     async def test_shipment_status(self, work_app, db_session_factory):
-        char_id = await seed_character(db_session_factory, character_overrides={"location_id": "station"})
+        char_id = await seed_character(
+            db_session_factory, character_overrides={"location_id": "station"}
+        )
         shipment_id = await seed_shipment(db_session_factory)
         redis_client = work_app.state.fake_redis
         redis_client.store[crime_attempt_key("a1")] = json.dumps(
@@ -1283,7 +1289,9 @@ class TestCrimeAttemptStatus:
     async def test_shipment_status_404s_once_the_shipment_is_gone(
         self, work_app, db_session_factory
     ):
-        char_id = await seed_character(db_session_factory, character_overrides={"location_id": "station"})
+        char_id = await seed_character(
+            db_session_factory, character_overrides={"location_id": "station"}
+        )
         redis_client = work_app.state.fake_redis
         redis_client.store[crime_attempt_key("a1")] = json.dumps(
             {
@@ -2577,7 +2585,9 @@ class TestDashboardCharacters:
     async def test_create_stores_a_valid_appearance_layers_submission(
         self, work_app, db_session_factory
     ):
-        category_id, option_ids = await seed_layer_category(db_session_factory, option_names=["Braid"])
+        category_id, option_ids = await seed_layer_category(
+            db_session_factory, option_names=["Braid"]
+        )
         option_id = option_ids[0]
         transport = httpx.ASGITransport(app=work_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -2668,7 +2678,9 @@ class TestDashboardCharacters:
 
     async def test_update_sets_appearance_layers(self, work_app, db_session_factory):
         char_id = await seed_character(db_session_factory, discord_id=5)
-        category_id, option_ids = await seed_layer_category(db_session_factory, option_names=["Braid"])
+        category_id, option_ids = await seed_layer_category(
+            db_session_factory, option_names=["Braid"]
+        )
         option_id = option_ids[0]
         transport = httpx.ASGITransport(app=work_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -2683,7 +2695,9 @@ class TestDashboardCharacters:
         self, work_app, db_session_factory
     ):
         char_id = await seed_character(db_session_factory, discord_id=5)
-        category_id, option_ids = await seed_layer_category(db_session_factory, option_names=["Braid"])
+        category_id, option_ids = await seed_layer_category(
+            db_session_factory, option_names=["Braid"]
+        )
         option_id = option_ids[0]
         transport = httpx.ASGITransport(app=work_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -2704,7 +2718,9 @@ class TestDashboardCharacters:
     async def test_layer_catalog_lists_categories_in_z_index_order(
         self, work_app, db_session_factory
     ):
-        await seed_layer_category(db_session_factory, name="Hair", z_index=5, option_names=["Braid"])
+        await seed_layer_category(
+            db_session_factory, name="Hair", z_index=5, option_names=["Braid"]
+        )
         await seed_layer_category(db_session_factory, name="Base", z_index=0, option_names=["Tan"])
         transport = httpx.ASGITransport(app=work_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -4009,9 +4025,7 @@ class TestDashboardResidentsBlackMarketReveal:
         resident = response.json()["residents"][0]
         assert resident["is_black_market_contact"] is False
 
-    async def test_list_reveals_it_once_the_player_is_trusted(
-        self, market_app, db_session_factory
-    ):
+    async def test_list_reveals_it_once_the_player_is_trusted(self, market_app, db_session_factory):
         char_id = await seed_character(db_session_factory, discord_id=42)
         await seed_npc(db_session_factory, id="fence", name="Sal")
         async with db_session_factory() as session, session.begin():
@@ -4658,9 +4672,7 @@ class TestDashboardVitals:
             "solitaire",
         }
 
-    async def test_eat_consumes_inventory_and_relieves_hunger(
-        self, vitals_app, db_session_factory
-    ):
+    async def test_eat_consumes_inventory_and_relieves_hunger(self, vitals_app, db_session_factory):
         char_id = await seed_character(
             db_session_factory, discord_id=5, character_overrides={"hunger": 50.0}
         )
@@ -4737,7 +4749,9 @@ class TestDashboardVitals:
         body = response.json()
         assert body["health"] == 80.0
         async with db_session_factory() as session:
-            row = await session.get(Inventory, (OwnerKind.CHARACTER.value, str(char_id), "medicine"))
+            row = await session.get(
+                Inventory, (OwnerKind.CHARACTER.value, str(char_id), "medicine")
+            )
             assert row.qty == 1
 
     async def test_heal_refuses_without_inventory(self, vitals_app, db_session_factory):
@@ -4866,9 +4880,7 @@ class TestDashboardStaff:
             "reason": "brawling",
         }
 
-    async def test_jail_applied_ticks_includes_the_prior_bonus(
-        self, staff_app, db_session_factory
-    ):
+    async def test_jail_applied_ticks_includes_the_prior_bonus(self, staff_app, db_session_factory):
         # Regression test: a staff member entered ticks=25 and the response
         # said "jailed for 43 ticks", which read like a bug but is
         # `commit_to_jail`'s existing priors scaling (`jail_count *
@@ -5001,10 +5013,14 @@ class TestDashboardStaffExtras:
             character = await session.get(Character, char_id)
             assert character.money == 150
             actions = (
-                await session.execute(
-                    select(StaffAction).where(StaffAction.action == "give_money")
+                (
+                    await session.execute(
+                        select(StaffAction).where(StaffAction.action == "give_money")
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
         assert len(actions) == 1 and actions[0].payload == {"amount": 50}
 
     async def test_give_money_never_takes_a_character_below_zero(
@@ -5130,9 +5146,7 @@ class TestDashboardStaffExtras:
             assert character.shift_phase == DayPhase.MORNING.value
             assert character.job_is_illicit is False
 
-    async def test_give_mastery_sets_shifts_completed_directly(
-        self, staff_app, db_session_factory
-    ):
+    async def test_give_mastery_sets_shifts_completed_directly(self, staff_app, db_session_factory):
         char_id = await seed_character(db_session_factory, character_overrides={"name": "Wren"})
         with patch.object(
             httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
@@ -5159,7 +5173,11 @@ class TestDashboardStaffExtras:
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
                 response = await client.post(
                     "/activity/dashboard/staff/give/mastery",
-                    json={"discord_id": 42, "character_name": "Wren", "level": JobLevel.EXPERT.value},
+                    json={
+                        "discord_id": 42,
+                        "character_name": "Wren",
+                        "level": JobLevel.EXPERT.value,
+                    },
                 )
         assert response.status_code == 200
         assert response.json()["level"] == JobLevel.EXPERT.value
@@ -5189,7 +5207,11 @@ class TestDashboardStaffExtras:
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
                 response = await client.post(
                     "/activity/dashboard/staff/character/kill",
-                    json={"discord_id": 42, "character_name": "Wren", "reason": "Fell in the arena"},
+                    json={
+                        "discord_id": 42,
+                        "character_name": "Wren",
+                        "reason": "Fell in the arena",
+                    },
                 )
         assert response.status_code == 200
         async with db_session_factory() as session:
@@ -5213,8 +5235,10 @@ class TestDashboardStaffExtras:
         assert response.status_code == 200
         async with db_session_factory() as session:
             actions = (
-                await session.execute(select(StaffAction).where(StaffAction.action == "note"))
-            ).scalars().all()
+                (await session.execute(select(StaffAction).where(StaffAction.action == "note")))
+                .scalars()
+                .all()
+            )
         assert len(actions) == 1
         assert actions[0].target == str(char_id)
         assert actions[0].payload == {"text": "Watching this one."}
@@ -5275,9 +5299,7 @@ class TestDashboardStaffExtras:
         assert set_resp.status_code == 200 and set_resp.json()["limit"] == 7
         assert reset_resp.status_code == 200 and reset_resp.json()["limit"] is None
         async with db_session_factory() as session:
-            user = (
-                await session.execute(select(User).where(User.discord_id == 99))
-            ).scalar_one()
+            user = (await session.execute(select(User).where(User.discord_id == 99))).scalar_one()
             assert user.max_characters_override is None
 
     async def test_ban_sets_banned_at(self, staff_app, db_session_factory):
@@ -5487,9 +5509,7 @@ class TestDashboardStaffMarket:
         assert body["good_name"] == "Grain"
         assert body["new_supply"] == 10.0
 
-    async def test_add_stock_tops_up_existing_supply(
-        self, staff_market_app, db_session_factory
-    ):
+    async def test_add_stock_tops_up_existing_supply(self, staff_market_app, db_session_factory):
         async with db_session_factory() as session, session.begin():
             session.add(MarketPrice(district_id=1, good_id="grain", price=2.0, supply=5.0, tick=0))
         with patch.object(
@@ -5613,7 +5633,9 @@ class TestDashboardStaffLayers:
         # has something real to unlink.
         async with db_session_factory() as session, session.begin():
             option = (
-                await session.execute(select(LayerOption).where(LayerOption.category_id == category_id))
+                await session.execute(
+                    select(LayerOption).where(LayerOption.category_id == category_id)
+                )
             ).scalar_one()
             option.image_path = "uploads/layers/existing.png"
 
@@ -6087,9 +6109,7 @@ class TestDashboardPay:
         sender_id = await seed_character(
             db_session_factory, discord_id=5, character_overrides={"money": 0}
         )
-        await seed_character(
-            db_session_factory, discord_id=6, character_overrides={"name": "Mark"}
-        )
+        await seed_character(db_session_factory, discord_id=6, character_overrides={"name": "Mark"})
         transport = httpx.ASGITransport(app=work_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(
@@ -6178,9 +6198,7 @@ class TestDashboardTrade:
         initiator_id = await seed_character(
             db_session_factory, discord_id=5, character_overrides={"rp_mode": "story"}
         )
-        await seed_character(
-            db_session_factory, discord_id=6, character_overrides={"name": "Mark"}
-        )
+        await seed_character(db_session_factory, discord_id=6, character_overrides={"name": "Mark"})
         transport = httpx.ASGITransport(app=work_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(
@@ -6297,9 +6315,7 @@ class TestDashboardTrade:
         assert accept_response.status_code == 400
         assert accept_response.json()["detail"] == "trade_insufficient_inventory"
         async with db_session_factory() as session:
-            trade = (
-                await session.execute(select(Trade).where(Trade.id == trade_id))
-            ).scalar_one()
+            trade = (await session.execute(select(Trade).where(Trade.id == trade_id))).scalar_one()
             assert trade.status == "pending"
 
     async def test_staff_ambient_routes_mount_under_staff_prefix(
@@ -6314,7 +6330,13 @@ class TestDashboardTrade:
                 assert isinstance(r_list.json(), list)
 
                 # POST upload staff ambient
-                files = {"file": ("ambient.mp3", b"ID3\x03\x00\x00\x00\x00\x00#ambient data", "audio/mpeg")}
+                files = {
+                    "file": (
+                        "ambient.mp3",
+                        b"ID3\x03\x00\x00\x00\x00\x00#ambient data",
+                        "audio/mpeg",
+                    )
+                }
                 data = {
                     "discord_id": "123",
                     "title": "District 12 Anthem",
@@ -6340,4 +6362,3 @@ class TestDashboardTrade:
                 )
                 assert r_delete.status_code == 200
                 assert r_delete.json() == {"deleted": True}
-

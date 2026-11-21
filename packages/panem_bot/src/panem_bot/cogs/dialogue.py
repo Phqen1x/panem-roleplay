@@ -29,12 +29,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from panem_bot import autocomplete, utils
 from panem_bot.errors import NotAllowed, NotFound
-from panem_bot.services import characters as characters_svc
 from panem_bot.services import dialogue as dialogue_svc
 from panem_bot.services import proxy as proxy_svc
 from panem_bot.strings import t
 from panem_shared import feature_flags as feature_flags_svc
-from panem_shared.db.models import Character, DiscordChannel, Npc, Scene, WorldClock
+from panem_shared.db.models import DiscordChannel, Npc, Scene, WorldClock
 from panem_shared.enums import ChannelKind, SceneKind, SceneStatus
 
 from .scenes import OPEN_TAG, _find_tag
@@ -69,7 +68,9 @@ class DialogueCog(commands.Cog):
         assert interaction.guild is not None
         await interaction.response.defer(ephemeral=True, thinking=True)
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.followup.send(t("character_not_found"), ephemeral=True)
                 return
@@ -288,7 +289,9 @@ class DialogueCog(commands.Cog):
         if not character_name:
             return []
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character_name)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character_name
+            )
             if char is None:
                 return []
             names = (

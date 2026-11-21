@@ -119,7 +119,9 @@ async def _grant_good(session: AsyncSession, character: Character, good_id: str,
     row = await session.get(Inventory, (OwnerKind.CHARACTER.value, owner_id, good_id))
     if row is None:
         session.add(
-            Inventory(owner_kind=OwnerKind.CHARACTER.value, owner_id=owner_id, good_id=good_id, qty=qty)
+            Inventory(
+                owner_kind=OwnerKind.CHARACTER.value, owner_id=owner_id, good_id=good_id, qty=qty
+            )
         )
     else:
         row.qty += qty
@@ -197,7 +199,11 @@ async def apply_shipment_outcome(
         result = ShipmentResult(True, False, False, shipment.qty, good.name)
     else:
         result = await _apply_alert_escape_caught(
-            session, character=character, district_row=district_row, current_tick=current_tick, rng=rng
+            session,
+            character=character,
+            district_row=district_row,
+            current_tick=current_tick,
+            rng=rng,
         )
     await record_crime_log(
         session,

@@ -566,7 +566,9 @@ class CharacterCog(commands.Cog):
                 )
             ).all()
         for character_id, discord_id in rows:
-            await self._post_mode_switch_approval_embed(character_id, applicant_discord_id=discord_id)
+            await self._post_mode_switch_approval_embed(
+                character_id, applicant_discord_id=discord_id
+            )
 
     @_announce_pending_mode_switches.before_loop
     async def _before_announce_pending_mode_switches(self) -> None:
@@ -1023,9 +1025,7 @@ class CharacterCog(commands.Cog):
             # a fresh application. `current_mode` stays in effect (and
             # playable) the whole time this is pending -- see
             # `Character.pending_rp_mode`'s docstring.
-            await self._prompt_mode_switch_job_info(
-                interaction, character_id, name, new_mode
-            )
+            await self._prompt_mode_switch_job_info(interaction, character_id, name, new_mode)
             return
 
         async def on_confirm(confirm_interaction: discord.Interaction) -> None:
@@ -1433,13 +1433,9 @@ class CharacterCog(commands.Cog):
                     )
                 ).scalar_one_or_none()
                 if prior_shift is not None and prior_shift.result == ShiftResult.COMPLETED.value:
-                    shift_value = (
-                        f"Shift completed for today -- works {phase_time_range(DayPhase(row.shift_phase))}"
-                    )
+                    shift_value = f"Shift completed for today -- works {phase_time_range(DayPhase(row.shift_phase))}"
                 elif prior_shift is not None and prior_shift.result == ShiftResult.MISSED.value:
-                    shift_value = (
-                        f"Shift missed for today -- works {phase_time_range(DayPhase(row.shift_phase))}"
-                    )
+                    shift_value = f"Shift missed for today -- works {phase_time_range(DayPhase(row.shift_phase))}"
                 else:
                     shift_value = (
                         f"No shift open -- works {phase_time_range(DayPhase(row.shift_phase))}"

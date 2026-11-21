@@ -158,7 +158,10 @@ class TestTrivia:
     def test_answering_from_across_the_room_does_nothing(self) -> None:
         room = PartyRoom()
         katniss, _ = room.handle_join(websocket=object(), discord_id="1", name="Katniss")
-        katniss.x, katniss.y = STATIONS["capitol"]["x"], STATIONS["capitol"]["y"]  # nowhere near the trivia booth
+        katniss.x, katniss.y = (
+            STATIONS["capitol"]["x"],
+            STATIONS["capitol"]["y"],
+        )  # nowhere near the trivia booth
         room._advance_trivia()
         correct_index = TRIVIA_QUESTIONS[room.trivia.question_index]["correct"]
 
@@ -197,7 +200,10 @@ class TestCapitolSays:
     def test_acting_from_across_the_room_does_nothing(self) -> None:
         room = PartyRoom()
         player, _ = room.handle_join(websocket=object(), discord_id="1", name="Effie")
-        player.x, player.y = STATIONS["trivia"]["x"], STATIONS["trivia"]["y"]  # nowhere near the stage
+        player.x, player.y = (
+            STATIONS["trivia"]["x"],
+            STATIONS["trivia"]["y"],
+        )  # nowhere near the stage
         room._advance_capitol()
         correct_key = CAPITOL_ACTIONS[room.capitol.action_index]["key"]
 

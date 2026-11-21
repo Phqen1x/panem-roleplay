@@ -24,9 +24,7 @@ def upgrade() -> None:
     op.create_table(
         "character_hobbies",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column(
-            "character_id", sa.Integer(), sa.ForeignKey("characters.id"), nullable=False
-        ),
+        sa.Column("character_id", sa.Integer(), sa.ForeignKey("characters.id"), nullable=False),
         sa.Column("hobby_id", sa.String(length=32), nullable=False),
         sa.Column("sessions_played", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("last_played_tick", sa.Integer(), nullable=True),
@@ -89,9 +87,7 @@ def upgrade() -> None:
         sa.Column(
             "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
-        sa.UniqueConstraint(
-            "collectible_instance_id", name="uq_museum_slot_one_per_instance"
-        ),
+        sa.UniqueConstraint("collectible_instance_id", name="uq_museum_slot_one_per_instance"),
     )
     op.create_index("ix_museum_slots_owner_character_id", "museum_slots", ["owner_character_id"])
     op.alter_column("museum_slots", "wing", server_default=None)

@@ -1309,9 +1309,7 @@ class CharacterHobby(TimestampMixin, Base):
     sessions_played: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_played_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    __table_args__ = (
-        UniqueConstraint("character_id", "hobby_id", name="uq_character_hobby_once"),
-    )
+    __table_args__ = (UniqueConstraint("character_id", "hobby_id", name="uq_character_hobby_once"),)
 
 
 class CollectibleInstance(TimestampMixin, Base):
@@ -1634,9 +1632,7 @@ class BulletinEntry(TimestampMixin, Base):
     `None` for a pure announcement with no future moment attached."""
     requirements: Mapped[str | None] = mapped_column(String(200), nullable=True)
     danger_level: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    posted_by_user_id: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id"), nullable=True
-    )
+    posted_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     """`None` for a system-generated entry (weather/global-event/rumor) --
     only set for `source_kind = "player_post"` (`/bulletin post`)."""
     retracted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

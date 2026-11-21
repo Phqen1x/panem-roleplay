@@ -17,7 +17,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from panem_bot import autocomplete, utils
 from panem_bot.errors import ServiceError
@@ -87,7 +86,9 @@ class TradeCog(commands.Cog):
         self, interaction: discord.Interaction, character: str, target: str, amount: int
     ) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            sender = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            sender = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if sender is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -196,7 +197,9 @@ class TradeCog(commands.Cog):
         want_money: int = 0,
     ) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            initiator = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            initiator = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if initiator is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
