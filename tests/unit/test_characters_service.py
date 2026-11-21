@@ -646,6 +646,7 @@ class TestApproveCharacter:
         assert character.status == CharacterStatus.APPROVED.value
 
         from sqlalchemy import select
+
         shift = (
             await db_session.execute(
                 select(Shift).where(Shift.character_id == character.id, Shift.result.is_(None))

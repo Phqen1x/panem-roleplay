@@ -5,12 +5,10 @@ from __future__ import annotations
 import discord
 from discord import app_commands
 from discord.ext import commands
-from sqlalchemy import select, func
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func, select
 
 from panem_bot import autocomplete, utils
 from panem_bot.errors import NotAllowed, NotFound
-from panem_bot.services import characters as characters_svc
 from panem_bot.services import travel as travel_svc
 from panem_bot.strings import t
 from panem_shared.db.models import Character, User, WorldClock
@@ -52,7 +50,9 @@ class TravelCog(commands.Cog):
         self, interaction: discord.Interaction, character: str, location: str
     ) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.followup.send(t("character_not_found"), ephemeral=True)
                 return
@@ -64,9 +64,7 @@ class TravelCog(commands.Cog):
                 loc = travel_svc.resolve_location(district_content, location)
                 travel_svc.check_can_travel(character=char, location=loc, current_tick=current_tick)
             except (NotFound, NotAllowed) as exc:
-                await interaction.followup.send(
-                    t(exc.reason_key, **exc.fmt), ephemeral=True
-                )
+                await interaction.followup.send(t(exc.reason_key, **exc.fmt), ephemeral=True)
                 return
 
             char.location_id = loc.id
@@ -83,7 +81,9 @@ class TravelCog(commands.Cog):
         self, interaction: discord.Interaction, character: str, destination_id: int
     ) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.followup.send(t("character_not_found"), ephemeral=True)
                 return
@@ -102,9 +102,7 @@ class TravelCog(commands.Cog):
                 if travel_svc.should_charge_transport(char, origin_district.id, destination_id):
                     await travel_svc.spend_transport(session, char)
             except (NotFound, NotAllowed) as exc:
-                await interaction.followup.send(
-                    t(exc.reason_key, **exc.fmt), ephemeral=True
-                )
+                await interaction.followup.send(t(exc.reason_key, **exc.fmt), ephemeral=True)
                 return
 
             destination_district = self.bot.content.district(destination_id)  # type: ignore[attr-defined]
@@ -178,7 +176,9 @@ class TravelCog(commands.Cog):
     async def where(self, interaction: discord.Interaction, character: str) -> None:
         await interaction.response.defer(ephemeral=True, thinking=True)
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.followup.send(t("character_not_found"), ephemeral=True)
                 return

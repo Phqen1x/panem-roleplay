@@ -748,7 +748,7 @@ class TestGenerateLlmReply:
 
         messages = captured["body"]["messages"]  # type: ignore[index]
         # System message at 0, then capped history, then latest user message
-        expected_history = oversized[-constants.ENGAGEMENT_HISTORY_WINDOW:]
+        expected_history = oversized[-constants.ENGAGEMENT_HISTORY_WINDOW :]
         assert messages[1:-1] == expected_history
         assert len(messages[1:-1]) == constants.ENGAGEMENT_HISTORY_WINDOW
         assert messages[-1] == {"role": "user", "content": "Latest turn"}
@@ -1024,6 +1024,8 @@ class TestBlackMarketContactDialogue:
 
     def test_template_reply_includes_fence_hint_when_trusted(self):
         npc = make_npc()
-        reply = dialogue.template_reply(npc, "likes", "help me sell stolen goods", is_black_market_contact=True)
+        reply = dialogue.template_reply(
+            npc, "likes", "help me sell stolen goods", is_black_market_contact=True
+        )
         assert isinstance(reply, str)
         assert len(reply) > 0

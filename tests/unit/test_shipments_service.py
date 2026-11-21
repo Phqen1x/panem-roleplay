@@ -32,7 +32,9 @@ class SequenceRng:
 
 def make_goods() -> dict[str, Good]:
     return {
-        good_id: Good(id=good_id, name=good_id.replace("_", " ").title(), base_price=10.0, category="stolen")
+        good_id: Good(
+            id=good_id, name=good_id.replace("_", " ").title(), base_price=10.0, category="stolen"
+        )
         for good_id in constants.SHIPMENT_LOOT_GOOD_IDS
     }
 

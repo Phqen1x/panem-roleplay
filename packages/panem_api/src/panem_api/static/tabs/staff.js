@@ -15,7 +15,7 @@
 // use this panel, which is built to render sensibly on zero categories
 // (just the "New category" form, nothing else) rather than assuming
 // something is already there.
-import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=7";
+import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=9";
 
 // `panem_shared.enums.AfflictionStat`'s five values -- the only stats a
 // staff-authored affliction type's cure/auto-apply condition can name.
@@ -1656,11 +1656,202 @@ function ambientMusicPanel(ctx) {
   );
 }
 
+// The dashboard counterpart to Discord's `/staff channel lock`/`unlock`:
+// one checkbox per roleplay channel (each district's forum + the
+// guild-wide `#ooc`, exactly the `DiscordChannel` rows `scripts/
+// setup_guild.py` locks to staff-only at creation). Unlike the Discord
+// command, this always targets whichever single role the server
+// configured as `ROLEPLAY_ROLE_ID` -- a toggle needs one known target,
+// not a role picker -- so the whole panel just explains that and shows
+// an error (via `GET .../channels`' 409) if nothing's configured yet.
+function channelAccessPanel(ctx) {
+  const listEl = el("div", {});
+  const statusEl = el("p", { class: "tab-status" });
+
+  async function refreshChannels() {
+    listEl.innerHTML = "";
+    setStatusText(statusEl, "Loading channels…");
+    let body;
+    try {
+      body = await fetchJson(`/activity/dashboard/staff/channels?discord_id=${ctx.discordId()}`);
+    } catch (err) {
+      setStatusText(statusEl, `Could not load: ${err.message}`, { error: true });
+      return;
+    }
+    if (body.channels.length === 0) {
+      setStatusText(statusEl, "No roleplay channels found yet -- run scripts/setup_guild.py first.");
+      return;
+    }
+    setStatusText(
+      statusEl,
+      `Unlocking grants view + post access to <@&${body.roleplay_role_id}>, this server's configured roleplay role.`
+    );
+
+    const rows = body.channels.map((channel) => {
+      const checkbox = el("input", { type: "checkbox" });
+      checkbox.checked = channel.locked === false;
+      checkbox.disabled = channel.locked === null;
+      const noteEl = el(
+        "span",
+        { class: "tab-status", style: "margin-left: 10px;" },
+        channel.locked === null ? "(current state unknown)" : ""
+      );
+
+      checkbox.addEventListener("change", async () => {
+        const wantUnlocked = checkbox.checked;
+        checkbox.disabled = true;
+        noteEl.textContent = "Saving…";
+        try {
+          await fetchJson(`/activity/dashboard/staff/channels/${channel.channel_id}/access`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ discord_id: ctx.discordId(), locked: !wantUnlocked }),
+          });
+          noteEl.textContent = "";
+        } catch (err) {
+          checkbox.checked = !wantUnlocked;
+          noteEl.textContent = err.message;
+          noteEl.classList.add("error");
+        } finally {
+          checkbox.disabled = false;
+        }
+      });
+
+      return el(
+        "div",
+        {
+          class: "field-row",
+          style:
+            "justify-content: space-between; align-items: center; " +
+            "border-bottom: 1px solid var(--border-color, rgba(197, 160, 89, 0.2)); padding: 6px 0;",
+        },
+        el("label", {}, checkbox, ` ${channel.label}`),
+        noteEl
+      );
+    });
+    listEl.append(...rows);
+  }
+
+  refreshChannels();
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "Channel Access" }),
+    el(
+      "p",
+      { class: "tab-status" },
+      "Lock or unlock a district's roleplay forum (or #ooc) for the server's roleplay role. " +
+        "Approval/log channels always stay staff-only, and threads inside a forum follow its " +
+        "own lock state automatically."
+    ),
+    statusEl,
+    listEl
+  );
+}
+
+// Beta-release gating: `/staff feature set`'s dashboard twin. Lists every
+// known tab/system flag (`panem_shared.feature_flags.KNOWN_FLAGS`) plus
+// any free-typed key (e.g. a `command:` one) someone's already set, and
+// lets staff set one -- the same three states as the slash command
+// (enabled / staff only / disabled, everyone including staff), so this is
+// purely a UI convenience over the same `feature_flags` table, not a
+// separate mechanism.
+function flagsPanel(ctx) {
+  const resultLine = el("p", { class: "result-line" });
+  const listEl = el("div", {});
+  const keyInput = el("input", {
+    type: "text",
+    placeholder: "Flag key (e.g. npc_interaction, tab:map)",
+  });
+  const modeSelect = dropdown([
+    { value: "enabled", label: "Enabled -- everyone" },
+    { value: "staff_only", label: "Staff only" },
+    { value: "disabled", label: "Disabled -- everyone, staff included" },
+  ]);
+  modeSelect.value = "enabled";
+  const setBtn = el("button", { class: "btn", type: "button" }, "Set");
+
+  async function refresh() {
+    listEl.innerHTML = "";
+    try {
+      const body = await ctx.apiFetch(
+        `/activity/dashboard/staff/flags?discord_id=${encodeURIComponent(ctx.discordId())}`
+      );
+      if (!body.flags.length) {
+        listEl.append(el("p", { class: "tab-status" }, "No flags defined."));
+        return;
+      }
+      for (const flag of body.flags) {
+        listEl.append(
+          el(
+            "div",
+            { class: "field-row" },
+            el("label", {
+              text: flag.description ? `${flag.key} -- ${flag.description}` : flag.key,
+            }),
+            el("span", { class: "tab-status" }, flag.state)
+          )
+        );
+      }
+    } catch (err) {
+      listEl.append(el("p", { class: "tab-status error" }, `Could not load flags: ${err.message}`));
+    }
+  }
+
+  setBtn.addEventListener("click", async () => {
+    resultLine.textContent = "";
+    const key = keyInput.value.trim();
+    if (!key) {
+      resultLine.className = "result-line lose";
+      resultLine.textContent = "Enter a flag key.";
+      return;
+    }
+    try {
+      await ctx.apiFetch("/activity/dashboard/staff/flags/set", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          discord_id: ctx.discordId(),
+          key,
+          state: modeSelect.value,
+        }),
+      });
+      resultLine.className = "result-line win";
+      resultLine.textContent = `"${key}" is now ${modeSelect.value}.`;
+      keyInput.value = "";
+      refresh();
+    } catch (err) {
+      resultLine.className = "result-line lose";
+      resultLine.textContent = err.message;
+    }
+  });
+
+  refresh();
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "Feature Flags" }),
+    el(
+      "p",
+      { class: "tab-status" },
+      "Toggle beta tabs/commands for players -- mirrors /staff feature set."
+    ),
+    listEl,
+    el("div", { class: "field-row" }, el("label", { text: "Key" }), keyInput),
+    el("div", { class: "field-row" }, el("label", { text: "Mode" }), modeSelect),
+    el("div", { class: "field-row" }, setBtn),
+    resultLine
+  );
+}
+
 export function mount(root, ctx) {
   root.append(
     jailPanel(ctx),
     givePanel(ctx),
     characterActionsPanel(ctx),
+    channelAccessPanel(ctx),
     districtAdminPanel(ctx),
     npcAdminPanel(ctx),
     ambientMusicPanel(ctx),
@@ -1668,7 +1859,8 @@ export function mount(root, ctx) {
     marketStockPanel(ctx),
     mottosPanel(ctx),
     layersPanel(ctx),
-    afflictionTypesPanel(ctx)
+    afflictionTypesPanel(ctx),
+    flagsPanel(ctx)
   );
 }
 

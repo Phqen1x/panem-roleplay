@@ -15,7 +15,18 @@ import yaml
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from panem_shared.content.errors import ContentValidationError
-from panem_shared.content.schemas import District, Good, Job, NpcContent, Route
+from panem_shared.content.schemas import (
+    Collectible,
+    District,
+    DistrictClimate,
+    FurniturePiece,
+    Good,
+    Hobby,
+    Job,
+    NpcContent,
+    PetSpecies,
+    Route,
+)
 
 
 def _read_yaml(path: Path) -> object:
@@ -90,6 +101,39 @@ def load_routes(data_dir: Path) -> list[Route]:
     return _validate_list(path, Route, raw)
 
 
+def load_pets(data_dir: Path) -> dict[str, PetSpecies]:
+    """Optional, same as `load_routes`/`load_npcs` -- a checkout (or test
+    fixture) with no `pets.yaml` simply has no pet store catalog yet."""
+    path = data_dir / "pets.yaml"
+    if not path.exists():
+        return {}
+    raw = _read_yaml(path)
+    pets = _validate_list(path, PetSpecies, raw)
+    by_id: dict[str, PetSpecies] = {}
+    for pet in pets:
+        if pet.id in by_id:
+            raise ContentValidationError(path.as_posix(), f"duplicate pet id {pet.id!r}")
+        by_id[pet.id] = pet
+    return by_id
+
+
+def load_furniture(data_dir: Path) -> dict[str, FurniturePiece]:
+    """Optional, same as `load_pets` above."""
+    path = data_dir / "furniture.yaml"
+    if not path.exists():
+        return {}
+    raw = _read_yaml(path)
+    pieces = _validate_list(path, FurniturePiece, raw)
+    by_key: dict[str, FurniturePiece] = {}
+    for piece in pieces:
+        if piece.item_key in by_key:
+            raise ContentValidationError(
+                path.as_posix(), f"duplicate furniture item_key {piece.item_key!r}"
+            )
+        by_key[piece.item_key] = piece
+    return by_key
+
+
 def load_npcs(data_dir: Path) -> dict[str, NpcContent]:
     """`data/npcs/*.yaml` is optional -- a district with no authored file
     (or a fresh checkout with no `data/npcs/` directory at all) simply has
@@ -108,6 +152,56 @@ def load_npcs(data_dir: Path) -> dict[str, NpcContent]:
     return by_id
 
 
+def load_hobbies(data_dir: Path) -> dict[str, Hobby]:
+    """Optional, same as `load_pets` above -- a checkout with no
+    `hobbies.yaml` simply has no hobbies to pick yet."""
+    path = data_dir / "hobbies.yaml"
+    if not path.exists():
+        return {}
+    raw = _read_yaml(path)
+    hobbies = _validate_list(path, Hobby, raw)
+    by_id: dict[str, Hobby] = {}
+    for hobby in hobbies:
+        if hobby.id in by_id:
+            raise ContentValidationError(path.as_posix(), f"duplicate hobby id {hobby.id!r}")
+        by_id[hobby.id] = hobby
+    return by_id
+
+
+def load_collectibles(data_dir: Path) -> dict[str, Collectible]:
+    """Optional, same as `load_hobbies` above."""
+    path = data_dir / "collectibles.yaml"
+    if not path.exists():
+        return {}
+    raw = _read_yaml(path)
+    collectibles = _validate_list(path, Collectible, raw)
+    by_id: dict[str, Collectible] = {}
+    for item in collectibles:
+        if item.id in by_id:
+            raise ContentValidationError(path.as_posix(), f"duplicate collectible id {item.id!r}")
+        by_id[item.id] = item
+    return by_id
+
+
+def load_climate(data_dir: Path) -> dict[int, DistrictClimate]:
+    """Optional, same as `load_hobbies` above -- a district with no entry
+    here simply never gets a forecast/weather roll (`panem_bot.cogs.
+    weather`'s poll skips it)."""
+    path = data_dir / "climate.yaml"
+    if not path.exists():
+        return {}
+    raw = _read_yaml(path)
+    climates = _validate_list(path, DistrictClimate, raw)
+    by_id: dict[int, DistrictClimate] = {}
+    for climate in climates:
+        if climate.district_id in by_id:
+            raise ContentValidationError(
+                path.as_posix(), f"duplicate climate district_id {climate.district_id!r}"
+            )
+        by_id[climate.district_id] = climate
+    return by_id
+
+
 @dataclass(frozen=True, slots=True)
 class ContentBundle:
     districts: dict[int, District]
@@ -115,6 +209,11 @@ class ContentBundle:
     jobs: dict[str, Job]
     routes: list[Route]
     npcs: dict[str, NpcContent] = field(default_factory=dict)
+    pets: dict[str, PetSpecies] = field(default_factory=dict)
+    furniture: dict[str, FurniturePiece] = field(default_factory=dict)
+    hobbies: dict[str, Hobby] = field(default_factory=dict)
+    collectibles: dict[str, Collectible] = field(default_factory=dict)
+    climate: dict[int, DistrictClimate] = field(default_factory=dict)
 
     def district(self, district_id: int) -> District:
         try:
@@ -211,6 +310,39 @@ def _cross_validate(bundle: ContentBundle, data_dir: Path, district_paths: dict[
                     f"not {npc.district}",
                 )
 
+    hobbies_path = (data_dir / "hobbies.yaml").as_posix()
+    for hobby in bundle.hobbies.values():
+        if hobby.tool_good_id is not None and hobby.tool_good_id not in bundle.goods:
+            raise ContentValidationError(
+                hobbies_path,
+                f"hobby {hobby.id!r} tool_good_id {hobby.tool_good_id!r} is not a defined good id",
+            )
+        for drop in hobby.drops:
+            if drop.collectible_id not in bundle.collectibles:
+                raise ContentValidationError(
+                    hobbies_path,
+                    f"hobby {hobby.id!r} drops references undefined collectible id "
+                    f"{drop.collectible_id!r}",
+                )
+
+    collectibles_path = (data_dir / "collectibles.yaml").as_posix()
+    for collectible in bundle.collectibles.values():
+        if collectible.hobby_id is not None and collectible.hobby_id not in bundle.hobbies:
+            raise ContentValidationError(
+                collectibles_path,
+                f"collectible {collectible.id!r} hobby_id {collectible.hobby_id!r} is not a "
+                "defined hobby id",
+            )
+
+    climate_path = (data_dir / "climate.yaml").as_posix()
+    for climate in bundle.climate.values():
+        if climate.district_id not in bundle.districts:
+            raise ContentValidationError(
+                climate_path,
+                f"climate entry references district {climate.district_id}, which has no "
+                "district file",
+            )
+
 
 def load_content(data_dir: Path) -> ContentBundle:
     """Load and validate every content file under `data_dir`.
@@ -226,6 +358,11 @@ def load_content(data_dir: Path) -> ContentBundle:
         jobs=load_jobs(data_dir),
         routes=load_routes(data_dir),
         npcs=load_npcs(data_dir),
+        pets=load_pets(data_dir),
+        furniture=load_furniture(data_dir),
+        hobbies=load_hobbies(data_dir),
+        collectibles=load_collectibles(data_dir),
+        climate=load_climate(data_dir),
     )
     _cross_validate(bundle, data_dir, district_paths)
     return bundle

@@ -150,3 +150,31 @@
   base_price: 38.0
   perishable: false
   category: stolen
+# `category: hobby_tool` -- never produced/imported/quota'd by any
+# district, never sold on the market; `panem_shared.hobbies.select_hobby`
+# grants one free unit the first time a character picks the hobby it
+# belongs to (Spec doesn't gate hobbies behind a purchase). Owning one
+# narrows the timing minigame's miss window.
+- id: fishing_rod
+  name: Fishing Rod
+  base_price: 15.0
+  perishable: false
+  category: hobby_tool
+- id: garden_trowel
+  name: Garden Trowel
+  base_price: 10.0
+  perishable: false
+  category: hobby_tool
+- id: mixing_bowl
+  name: Mixing Bowl
+  base_price: 8.0
+  perishable: false
+  category: hobby_tool
+# `category: event` -- Hypixel-Jacob's-style ticket currency
+# (`panem_shared.global_events`), granted by a Global Event's reward and
+# spent on TBD future redemptions. Never on the legal market either.
+- id: event_ticket
+  name: Event Ticket
+  base_price: 1.0
+  perishable: false
+  category: event

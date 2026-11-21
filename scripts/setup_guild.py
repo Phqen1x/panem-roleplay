@@ -2,8 +2,8 @@
 """Idempotent one-time (and re-runnable) guild setup (Plan §3.1 deliverable 2).
 
 Creates one shared "Roleplay" category containing:
-  - a single `#ooc` text channel (open to everyone, pinned to the top) for
-    all out-of-character chat guild-wide
+  - a single `#ooc` text channel (pinned to the top) for all
+    out-of-character chat guild-wide
   - a Forum channel per district (`district-N-roleplay`, or
     `capitol-roleplay` for The Capitol) with one tag per location plus
     `Open`/`Closed`/`Board`, `require_tag=True`, default auto-archive =
@@ -13,11 +13,23 @@ Creates one shared "Roleplay" category containing:
     `Bulletin` (FR-ECO-8) via `panem_bot/narrator.py`'s
     `ChannelKind.BOARD` lookup
 
-Plus, per district, a role (view/post that district's forum; everyone else
-can view only) -- and guild-wide staff role, approval channel, and log
-channel in their own "Panem Staff" category. A district's role is normally
-found/created by name, but `.env`'s `CAPITOL_ROLE_ID` / `DISTRICT_N_ROLE_ID`
-(see `.env.example`) can point it at an existing role instead.
+Every channel/forum/thread this script creates -- `#ooc`, each district's
+forum (and so every thread inside it, since Discord threads always
+inherit their parent channel's view permissions), the approval channel,
+the log channel -- is visible to nobody but the guild-wide staff role by
+default. Staff open one up with `/staff channel unlock channel:<#chan>
+role:<@role>` (e.g. a district's own role, or `@everyone`) once they're
+ready, and `/staff channel lock` reverses it; see `StaffCog.
+channel_unlock`/`channel_lock` in `panem_bot/cogs/staff.py`. A re-run of
+this idempotent script never resets that choice -- see `ensure_forum`'s
+docstring.
+
+Plus, per district, a role (not given any standing access to that
+district's forum -- staff unlock it explicitly, see above) -- and a
+guild-wide staff role, approval channel, and log channel in their own
+"Panem Staff" category. A district's role is normally found/created by
+name, but `.env`'s `CAPITOL_ROLE_ID` / `DISTRICT_N_ROLE_ID` (see
+`.env.example`) can point it at an existing role instead.
 
 Per-district categories from the Plan's original layout are intentionally
 not created: a single guild-wide OOC channel with player-made threads
@@ -146,18 +158,15 @@ async def ensure_text_channel(
     overwrites: dict[discord.Role | discord.Member, discord.PermissionOverwrite] | None = None,
     position: int | None = None,
 ) -> discord.TextChannel:
-    """`overwrites=None` leaves the channel open (inherits the category's/
-    guild's default permissions) -- used for the single guild-wide `#ooc`
-    channel, which is deliberately unrestricted."""
+    """`overwrites` is only applied the first time this channel is created.
+    Once it exists, visibility is the staff's to manage (`/staff channel
+    lock`/`unlock`) -- a re-run of this idempotent script must not reset
+    whatever a staff member has since unlocked, so an existing channel's
+    overwrites are left untouched here."""
     existing = discord.utils.get(category.text_channels, name=name)
     if existing is not None:
-        edit_kwargs: dict[str, object] = {}
-        if overwrites is not None:
-            edit_kwargs["overwrites"] = overwrites
         if position is not None:
-            edit_kwargs["position"] = position
-        if edit_kwargs:
-            await existing.edit(**edit_kwargs)
+            await existing.edit(position=position)
         return existing
     create_kwargs: dict[str, object] = {"category": category, "reason": "Panem setup"}
     if overwrites is not None:
@@ -191,11 +200,15 @@ async def ensure_forum(
     )
     tags = _location_tags(district)
     if existing is not None:
+        # `overwrites` is deliberately not reapplied here -- see
+        # `ensure_text_channel`'s docstring: once a forum exists, its
+        # visibility is the staff's to manage via `/staff channel
+        # lock`/`unlock`, and a re-run of this idempotent script must not
+        # silently re-lock a forum staff already opened up.
         await existing.edit(
             available_tags=tags,
             require_tag=True,
             default_auto_archive_duration=auto_archive_minutes,
-            overwrites=overwrites,
         )
         return existing
     # `Guild.create_forum()` has no `require_tag` parameter (only
@@ -371,14 +384,19 @@ async def setup_district(
 ) -> None:
     role = await ensure_district_role(guild, settings, district)
 
+    # Staff-only by default -- `role` (this district's own role) gets no
+    # standing access here, unlike the Plan's original "everyone can view,
+    # only the district can post" layout. Staff decide when a district is
+    # ready to open with `/staff channel unlock <forum> <role>`, which
+    # grants exactly this district's role (or any other) view+post access
+    # without a redeploy; `/staff channel lock` reverses it. See
+    # `ensure_forum`'s docstring for why a re-run of this script never
+    # resets that choice.
     forum_overwrites = _with_bot_access(
         guild,
         {
             guild.default_role: discord.PermissionOverwrite(
-                view_channel=True, send_messages=False, send_messages_in_threads=False
-            ),
-            role: discord.PermissionOverwrite(
-                view_channel=True, send_messages=True, send_messages_in_threads=True
+                view_channel=False, send_messages=False, send_messages_in_threads=False
             ),
             staff_role: discord.PermissionOverwrite(
                 view_channel=True,
@@ -394,6 +412,13 @@ async def setup_district(
         district,
         overwrites=forum_overwrites,
         auto_archive_minutes=auto_archive_minutes,
+    )
+    logger.info(
+        "forum_locked_to_staff",
+        district=district.id,
+        forum=forum.name,
+        district_role=role.name,
+        hint=f"/staff channel unlock channel:#{forum.name} role:@{role.name} to open it up",
     )
     webhook = await ensure_webhook(forum)
     await upsert_discord_channel(
@@ -443,13 +468,25 @@ async def setup_staff_channels(session, guild: discord.Guild, staff_role: discor
     )
 
 
-async def setup_roleplay_category(session, guild: discord.Guild) -> discord.CategoryChannel:
+async def setup_roleplay_category(
+    session, guild: discord.Guild, staff_role: discord.Role
+) -> discord.CategoryChannel:
     """The shared category holding `#ooc` (pinned to the top) and every
-    district's forum. `#ooc` is deliberately open -- no overwrites -- so
-    the whole guild can use it for OOC chat, with player-made threads as
-    needed."""
+    district's forum. `#ooc` is staff-only by default, same as every
+    other channel this script creates -- `/staff channel unlock
+    channel:#ooc role:@everyone` (or any other role) opens it up to the
+    whole guild once staff are ready."""
     category = await ensure_category(guild, RP_CATEGORY_NAME)
-    ooc = await ensure_text_channel(guild, category, OOC_CHANNEL_NAME, position=0)
+    ooc_overwrites = _with_bot_access(
+        guild,
+        {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            staff_role: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+        },
+    )
+    ooc = await ensure_text_channel(
+        guild, category, OOC_CHANNEL_NAME, overwrites=ooc_overwrites, position=0
+    )
     await upsert_discord_channel(
         session,
         district_id=GLOBAL_DISTRICT_SENTINEL,
@@ -494,7 +531,7 @@ async def run(settings: Settings) -> None:
             logger.info("staff_channels_committed")
 
             async with session_factory() as session, session.begin():
-                rp_category = await setup_roleplay_category(session, guild)
+                rp_category = await setup_roleplay_category(session, guild, staff_role)
             logger.info("roleplay_category_committed")
 
             for district in sorted(content.districts.values(), key=lambda d: d.id):

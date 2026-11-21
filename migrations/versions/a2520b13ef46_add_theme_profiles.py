@@ -50,9 +50,7 @@ def upgrade() -> None:
     # TABLE` below instead, the same `use_alter`-equivalent split
     # `e4b7c2a9f1d6_add_housing_tables.py` uses for `characters.
     # housing_property_id` <-> `properties.owner_id`'s own cycle.
-    op.add_column(
-        "users", sa.Column("active_theme_profile_id", sa.Integer(), nullable=True)
-    )
+    op.add_column("users", sa.Column("active_theme_profile_id", sa.Integer(), nullable=True))
     op.create_foreign_key(
         "fk_users_active_theme_profile_id",
         "users",

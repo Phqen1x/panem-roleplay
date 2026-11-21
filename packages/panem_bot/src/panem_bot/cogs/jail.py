@@ -7,12 +7,10 @@ import random
 import discord
 from discord import app_commands
 from discord.ext import commands
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from panem_bot import activity_launch, autocomplete, utils
 from panem_bot.errors import ServiceError
-from panem_bot.services import characters as characters_svc
 from panem_bot.services import jail as jail_svc
 from panem_bot.strings import t
 from panem_shared import constants
@@ -32,7 +30,9 @@ class JailCog(commands.Cog):
     @app_commands.autocomplete(character=autocomplete.own_approved)
     async def bail(self, interaction: discord.Interaction, character: str) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -72,7 +72,9 @@ class JailCog(commands.Cog):
     @app_commands.autocomplete(character=autocomplete.own_approved)
     async def lockpick(self, interaction: discord.Interaction, character: str) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return

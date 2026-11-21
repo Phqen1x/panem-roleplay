@@ -13,13 +13,11 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from panem_bot import autocomplete, utils
-from panem_bot.services import characters as characters_svc
 from panem_bot.services import jobs as jobs_svc
 from panem_bot.strings import t
-from panem_shared.db.models import Character, Npc, RelationshipRow
+from panem_shared.db.models import Npc, RelationshipRow
 from panem_shared.enums import OwnerKind
 from panem_shared.relationships import relationship_key
 
@@ -37,7 +35,9 @@ class ResidentCog(commands.Cog):
     @app_commands.autocomplete(character=autocomplete.own_approved)
     async def resident_list(self, interaction: discord.Interaction, character: str) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -80,7 +80,9 @@ class ResidentCog(commands.Cog):
         self, interaction: discord.Interaction, character: str, resident: str
     ) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -125,7 +127,9 @@ class ResidentCog(commands.Cog):
         self, interaction: discord.Interaction, character: str, resident: str
     ) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -195,7 +199,9 @@ class ResidentCog(commands.Cog):
         if not character_name:
             return []
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character_name)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character_name
+            )
             if char is None:
                 return []
             names = (

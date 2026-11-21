@@ -35,15 +35,19 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from panem_shared import block_models
 from panem_shared.db.base import Base, TimestampMixin
 from panem_shared.enums import (
     CharacterStatus,
+    EventChainStatus,
+    GlobalEventStatus,
     OwnerKind,
     RpMode,
     SceneKind,
     SceneStatus,
     Stance,
     TradeStatus,
+    WeatherEventStatus,
 )
 
 
@@ -209,10 +213,33 @@ class Character(TimestampMixin, Base):
 
     reputation: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     money: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    archetype_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    """-100 (Evil) .. 100 (Good), moved by `panem_shared.reactions.apply_
+    reaction_choice` every time a `ReactionEvent` pop-up is answered --
+    see that module for the asymmetric-neutral-pull math. `panem_shared.
+    reactions.archetype_label` reads it back as "Good"/"Neutral"/"Evil"
+    for NPC dialogue/opinion hooks."""
 
     location_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     x: Mapped[float | None] = mapped_column(Float, nullable=True)
     y: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    block_parts: Mapped[dict[str, str]] = mapped_column(
+        JSONB, nullable=False, default=lambda: dict(block_models.DEFAULT_APPEARANCE)
+    )
+    """The 3D Capitol map's walkable avatar (`panem_api.map3d_routes`'s
+    `/activity/dashboard/map3d/character/*` routes): `{"head": letter,
+    "head_color": letter, "torso": ..., "arms": ..., "legs": ...}`, each
+    letter `a`-`r` into the 18 vendored Blocky Characters meshes (shape)
+    or the 18 vendored recolor textures (color) -- see `panem_shared.
+    block_models`'s module docstring for why four independently-chosen
+    parts work at all (they share one rig) and `static/map3d/character.js`
+    for where a part actually gets cut from one outfit file and grafted
+    onto another. Separate from `appearance_layers` above on purpose:
+    that's the Picrew-style 2D portrait shown in Discord (an uploaded-art
+    system with no 3D equivalent), this is the character's body on the
+    live map, where there's no staff-uploaded-art option at all -- the
+    only assets to render with are these vendored presets."""
 
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     proxy_tag: Mapped[str | None] = mapped_column(String(12), nullable=True)
@@ -609,6 +636,22 @@ class EngagementSettings(Base):
     idle_timeout_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+class DialogueSettings(Base):
+    """Single-row staff kill switch for LLM-backed NPC dialogue (`/staff
+    dialogue disable`/`enable`), mirroring `EngagementSettings`'/
+    `WorldClock`'s singleton shape. When `enabled` is false,
+    `panem_bot.services.dialogue.resolve_provider` returns `"template"`
+    unconditionally -- overriding both `Settings.dialogue_provider` and
+    any individual `Npc.provider_override` -- so every dialogue path
+    (`/talk`, ambient NPC chatter, engagement summaries) falls back to
+    canned/no-op behavior without an env edit or restart of any process."""
+
+    __tablename__ = "dialogue_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
 class PanemHistoryEntry(TimestampMixin, Base):
     """One staff-authored fact of Panem-wide history/canon, tagged with
     comma-separated keywords a staff member typed in (`/staff lore
@@ -759,6 +802,22 @@ class Property(Base):
     mortgage_missed_payments: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     created_at_tick: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    damage_level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    """0-100, accumulated by `panem_bot.cogs.weather`'s poll when an
+    unlucky roll lands during an `ACTIVE` `WeatherEvent` in this property's
+    district (`panem_shared.weather`) -- repaired via `/housing repair`
+    at `constants.WEATHER_REPAIR_COST_PER_POINT` money/point. Purely
+    cosmetic today (no gameplay penalty reads it yet beyond the repair
+    bill itself) -- a natural follow-up once a dashboard interior view
+    wants to render visible damage."""
+    weather_prep: Mapped[dict[str, int]] = mapped_column(JSONB, nullable=False, default=dict)
+    """`{WeatherKind.value: level}`, each 0-`constants.WEATHER_PREP_MAX_
+    LEVEL` -- raised via `/housing prepare`, spending `lumber` + money
+    (`panem_shared.weather.prepare_property`). A kind with no entry reads
+    as level 0 (unprepared). Keyed by kind rather than one flat "how
+    prepared is this house" number because Spec is explicit that what you
+    prepare *with* depends on which weather is coming."""
 
 
 class ApartmentLease(Base):
@@ -1153,9 +1212,7 @@ class DistrictLorePerson(TimestampMixin, Base):
     role: Mapped[str] = mapped_column(String(16), nullable=False)
     """`"victor"` or `"mentor"`."""
     name: Mapped[str] = mapped_column(String(80), nullable=False)
-    character_id: Mapped[int | None] = mapped_column(
-        ForeignKey("characters.id"), nullable=True
-    )
+    character_id: Mapped[int | None] = mapped_column(ForeignKey("characters.id"), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
@@ -1176,3 +1233,462 @@ class AmbientTrack(TimestampMixin, Base):
     channel_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_by_staff_discord_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
+
+class Pet(TimestampMixin, Base):
+    """A pet a character bought from the Capitol Market's pet store
+    (`panem_shared.content.schemas.PetSpecies`, `data/pets.yaml`) --
+    purely a possession today (no feeding/needs loop, no 3D-map presence
+    beyond the map3d routes optionally showing it beside its owner): the
+    groundwork the feature asked for, not the full simulation `Character`'s
+    own needs meters get. `species_id` is a plain content-referencing
+    column (no FK), same convention as `Inventory.good_id` -- pets live in
+    content YAML, not a DB table."""
+
+    __tablename__ = "pets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_character_id: Mapped[int] = mapped_column(
+        ForeignKey("characters.id"), nullable=False, index=True
+    )
+    species_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(32), nullable=False)
+    acquired_tick: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    owner: Mapped[Character] = relationship()
+
+
+class PropertyInteriorItem(Base):
+    """One placed piece of furniture inside a `Property`'s interior scene
+    (`panem_shared.content.schemas.FurniturePiece`, `data/furniture.yaml`)
+    -- the 3D map's "enter your house" view. A property with no rows here
+    yet simply hasn't had its default layout generated/persisted --
+    `panem_shared.housing3d.default_layout` builds one from `Property.kind`/
+    `.tier` the first time `GET .../housing3d/{property_id}` is called for
+    it, the same lazy-seed shape `panem_shared.layers`' "nothing uploaded
+    yet" catalog uses rather than a purchase-time hook, so existing
+    properties (seeded long before this feature existed) get a layout too
+    without a backfill migration. `item_key` is a plain content-referencing
+    column (no FK), same convention as `species_id` above."""
+
+    __tablename__ = "property_interior_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    property_id: Mapped[int] = mapped_column(
+        ForeignKey("properties.id"), nullable=False, index=True
+    )
+    item_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    pos_x: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    pos_z: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    rotation_y: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    """Degrees around the vertical axis -- kept in degrees (not radians) so
+    a stored value is human-readable in a DB browser; the frontend converts
+    once on load/save."""
+
+    property_: Mapped[Property] = relationship()
+
+
+# ============================================================ Hobbies
+
+
+class CharacterHobby(TimestampMixin, Base):
+    """One of a character's up to `constants.MAX_HOBBIES_PER_CHARACTER`
+    picked hobbies (`panem_shared.hobbies`). `sessions_played` only counts
+    *successful* minigame attempts -- same "count of wins, not attempts"
+    shape `Character.shifts_completed` uses for job mastery -- and drives
+    the Apprentice->Expert ladder via `panem_shared.hobby_levels` (the
+    same `JobLevel` enum the job system uses, reused rather than
+    duplicated)."""
+
+    __tablename__ = "character_hobbies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    character_id: Mapped[int] = mapped_column(
+        ForeignKey("characters.id"), nullable=False, index=True
+    )
+    hobby_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    sessions_played: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_played_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (UniqueConstraint("character_id", "hobby_id", name="uq_character_hobby_once"),)
+
+
+class CollectibleInstance(TimestampMixin, Base):
+    """One concrete found collectible (`data/collectibles.yaml`'s
+    `Collectible.id` by `collectible_id`, a plain content-referencing
+    column -- same convention as every other good/job/item id column in
+    this schema). Still owned by `owner_character_id` until donated to
+    the museum -- donating doesn't delete or reassign this row (Spec:
+    "you cannot get it back", not "it's gone"), it just stamps
+    `donated_at` and gets a `MuseumSlot` pointed at it; `panem_shared.
+    museum.character_inventory` filters on `donated_at IS NULL` to show
+    only what's still in a character's own hands."""
+
+    __tablename__ = "collectible_instances"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_character_id: Mapped[int] = mapped_column(
+        ForeignKey("characters.id"), nullable=False, index=True
+    )
+    collectible_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    """The `Hobby.id` (or `"event"` for a personal/global-event grant)
+    that produced this instance -- display-only flavor ("caught while
+    fishing")."""
+    found_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+    found_district_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    donated_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class MuseumSlot(TimestampMixin, Base):
+    """A donated collectible's place in its owner's museum. `wing`/
+    `position` are freely rewritable by `/museum organize` (one slot at a
+    time) or `/museum preset` (`panem_shared.museum.apply_preset`, all of
+    a character's slots at once) -- neither ever changes which
+    `CollectibleInstance` a slot points at, only where it's displayed.
+    One slot per instance, enforced the same way `ApartmentLease`
+    enforces one lease per unit: a `UniqueConstraint`, not a 1:1
+    relationship declared on the ORM side."""
+
+    __tablename__ = "museum_slots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_character_id: Mapped[int] = mapped_column(
+        ForeignKey("characters.id"), nullable=False, index=True
+    )
+    collectible_instance_id: Mapped[int] = mapped_column(
+        ForeignKey("collectible_instances.id"), nullable=False
+    )
+    wing: Mapped[str] = mapped_column(String(32), nullable=False, default="General")
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    donated_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("collectible_instance_id", name="uq_museum_slot_one_per_instance"),
+    )
+
+
+# ===================================================== Personal events
+
+
+class PersonalEventChain(TimestampMixin, Base):
+    """A character-scoped event chain (Spec's "fishing up a toy ->
+    who does this belong to? -> ..." example) -- `chain_kind` selects
+    which handler in `panem_shared.personal_events` interprets `step`/
+    `state`; today only `"lost_item"` exists, but the shape (a step
+    counter plus a free-form JSON scratchpad) is deliberately generic so
+    a second chain kind doesn't need its own table.
+
+    Only one *active* chain per `(character_id, chain_kind)` is enforced
+    in `panem_shared.personal_events.start_chain` (a query, not a DB
+    constraint -- a completed/abandoned/expired chain for the same kind
+    must stay queryable as history, so a partial-unique-on-status index
+    would need the same "which statuses count" judgment call anyway)."""
+
+    __tablename__ = "personal_event_chains"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    character_id: Mapped[int] = mapped_column(
+        ForeignKey("characters.id"), nullable=False, index=True
+    )
+    chain_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=EventChainStatus.ACTIVE.value
+    )
+    step: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    state: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    started_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+    expires_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+# ======================================================= Global events
+
+
+class GlobalEvent(TimestampMixin, Base):
+    """A staff-triggered, hobby-themed competition anyone in its
+    `district_id` (or world-wide, if `None`) can join while it's
+    `ACTIVE` -- the Hypixel-Jacob's-Contest-style weekly beat, started
+    manually via `/staff event create` today; Spec's eventual "happens on
+    a regular basis automatically" is future work for `panem_bot.cogs.
+    events`'s lifecycle loop, which already flips `SCHEDULED`->`ACTIVE`->
+    `FINISHED` purely off the two tick columns and so needs no change to
+    also pick its own `starts_tick` once that's wanted."""
+
+    __tablename__ = "global_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    hobby_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    description: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    district_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=GlobalEventStatus.SCHEDULED.value, index=True
+    )
+    starts_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+    ends_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class GlobalEventEntry(Base):
+    """One character's standing in a `GlobalEvent` -- `score` accumulates
+    across every hobby session they play while the event is `ACTIVE` and
+    their current district matches it (or it's world-wide); a character
+    already pursuing that hobby has "a natural upper hand" (Spec) simply
+    because their existing `JobLevel` success-bonus applies to every one
+    of those sessions same as always, no separate competition-specific
+    skill check."""
+
+    __tablename__ = "global_event_entries"
+
+    event_id: Mapped[int] = mapped_column(ForeignKey("global_events.id"), primary_key=True)
+    character_id: Mapped[int] = mapped_column(ForeignKey("characters.id"), primary_key=True)
+    score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rewarded: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+# ============================================================ Weather
+
+
+class WeatherForecast(Base):
+    """One district's daily broadcast forecast -- always present (rain/
+    snow/clear have no severity and nothing to prepare for), generated
+    `constants.WEATHER_FORECAST_LEAD_DAYS` ahead by `panem_bot.cogs.
+    weather`'s poll. `day_index` is `panem_shared.simtime.day_index(tick)`,
+    an absolute day count, not day-within-month."""
+
+    __tablename__ = "weather_forecasts"
+
+    district_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    day_index: Mapped[int] = mapped_column(Integer, primary_key=True)
+    season: Mapped[str] = mapped_column(String(16), nullable=False)
+    temp_high: Mapped[int] = mapped_column(Integer, nullable=False)
+    temp_low: Mapped[int] = mapped_column(Integer, nullable=False)
+    condition: Mapped[str] = mapped_column(String(16), nullable=False, default="clear")
+    """`"clear"` | `"rain"` | `"snow"` -- the no-severity half of
+    `WeatherKind`; an inclement day also gets a `WeatherEvent` row, this
+    column stays whatever `WeatherKind.CLEAR`/`RAIN`/`SNOW` fits the
+    season regardless."""
+    announced_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class WeatherEvent(TimestampMixin, Base):
+    """A predicted-or-happening severity-rated (category 1-6) inclement
+    event for one district/day -- `panem_bot.cogs.weather`'s poll enforces
+    "no more than one per district per day" and "other than rain/snow,
+    once an in-game week max" by querying this table's own history
+    (`WEATHER_EVENT_MIN_GAP_DAYS`) rather than a DB constraint, since the
+    gap rule only applies between *inclement* rows, never against
+    `WeatherForecast`'s every-day rain/snow/clear row."""
+
+    __tablename__ = "weather_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    district_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    day_index: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    severity: Mapped[int] = mapped_column(Integer, nullable=False)
+    predicted_start_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+    predicted_duration_ticks: Mapped[int] = mapped_column(Integer, nullable=False)
+    actual_start_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    actual_end_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=WeatherEventStatus.FORECAST.value, index=True
+    )
+    announced_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+# ===================================================== Reaction events
+
+
+class ReactionEventLog(TimestampMixin, Base):
+    """One resolved (or timed-out) `ReactionEvent` pop-up -- `scenario_id`
+    keys into `panem_shared.reactions.SCENARIOS` (code-authored flavor
+    text, not a DB/content-YAML catalog, since each one is just three
+    short strings plus a prompt). `choice` is `None` when the character
+    never answered within `constants.REACTION_EVENT_CHOICE_SECONDS`, which
+    `panem_shared.reactions.apply_reaction_choice` treats as "no archetype
+    effect" rather than an implicit neutral pick."""
+
+    __tablename__ = "reaction_event_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    character_id: Mapped[int] = mapped_column(
+        ForeignKey("characters.id"), nullable=False, index=True
+    )
+    scenario_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    choice: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    tick: Mapped[int] = mapped_column(Integer, nullable=False)
+    archetype_score_after: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+
+# ============================================================== Rumors
+
+
+class Rumor(TimestampMixin, Base):
+    """A piece of overheard/found gossip -- may or may not be true.
+    `reliability_pct` starts wherever `panem_shared.rumors.spawn_rumor`
+    rolls it (`constants.RUMOR_BASE_RELIABILITY_RANGE`) and only ever
+    moves via logged `RumorInvestigation` rows; nothing else in the
+    system reads or writes it. `related_kind`/`related_id` optionally
+    tie a rumor to the real thing it's about (a `WeatherEvent`, a
+    `GlobalEvent`, ...) so a correct rumor can plausibly have warned
+    someone ahead of the real announcement (Spec's "advance notice to
+    prepare"/"practice ahead of a competition") -- `None`/`None` for a
+    rumor that's pure flavor with nothing concrete behind it, which is
+    allowed to be itself fabricated start to finish."""
+
+    __tablename__ = "rumors"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    district_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    text: Mapped[str] = mapped_column(String(300), nullable=False)
+    reliability_pct: Mapped[int] = mapped_column(Integer, nullable=False)
+    related_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    related_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    origin: Mapped[str] = mapped_column(String(64), nullable=False, default="overheard")
+    """Display-only flavor for where it surfaced -- "overheard", "a
+    scrap of paper on the ground", an NPC's name, ..."""
+    spawned_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+    expires_tick: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    """`panem_bot.cogs.rumors`'s spawn loop sweeps (deletes) a rumor past
+    this tick -- `panem_shared.rumors.spawn_rumor` defaults it to 1
+    simulation month out, same as every other default-expiry window this
+    codebase uses a plain tick column for (`PersonalEventChain.expires_
+    tick`, ...). `None` means it never expires on its own (not currently
+    used by anything, but left open rather than a backfilled sentinel)."""
+
+
+class RumorInvestigation(TimestampMixin, Base):
+    """One logged `/rumor investigate` attempt -- `reliability_delta` is
+    the signed shift it actually applied to `Rumor.reliability_pct`
+    (already clamped to 0-100), kept here so a rumor's investigation
+    history can be displayed (`/rumor investigate` shows "3 people have
+    looked into this") without re-deriving it from the rumor's own
+    before/after state."""
+
+    __tablename__ = "rumor_investigations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    rumor_id: Mapped[int] = mapped_column(ForeignKey("rumors.id"), nullable=False, index=True)
+    character_id: Mapped[int] = mapped_column(
+        ForeignKey("characters.id"), nullable=False, index=True
+    )
+    finding: Mapped[str] = mapped_column(String(300), nullable=False)
+    reliability_delta: Mapped[int] = mapped_column(Integer, nullable=False)
+    tick: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+# ============================================================ Feature flags
+
+
+class FeatureFlag(TimestampMixin, Base):
+    """Admin-toggleable kill switch for a beta-stage tab/command/system --
+    `panem_shared.feature_flags` is the only reader/writer; `/staff feature
+    set` (`panem_bot.cogs.staff`) and the Staff tab's flags panel
+    (`dashboard_routes.py`) are its two editors. One row per `key`
+    (`panem_shared.feature_flags.NPC_INTERACTION`, `tab:<name>`,
+    `command:<name>`, ...); an absent row reads as ENABLED
+    (`panem_shared.feature_flags.get_state`'s default), so this table only
+    ever needs a row for a flag that's actually been changed away from
+    that default. `state` is a plain string rather than a DB enum column
+    so a new `FlagState` value never needs a migration of its own."""
+
+    __tablename__ = "feature_flags"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="enabled")
+    updated_by_discord_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+
+# ============================================================ Bulletin
+
+
+class BulletinEntry(TimestampMixin, Base):
+    """One pinned notice on the board -- `source_kind`/`source_id`
+    optionally point back at whatever produced it (a `WeatherEvent`, a
+    `GlobalEvent`, a `Rumor`, ...) so it can be kept in sync (or just so
+    `/bulletin` can deep-link into the right command), but every display
+    field below is its own snapshot copy rather than a join: a bulletin
+    entry has to stay readable (and keep whatever location/time/tag text
+    it was posted with) even after its source row is long gone, the same
+    reasoning `CrimeLog.target_name` already documents."""
+
+    __tablename__ = "bulletin_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tag: Mapped[str] = mapped_column(String(32), nullable=False)
+    """"Admin hosted" | "Player hosted" | "NPC hosted" | a plain event-type
+    label -- `panem_bot.cogs.bulletin` picks the right one per
+    `source_kind`, staff/players can override it on player-posted entries."""
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    body: Mapped[str] = mapped_column(String(600), nullable=False, default="")
+    district_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    location_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    posted_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """When the thing being announced actually happens, if applicable --
+    `None` for a pure announcement with no future moment attached."""
+    requirements: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    danger_level: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    posted_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    """`None` for a system-generated entry (weather/global-event/rumor) --
+    only set for `source_kind = "player_post"` (`/bulletin post`)."""
+    retracted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    image_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    """An optional image a player attaches when posting (`/bulletin
+    post`'s own image option) -- a plain URL, the same `String(512)`
+    shape `Character.avatar_url`/`User.avatar_url`/`Npc.avatar_url`
+    already use for an image reference rather than storing bytes
+    in-process; there's no upload pipeline for this to go through."""
+
+
+class BulletinUserState(Base):
+    """One user's personal view of one `BulletinEntry` -- interest
+    marking and manual drag-organize position are per-viewer (Spec: "you
+    can organize it freely"), never shared, so this keys off `User.id`
+    rather than anything board-wide. A user with no row for an entry
+    simply uses the default sort (start time/date) and shows as not
+    interested -- no backfill needed as new entries appear."""
+
+    __tablename__ = "bulletin_user_state"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    entry_id: Mapped[int] = mapped_column(ForeignKey("bulletin_entries.id"), primary_key=True)
+    interested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    category: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    """User-written free-text grouping label (Spec: "write in categories
+    if desired") -- `None` falls back to `BulletinEntry.tag`."""
+    sort_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """`None` means this user hasn't manually dragged this entry -- the
+    default start-time/date sort applies. Set by a manual move; a preset
+    re-sort (`panem_bot.cogs.bulletin`'s "reset to default" button) just
+    clears every row for that user back to `None` rather than computing
+    new positions for a sort the query can already do unassisted."""
+    hidden: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    """Per-viewer "Delete"/"Hide" -- the one removal action available on
+    *every* entry, not just a player's own posts (`retract` stays the
+    separate, real, owner-only removal of the one shared row). `board_for`
+    still returns a hidden entry (with this flag set) rather than
+    filtering it out server-side, so the dashboard can show a "N hidden"
+    disclosure a player can reopen, the same non-destructive spirit
+    `interested` already has."""
+
+
+class BulletinReminder(Base):
+    """A pending "remind me" DM for one user/entry -- deleted once sent
+    (or once the entry's `event_tick` passes with no reminder lead left
+    to honor), the same "gone is gone, no status column" shape
+    `Shipment` uses for its own one-shot window."""
+
+    __tablename__ = "bulletin_reminders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    entry_id: Mapped[int] = mapped_column(ForeignKey("bulletin_entries.id"), nullable=False)
+    remind_at_tick: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "entry_id", name="uq_bulletin_reminder_once_per_user"),
+    )

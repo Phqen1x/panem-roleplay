@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from panem_bot import redis_keys
 from panem_bot.errors import NotAllowed
 from panem_bot.outbound import OutboundMessage, SendPriority
-from panem_bot.services import characters as characters_svc
 from panem_bot.services import dialogue as dialogue_svc
 from panem_bot.services import engagements as engagements_svc
 from panem_bot.services import housing as housing_svc
@@ -23,9 +22,11 @@ from panem_bot.services import proxy as proxy_svc
 from panem_bot.services import shifts as shifts_svc
 from panem_bot.strings import t
 from panem_shared import constants, hostility, relationships
+from panem_shared import feature_flags as feature_flags_svc
 from panem_shared.db.models import (
     Character,
     DialogueLog,
+    DialogueSettings,
     DiscordChannel,
     DistrictLore,
     DistrictState,
@@ -345,8 +346,23 @@ class ProxyCog(commands.Cog):
         # (`/talk`/`/engage` can attach NPCs to *any* scene -- an ambient
         # thread, an open `/scene`, not just a dedicated `SceneKind.
         # ENGAGEMENT` thread -- see `cogs/dialogue.py`'s docstring), not
-        # merely that the scene's `kind` is ENGAGEMENT.
-        is_engagement = scene is not None and bool(scene.participants.get("npcs"))
+        # merely that the scene's `kind` is ENGAGEMENT. If an admin has
+        # since disabled/restricted NPC interaction (`/staff feature set
+        # npc_interaction`), an already-joined NPC just goes quiet rather
+        # than erroring on every message in what's likely an old thread --
+        # the flag's real job is stopping *new* `/talk`/`/engage` NPC
+        # invites, which are gated loudly at their own command instead.
+        npc_scene = scene is not None and bool(scene.participants.get("npcs"))
+        npc_interaction_ok = True
+        if npc_scene:
+            author_is_staff = isinstance(
+                message.author, discord.Member
+            ) and await self.bot.is_staff(message.author)  # type: ignore[attr-defined]
+            flag_state = await feature_flags_svc.get_state(
+                session, feature_flags_svc.NPC_INTERACTION
+            )
+            npc_interaction_ok = feature_flags_svc.is_allowed(flag_state, is_staff=author_is_staff)
+        is_engagement = npc_scene and npc_interaction_ok
 
         async def send_chunk(chunk: str, files: list[discord.File], *, is_last: bool) -> None:
             sent = await webhook.send(
@@ -508,6 +524,8 @@ class ProxyCog(commands.Cog):
             history_entries = (await session.execute(select(PanemHistoryEntry))).scalars().all()
             world_lore = await session.get(WorldLoreSettings, 1)
             world_notes = world_lore.alternate_universe_notes if world_lore is not None else None
+            dialogue_settings = await session.get(DialogueSettings, 1)
+            dialogue_enabled = dialogue_settings is None or dialogue_settings.enabled
 
             # A hostile action (spitting on, hitting, attacking, or
             # otherwise harming/annoying an NPC) tanks that NPC's opinion
@@ -613,6 +631,7 @@ class ProxyCog(commands.Cog):
                     district_on_edge=jail_svc.is_crackdown_active(district_state, current_tick),
                     district_lore=district_lore,
                     is_black_market_contact=is_black_market_contact,
+                    dialogue_enabled=dialogue_enabled,
                 )
 
                 sent = await webhook.send(

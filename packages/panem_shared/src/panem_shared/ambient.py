@@ -38,9 +38,7 @@ UPLOAD_SUBDIR = "uploads/ambient"
 
 async def list_ambient_tracks(session: AsyncSession) -> list[AmbientTrack]:
     """Every uploaded ambient music track, newest first."""
-    result = await session.execute(
-        select(AmbientTrack).order_by(AmbientTrack.id.desc())
-    )
+    result = await session.execute(select(AmbientTrack).order_by(AmbientTrack.id.desc()))
     return list(result.scalars().all())
 
 
@@ -65,9 +63,12 @@ async def get_matching_ambient_tracks(
     # 1. Location match
     if location_id:
         for t in all_tracks:
-            if t.scope == "location" and t.location_id == location_id:
-                if t.district_id is None or t.district_id == district_id:
-                    matching.append(t)
+            if (
+                t.scope == "location"
+                and t.location_id == location_id
+                and (t.district_id is None or t.district_id == district_id)
+            ):
+                matching.append(t)
 
     # 2. Channel match
     if channel_id:
@@ -134,7 +135,9 @@ def save_ambient_audio_bytes(file_bytes: bytes, filename: str, uploads_root: Pat
     if ext not in ALLOWED_AUDIO_EXTENSIONS:
         ext = ".mp3"
 
-    safe_stem = "".join(c for c in Path(filename).stem if c.isalnum() or c in ("-", "_"))[:32] or "track"
+    safe_stem = (
+        "".join(c for c in Path(filename).stem if c.isalnum() or c in ("-", "_"))[:32] or "track"
+    )
     unique_name = f"{uuid4().hex}_{safe_stem}{ext}"
 
     dest_dir = uploads_root / UPLOAD_SUBDIR

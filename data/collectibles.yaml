@@ -1,0 +1,110 @@
+# Collectible catalog (Spec: "Museum") -- every `CollectibleInstance.
+# collectible_id` must resolve here. `wing` is the default museum
+# grouping (`panem_shared.museum`'s "by_wing" preset).
+- id: minnow
+  name: Minnow
+  hobby_id: fishing
+  rarity: common
+  wing: Aquatic Life
+  description: A tiny, unremarkable river fish. Everyone's first catch.
+  donation_reward: 5
+- id: silver_trout
+  name: Silver Trout
+  hobby_id: fishing
+  rarity: common
+  wing: Aquatic Life
+  description: A respectable catch, scales flashing in the light.
+  donation_reward: 8
+- id: river_bass
+  name: River Bass
+  hobby_id: fishing
+  rarity: uncommon
+  wing: Aquatic Life
+  description: Fought the whole way in. Worth the trouble.
+  donation_reward: 15
+- id: capitol_koi
+  name: Capitol Koi
+  hobby_id: fishing
+  rarity: rare
+  wing: Aquatic Life
+  description: An ornamental import, nowhere near its garden pond. How did it get here?
+  donation_reward: 40
+- id: ancient_turtle_shell
+  name: Ancient Turtle Shell
+  hobby_id: fishing
+  rarity: legendary
+  wing: Aquatic Life
+  description: Empty, enormous, and far older than the district itself.
+  donation_reward: 100
+
+- id: wildflower_bouquet
+  name: Wildflower Bouquet
+  hobby_id: gardening
+  rarity: common
+  wing: Flora & Garden
+  description: A cheerful handful of whatever was growing nearby.
+  donation_reward: 5
+- id: heirloom_tomato
+  name: Heirloom Tomato
+  hobby_id: gardening
+  rarity: common
+  wing: Flora & Garden
+  description: Lumpy, imperfect, and better than anything the market sells.
+  donation_reward: 8
+- id: sunpetal_bloom
+  name: Sunpetal Bloom
+  hobby_id: gardening
+  rarity: uncommon
+  wing: Flora & Garden
+  description: Opens only at midday, and only for a careful gardener.
+  donation_reward: 15
+- id: nightshade_bloom
+  name: Nightshade Bloom
+  hobby_id: gardening
+  rarity: rare
+  wing: Flora & Garden
+  description: Beautiful, faintly dangerous, and not easy to coax out of the ground.
+  donation_reward: 40
+- id: capitol_rose
+  name: Capitol Rose
+  hobby_id: gardening
+  rarity: legendary
+  wing: Flora & Garden
+  description: A genetically perfect bloom that has no business growing wild.
+  donation_reward: 100
+
+- id: plain_biscuit
+  name: Plain Biscuit
+  hobby_id: baking
+  rarity: common
+  wing: Baked Goods
+  description: A little dense, a little lopsided, entirely edible.
+  donation_reward: 5
+- id: cinnamon_roll
+  name: Cinnamon Roll
+  hobby_id: baking
+  rarity: common
+  wing: Baked Goods
+  description: The glaze didn't quite set, but nobody's complaining.
+  donation_reward: 8
+- id: honey_loaf
+  name: Honey Loaf
+  hobby_id: baking
+  rarity: uncommon
+  wing: Baked Goods
+  description: Golden, dense, and gone before it cools.
+  donation_reward: 15
+- id: capitol_tart
+  name: Capitol Tart
+  hobby_id: baking
+  rarity: rare
+  wing: Baked Goods
+  description: A recipe this precise shouldn't be possible from a district kitchen.
+  donation_reward: 40
+- id: golden_crust_cake
+  name: Golden Crust Cake
+  hobby_id: baking
+  rarity: legendary
+  wing: Baked Goods
+  description: Flawless crust, impossible rise. A once-in-a-lifetime bake.
+  donation_reward: 100

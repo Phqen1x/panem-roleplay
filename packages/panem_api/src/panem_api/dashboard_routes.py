@@ -26,12 +26,15 @@ crime, work, market, travel, residents, housing, characters) adds its own
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import datetime as dt
 import json
 import random
 import secrets
 import uuid
 from pathlib import Path
+from typing import Literal
 
 import redis.asyncio as redis
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
@@ -40,71 +43,95 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from panem_api import discord_staff
-from panem_shared import ambient as ambient_svc
 from panem_shared import affliction_types as affliction_types_svc
+from panem_shared import ambient as ambient_svc
 from panem_shared import avatars as avatars_svc
 from panem_shared import blackmarket as blackmarket_svc
+from panem_shared import bulletin as bulletin_svc
 from panem_shared import characters as characters_svc
-from panem_shared import constants, job_levels, simtime
+from panem_shared import constants, hobby_levels, job_levels, simtime
 from panem_shared import crime_log as crime_log_svc
 from panem_shared import district_lore as district_lore_svc
+from panem_shared import feature_flags as feature_flags_svc
+from panem_shared import global_events as global_events_svc
+from panem_shared import hobbies as hobbies_svc
 from panem_shared import housing as housing_svc
 from panem_shared import jail as jail_svc
 from panem_shared import jobs as jobs_svc
 from panem_shared import layers as layers_svc
 from panem_shared import lore as lore_svc
 from panem_shared import market as market_svc
+from panem_shared import museum as museum_svc
 from panem_shared import pay as pay_svc
+from panem_shared import personal_events as personal_events_svc
 from panem_shared import poaching as poaching_svc
+from panem_shared import reactions as reactions_svc
 from panem_shared import rp_modes as rp_modes_svc
+from panem_shared import rumors as rumors_svc
 from panem_shared import shipments as shipments_svc
 from panem_shared import stealing as stealing_svc
 from panem_shared import sustenance as sustenance_svc
 from panem_shared import theme as theme_svc
 from panem_shared import trades as trades_svc
 from panem_shared import travel as travel_svc
+from panem_shared import weather as weather_svc
 from panem_shared.content.loader import ContentBundle
 from panem_shared.content.schemas import Location
 from panem_shared.content.traits import speech_tone
 from panem_shared.db.models import (
     AfflictionType,
     ApartmentLease,
+    BulletinEntry,
     Character,
     CharacterAffliction,
+    CharacterHobby,
+    CollectibleInstance,
+    DiscordChannel,
     DistrictLore,
     DistrictLorePerson,
     DistrictState,
     EngagementSettings,
+    GlobalEvent,
     Inventory,
     LayerCategory,
     Npc,
     PanemHistoryEntry,
+    PersonalEventChain,
     Property,
     PropertyAuction,
+    ReactionEventLog,
     RelationshipRow,
+    Rumor,
     Scene,
     StaffAction,
     ThemeProfile,
     Trade,
     User,
+    WeatherEvent,
+    WeatherForecast,
     WorldClock,
 )
 from panem_shared.db.session import session_scope
 from panem_shared.enums import (
+    ChannelKind,
     CharacterStatus,
     DayPhase,
     Gender,
+    GlobalEventStatus,
     JobLevel,
     LocationKind,
     OwnerKind,
     Position,
     PropertyKind,
+    ReactionChoice,
     RpMode,
     SceneStatus,
     Stance,
     TradeStatus,
+    WeatherEventStatus,
 )
 from panem_shared.errors import NotAllowed, NotFound, ServiceError
+from panem_shared.logging import get_logger
 from panem_shared.redis_keys import (
     CHARACTER_MODE_SWITCH_PENDING_CHANNEL,
     CHARACTER_PENDING_CHANNEL,
@@ -119,6 +146,8 @@ from panem_shared.shifts import (
     has_job,
     start_shift_game,
 )
+
+logger = get_logger(component="api")
 
 
 class DashboardCharacterSummary(BaseModel):
@@ -185,6 +214,14 @@ class IdentifyResponse(BaseModel):
     theme: DashboardTheme = Field(default_factory=DashboardTheme)
     # Empty for a non-donor/lapsed donor, same surfacing rule as `theme`.
     theme_profiles: list[ThemeProfileSummary] = Field(default_factory=list)
+    # Bare tab names (`"map"`, not `"tab:map"`) this caller shouldn't see,
+    # already resolved server-side against `feature_flags` + `is_staff`
+    # above -- `app.js`'s `visibleTabs()` just filters these out, the same
+    # "server decides, client never re-derives a privilege decision" shape
+    # `is_staff`/`is_donor` already follow here. Covers any tab an admin
+    # has flagged `staff_only`/`disabled` via `/staff feature set`, not
+    # just the Map tab that motivated adding this.
+    hidden_tabs: list[str] = Field(default_factory=list)
 
 
 def _require_session_factory(
@@ -274,6 +311,53 @@ async def _resolve_theme(
     return _theme_for_profile(profile)
 
 
+async def _hidden_tabs(session: AsyncSession, *, is_staff: bool) -> list[str]:
+    """Every `panem_shared.feature_flags.ACTIVITY_TABS` entry this caller
+    shouldn't see -- `tab:<name>` flagged `disabled` (hidden from
+    everyone, staff included) or `staff_only` (hidden from everyone but
+    staff). A tab with no row at all (the common case) stays visible, same
+    `get_state`'s "absent == ENABLED" default."""
+    overrides = await feature_flags_svc.list_states(session)
+    hidden: list[str] = []
+    for tab_name in feature_flags_svc.ACTIVITY_TABS:
+        state = overrides.get(
+            feature_flags_svc.tab_key(tab_name), feature_flags_svc.FlagState.ENABLED
+        )
+        if not feature_flags_svc.is_allowed(state, is_staff=is_staff):
+            hidden.append(tab_name)
+    return hidden
+
+
+async def _require_tab_access(
+    session: AsyncSession,
+    *,
+    discord_id: int,
+    tab_name: str,
+    discord_token: str,
+    discord_guild_id: int,
+    staff_role_id: int,
+) -> None:
+    """Server-side enforcement mirroring `/identify`'s `hidden_tabs`: a
+    mutating action behind a `staff_only`/`disabled` tab (`/staff feature
+    set tab:<tab_name> ...`) is refused here too, not just hidden from
+    the UI -- the same "never trust the client with a privilege decision"
+    posture `_resolve_owned_character` already applies to ownership.
+    Read-only status/board/listing routes deliberately don't call this
+    (matching what `hidden_tabs` already hides from them is enough
+    there); only a route that *changes* something behind a flagged tab
+    does, so a disabled tab's effects can't be reached by calling the API
+    directly once its button is gone from the UI."""
+    is_staff = await discord_staff.fetch_is_staff(
+        discord_id,
+        bot_token=discord_token,
+        guild_id=discord_guild_id,
+        staff_role_id=staff_role_id,
+    )
+    state = await feature_flags_svc.get_state(session, feature_flags_svc.tab_key(tab_name))
+    if not feature_flags_svc.is_allowed(state, is_staff=is_staff):
+        raise HTTPException(status_code=403, detail="tab_disabled")
+
+
 def build_identify_router(
     *,
     session_factory: async_sessionmaker[AsyncSession] | None,
@@ -318,10 +402,13 @@ def build_identify_router(
         )
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
+            hidden_tabs = await _hidden_tabs(session, is_staff=is_staff)
             user_row = await session.execute(select(User).where(User.discord_id == body.discord_id))
             user = user_row.scalar_one_or_none()
             if user is None:
-                return IdentifyResponse(characters=[], is_staff=is_staff, is_donor=is_donor)
+                return IdentifyResponse(
+                    characters=[], is_staff=is_staff, is_donor=is_donor, hidden_tabs=hidden_tabs
+                )
             rows = await session.execute(
                 select(Character)
                 .where(
@@ -338,18 +425,14 @@ def build_identify_router(
                     .where(ThemeProfile.user_id == user.id)
                     .order_by(ThemeProfile.id)
                 )
-                theme_profiles = [
-                    _theme_profile_summary(p) for p in profile_rows.scalars().all()
-                ]
+                theme_profiles = [_theme_profile_summary(p) for p in profile_rows.scalars().all()]
             return IdentifyResponse(
                 characters=[
                     DashboardCharacterSummary(
                         id=c.id,
                         name=c.name,
                         avatar_url=c.avatar_url,
-                        appearance_layers=layers_svc.sanitize_stored_selection(
-                            c.appearance_layers
-                        ),
+                        appearance_layers=layers_svc.sanitize_stored_selection(c.appearance_layers),
                         district_id=c.district_id,
                         current_district_id=c.current_district_id,
                         district_name=(
@@ -378,6 +461,7 @@ def build_identify_router(
                     else DashboardTheme()
                 ),
                 theme_profiles=theme_profiles,
+                hidden_tabs=hidden_tabs,
             )
 
     return router
@@ -507,9 +591,7 @@ def build_theme_router(
         await _require_donor(body.discord_id)
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
-            user_row = await session.execute(
-                select(User).where(User.discord_id == body.discord_id)
-            )
+            user_row = await session.execute(select(User).where(User.discord_id == body.discord_id))
             user = user_row.scalar_one_or_none()
             if user is None:
                 return ThemeProfileListResponse(profiles=[], active_profile_id=None)
@@ -530,7 +612,9 @@ def build_theme_router(
         async with session_scope(factory) as session:
             user = await characters_svc.get_or_create_user(session, body.discord_id)
             count_row = await session.execute(
-                select(func.count()).select_from(ThemeProfile).where(ThemeProfile.user_id == user.id)
+                select(func.count())
+                .select_from(ThemeProfile)
+                .where(ThemeProfile.user_id == user.id)
             )
             if count_row.scalar_one() >= MAX_THEME_PROFILES_PER_USER:
                 raise HTTPException(status_code=400, detail="theme_profile_limit_reached")
@@ -910,6 +994,26 @@ def build_characters_router(
             current_tick = await _current_tick(session)
             return _character_detail(character, content=content, current_tick=current_tick)
 
+    @router.post("/avatar-upload")
+    async def upload_character_avatar(
+        discord_id: int = Form(...),
+        file: UploadFile = File(...),  # noqa: B008
+    ) -> dict[str, str]:
+        """Uploads an avatar image before a character exists (e.g. during character creation)."""
+        if not activity_public_url:
+            raise HTTPException(
+                status_code=400,
+                detail="Avatar uploads aren't configured on this server (no public URL set).",
+            )
+        data = await file.read()
+        try:
+            relative_path = avatars_svc.save_avatar_image(
+                content_type=file.content_type or "", data=data, static_dir=static_dir
+            )
+        except ServiceError as exc:
+            raise _http_from_service_error(exc) from exc
+        return {"avatar_url": f"{activity_public_url.rstrip('/')}/{relative_path}"}
+
     @router.post("/{character_id}/avatar-upload", response_model=CharacterDetail)
     async def upload_my_character_avatar(
         character_id: int,
@@ -994,9 +1098,7 @@ def _layer_category_response(category: LayerCategory) -> LayerCategoryResponse:
     )
 
 
-def build_layers_router(
-    *, session_factory: async_sessionmaker[AsyncSession] | None
-) -> APIRouter:
+def build_layers_router(*, session_factory: async_sessionmaker[AsyncSession] | None) -> APIRouter:
     """The Picrew-style customizer's read side: every category (in render
     order) and its options. No `discord_id` needed -- like the old
     `appearance-options` endpoint this replaces, it's static, non-sensitive
@@ -1417,17 +1519,21 @@ def build_crime_router(
                 # id keeps which house gets targeted stable across repeated attempts
                 # rather than depending on the database's unspecified row order.
                 house = (
-                    await session.execute(
-                        select(Property)
-                        .where(
-                            Property.kind == PropertyKind.HOUSE.value,
-                            Property.owner_kind == OwnerKind.CHARACTER.value,
-                            Property.owner_id == owner_char.id,
-                            Property.district_id == character.current_district_id,
+                    (
+                        await session.execute(
+                            select(Property)
+                            .where(
+                                Property.kind == PropertyKind.HOUSE.value,
+                                Property.owner_kind == OwnerKind.CHARACTER.value,
+                                Property.owner_id == owner_char.id,
+                                Property.district_id == character.current_district_id,
+                            )
+                            .order_by(Property.id)
                         )
-                        .order_by(Property.id)
                     )
-                ).scalars().first()
+                    .scalars()
+                    .first()
+                )
             if house is None:
                 raise HTTPException(status_code=404, detail="burgle_owner_not_found")
 
@@ -1835,9 +1941,7 @@ def build_blackmarket_router(
                     continue
                 price = await blackmarket_svc.get_price(session, district.id, good)
                 stock = await blackmarket_svc.get_supply(session, district.id, good_id)
-                prices.append(
-                    GoodPrice(good_id=good_id, name=good.name, price=price, stock=stock)
-                )
+                prices.append(GoodPrice(good_id=good_id, name=good.name, price=price, stock=stock))
             trusted = False
             try:
                 fence = blackmarket_svc.resolve_fence(district.id, content.npcs)
@@ -2540,7 +2644,9 @@ class TradeActionRequest(BaseModel):
     discord_id: int
 
 
-def _trade_summary(trade: Trade, *, initiator_name: str, recipient_name: str, viewer_id: int) -> TradeSummary:
+def _trade_summary(
+    trade: Trade, *, initiator_name: str, recipient_name: str, viewer_id: int
+) -> TradeSummary:
     return TradeSummary(
         id=trade.id,
         initiator_character_id=trade.initiator_character_id,
@@ -3022,8 +3128,7 @@ def build_housing_router(
                 mortgage_terms=HousingMortgageTerms(
                     down_payment_pct=constants.MORTGAGE_DOWN_PAYMENT_PCT,
                     interest_rate=constants.MORTGAGE_INTEREST_RATE,
-                    term_days=constants.MORTGAGE_TERM_TICKS_DEFAULT
-                    // constants.TICKS_PER_DAY,
+                    term_days=constants.MORTGAGE_TERM_TICKS_DEFAULT // constants.TICKS_PER_DAY,
                     max_ltv=constants.MORTGAGE_MAX_LTV,
                     misses_to_foreclose=constants.MORTGAGE_MISSES_TO_FORECLOSE,
                 ),
@@ -3644,6 +3749,22 @@ class StaffJailResponse(BaseModel):
     jailed_until_tick: int
 
 
+class FeatureFlagSummary(BaseModel):
+    key: str
+    description: str | None = None
+    state: str
+
+
+class FeatureFlagsResponse(BaseModel):
+    flags: list[FeatureFlagSummary]
+
+
+class FeatureFlagSetRequest(BaseModel):
+    discord_id: int
+    key: str
+    state: str
+
+
 class StaffAddStockRequest(BaseModel):
     discord_id: int
     district_id: int
@@ -3657,6 +3778,27 @@ class StaffAddStockResponse(BaseModel):
     good_name: str
     qty_added: float
     new_supply: float
+
+
+class StaffChannelAccessEntry(BaseModel):
+    channel_id: int
+    district_id: int
+    label: str
+    kind: str
+    # `None` means the Discord lookup failed (see `discord_staff.fetch_
+    # role_can_view_channel`) -- the frontend shows "unknown" rather than
+    # rendering a toggle it can't trust the state of.
+    locked: bool | None
+
+
+class StaffChannelAccessListResponse(BaseModel):
+    roleplay_role_id: int
+    channels: list[StaffChannelAccessEntry]
+
+
+class StaffChannelAccessRequest(BaseModel):
+    discord_id: int
+    locked: bool
 
 
 class CreateLayerCategoryRequest(BaseModel):
@@ -4090,7 +4232,9 @@ def build_rp_mode_router(
                 session, discord_id=body.discord_id, character_id=character_id
             )
             try:
-                rp_modes_svc.check_can_switch_mode(character, body.new_mode, dt.datetime.now(dt.UTC))
+                rp_modes_svc.check_can_switch_mode(
+                    character, body.new_mode, dt.datetime.now(dt.UTC)
+                )
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
             if rp_modes_svc.mode_switch_needs_job_info(character, body.new_mode):
@@ -4160,6 +4304,7 @@ def build_staff_router(
     discord_guild_id: int = 0,
     staff_role_id: int = 0,
     log_channel_id: int = 0,
+    roleplay_role_id: int = 0,
 ) -> APIRouter:
     """The Staff tab's REST surface -- the dashboard equivalent of `/staff
     jail`. Staff-only: every route here re-checks `discord_staff.fetch_is_
@@ -4279,6 +4424,127 @@ def build_staff_router(
         )
         return response
 
+    # ---- Channel lock/unlock (dashboard counterpart to `/staff channel
+    # lock`/`unlock`) ------------------------------------------------------
+    # Operates on exactly the channels `scripts/setup_guild.py` locked down
+    # to staff-only at creation: each district's forum and the guild-wide
+    # `#ooc` (`DiscordChannel` rows of kind FORUM/OOC) -- not the approval/
+    # log channels, which stay staff-only permanently, and not individual
+    # ambient/board threads, since a Discord thread always inherits its
+    # parent channel's view permissions. Unlike `/staff channel lock`/
+    # `unlock` in Discord (which takes any role), this always targets the
+    # one role configured as `ROLEPLAY_ROLE_ID` -- a toggle needs a single,
+    # known target, and that's the point of the setting.
+
+    def _channel_label(district_id: int, kind: str) -> str:
+        if kind == ChannelKind.OOC.value:
+            return "#ooc (guild-wide)"
+        district_name = (
+            content.district(district_id).name
+            if district_id in content.districts
+            else f"district {district_id}"
+        )
+        return f"{district_name} forum"
+
+    @router.get("/channels", response_model=StaffChannelAccessListResponse)
+    async def list_channel_access(discord_id: int) -> StaffChannelAccessListResponse:
+        await _require_staff(discord_id)
+        if not roleplay_role_id:
+            raise HTTPException(status_code=409, detail="roleplay_role_not_configured")
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(DiscordChannel).where(
+                            DiscordChannel.kind.in_(
+                                [ChannelKind.FORUM.value, ChannelKind.OOC.value]
+                            )
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            row_data = [(row.channel_id, row.district_id, row.kind) for row in rows]
+        locked_states = await asyncio.gather(
+            *(
+                discord_staff.fetch_role_can_view_channel(
+                    channel_id, roleplay_role_id, bot_token=discord_token
+                )
+                for channel_id, _district_id, _kind in row_data
+            )
+        )
+        channels = [
+            StaffChannelAccessEntry(
+                channel_id=channel_id,
+                district_id=district_id,
+                label=_channel_label(district_id, kind),
+                kind=kind,
+                locked=None if can_view is None else not can_view,
+            )
+            for (channel_id, district_id, kind), can_view in zip(
+                row_data, locked_states, strict=True
+            )
+        ]
+        channels.sort(key=lambda c: (c.kind != ChannelKind.OOC.value, c.district_id))
+        return StaffChannelAccessListResponse(roleplay_role_id=roleplay_role_id, channels=channels)
+
+    @router.post("/channels/{channel_id}/access", response_model=StaffChannelAccessEntry)
+    async def set_channel_access(
+        channel_id: int, body: StaffChannelAccessRequest
+    ) -> StaffChannelAccessEntry:
+        await _require_staff(body.discord_id)
+        if not roleplay_role_id:
+            raise HTTPException(status_code=409, detail="roleplay_role_not_configured")
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            row = (
+                await session.execute(
+                    select(DiscordChannel).where(
+                        DiscordChannel.channel_id == channel_id,
+                        DiscordChannel.kind.in_([ChannelKind.FORUM.value, ChannelKind.OOC.value]),
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                raise HTTPException(status_code=404, detail="channel_not_found")
+            district_id, kind = row.district_id, row.kind
+        ok = await discord_staff.set_role_channel_locked(
+            channel_id,
+            roleplay_role_id,
+            bot_token=discord_token,
+            locked=body.locked,
+            is_forum=(kind == ChannelKind.FORUM.value),
+        )
+        if not ok:
+            raise HTTPException(status_code=502, detail="discord_permission_edit_failed")
+        async with session_scope(factory) as session:
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="channel_lock" if body.locked else "channel_unlock",
+                    target=str(channel_id),
+                    payload={"role_id": roleplay_role_id},
+                )
+            )
+        await discord_staff.post_staff_log(
+            channel_id=log_channel_id,
+            bot_token=discord_token,
+            content=(
+                f"**Staff action:** <@{body.discord_id}> "
+                f"`{'channel_lock' if body.locked else 'channel_unlock'}` -> <#{channel_id}> "
+                f"for <@&{roleplay_role_id}>"
+            ),
+        )
+        return StaffChannelAccessEntry(
+            channel_id=channel_id,
+            district_id=district_id,
+            label=_channel_label(district_id, kind),
+            kind=kind,
+            locked=body.locked,
+        )
+
     # ---- Layer management (Picrew-style customizer admin) --------------
     # The upload flow this feature was actually asked for: staff add a
     # category once (a stack position + a name), then upload images into
@@ -4338,9 +4604,7 @@ def build_staff_router(
                 raise _http_from_service_error(exc) from exc
         return {"deleted": True}
 
-    @router.post(
-        "/layers/categories/{category_id}/options", response_model=LayerOptionResponse
-    )
+    @router.post("/layers/categories/{category_id}/options", response_model=LayerOptionResponse)
     async def create_layer_option(
         category_id: int,
         discord_id: int = Form(...),
@@ -4555,7 +4819,10 @@ def build_staff_router(
                 )
             )
         return StaffGiveItemResponse(
-            character_name=body.character_name, good_id=good.id, good_name=good.name, new_qty=new_qty
+            character_name=body.character_name,
+            good_id=good.id,
+            good_name=good.name,
+            new_qty=new_qty,
         )
 
     @router.post("/give/position", response_model=StaffGivePositionResponse)
@@ -4680,7 +4947,9 @@ def build_staff_router(
         return {"logged": True}
 
     @router.post("/character/delete-pending", response_model=StaffDeletePendingResponse)
-    async def delete_pending_character(body: StaffDeletePendingRequest) -> StaffDeletePendingResponse:
+    async def delete_pending_character(
+        body: StaffDeletePendingRequest,
+    ) -> StaffDeletePendingResponse:
         await _require_staff(body.discord_id)
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
@@ -4726,9 +4995,7 @@ def build_staff_router(
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             row = (
-                await session.execute(
-                    select(User).where(User.discord_id == body.target_discord_id)
-                )
+                await session.execute(select(User).where(User.discord_id == body.target_discord_id))
             ).scalar_one_or_none()
             if row is None:
                 row = User(discord_id=body.target_discord_id)
@@ -5055,24 +5322,27 @@ def build_staff_router(
         district_id: str | None = Form(None),
         location_id: str | None = Form(None),
         channel_id: str | None = Form(None),
-        file: UploadFile = File(...),
+        file: UploadFile = File(...),  # noqa: B008 -- FastAPI's own sentinel-default idiom
     ) -> AmbientTrackResponse:
         await _require_staff(discord_id)
         factory = _require_session_factory(session_factory)
 
         parsed_district_id: int | None = None
         if district_id is not None and str(district_id).strip():
-            try:
+            with contextlib.suppress(ValueError):
                 parsed_district_id = int(str(district_id).strip())
-            except ValueError:
-                pass
 
         clean_location_id = location_id.strip() if location_id and location_id.strip() else None
         clean_channel_id = channel_id.strip() if channel_id and channel_id.strip() else None
 
         file_bytes = await file.read()
-        uploads_root = static_dir or STATIC_DIR
-        rel_path = ambient_svc.save_ambient_audio_bytes(file_bytes, file.filename or "track.mp3", uploads_root)
+        # `static_dir` (this router's own parameter) is already resolved to
+        # `STATIC_DIR` by `create_app` when the caller passes none -- no
+        # second fallback needed, and `STATIC_DIR` isn't defined in this
+        # module anyway (it's `app.py`'s own constant).
+        rel_path = ambient_svc.save_ambient_audio_bytes(
+            file_bytes, file.filename or "track.mp3", static_dir
+        )
         async with session_scope(factory) as session:
             try:
                 track = await ambient_svc.create_ambient_track(
@@ -5098,7 +5368,9 @@ def build_staff_router(
             )
 
     @router.post("/ambient/{track_id}/delete")
-    async def delete_staff_ambient_track(track_id: int, body: DeleteAmbientTrackRequest) -> dict[str, bool]:
+    async def delete_staff_ambient_track(
+        track_id: int, body: DeleteAmbientTrackRequest
+    ) -> dict[str, bool]:
         await _require_staff(body.discord_id)
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
@@ -5107,6 +5379,55 @@ def build_staff_router(
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
         return {"deleted": True}
+
+    @router.get("/flags", response_model=FeatureFlagsResponse)
+    async def list_feature_flags(discord_id: int) -> FeatureFlagsResponse:
+        """Backs the Staff tab's flags panel -- same `/staff feature list`
+        catalog `panem_bot.cogs.staff` serves, so either surface can be
+        used interchangeably to toggle a beta tab/command/system."""
+        await _require_staff(discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            overrides = await feature_flags_svc.list_states(session)
+        flags = [
+            FeatureFlagSummary(
+                key=key,
+                description=description,
+                state=overrides.get(key, feature_flags_svc.FlagState.ENABLED).value,
+            )
+            for key, description in feature_flags_svc.KNOWN_FLAGS.items()
+        ]
+        flags += [
+            FeatureFlagSummary(key=key, description=None, state=state.value)
+            for key, state in overrides.items()
+            if key not in feature_flags_svc.KNOWN_FLAGS
+        ]
+        return FeatureFlagsResponse(flags=flags)
+
+    @router.post("/flags/set")
+    async def set_feature_flag(body: FeatureFlagSetRequest) -> dict[str, bool]:
+        await _require_staff(body.discord_id)
+        clean_key = body.key.strip()
+        if not clean_key:
+            raise HTTPException(status_code=400, detail="invalid_key")
+        try:
+            state = feature_flags_svc.FlagState(body.state)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="invalid_state") from exc
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            await feature_flags_svc.set_state(
+                session, clean_key, state, updated_by_discord_id=body.discord_id
+            )
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="feature_set",
+                    target=clean_key,
+                    payload={"state": state.value},
+                )
+            )
+        return {"ok": True}
 
     return router
 
@@ -5418,7 +5739,9 @@ def build_district_lore_router(
             )
 
     @router.post("/panem-history", response_model=PanemHistoryEntryResponse)
-    async def create_panem_history(body: CreatePanemHistoryEntryRequest) -> PanemHistoryEntryResponse:
+    async def create_panem_history(
+        body: CreatePanemHistoryEntryRequest,
+    ) -> PanemHistoryEntryResponse:
         await _require_staff(body.discord_id)
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
@@ -5476,9 +5799,7 @@ def build_district_lore_router(
     return router
 
 
-def build_ambient_router(
-    *, session_factory: async_sessionmaker[AsyncSession] | None
-) -> APIRouter:
+def build_ambient_router(*, session_factory: async_sessionmaker[AsyncSession] | None) -> APIRouter:
     router = APIRouter(prefix="/activity/dashboard/ambient", tags=["dashboard"])
 
     @router.get("/tracks", response_model=list[AmbientTrackResponse])
@@ -5508,5 +5829,1594 @@ def build_ambient_router(
         except Exception as exc:
             logger.warning("Could not fetch ambient tracks (table may not exist yet): %s", exc)
             return []
+
+    return router
+
+
+# ============================================================== Hobbies
+
+
+class HobbySelectedSummary(BaseModel):
+    hobby_id: str
+    name: str
+    verb: str
+    description: str
+    level: str
+    sessions_played: int
+    on_cooldown: bool
+    owns_tool: bool
+    tool_name: str | None = None
+
+
+class HobbyAvailableSummary(BaseModel):
+    hobby_id: str
+    name: str
+    description: str
+    tool_name: str | None = None
+
+
+class HobbiesStatusResponse(BaseModel):
+    max_hobbies: int
+    selected: list[HobbySelectedSummary]
+    available: list[HobbyAvailableSummary]
+
+
+class HobbySelectRequest(BaseModel):
+    discord_id: int
+    hobby_id: str
+
+
+class HobbySelectResponse(BaseModel):
+    hobby_id: str
+    name: str
+    tool_name: str | None = None
+
+
+class HobbyForgetRequest(BaseModel):
+    discord_id: int
+    hobby_id: str
+
+
+class HobbyPlayRequest(BaseModel):
+    discord_id: int
+    hobby_id: str
+    # Whether the canvas minigame (`static/hobby.js` + `games/fishing.js`/
+    # `games/gardening.js`/`games/bake.js`) landed its own win condition --
+    # required (not defaulted) on purpose, the same AND-gate `/hobby play`'s
+    # Discord-side `HobbyTimingView` already enforces: a session can only
+    # succeed if *both* the minigame and the probability roll below hit,
+    # so there's no way to skip straight to the roll by omitting this.
+    timing_hit: bool
+
+
+class HobbyPlayResponse(BaseModel):
+    success: bool
+    collectible_name: str | None = None
+    collectible_rarity: str | None = None
+    chain_started: bool = False
+    leveled_up_to: str | None = None
+
+
+def _hobby_summary_rows(
+    content: ContentBundle,
+    owned: list[CharacterHobby],
+    inventory_by_good: dict[str, int],
+    current_tick: int,
+) -> tuple[list[HobbySelectedSummary], list[HobbyAvailableSummary]]:
+    owned_ids = {row.hobby_id for row in owned}
+    selected = []
+    for row in owned:
+        hobby = content.hobbies.get(row.hobby_id)
+        if hobby is None:
+            continue
+        owns_tool = hobbies_svc.has_tool(hobby, inventory_by_good)
+        on_cooldown = (
+            row.last_played_tick is not None
+            and current_tick - row.last_played_tick < constants.HOBBY_SESSION_COOLDOWN_TICKS
+        )
+        tool_name = content.goods[hobby.tool_good_id].name if hobby.tool_good_id else None
+        selected.append(
+            HobbySelectedSummary(
+                hobby_id=hobby.id,
+                name=hobby.name,
+                verb=hobby.verb,
+                description=hobby.description,
+                level=hobby_levels.hobby_level_for_sessions(row.sessions_played).value,
+                sessions_played=row.sessions_played,
+                on_cooldown=on_cooldown,
+                owns_tool=owns_tool,
+                tool_name=tool_name,
+            )
+        )
+    available = [
+        HobbyAvailableSummary(
+            hobby_id=hobby.id,
+            name=hobby.name,
+            description=hobby.description,
+            tool_name=content.goods[hobby.tool_good_id].name if hobby.tool_good_id else None,
+        )
+        for hobby in content.hobbies.values()
+        if hobby.id not in owned_ids
+    ]
+    return selected, available
+
+
+def build_hobbies_router(
+    *,
+    content: ContentBundle,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    discord_token: str = "",
+    discord_guild_id: int = 0,
+    staff_role_id: int = 0,
+) -> APIRouter:
+    """The Hobbies tab's REST surface -- mirrors `/hobby select|forget|
+    play` (`panem_shared.hobbies`). `/play` requires `timing_hit` (the
+    dashboard's own canvas minigame result, from `static/hobby.js` +
+    `games/fishing.js`/`games/gardening.js`/`games/bake.js`) exactly the
+    same way Discord's `/hobby play` requires its `HobbyTimingView`
+    button press to land first -- success is `timing_hit AND` the usual
+    probability roll, never the roll alone."""
+    router = APIRouter(prefix="/activity/dashboard/hobbies", tags=["dashboard"])
+
+    async def _inventory_by_good(session: AsyncSession, character_id: int) -> dict[str, int]:
+        rows = (
+            (
+                await session.execute(
+                    select(Inventory).where(
+                        Inventory.owner_kind == OwnerKind.CHARACTER.value,
+                        Inventory.owner_id == str(character_id),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return {row.good_id: row.qty for row in rows}
+
+    @router.get("/{character_id}/status", response_model=HobbiesStatusResponse)
+    async def hobbies_status(character_id: int, discord_id: int) -> HobbiesStatusResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            current_tick = await _current_tick(session)
+            owned = await hobbies_svc.selected_hobbies(session, character.id)
+            inventory_by_good = await _inventory_by_good(session, character.id)
+            selected, available = _hobby_summary_rows(
+                content, owned, inventory_by_good, current_tick
+            )
+        return HobbiesStatusResponse(
+            max_hobbies=constants.MAX_HOBBIES_PER_CHARACTER, selected=selected, available=available
+        )
+
+    @router.post("/{character_id}/select", response_model=HobbySelectResponse)
+    async def hobbies_select(character_id: int, body: HobbySelectRequest) -> HobbySelectResponse:
+        factory = _require_session_factory(session_factory)
+        hobby = content.hobbies.get(body.hobby_id)
+        if hobby is None:
+            raise HTTPException(status_code=404, detail="hobby_not_found")
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            await _require_tab_access(
+                session,
+                discord_id=body.discord_id,
+                tab_name="hobbies",
+                discord_token=discord_token,
+                discord_guild_id=discord_guild_id,
+                staff_role_id=staff_role_id,
+            )
+            try:
+                await hobbies_svc.select_hobby(session, character, body.hobby_id, content)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        tool_name = content.goods[hobby.tool_good_id].name if hobby.tool_good_id else None
+        return HobbySelectResponse(hobby_id=hobby.id, name=hobby.name, tool_name=tool_name)
+
+    @router.post("/{character_id}/forget")
+    async def hobbies_forget(character_id: int, body: HobbyForgetRequest) -> dict[str, bool]:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            await _require_tab_access(
+                session,
+                discord_id=body.discord_id,
+                tab_name="hobbies",
+                discord_token=discord_token,
+                discord_guild_id=discord_guild_id,
+                staff_role_id=staff_role_id,
+            )
+            try:
+                await hobbies_svc.forget_hobby(session, character, body.hobby_id)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"ok": True}
+
+    @router.post("/{character_id}/play", response_model=HobbyPlayResponse)
+    async def hobbies_play(character_id: int, body: HobbyPlayRequest) -> HobbyPlayResponse:
+        factory = _require_session_factory(session_factory)
+        hobby = content.hobbies.get(body.hobby_id)
+        if hobby is None:
+            raise HTTPException(status_code=404, detail="hobby_not_found")
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            character_hobby = (
+                await session.execute(
+                    select(CharacterHobby).where(
+                        CharacterHobby.character_id == character.id,
+                        CharacterHobby.hobby_id == body.hobby_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if character_hobby is None:
+                raise HTTPException(status_code=400, detail="hobby_not_selected")
+            await _require_tab_access(
+                session,
+                discord_id=body.discord_id,
+                tab_name="hobbies",
+                discord_token=discord_token,
+                discord_guild_id=discord_guild_id,
+                staff_role_id=staff_role_id,
+            )
+            current_tick = await _current_tick(session)
+            try:
+                hobbies_svc.check_can_play(character_hobby, current_tick)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            inventory_by_good = await _inventory_by_good(session, character.id)
+            owns_tool = hobbies_svc.has_tool(hobby, inventory_by_good)
+            probability = hobbies_svc.session_success_probability(
+                hobby, character_hobby.sessions_played, owns_tool
+            )
+            rng = random.Random()
+            success = body.timing_hit and rng.random() < probability
+            outcome = await hobbies_svc.resolve_session(
+                session,
+                character=character,
+                character_hobby=character_hobby,
+                hobby=hobby,
+                content=content,
+                current_tick=current_tick,
+                success=success,
+                rng=rng,
+            )
+            collectible_name = outcome.collectible.name if outcome.collectible else None
+            collectible_rarity = outcome.collectible.rarity.value if outcome.collectible else None
+        return HobbyPlayResponse(
+            success=outcome.success,
+            collectible_name=collectible_name,
+            collectible_rarity=collectible_rarity,
+            chain_started=outcome.chain_started,
+            leveled_up_to=outcome.leveled_up_to.value if outcome.leveled_up_to else None,
+        )
+
+    return router
+
+
+# =============================================================== Museum
+
+
+class MuseumSlotSummary(BaseModel):
+    slot_id: int
+    wing: str
+    position: int
+    collectible_id: str
+    name: str
+    rarity: str
+    description: str
+
+
+class MuseumUndonatedSummary(BaseModel):
+    instance_id: int
+    collectible_id: str
+    name: str
+    rarity: str
+    source: str
+
+
+class MuseumResponse(BaseModel):
+    slots: list[MuseumSlotSummary]
+    undonated: list[MuseumUndonatedSummary]
+    presets: list[str]
+
+
+class MuseumDonateRequest(BaseModel):
+    discord_id: int
+    instance_id: int
+
+
+class MuseumDonateResponse(BaseModel):
+    collectible_id: str
+    name: str
+    reward: int
+
+
+class MuseumOrganizeRequest(BaseModel):
+    discord_id: int
+    slot_id: int
+    wing: str
+    position: int = 0
+
+
+class MuseumPresetRequest(BaseModel):
+    discord_id: int
+    preset: str
+
+
+def build_museum_router(
+    *, content: ContentBundle, session_factory: async_sessionmaker[AsyncSession] | None
+) -> APIRouter:
+    """The Museum tab's REST surface (`panem_shared.museum`) -- a
+    character's own collection only; viewing someone else's museum stays
+    a `/museum view` Discord-only feature for now."""
+    router = APIRouter(prefix="/activity/dashboard/museum", tags=["dashboard"])
+
+    @router.get("/{character_id}/status", response_model=MuseumResponse)
+    async def museum_get(character_id: int, discord_id: int) -> MuseumResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            slots = await museum_svc.museum_slots(session, character.id)
+            slot_summaries = []
+            for slot in slots:
+                instance = await session.get(CollectibleInstance, slot.collectible_instance_id)
+                collectible = (
+                    content.collectibles.get(instance.collectible_id) if instance else None
+                )
+                if collectible is None:
+                    continue
+                slot_summaries.append(
+                    MuseumSlotSummary(
+                        slot_id=slot.id,
+                        wing=slot.wing,
+                        position=slot.position,
+                        collectible_id=collectible.id,
+                        name=collectible.name,
+                        rarity=collectible.rarity.value,
+                        description=collectible.description,
+                    )
+                )
+            instances = await museum_svc.undonated_instances(session, character.id)
+            undonated = []
+            for instance in instances:
+                collectible = content.collectibles.get(instance.collectible_id)
+                if collectible is None:
+                    continue
+                undonated.append(
+                    MuseumUndonatedSummary(
+                        instance_id=instance.id,
+                        collectible_id=collectible.id,
+                        name=collectible.name,
+                        rarity=collectible.rarity.value,
+                        source=instance.source,
+                    )
+                )
+        return MuseumResponse(
+            slots=slot_summaries, undonated=undonated, presets=list(constants.MUSEUM_PRESETS)
+        )
+
+    @router.post("/{character_id}/donate", response_model=MuseumDonateResponse)
+    async def museum_donate(character_id: int, body: MuseumDonateRequest) -> MuseumDonateResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            current_tick = await _current_tick(session)
+            try:
+                collectible, reward = await museum_svc.donate(
+                    session,
+                    character=character,
+                    instance_id=body.instance_id,
+                    content=content,
+                    current_tick=current_tick,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return MuseumDonateResponse(
+            collectible_id=collectible.id, name=collectible.name, reward=reward
+        )
+
+    @router.post("/{character_id}/organize")
+    async def museum_organize(character_id: int, body: MuseumOrganizeRequest) -> dict[str, bool]:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            try:
+                await museum_svc.move(
+                    session,
+                    character=character,
+                    slot_id=body.slot_id,
+                    wing=body.wing,
+                    position=body.position,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"ok": True}
+
+    @router.post("/{character_id}/preset")
+    async def museum_preset(character_id: int, body: MuseumPresetRequest) -> dict[str, bool]:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            try:
+                await museum_svc.apply_preset(
+                    session, character_id=character.id, preset=body.preset, content=content
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"ok": True}
+
+    return router
+
+
+# ============================================================== Weather
+
+
+class WeatherEventSummary(BaseModel):
+    kind: str
+    severity: int
+    status: str
+    predicted_start_tick: int
+    actual_start_tick: int | None = None
+    actual_end_tick: int | None = None
+
+
+class WeatherDayForecast(BaseModel):
+    day_index: int
+    season: str
+    condition: str
+    temp_low: int
+    temp_high: int
+    # Any still-`FORECAST`-status event (thunderstorm/blizzard/etc) whose
+    # `predicted_start_tick` falls on this day -- `None` on an ordinary
+    # clear/rain/snow day. Separate from `WeatherStatusResponse.active_
+    # event`/`upcoming_event` below (which stay singular for `home.js`'s
+    # hero panel): this is what lets the 10-day forecast list show each
+    # day's own predicted event inline instead of just one at a time.
+    event: WeatherEventSummary | None = None
+
+
+class WeatherPropertySummary(BaseModel):
+    property_id: int
+    kind: str
+    damage_level: int
+    prep: dict[str, int]
+
+
+class WeatherStatusResponse(BaseModel):
+    district_id: int
+    today: WeatherDayForecast | None = None
+    tomorrow: WeatherDayForecast | None = None
+    active_event: WeatherEventSummary | None = None
+    upcoming_event: WeatherEventSummary | None = None
+    property: WeatherPropertySummary | None = None
+    # Today plus the next 9 days (10 total, matching `constants.WEATHER_
+    # FORECAST_LEAD_DAYS`'s rolling generation window) -- `today`/
+    # `tomorrow` above stay as they were for whatever already reads them,
+    # this is purely additive for the Weather tab's own 10-day view.
+    forecast_days: list[WeatherDayForecast] = Field(default_factory=list)
+
+
+class WeatherPrepareRequest(BaseModel):
+    discord_id: int
+    kind: str
+
+
+class WeatherPrepareResponse(BaseModel):
+    kind: str
+    level: int
+
+
+class WeatherRepairRequest(BaseModel):
+    discord_id: int
+    points: int
+
+
+class WeatherRepairResponse(BaseModel):
+    points: int
+    cost: int
+    damage_level: int
+
+
+def _forecast_summary(
+    row: WeatherForecast, day_index: int, event: WeatherEvent | None = None
+) -> WeatherDayForecast:
+    return WeatherDayForecast(
+        day_index=day_index,
+        season=row.season,
+        condition=row.condition,
+        temp_low=row.temp_low,
+        temp_high=row.temp_high,
+        event=_event_summary(event) if event is not None else None,
+    )
+
+
+def _event_summary(row: WeatherEvent) -> WeatherEventSummary:
+    return WeatherEventSummary(
+        kind=row.kind,
+        severity=row.severity,
+        status=row.status,
+        predicted_start_tick=row.predicted_start_tick,
+        actual_start_tick=row.actual_start_tick,
+        actual_end_tick=row.actual_end_tick,
+    )
+
+
+def build_weather_router(*, session_factory: async_sessionmaker[AsyncSession] | None) -> APIRouter:
+    """The Weather tab's REST surface (`panem_shared.weather`) -- forecast
+    lookups plus property prep/repair. Generation itself (forecasts,
+    activating/ending events) stays `panem_bot.cogs.weather`'s poll; this
+    only ever reads what that poll has already written, the same split
+    `/weather forecast` and `/housing prepare|repair` already use on the
+    Discord side."""
+    router = APIRouter(prefix="/activity/dashboard/weather", tags=["dashboard"])
+
+    @router.get("/{character_id}/status", response_model=WeatherStatusResponse)
+    async def weather_status(character_id: int, discord_id: int) -> WeatherStatusResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            district_id = character.current_district_id
+            current_tick = await _current_tick(session)
+            today_index = simtime.day_index(current_tick)
+            # Literal `+ 1` ("tomorrow"), not `+ constants.WEATHER_
+            # FORECAST_LEAD_DAYS` -- see that constant's own docstring
+            # (it now governs the 10-day generation/display window below,
+            # not what counts as "the actual next calendar day" here).
+            lead_index = today_index + 1
+
+            today_row = await session.get(WeatherForecast, (district_id, today_index))
+            tomorrow_row = await session.get(WeatherForecast, (district_id, lead_index))
+            active = await weather_svc.active_event_for_district(session, district_id)
+            upcoming = (
+                await session.execute(
+                    select(WeatherEvent)
+                    .where(
+                        WeatherEvent.district_id == district_id,
+                        WeatherEvent.status == WeatherEventStatus.FORECAST.value,
+                    )
+                    .order_by(WeatherEvent.day_index)
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+
+            # The 10-day-ahead view: today plus the next 9 days, each with
+            # whatever `FORECAST`-status event (if any) lands on it --
+            # `WEATHER_FORECAST_LEAD_DAYS`'s own rolling-window generation
+            # (see `panem_bot.cogs.weather`'s poll) is what keeps all of
+            # these rows already sitting ready; a day missing a row just
+            # doesn't get an entry (the same cold-start/just-deployed gap
+            # that constant's docstring already documents).
+            day_indices = list(
+                range(today_index, today_index + constants.WEATHER_FORECAST_LEAD_DAYS)
+            )
+            window_rows = (
+                (
+                    await session.execute(
+                        select(WeatherForecast).where(
+                            WeatherForecast.district_id == district_id,
+                            WeatherForecast.day_index.in_(day_indices),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            window_events = (
+                (
+                    await session.execute(
+                        select(WeatherEvent).where(
+                            WeatherEvent.district_id == district_id,
+                            WeatherEvent.status == WeatherEventStatus.FORECAST.value,
+                            WeatherEvent.day_index.in_(day_indices),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            events_by_day = {event.day_index: event for event in window_events}
+            forecast_days = [
+                _forecast_summary(row, row.day_index, events_by_day.get(row.day_index))
+                for row in sorted(window_rows, key=lambda row: row.day_index)
+            ]
+
+            property_summary = None
+            if character.housing_property_id is not None:
+                home = await session.get(Property, character.housing_property_id)
+                if home is not None:
+                    property_summary = WeatherPropertySummary(
+                        property_id=home.id,
+                        kind=home.kind,
+                        damage_level=home.damage_level,
+                        prep=dict(home.weather_prep),
+                    )
+        return WeatherStatusResponse(
+            district_id=district_id,
+            today=_forecast_summary(today_row, today_index) if today_row else None,
+            tomorrow=_forecast_summary(tomorrow_row, lead_index) if tomorrow_row else None,
+            active_event=_event_summary(active) if active else None,
+            upcoming_event=_event_summary(upcoming) if upcoming else None,
+            property=property_summary,
+            forecast_days=forecast_days,
+        )
+
+    @router.post("/{character_id}/prepare", response_model=WeatherPrepareResponse)
+    async def weather_prepare(
+        character_id: int, body: WeatherPrepareRequest
+    ) -> WeatherPrepareResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            home = (
+                await session.get(Property, character.housing_property_id)
+                if character.housing_property_id is not None
+                else None
+            )
+            if home is None:
+                raise HTTPException(status_code=400, detail="weather_no_property")
+            try:
+                level = await weather_svc.prepare_property(
+                    session, character=character, property_row=home, kind=body.kind
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return WeatherPrepareResponse(kind=body.kind, level=level)
+
+    @router.post("/{character_id}/repair", response_model=WeatherRepairResponse)
+    async def weather_repair(
+        character_id: int, body: WeatherRepairRequest
+    ) -> WeatherRepairResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            home = (
+                await session.get(Property, character.housing_property_id)
+                if character.housing_property_id is not None
+                else None
+            )
+            if home is None:
+                raise HTTPException(status_code=400, detail="weather_no_property")
+            try:
+                cost = await weather_svc.repair_property(
+                    session, character=character, property_row=home, points=body.points
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            damage_level = home.damage_level
+        return WeatherRepairResponse(points=body.points, cost=cost, damage_level=damage_level)
+
+    return router
+
+
+# ============================================================= Bulletin
+
+
+class BulletinEntrySummary(BaseModel):
+    entry_id: int
+    tag: str
+    title: str
+    body: str
+    district_id: int | None = None
+    posted_tick: int
+    event_tick: int | None = None
+    requirements: str | None = None
+    danger_level: int | None = None
+    interested: bool = False
+    category: str | None = None
+    hidden: bool = False
+    image_url: str | None = None
+    # Every entry's owner-ness, surfaced so the frontend can tell "Retract"
+    # (the real, owner-only removal -- only ever true for a player's own
+    # post) apart from "Hide" (the per-viewer removal everyone else, and
+    # system entries, get instead).
+    is_own_post: bool = False
+
+
+class BulletinBoardResponse(BaseModel):
+    entries: list[BulletinEntrySummary]
+
+
+class BulletinPostRequest(BaseModel):
+    discord_id: int
+    title: str
+    body: str = ""
+    event_tick: int | None = None
+    requirements: str | None = None
+    npc_hosted: bool = False
+    world_wide: bool = False
+    image_url: str | None = None
+
+
+class BulletinRetractRequest(BaseModel):
+    discord_id: int
+    entry_id: int
+
+
+class BulletinInterestRequest(BaseModel):
+    discord_id: int
+    entry_id: int
+    interested: bool = True
+
+
+class BulletinHideRequest(BaseModel):
+    discord_id: int
+    entry_id: int
+    hidden: bool = True
+
+
+class BulletinRemindRequest(BaseModel):
+    discord_id: int
+    entry_id: int
+    lead_ticks: int = 1
+
+
+class BulletinOrganizeRequest(BaseModel):
+    discord_id: int
+    entry_id: int
+    position: int
+    category: str | None = None
+
+
+class BulletinResetRequest(BaseModel):
+    discord_id: int
+
+
+def build_bulletin_router(
+    *,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    discord_token: str = "",
+    discord_guild_id: int = 0,
+    staff_role_id: int = 0,
+) -> APIRouter:
+    """The Bulletin tab's REST surface (`panem_shared.bulletin`) -- the
+    board itself, posting/retracting, interest marking, reminders, and
+    per-viewer drag-organize. Nothing here ever posts a *system* entry
+    (weather/global-event/rumor) -- those only ever come from `panem_bot.
+    cogs.weather`'s poll, `panem_bot.cogs.rumors`'s spawn loop, and
+    `/staff event create|conclude`."""
+    router = APIRouter(prefix="/activity/dashboard/bulletin", tags=["dashboard"])
+
+    @router.get("/{character_id}/board", response_model=BulletinBoardResponse)
+    async def bulletin_board(character_id: int, discord_id: int) -> BulletinBoardResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            user = await characters_svc.get_or_create_user(session, discord_id)
+            rows = await bulletin_svc.board_for(
+                session, district_id=character.current_district_id, viewer_user_id=user.id
+            )
+            entries = [
+                BulletinEntrySummary(
+                    entry_id=entry.id,
+                    tag=entry.tag,
+                    title=entry.title,
+                    body=entry.body,
+                    district_id=entry.district_id,
+                    posted_tick=entry.posted_tick,
+                    event_tick=entry.event_tick,
+                    requirements=entry.requirements,
+                    danger_level=entry.danger_level,
+                    interested=bool(state.interested) if state is not None else False,
+                    category=state.category if state is not None else None,
+                    hidden=bool(state.hidden) if state is not None else False,
+                    is_own_post=entry.posted_by_user_id == user.id,
+                    image_url=entry.image_url,
+                )
+                for entry, state in rows
+            ]
+        return BulletinBoardResponse(entries=entries)
+
+    @router.post("/{character_id}/post")
+    async def bulletin_post(character_id: int, body: BulletinPostRequest) -> dict[str, bool]:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            user = await characters_svc.get_or_create_user(session, body.discord_id)
+            await _require_tab_access(
+                session,
+                discord_id=body.discord_id,
+                tab_name="bulletin",
+                discord_token=discord_token,
+                discord_guild_id=discord_guild_id,
+                staff_role_id=staff_role_id,
+            )
+            current_tick = await _current_tick(session)
+            try:
+                await bulletin_svc.post_player_entry(
+                    session,
+                    user=user,
+                    tag="NPC hosted" if body.npc_hosted else "Player hosted",
+                    title=body.title,
+                    body=body.body,
+                    district_id=None if body.world_wide else character.current_district_id,
+                    location_id=None if body.world_wide else character.location_id,
+                    posted_tick=current_tick,
+                    event_tick=body.event_tick,
+                    requirements=body.requirements,
+                    npc_hosted=body.npc_hosted,
+                    image_url=body.image_url,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"ok": True}
+
+    @router.post("/{character_id}/retract")
+    async def bulletin_retract(character_id: int, body: BulletinRetractRequest) -> dict[str, bool]:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            user = await characters_svc.get_or_create_user(session, body.discord_id)
+            await _require_tab_access(
+                session,
+                discord_id=body.discord_id,
+                tab_name="bulletin",
+                discord_token=discord_token,
+                discord_guild_id=discord_guild_id,
+                staff_role_id=staff_role_id,
+            )
+            try:
+                await bulletin_svc.retract(session, user=user, entry_id=body.entry_id)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"ok": True}
+
+    @router.post("/{character_id}/interest")
+    async def bulletin_interest(
+        character_id: int, body: BulletinInterestRequest
+    ) -> dict[str, bool]:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            user = await characters_svc.get_or_create_user(session, body.discord_id)
+            await _require_tab_access(
+                session,
+                discord_id=body.discord_id,
+                tab_name="bulletin",
+                discord_token=discord_token,
+                discord_guild_id=discord_guild_id,
+                staff_role_id=staff_role_id,
+            )
+            try:
+                await bulletin_svc.set_interest(
+                    session, user=user, entry_id=body.entry_id, interested=body.interested
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"ok": True}
+
+    @router.post("/{character_id}/hide")
+    async def bulletin_hide(character_id: int, body: BulletinHideRequest) -> dict[str, bool]:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            user = await characters_svc.get_or_create_user(session, body.discord_id)
+            await _require_tab_access(
+                session,
+                discord_id=body.discord_id,
+                tab_name="bulletin",
+                discord_token=discord_token,
+                discord_guild_id=discord_guild_id,
+                staff_role_id=staff_role_id,
+            )
+            try:
+                await bulletin_svc.set_hidden(
+                    session, user=user, entry_id=body.entry_id, hidden=body.hidden
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"ok": True}
+
+    @router.post("/{character_id}/remind")
+    async def bulletin_remind(character_id: int, body: BulletinRemindRequest) -> dict[str, bool]:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            user = await characters_svc.get_or_create_user(session, body.discord_id)
+            entry = await session.get(BulletinEntry, body.entry_id)
+            if entry is None:
+                raise HTTPException(status_code=404, detail="bulletin_entry_not_found")
+            await _require_tab_access(
+                session,
+                discord_id=body.discord_id,
+                tab_name="bulletin",
+                discord_token=discord_token,
+                discord_guild_id=discord_guild_id,
+                staff_role_id=staff_role_id,
+            )
+            current_tick = await _current_tick(session)
+            try:
+                await bulletin_svc.schedule_reminder(
+                    session,
+                    user=user,
+                    entry=entry,
+                    lead_ticks=body.lead_ticks,
+                    current_tick=current_tick,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"ok": True}
+
+    @router.post("/{character_id}/organize")
+    async def bulletin_organize(
+        character_id: int, body: BulletinOrganizeRequest
+    ) -> dict[str, bool]:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            user = await characters_svc.get_or_create_user(session, body.discord_id)
+            await _require_tab_access(
+                session,
+                discord_id=body.discord_id,
+                tab_name="bulletin",
+                discord_token=discord_token,
+                discord_guild_id=discord_guild_id,
+                staff_role_id=staff_role_id,
+            )
+            try:
+                await bulletin_svc.move_entry(
+                    session,
+                    user=user,
+                    entry_id=body.entry_id,
+                    position=body.position,
+                    category=body.category,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return {"ok": True}
+
+    @router.post("/{character_id}/reset-organize")
+    async def bulletin_reset_organize(
+        character_id: int, body: BulletinResetRequest
+    ) -> dict[str, bool]:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            user = await characters_svc.get_or_create_user(session, body.discord_id)
+            await _require_tab_access(
+                session,
+                discord_id=body.discord_id,
+                tab_name="bulletin",
+                discord_token=discord_token,
+                discord_guild_id=discord_guild_id,
+                staff_role_id=staff_role_id,
+            )
+            await bulletin_svc.reset_organization(session, user_id=user.id)
+        return {"ok": True}
+
+    return router
+
+
+# ============================================================= Reactions
+
+
+class ReactionOptionSummary(BaseModel):
+    choice: str
+    label: str
+
+
+class ReactionPendingSummary(BaseModel):
+    log_id: int
+    scenario_id: str
+    prompt: str
+    options: list[ReactionOptionSummary]
+    expires_in_seconds: float
+
+
+class ReactionsStatusResponse(BaseModel):
+    archetype_score: float
+    archetype_label: str
+    pending: ReactionPendingSummary | None = None
+
+
+class ReactionsRespondRequest(BaseModel):
+    discord_id: int
+    choice: Literal["good", "neutral", "evil"]
+
+
+class ReactionsRespondResponse(BaseModel):
+    archetype_score: float
+    archetype_label: str
+
+
+def _reaction_pending_summary(log: ReactionEventLog, *, now: dt.datetime) -> ReactionPendingSummary:
+    scenario = reactions_svc.SCENARIOS[log.scenario_id]
+    expires_at = log.created_at + dt.timedelta(seconds=constants.REACTION_EVENT_CHOICE_SECONDS)
+    return ReactionPendingSummary(
+        log_id=log.id,
+        scenario_id=scenario.id,
+        prompt=scenario.prompt,
+        options=[
+            ReactionOptionSummary(choice=opt.choice.value, label=opt.label)
+            for opt in scenario.options
+        ],
+        expires_in_seconds=max(0.0, (expires_at - now).total_seconds()),
+    )
+
+
+def build_reactions_router(
+    *,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    discord_token: str = "",
+    discord_guild_id: int = 0,
+    staff_role_id: int = 0,
+) -> APIRouter:
+    """The Reactions tab's REST surface (`panem_shared.reactions`) -- the
+    character's current archetype standing, plus triggering/answering a
+    pop-up. Unlike `weather`'s router, this one *does* generate fresh
+    state of its own: `/status` is also the one place a brand new pop-up
+    ever gets rolled (`reactions_svc.maybe_trigger_from_dashboard`), on
+    the theory that a player only ever polls this while the Activity
+    dashboard is actually open in front of them -- there is no more
+    `panem_bot.cogs.reactions` background loop DMing one to someone who
+    isn't there to see it. `app.js`'s own global poll (not the Reactions
+    tab specifically -- a pop-up can land while any tab is open) is what
+    calls `/status` on a timer; answering happens through the floating
+    window that poll opens, which posts to `/respond` below."""
+    router = APIRouter(prefix="/activity/dashboard/reactions", tags=["dashboard"])
+
+    @router.get("/{character_id}/status", response_model=ReactionsStatusResponse)
+    async def reactions_status(character_id: int, discord_id: int) -> ReactionsStatusResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            archetype_score = character.archetype_score
+            now = dt.datetime.now(dt.UTC)
+            log = await reactions_svc.latest_pending(session, character_id=character.id, now=now)
+            if log is None:
+                # This poll only ever runs while the Activity dashboard is
+                # open (see `maybe_trigger_from_dashboard`'s own docstring)
+                # -- the one and only place a fresh pop-up can still come
+                # from, now that the old DM-pushing background loop is
+                # gone. `app.js` polls this unconditionally (not gated on
+                # the Reactions tab being hidden -- a pop-up floats above
+                # whichever tab is open), so a beta-locked-out player
+                # still calls this every few seconds; rather than 403 that
+                # noisily, just never roll them a fresh one -- the same
+                # "this tab's effects don't reach you until you can see
+                # it" rule as every other beta-gated system, applied here
+                # as a quiet no-op instead of a refusal.
+                reactions_state = await feature_flags_svc.get_state(
+                    session, feature_flags_svc.tab_key("reactions")
+                )
+                is_staff = await discord_staff.fetch_is_staff(
+                    discord_id,
+                    bot_token=discord_token,
+                    guild_id=discord_guild_id,
+                    staff_role_id=staff_role_id,
+                )
+                if feature_flags_svc.is_allowed(reactions_state, is_staff=is_staff):
+                    current_tick = await _current_tick(session)
+                    log = await reactions_svc.maybe_trigger_from_dashboard(
+                        session,
+                        character=character,
+                        current_tick=current_tick,
+                        rng=random.Random(),
+                    )
+                    if log is not None:
+                        await session.flush()
+            pending = _reaction_pending_summary(log, now=now) if log is not None else None
+        return ReactionsStatusResponse(
+            archetype_score=archetype_score,
+            archetype_label=reactions_svc.archetype_label(archetype_score),
+            pending=pending,
+        )
+
+    @router.post("/{character_id}/respond", response_model=ReactionsRespondResponse)
+    async def reactions_respond(
+        character_id: int, body: ReactionsRespondRequest
+    ) -> ReactionsRespondResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            now = dt.datetime.now(dt.UTC)
+            log = await reactions_svc.latest_pending(session, character_id=character.id, now=now)
+            if log is None:
+                raise HTTPException(status_code=404, detail="reaction_none_pending")
+            try:
+                new_score = await reactions_svc.respond(
+                    session, character=character, log=log, choice=ReactionChoice(body.choice)
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return ReactionsRespondResponse(
+            archetype_score=new_score, archetype_label=reactions_svc.archetype_label(new_score)
+        )
+
+    return router
+
+
+# ================================================================ Events
+
+
+class PersonalEventChainSummary(BaseModel):
+    chain_id: int
+    step: int
+    item_name: str
+    found_how: str
+    found_district_id: int
+    target_npc_name: str | None = None
+    expires_tick: int | None = None
+
+
+class EventsStatusResponse(BaseModel):
+    chain: PersonalEventChainSummary | None = None
+
+
+class EventsMysteryRequest(BaseModel):
+    discord_id: int
+
+
+class EventsMysteryResponse(BaseModel):
+    owner_npc_name: str
+    clue: str
+
+
+class EventsDeliverRequest(BaseModel):
+    discord_id: int
+
+
+class EventsDeliverResponse(BaseModel):
+    npc_name: str
+    money: int
+    reputation: float
+
+
+class GlobalEventSummary(BaseModel):
+    event_id: int
+    hobby_id: str
+    hobby_name: str
+    name: str
+    description: str
+    district_id: int | None = None
+    status: str
+    starts_tick: int
+    ends_tick: int
+    in_range: bool
+
+
+class GlobalEventListResponse(BaseModel):
+    events: list[GlobalEventSummary]
+
+
+class GlobalEventLeaderboardEntry(BaseModel):
+    rank: int
+    character_name: str
+    score: float
+    attempts: int
+
+
+class GlobalEventLeaderboardResponse(BaseModel):
+    event_name: str
+    entries: list[GlobalEventLeaderboardEntry]
+
+
+def _lost_item_chain_summary(chain: PersonalEventChain) -> PersonalEventChainSummary:
+    return PersonalEventChainSummary(
+        chain_id=chain.id,
+        step=chain.step,
+        item_name=chain.state.get("item_name", ""),
+        found_how=chain.state.get("found_how", ""),
+        found_district_id=chain.state.get("found_district_id", 0),
+        target_npc_name=chain.state.get("target_npc_name"),
+        expires_tick=chain.expires_tick,
+    )
+
+
+async def _active_lost_item_chain(
+    session: AsyncSession, character_id: int
+) -> PersonalEventChain | None:
+    for chain in await personal_events_svc.active_chains(session, character_id):
+        if chain.chain_kind == "lost_item":
+            return chain
+    return None
+
+
+def build_events_router(
+    *, content: ContentBundle, session_factory: async_sessionmaker[AsyncSession] | None
+) -> APIRouter:
+    """The Events tab's REST surface -- a character's own personal
+    mystery chain (`panem_shared.personal_events`, currently only the
+    `lost_item` chain hobbies can start) plus the global-event listing/
+    leaderboard (`panem_shared.global_events`). Starting a chain stays a
+    side effect of playing a hobby (`/activity/dashboard/hobbies`) --
+    there's no "start a mystery" button here, same as there's no
+    `/event start` Discord command -- and joining a global event is
+    likewise just playing its hobby while it's `ACTIVE`, not a separate
+    sign-up action."""
+    router = APIRouter(prefix="/activity/dashboard/events", tags=["dashboard"])
+
+    @router.get("/{character_id}/status", response_model=EventsStatusResponse)
+    async def events_status(character_id: int, discord_id: int) -> EventsStatusResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            chain = await _active_lost_item_chain(session, character.id)
+            summary = _lost_item_chain_summary(chain) if chain is not None else None
+        return EventsStatusResponse(chain=summary)
+
+    @router.post("/{character_id}/mystery", response_model=EventsMysteryResponse)
+    async def events_mystery(
+        character_id: int, body: EventsMysteryRequest
+    ) -> EventsMysteryResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            chain = await _active_lost_item_chain(session, character.id)
+            if chain is None:
+                raise HTTPException(status_code=404, detail="chain_none_active")
+            current_tick = await _current_tick(session)
+            try:
+                result = await personal_events_svc.investigate(
+                    session, chain=chain, current_tick=current_tick, rng=random.Random()
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return EventsMysteryResponse(owner_npc_name=result.owner_npc_name, clue=result.clue)
+
+    @router.post("/{character_id}/deliver", response_model=EventsDeliverResponse)
+    async def events_deliver(
+        character_id: int, body: EventsDeliverRequest
+    ) -> EventsDeliverResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            chain = await _active_lost_item_chain(session, character.id)
+            if chain is None:
+                raise HTTPException(status_code=404, detail="chain_none_active")
+            current_tick = await _current_tick(session)
+            try:
+                result = await personal_events_svc.deliver(
+                    session, character=character, chain=chain, current_tick=current_tick
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return EventsDeliverResponse(
+            npc_name=result.npc_name, money=result.money, reputation=result.reputation
+        )
+
+    @router.get("/{character_id}/global", response_model=GlobalEventListResponse)
+    async def events_global_list(character_id: int, discord_id: int) -> GlobalEventListResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            district_id = character.current_district_id
+            rows = (
+                (
+                    await session.execute(
+                        select(GlobalEvent)
+                        .where(
+                            GlobalEvent.status.in_(
+                                (GlobalEventStatus.SCHEDULED.value, GlobalEventStatus.ACTIVE.value)
+                            )
+                        )
+                        .order_by(GlobalEvent.starts_tick)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            summaries = [
+                GlobalEventSummary(
+                    event_id=event.id,
+                    hobby_id=event.hobby_id,
+                    hobby_name=(
+                        content.hobbies[event.hobby_id].name
+                        if event.hobby_id in content.hobbies
+                        else event.hobby_id
+                    ),
+                    name=event.name,
+                    description=event.description,
+                    district_id=event.district_id,
+                    status=event.status,
+                    starts_tick=event.starts_tick,
+                    ends_tick=event.ends_tick,
+                    in_range=event.district_id is None or event.district_id == district_id,
+                )
+                for event in rows
+            ]
+        return GlobalEventListResponse(events=summaries)
+
+    @router.get(
+        "/{character_id}/global/{event_id}/leaderboard",
+        response_model=GlobalEventLeaderboardResponse,
+    )
+    async def events_global_leaderboard(
+        character_id: int, event_id: int, discord_id: int
+    ) -> GlobalEventLeaderboardResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            event = await session.get(GlobalEvent, event_id)
+            if event is None:
+                raise HTTPException(status_code=404, detail="global_event_not_found")
+            event_name = event.name
+            entries = await global_events_svc.leaderboard(session, event_id, limit=10)
+            summaries = []
+            for rank, entry in enumerate(entries, start=1):
+                entry_character = await session.get(Character, entry.character_id)
+                summaries.append(
+                    GlobalEventLeaderboardEntry(
+                        rank=rank,
+                        character_name=(
+                            entry_character.name
+                            if entry_character is not None
+                            else f"#{entry.character_id}"
+                        ),
+                        score=entry.score,
+                        attempts=entry.attempts,
+                    )
+                )
+        return GlobalEventLeaderboardResponse(event_name=event_name, entries=summaries)
+
+    return router
+
+
+# ================================================================ Rumors
+
+
+class RumorRelatedSummary(BaseModel):
+    """What a rumor is actually about, if anything -- only ever surfaced
+    on `RumorSummary.resolution` once a rumor is fully investigated (see
+    that field's own comment), never before, so a resolution is a payoff
+    for exhausting the investigation, not a spoiler available for free."""
+
+    kind: str  # "weather_event" | "global_event"
+    name: str
+    district_id: int | None = None
+    status: str
+    severity: int | None = None  # weather_event only
+    predicted_start_tick: int | None = None  # weather_event only
+    hobby_name: str | None = None  # global_event only
+    starts_tick: int | None = None  # global_event only
+
+
+class RumorSummary(BaseModel):
+    rumor_id: int
+    text: str
+    origin: str
+    reliability_pct: int
+    investigation_count: int
+    investigations_remaining: int
+    expires_tick: int | None = None
+    # Populated only once `investigations_remaining <= 0` -- the "clear
+    # instructions for how to resolve it" the fully-investigated rumor
+    # earns. `None` at that cap either means the rumor was pure
+    # free-floating flavor with nothing concrete behind it to begin with
+    # (most rumors), or that `reliability_pct` landed too low/ambiguous
+    # to call it either way -- the frontend tells those two cases apart
+    # via `reliability_pct` itself, already in hand.
+    resolution: RumorRelatedSummary | None = None
+
+
+class RumorBoardResponse(BaseModel):
+    district_id: int
+    rumors: list[RumorSummary]
+
+
+class RumorInvestigateRequest(BaseModel):
+    discord_id: int
+    rumor_id: int
+    # The dashboard's "Spot the Odd One Out" minigame result (`static/
+    # rumor_investigate.js` + `games/odd_one_out.js`) -- required, not
+    # defaulted, the same AND-gate every other dashboard minigame's
+    # result field already enforces (see `HobbyPlayRequest.timing_hit`).
+    # Losing it still consumes one of the capped investigation slots
+    # (`panem_shared.rumors.investigate`'s own docstring) but never moves
+    # `reliability_pct`.
+    success: bool
+
+
+class RumorInvestigateResponse(BaseModel):
+    rumor_id: int
+    finding: str
+    reliability_pct: int
+    reliability_delta: int
+
+
+class RumorDeleteRequest(BaseModel):
+    discord_id: int
+    rumor_id: int
+
+
+def _related_kind_label(kind: str) -> str:
+    return kind.replace("_", " ").title()
+
+
+async def _rumor_resolution(
+    session: AsyncSession, rumor: Rumor, content: ContentBundle
+) -> RumorRelatedSummary | None:
+    if rumor.related_kind == "weather_event" and rumor.related_id is not None:
+        event = await session.get(WeatherEvent, rumor.related_id)
+        if event is None:
+            return None
+        return RumorRelatedSummary(
+            kind="weather_event",
+            name=_related_kind_label(event.kind),
+            district_id=event.district_id,
+            status=event.status,
+            severity=event.severity,
+            predicted_start_tick=event.predicted_start_tick,
+        )
+    if rumor.related_kind == "global_event" and rumor.related_id is not None:
+        event = await session.get(GlobalEvent, rumor.related_id)
+        if event is None:
+            return None
+        hobby = content.hobbies.get(event.hobby_id)
+        return RumorRelatedSummary(
+            kind="global_event",
+            name=event.name,
+            district_id=event.district_id,
+            status=event.status,
+            hobby_name=hobby.name if hobby is not None else event.hobby_id,
+            starts_tick=event.starts_tick,
+        )
+    return None
+
+
+def build_rumors_router(
+    *,
+    content: ContentBundle,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    discord_token: str = "",
+    discord_guild_id: int = 0,
+    staff_role_id: int = 0,
+) -> APIRouter:
+    """The Rumors tab's REST surface (`panem_shared.rumors`) -- every
+    rumor currently floating around the character's own current
+    district, investigating one (via the dashboard's own minigame, see
+    `RumorInvestigateRequest.success`), and deleting one outright (a real
+    delete of the one shared row -- a rumor has no per-viewer anything to
+    hide the way a bulletin entry does). Spawning stays `panem_bot.cogs.
+    weather`'s poll (for a rumor tied to a real event) and `panem_bot.
+    cogs.rumors`'s spawn loop (for a free-floating one) -- there's no
+    "start a rumor" player action to mirror here, same as Discord has
+    none."""
+    router = APIRouter(prefix="/activity/dashboard/rumors", tags=["dashboard"])
+
+    @router.get("/{character_id}/board", response_model=RumorBoardResponse)
+    async def rumors_board(character_id: int, discord_id: int) -> RumorBoardResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=discord_id, character_id=character_id
+            )
+            district_id = character.current_district_id
+            rows = await rumors_svc.district_rumors(session, district_id)
+            summaries = []
+            for rumor in rows:
+                count = await rumors_svc.investigation_count(session, rumor.id)
+                remaining = max(0, constants.RUMOR_MAX_INVESTIGATIONS - count)
+                resolution = (
+                    await _rumor_resolution(session, rumor, content) if remaining <= 0 else None
+                )
+                summaries.append(
+                    RumorSummary(
+                        rumor_id=rumor.id,
+                        text=rumor.text,
+                        origin=rumor.origin,
+                        reliability_pct=rumor.reliability_pct,
+                        investigation_count=count,
+                        investigations_remaining=remaining,
+                        expires_tick=rumor.expires_tick,
+                        resolution=resolution,
+                    )
+                )
+        return RumorBoardResponse(district_id=district_id, rumors=summaries)
+
+    @router.post("/{character_id}/investigate", response_model=RumorInvestigateResponse)
+    async def rumors_investigate(
+        character_id: int, body: RumorInvestigateRequest
+    ) -> RumorInvestigateResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            await _require_tab_access(
+                session,
+                discord_id=body.discord_id,
+                tab_name="rumors",
+                discord_token=discord_token,
+                discord_guild_id=discord_guild_id,
+                staff_role_id=staff_role_id,
+            )
+            try:
+                rumor = await rumors_svc.get_rumor(session, body.rumor_id)
+                current_tick = await _current_tick(session)
+                log = await rumors_svc.investigate(
+                    session,
+                    character_id=character.id,
+                    rumor=rumor,
+                    current_tick=current_tick,
+                    rng=random.Random(),
+                    success=body.success,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            reliability_pct = rumor.reliability_pct
+            finding = log.finding
+            reliability_delta = log.reliability_delta
+        return RumorInvestigateResponse(
+            rumor_id=body.rumor_id,
+            finding=finding,
+            reliability_pct=reliability_pct,
+            reliability_delta=reliability_delta,
+        )
+
+    @router.post("/{character_id}/delete")
+    async def rumors_delete(character_id: int, body: RumorDeleteRequest) -> dict[str, bool]:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            await _require_tab_access(
+                session,
+                discord_id=body.discord_id,
+                tab_name="rumors",
+                discord_token=discord_token,
+                discord_guild_id=discord_guild_id,
+                staff_role_id=staff_role_id,
+            )
+            # 404s on an already-gone rumor via `get_rumor` rather than a
+            # silent no-op -- consistent with every other dashboard
+            # delete-ish action (`bulletin_retract`, ...) treating "gone
+            # already" as not found, not success.
+            try:
+                await rumors_svc.get_rumor(session, body.rumor_id)
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            await rumors_svc.delete_rumor(session, body.rumor_id)
+        return {"ok": True}
 
     return router
