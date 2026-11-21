@@ -7,7 +7,6 @@ import datetime as dt
 import random
 import re
 import uuid
-
 from pathlib import Path
 
 import discord
@@ -25,7 +24,11 @@ from panem_bot.services import shifts as shifts_svc
 from panem_bot.services.staff import log_staff_action
 from panem_bot.strings import t
 from panem_bot.views import GENDER_LABELS
-from panem_shared import ambient as ambient_svc, constants, job_levels
+from panem_shared import ambient as ambient_svc
+from panem_shared import bulletin as bulletin_svc
+from panem_shared import constants, job_levels
+from panem_shared import feature_flags as feature_flags_svc
+from panem_shared import global_events as global_events_svc
 from panem_shared import lore as lore_svc
 from panem_shared.content.traits import speech_tone
 from panem_shared.db.models import (
@@ -33,6 +36,7 @@ from panem_shared.db.models import (
     DialogueSettings,
     DistrictState,
     EngagementSettings,
+    GlobalEvent,
     Inventory,
     Npc,
     Property,
@@ -41,9 +45,11 @@ from panem_shared.db.models import (
     WorldClock,
 )
 from panem_shared.enums import (
+    BulletinSourceKind,
     CharacterStatus,
     DayPhase,
     Gender,
+    GlobalEventStatus,
     JobLevel,
     OwnerKind,
     Position,
@@ -51,6 +57,18 @@ from panem_shared.enums import (
 )
 
 MESSAGE_LINK_RE = re.compile(r"/channels/(\d+)/(\d+)/(\d+)$")
+
+_FEATURE_STATE_CHOICES = [
+    app_commands.Choice(name="Enabled -- everyone", value=feature_flags_svc.FlagState.ENABLED.value),
+    app_commands.Choice(
+        name="Staff only -- blocked/hidden for everyone else",
+        value=feature_flags_svc.FlagState.STAFF_ONLY.value,
+    ),
+    app_commands.Choice(
+        name="Disabled -- blocked/hidden for everyone, staff included",
+        value=feature_flags_svc.FlagState.DISABLED.value,
+    ),
+]
 
 
 async def _is_staff(interaction: discord.Interaction) -> bool:
@@ -102,6 +120,16 @@ class StaffCog(commands.Cog):
         description="Manage activity ambient music tracks",
         parent=group,
     )
+    event_group = app_commands.Group(
+        name="event",
+        description="Schedule and manage global (hobby-competition) events",
+        parent=group,
+    )
+    feature_group = app_commands.Group(
+        name="feature",
+        description="Toggle beta tabs/commands/systems for players without a redeploy",
+        parent=group,
+    )
 
     @group.command(name="whois", description="Look up who a proxied message belongs to")
     @app_commands.describe(message_link="Link to the proxied message")
@@ -143,12 +171,17 @@ class StaffCog(commands.Cog):
 
         district_name = self.bot.content.district(district).name  # type: ignore[attr-defined]
         fence = next(
-            (npc for npc in self.bot.content.npcs.values() if npc.district == district and npc.black_market_contact),
+            (
+                npc
+                for npc in self.bot.content.npcs.values()
+                if npc.district == district and npc.black_market_contact
+            ),
             None,
         )
         embed = discord.Embed(title=f"{district_name} -- district state")
         embed.add_field(
-            name="Black Market Contact", value=f"**{fence.name}** (`{fence.id}`)" if fence else "None"
+            name="Black Market Contact",
+            value=f"**{fence.name}** (`{fence.id}`)" if fence else "None",
         )
         embed.add_field(
             name="Crisis level", value=f"{row.crisis_level} ({row.crisis_kind or 'calm'})"
@@ -1344,7 +1377,9 @@ class StaffCog(commands.Cog):
             notes[:1900] or "No Alternate Universe notes set.", ephemeral=True
         )
 
-    @music_group.command(name="upload", description="Upload an ambient music track for the Activity")
+    @music_group.command(
+        name="upload", description="Upload an ambient music track for the Activity"
+    )
     @app_commands.describe(
         attachment="Audio file (mp3, ogg, wav, m4a, flac, webm)",
         title="Display title for the track",
@@ -1375,9 +1410,22 @@ class StaffCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         file_bytes = await attachment.read()
         settings_dir = getattr(self.bot.settings, "static_uploads_dir", None)
-        uploads_root = Path(settings_dir) if settings_dir else (Path(__file__).parents[4] / "packages" / "panem_api" / "src" / "panem_api" / "static")
+        uploads_root = (
+            Path(settings_dir)
+            if settings_dir
+            else (
+                Path(__file__).parents[4]
+                / "packages"
+                / "panem_api"
+                / "src"
+                / "panem_api"
+                / "static"
+            )
+        )
         try:
-            rel_path = ambient_svc.save_ambient_audio_bytes(file_bytes, attachment.filename, uploads_root)
+            rel_path = ambient_svc.save_ambient_audio_bytes(
+                file_bytes, attachment.filename, uploads_root
+            )
             async with self.bot.db() as session:
                 track = await ambient_svc.create_ambient_track(
                     session,
@@ -1412,7 +1460,9 @@ class StaffCog(commands.Cog):
         async with self.bot.db() as session:
             tracks = await ambient_svc.list_ambient_tracks(session)
         if not tracks:
-            await interaction.response.send_message("No ambient tracks uploaded yet.", ephemeral=True)
+            await interaction.response.send_message(
+                "No ambient tracks uploaded yet.", ephemeral=True
+            )
             return
         lines = []
         for t in tracks:
@@ -1425,7 +1475,9 @@ class StaffCog(commands.Cog):
                 target_str = f" [Channel: {t.channel_id}]"
             lines.append(f"**#{t.id}** -- **{t.title}** (`{t.scope}`{target_str})")
 
-        embed = discord.Embed(title="Activity Ambient Music Tracks", description="\n".join(lines[:20]))
+        embed = discord.Embed(
+            title="Activity Ambient Music Tracks", description="\n".join(lines[:20])
+        )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @music_group.command(name="delete", description="Delete an ambient music track by ID")
@@ -1446,7 +1498,235 @@ class StaffCog(commands.Cog):
             except ServiceError as exc:
                 await interaction.response.send_message(f"Error: {exc}", ephemeral=True)
                 return
-        await interaction.response.send_message(f"Deleted ambient track #{track_id}.", ephemeral=True)
+        await interaction.response.send_message(
+            f"Deleted ambient track #{track_id}.", ephemeral=True
+        )
+
+    # --------------------------------------------------------- global events
+
+    @event_group.command(name="create", description="Schedule a hobby-themed global event")
+    @app_commands.describe(
+        hobby="Which hobby it's themed around",
+        name="Display name",
+        description="Flavor text",
+        starts_in_ticks="How many ticks from now it starts",
+        duration_ticks=f"How long it runs (default {constants.GLOBAL_EVENT_DEFAULT_DURATION_TICKS})",
+        district="Leave unset for a world-wide event",
+    )
+    @app_commands.autocomplete(hobby=autocomplete.any_hobby)
+    @app_commands.autocomplete(district=autocomplete.districts)
+    @app_commands.check(_is_staff)
+    async def event_create(
+        self,
+        interaction: discord.Interaction,
+        hobby: str,
+        name: str,
+        description: str,
+        starts_in_ticks: int = 0,
+        duration_ticks: int | None = None,
+        district: int | None = None,
+    ) -> None:
+        async with self.bot.db() as session:
+            clock = await session.get(WorldClock, 1)
+            current_tick = clock.tick if clock is not None else 0
+            starts_tick = current_tick + max(starts_in_ticks, 0)
+            ends_tick = starts_tick + (
+                duration_ticks
+                if duration_ticks is not None
+                else constants.GLOBAL_EVENT_DEFAULT_DURATION_TICKS
+            )
+            try:
+                event = await global_events_svc.create_event(
+                    session,
+                    hobby_id=hobby,
+                    name=name,
+                    description=description,
+                    district_id=district,
+                    starts_tick=starts_tick,
+                    ends_tick=ends_tick,
+                    content=self.bot.content,  # type: ignore[attr-defined]
+                )
+                await session.flush()
+                await bulletin_svc.record_system_entry(
+                    session,
+                    source_kind=BulletinSourceKind.GLOBAL_EVENT,
+                    source_id=event.id,
+                    tag="Admin hosted",
+                    title=f"{name} scheduled",
+                    body=description,
+                    district_id=district,
+                    posted_tick=current_tick,
+                    event_tick=starts_tick,
+                )
+                await log_staff_action(
+                    session,
+                    bot=self.bot,
+                    staff_discord_id=interaction.user.id,
+                    action="event_create",
+                    target=str(event.id),
+                    payload={"hobby": hobby, "name": name},
+                )
+            except ServiceError as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+        await interaction.response.send_message(t("global_event_created", name=name, hobby=hobby))
+
+    @event_group.command(name="conclude", description="End a global event now and pay out rewards")
+    @app_commands.describe(event="Which event")
+    @app_commands.autocomplete(event=autocomplete.any_global_event)
+    @app_commands.check(_is_staff)
+    async def event_conclude(self, interaction: discord.Interaction, event: int) -> None:
+        async with self.bot.db() as session:
+            global_event = await session.get(GlobalEvent, event)
+            if global_event is None:
+                await interaction.response.send_message(t("global_event_not_found"), ephemeral=True)
+                return
+            if global_event.status != GlobalEventStatus.ACTIVE.value:
+                await interaction.response.send_message(
+                    t("global_event_not_active"), ephemeral=True
+                )
+                return
+            clock = await session.get(WorldClock, 1)
+            current_tick = clock.tick if clock is not None else 0
+            result = await global_events_svc.conclude_event(session, event=global_event)
+            if result.winner_character_id is None:
+                text = t("global_event_no_entries", name=global_event.name)
+            else:
+                winner = await session.get(Character, result.winner_character_id)
+                winner_name = (
+                    winner.name if winner is not None else f"#{result.winner_character_id}"
+                )
+                text = t("global_event_concluded", name=global_event.name, winner=winner_name)
+            await bulletin_svc.record_system_entry(
+                session,
+                source_kind=BulletinSourceKind.GLOBAL_EVENT,
+                source_id=global_event.id,
+                tag="Admin hosted",
+                title=f"{global_event.name} has concluded",
+                district_id=global_event.district_id,
+                posted_tick=current_tick,
+            )
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="event_conclude",
+                target=str(event),
+                payload={"winner_character_id": result.winner_character_id},
+            )
+        await interaction.response.send_message(text)
+
+    @event_group.command(
+        name="cancel", description="Cancel a global event with no rewards paid out"
+    )
+    @app_commands.describe(event="Which event")
+    @app_commands.autocomplete(event=autocomplete.any_global_event)
+    @app_commands.check(_is_staff)
+    async def event_cancel(self, interaction: discord.Interaction, event: int) -> None:
+        async with self.bot.db() as session:
+            global_event = await session.get(GlobalEvent, event)
+            if global_event is None:
+                await interaction.response.send_message(t("global_event_not_found"), ephemeral=True)
+                return
+            try:
+                await global_events_svc.cancel_event(session, event=global_event)
+            except ServiceError as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+            name = global_event.name
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="event_cancel",
+                target=str(event),
+                payload={},
+            )
+        await interaction.response.send_message(t("global_event_cancelled", name=name))
+
+    @feature_group.command(
+        name="set", description="Set a tab/command/system's access level for players"
+    )
+    @app_commands.describe(
+        key=(
+            "Which tab/command/system -- e.g. npc_interaction, tab:map, "
+            "or any other tab:<name>/command:<name> key"
+        ),
+        mode="Who can still use/see it",
+    )
+    @app_commands.choices(mode=_FEATURE_STATE_CHOICES)
+    @app_commands.check(_is_staff)
+    async def feature_set(
+        self,
+        interaction: discord.Interaction,
+        key: str,
+        mode: app_commands.Choice[str],
+    ) -> None:
+        clean_key = key.strip()
+        if not clean_key:
+            await interaction.response.send_message("Enter a flag key.", ephemeral=True)
+            return
+        state = feature_flags_svc.FlagState(mode.value)
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            await feature_flags_svc.set_state(
+                session, clean_key, state, updated_by_discord_id=interaction.user.id
+            )
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="feature_set",
+                target=clean_key,
+                payload={"state": state.value},
+            )
+        await interaction.response.send_message(
+            f"`{clean_key}` is now **{mode.name}**.", ephemeral=True
+        )
+
+    @feature_set.autocomplete("key")
+    async def feature_set_key_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        current_lower = current.lower()
+        matches = [
+            k
+            for k, desc in feature_flags_svc.KNOWN_FLAGS.items()
+            if current_lower in k.lower() or current_lower in desc.lower()
+        ]
+        return [
+            app_commands.Choice(
+                name=f"{k} -- {feature_flags_svc.KNOWN_FLAGS[k]}"[:100], value=k
+            )
+            for k in matches[:25]
+        ]
+
+    @feature_group.command(
+        name="list", description="Show every known tab/command flag and its current state"
+    )
+    @app_commands.check(_is_staff)
+    async def feature_list(self, interaction: discord.Interaction) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            overrides = await feature_flags_svc.list_states(session)
+        lines = [
+            f"`{key}` -- **{overrides.get(key, feature_flags_svc.FlagState.ENABLED).value}** ({description})"
+            for key, description in feature_flags_svc.KNOWN_FLAGS.items()
+        ]
+        # A key that's been set but isn't one of the known tabs/systems
+        # above (e.g. a free-typed command: key) still shows up here
+        # rather than silently disappearing from the list.
+        lines += [
+            f"`{key}` -- **{state.value}**"
+            for key, state in overrides.items()
+            if key not in feature_flags_svc.KNOWN_FLAGS
+        ]
+        text = "\n".join(lines) or "No flags defined."
+        if len(text) > 1900:
+            text = text[:1900] + "\n… (truncated)"
+        await interaction.response.send_message(text, ephemeral=True)
 
 
 async def setup(bot: commands.Bot) -> None:

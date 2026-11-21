@@ -15,7 +15,7 @@
 // use this panel, which is built to render sensibly on zero categories
 // (just the "New category" form, nothing else) rather than assuming
 // something is already there.
-import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=7";
+import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=9";
 
 // `panem_shared.enums.AfflictionStat`'s five values -- the only stats a
 // staff-authored affliction type's cure/auto-apply condition can name.
@@ -1750,6 +1750,102 @@ function channelAccessPanel(ctx) {
   );
 }
 
+// Beta-release gating: `/staff feature set`'s dashboard twin. Lists every
+// known tab/system flag (`panem_shared.feature_flags.KNOWN_FLAGS`) plus
+// any free-typed key (e.g. a `command:` one) someone's already set, and
+// lets staff set one -- the same three states as the slash command
+// (enabled / staff only / disabled, everyone including staff), so this is
+// purely a UI convenience over the same `feature_flags` table, not a
+// separate mechanism.
+function flagsPanel(ctx) {
+  const resultLine = el("p", { class: "result-line" });
+  const listEl = el("div", {});
+  const keyInput = el("input", {
+    type: "text",
+    placeholder: "Flag key (e.g. npc_interaction, tab:map)",
+  });
+  const modeSelect = dropdown([
+    { value: "enabled", label: "Enabled -- everyone" },
+    { value: "staff_only", label: "Staff only" },
+    { value: "disabled", label: "Disabled -- everyone, staff included" },
+  ]);
+  modeSelect.value = "enabled";
+  const setBtn = el("button", { class: "btn", type: "button" }, "Set");
+
+  async function refresh() {
+    listEl.innerHTML = "";
+    try {
+      const body = await ctx.apiFetch(
+        `/activity/dashboard/staff/flags?discord_id=${encodeURIComponent(ctx.discordId())}`
+      );
+      if (!body.flags.length) {
+        listEl.append(el("p", { class: "tab-status" }, "No flags defined."));
+        return;
+      }
+      for (const flag of body.flags) {
+        listEl.append(
+          el(
+            "div",
+            { class: "field-row" },
+            el("label", {
+              text: flag.description ? `${flag.key} -- ${flag.description}` : flag.key,
+            }),
+            el("span", { class: "tab-status" }, flag.state)
+          )
+        );
+      }
+    } catch (err) {
+      listEl.append(el("p", { class: "tab-status error" }, `Could not load flags: ${err.message}`));
+    }
+  }
+
+  setBtn.addEventListener("click", async () => {
+    resultLine.textContent = "";
+    const key = keyInput.value.trim();
+    if (!key) {
+      resultLine.className = "result-line lose";
+      resultLine.textContent = "Enter a flag key.";
+      return;
+    }
+    try {
+      await ctx.apiFetch("/activity/dashboard/staff/flags/set", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          discord_id: ctx.discordId(),
+          key,
+          state: modeSelect.value,
+        }),
+      });
+      resultLine.className = "result-line win";
+      resultLine.textContent = `"${key}" is now ${modeSelect.value}.`;
+      keyInput.value = "";
+      refresh();
+    } catch (err) {
+      resultLine.className = "result-line lose";
+      resultLine.textContent = err.message;
+    }
+  });
+
+  refresh();
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "Feature Flags" }),
+    el(
+      "p",
+      { class: "tab-status" },
+      "Toggle beta tabs/commands for players -- mirrors /staff feature set."
+    ),
+    listEl,
+    el("div", { class: "field-row" }, el("label", { text: "Key" }), keyInput),
+    el("div", { class: "field-row" }, el("label", { text: "Mode" }), modeSelect),
+    el("div", { class: "field-row" }, setBtn),
+    resultLine
+  );
+}
+
 export function mount(root, ctx) {
   root.append(
     jailPanel(ctx),
@@ -1763,7 +1859,8 @@ export function mount(root, ctx) {
     marketStockPanel(ctx),
     mottosPanel(ctx),
     layersPanel(ctx),
-    afflictionTypesPanel(ctx)
+    afflictionTypesPanel(ctx),
+    flagsPanel(ctx)
   );
 }
 

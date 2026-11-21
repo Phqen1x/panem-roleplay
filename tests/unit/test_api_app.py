@@ -2545,6 +2545,35 @@ class TestDashboardCharacters:
             )
         assert response.status_code == 400
 
+    async def test_standalone_avatar_upload_saves_the_file_and_returns_url(
+        self, work_app_with_avatar_uploads, tmp_path
+    ):
+        transport = httpx.ASGITransport(app=work_app_with_avatar_uploads)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/activity/dashboard/characters/avatar-upload",
+                data={"discord_id": "5"},
+                files={"file": ("portrait.png", b"fake-png-bytes", "image/png")},
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["avatar_url"].startswith("https://example.com/uploads/avatars/")
+        saved_path = tmp_path / body["avatar_url"].removeprefix("https://example.com/")
+        assert saved_path.exists()
+        assert saved_path.read_bytes() == b"fake-png-bytes"
+
+    async def test_standalone_avatar_upload_refused_when_no_public_url_is_configured(
+        self, work_app
+    ):
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/activity/dashboard/characters/avatar-upload",
+                data={"discord_id": "5"},
+                files={"file": ("portrait.png", b"fake-png-bytes", "image/png")},
+            )
+        assert response.status_code == 400
+
     async def test_create_stores_a_valid_appearance_layers_submission(
         self, work_app, db_session_factory
     ):

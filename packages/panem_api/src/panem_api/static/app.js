@@ -23,7 +23,7 @@
 // every other dashboard endpoint re-validating discord_id+character_id
 // together) -- there's still no cryptographic auth here, same documented
 // gap as the rest of this process.
-import { fetchJson, el, renderTabIcon } from "./tabs/_shared.js?v=7";
+import { fetchJson, el, renderTabIcon } from "./tabs/_shared.js?v=9";
 import { mountThemePicker } from "./theme_picker.js?v=4";
 import { initClickSFX } from "./click_sfx.js?v=53";
 import { mountSoundPicker } from "./sound_picker.js?v=53";
@@ -63,7 +63,7 @@ async function openExternalLink(url) {
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "53";
+const ASSET_VERSION = "65";
 
 // District names mapping for Capitol and Districts 1-12
 const DISTRICT_NAMES = {
@@ -125,6 +125,14 @@ const TABS = [
   "jail",
   "crime",
   "housing",
+  "pets",
+  "hobbies",
+  "museum",
+  "weather",
+  "bulletin",
+  "rumors",
+  "events",
+  "reactions",
 ];
 const TAB_LABELS = {
   home: "Home",
@@ -138,6 +146,28 @@ const TAB_LABELS = {
   jail: "Jail",
   crime: "Crime",
   housing: "Housing",
+  pets: "Pets",
+  hobbies: "Hobbies",
+  museum: "Museum",
+  weather: "Weather",
+  bulletin: "Bulletin",
+  rumors: "Rumors",
+  events: "Events",
+  reactions: "Reactions",
+};
+
+// The mobile bottom dock's curated shortcuts -- everything else (every
+// tab in TABS, grouped) is still one tap away via Home's own app grid,
+// the same "a few pinned apps in the dock, the rest behind the home
+// screen" shape a phone's own launcher uses. Desktop has no dock at all
+// (the sidebar already lists every tab), so this is read only by
+// `setupDock()`.
+const DOCK_TABS = ["home", "map", "events", "character"];
+const DOCK_TAB_LABELS = {
+  home: "Home",
+  map: "Map",
+  events: "Activities",
+  character: "Character",
 };
 
 // Only offered when `/identify` reports `is_staff` -- see `visibleTabs()`.
@@ -168,6 +198,7 @@ const STAFF_ONLY_TAB_LABELS = {
 
 const statusEl = document.getElementById("status");
 const navEl = document.getElementById("tab-nav");
+const dockEl = document.getElementById("tab-dock");
 const tabRootEl = document.getElementById("tab-root");
 const discordIdInput = document.getElementById("discord-id-input");
 const characterToggleEl = document.getElementById("character-select-toggle");
@@ -184,6 +215,11 @@ const state = {
   characterId: null,
   isStaff: false,
   isDonor: false,
+  // Bare tab names (e.g. "map") this account shouldn't see right now --
+  // `/identify`'s `hidden_tabs`, already resolved server-side against
+  // `feature_flags` + `is_staff` (`dashboard_routes._hidden_tabs`). See
+  // `visibleTabs()`/`setupDock()` below for where this is applied.
+  hiddenTabs: [],
   theme: DEFAULT_THEME,
   themeProfiles: [],
   // The account's general/default profile id (independent of whatever the
@@ -240,6 +276,33 @@ function writeStorage(key, value) {
   } catch {
     // Private browsing / blocked storage -- selection just won't persist.
   }
+}
+
+// Per-viewer "frequently/recently used" tracking for Home's own app
+// shortcuts (`tabs/home.js`) -- never shared, never read back by
+// anything but this same browser, same spirit as the theme colors
+// mirrored into localStorage above. Read through `ctx.tabUsage()`
+// rather than home.js touching `localStorage` itself, so this stays the
+// one place usage is actually recorded (`showTab()` below).
+const TAB_USAGE_STORAGE_KEY = "panem_tab_usage_v1";
+
+function loadTabUsage() {
+  try {
+    const raw = readStorage(TAB_USAGE_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (parsed && parsed.counts && Array.isArray(parsed.recent)) return parsed;
+  } catch {
+    // Malformed/blocked storage -- fall through to a fresh, empty record.
+  }
+  return { counts: {}, recent: [] };
+}
+
+function recordTabUsage(name) {
+  if (name === "home") return; // the home screen itself isn't "an app" to rank
+  const usage = loadTabUsage();
+  usage.counts[name] = (usage.counts[name] || 0) + 1;
+  usage.recent = [name, ...usage.recent.filter((n) => n !== name)].slice(0, 8);
+  writeStorage(TAB_USAGE_STORAGE_KEY, JSON.stringify(usage));
 }
 
 // Sets the four CSS custom properties `style.css`'s `:root` defines
@@ -594,6 +657,9 @@ async function selectCharacter(id) {
   closeCharacterMenu();
   if (id === state.characterId) return;
   state.characterId = id;
+  // Any pop-up still showing belonged to the character being switched
+  // away from -- answering it now would silently apply to the wrong one.
+  if (reactionOverlay) reactionOverlay.close();
   writeStorage("panem_character_id", String(id));
   const chosen = state.characters.find((c) => c.id === id);
   if (chosen) {
@@ -649,6 +715,7 @@ async function refreshIdentity() {
     state.characters = [];
     state.isStaff = false;
     state.isDonor = false;
+    state.hiddenTabs = [];
     state.theme = DEFAULT_THEME;
     state.themeProfiles = [];
     state.activeThemeProfileId = null;
@@ -656,6 +723,7 @@ async function refreshIdentity() {
     themePickerEl.hidden = true;
     renderCharacterOptions();
     setupNav();
+    setupDock();
     return;
   }
   try {
@@ -667,6 +735,7 @@ async function refreshIdentity() {
     state.characters = body.characters;
     state.isStaff = Boolean(body.is_staff);
     state.isDonor = Boolean(body.is_donor);
+    state.hiddenTabs = body.hidden_tabs || [];
     // `body.theme` here has no character context (`/identify` doesn't
     // know which one's selected) -- it's the account's general theme, so
     // its `profile_id` is exactly the account's general default.
@@ -682,6 +751,7 @@ async function refreshIdentity() {
     state.characters = [];
     state.isStaff = false;
     state.isDonor = false;
+    state.hiddenTabs = [];
     state.theme = DEFAULT_THEME;
     state.themeProfiles = [];
     state.activeThemeProfileId = null;
@@ -696,6 +766,7 @@ async function refreshIdentity() {
     await refreshResolvedTheme();
   }
   setupNav();
+  setupDock();
 }
 
 function buildCtx() {
@@ -703,18 +774,31 @@ function buildCtx() {
     discordId: getDiscordId,
     characterId: () => state.characterId,
     characters: () => state.characters,
+    currentCharacter: currentCharacter,
     districtNames: DISTRICT_NAMES,
     districtMotto: (id) =>
       state.districtMottos[String(id)] || DEFAULT_DISTRICT_MOTTOS[String(id)] || "Excellence Endures",
     districtName: (id) => DISTRICT_NAMES[id] || `District ${id}`,
     apiFetch: fetchJson,
+    formatTick: formatSimMoment,
+    formatDay: formatSimDay,
     refreshIdentity,
     openExternalLink,
+    // Below: what `tabs/home.js` needs to render its own "Apps"/
+    // "Frequently used"/"Recently opened" shortcuts without duplicating
+    // app.js's own TABS/TAB_LABELS/usage-tracking internals.
+    visibleTabs: () => visibleTabs().filter((name) => name !== "home"),
+    tabLabel: (name) => STAFF_ONLY_TAB_LABELS[name] || TAB_LABELS[name] || name,
+    tabUsage: loadTabUsage,
+    goToTab: (name) => {
+      location.hash = `#${name}`;
+    },
   };
 }
 
 function visibleTabs() {
-  return state.isStaff ? [...TABS, ...STAFF_ONLY_TABS] : TABS;
+  const base = state.isStaff ? [...TABS, ...STAFF_ONLY_TABS] : TABS;
+  return base.filter((name) => !state.hiddenTabs.includes(name));
 }
 
 function currentTabName() {
@@ -738,12 +822,16 @@ let tabGeneration = 0;
 
 async function showTab(name) {
   const generation = ++tabGeneration;
+  recordTabUsage(name);
   if (currentTabHandle && typeof currentTabHandle.unmount === "function") {
     currentTabHandle.unmount();
   }
   currentTabHandle = null;
   tabRootEl.innerHTML = "";
   for (const button of navEl.children) {
+    button.classList.toggle("active", button.dataset.tab === name);
+  }
+  for (const button of dockEl.children) {
     button.classList.toggle("active", button.dataset.tab === name);
   }
   try {
@@ -769,28 +857,48 @@ async function showTab(name) {
   }
 }
 
+function navButton(name, active, labelOverride = null) {
+  const icon = renderTabIcon(name);
+  const label = el("span", {}, labelOverride || STAFF_ONLY_TAB_LABELS[name] || TAB_LABELS[name]);
+  return el(
+    "button",
+    {
+      "data-tab": name,
+      class: name === active ? "active" : "",
+      onclick: () => {
+        location.hash = `#${name}`;
+      },
+    },
+    icon,
+    label
+  );
+}
+
 function setupNav() {
   if (navBuiltForStaff === state.isStaff) return;
   navBuiltForStaff = state.isStaff;
   navEl.innerHTML = "";
   const active = currentTabName();
   for (const name of visibleTabs()) {
-    const icon = renderTabIcon(name);
-    const label = el("span", {}, STAFF_ONLY_TAB_LABELS[name] || TAB_LABELS[name]);
-    navEl.append(
-      el(
-        "button",
-        {
-          "data-tab": name,
-          class: name === active ? "active" : "",
-          onclick: () => {
-            location.hash = `#${name}`;
-          },
-        },
-        icon,
-        label
-      )
-    );
+    navEl.append(navButton(name, active));
+  }
+}
+
+// The mobile bottom dock -- a fixed, small set of shortcuts (`DOCK_TABS`),
+// never staff-gated, so unlike `setupNav()` it only ever needs building
+// once rather than re-running on every identity refresh.
+let dockBuilt = false;
+function setupDock() {
+  if (dockBuilt) return;
+  dockBuilt = true;
+  dockEl.innerHTML = "";
+  const active = currentTabName();
+  // Unlike `visibleTabs()` this never staff-gates (see DOCK_TABS' own
+  // comment), but it still has to respect an admin's `hidden_tabs` --
+  // otherwise a disabled tab (e.g. Map, mid-beta) would stay one tap away
+  // here even though the nav bar and Home's app grid both hide it.
+  for (const name of DOCK_TABS.filter((n) => !state.hiddenTabs.includes(n))) {
+    dockEl.append(navButton(name, active, DOCK_TAB_LABELS[name]));
   }
 }
 
@@ -866,6 +974,59 @@ function capitalize(word) {
   return word.charAt(0).toUpperCase() + word.slice(1);
 }
 
+// Fallbacks for `panem_shared.constants.TICKS_PER_DAY`/`DAYS_PER_MONTH` --
+// only used for the brief window before `refreshWorldTime`'s first
+// `/world/time` response lands (a tab mounted immediately at startup could
+// otherwise call `formatSimMoment` with no baseline yet); once it lands,
+// the real (possibly `tuning.yaml`-overridden) values from the server take
+// over.
+const DEFAULT_TICKS_PER_DAY = 24;
+const DEFAULT_DAYS_PER_MONTH = 30;
+
+// Converts an absolute tick (e.g. a `WeatherEvent.predicted_start_tick`, a
+// bulletin entry's `event_tick`) into the same "simulation time" shape the
+// world-clock header renders for *now* -- mirrors `panem_shared.simtime`'s
+// tick -> hour/day/month/phase math exactly like `renderWorldClock` below
+// does, but for an arbitrary tick rather than the live, interpolated one.
+// Used wherever a tab used to show a bare "tick 1234" to players, who have
+// no reason to know what a "tick" is.
+function formatSimMoment(tick) {
+  const ticksPerDay = worldTimeBaseline ? worldTimeBaseline.ticksPerDay : DEFAULT_TICKS_PER_DAY;
+  const daysPerMonth = worldTimeBaseline ? worldTimeBaseline.daysPerMonth : DEFAULT_DAYS_PER_MONTH;
+
+  const hourOfDay = tick % ticksPerDay;
+  const dayIndex = Math.floor(tick / ticksPerDay);
+  const day = (dayIndex % daysPerMonth) + 1;
+  const month = (Math.floor(dayIndex / daysPerMonth) % 12) + 1;
+  const year = Math.floor(dayIndex / (daysPerMonth * 12)) + 1;
+
+  const totalMinutes = (hourOfDay * 24 * 60) / ticksPerDay;
+  const hour24 = Math.floor(totalMinutes / 60) % 24;
+  const minute = Math.floor(totalMinutes % 60);
+  const period = hour24 < 12 ? "AM" : "PM";
+  const hour12 = hour24 % 12 || 12;
+  const timeStr = `${hour12}:${String(minute).padStart(2, "0")} ${period}`;
+
+  const ticksPerPhase = ticksPerDay / PHASE_ORDER.length;
+  const phaseIndex = Math.min(PHASE_ORDER.length - 1, Math.floor(hourOfDay / ticksPerPhase));
+  const phase = PHASE_ORDER[phaseIndex];
+
+  return `${timeStr} on Month ${month}, Day ${day}, Year ${year} (${capitalize(phase)} shift)`;
+}
+
+// A date-only sibling of `formatSimMoment` above for displays keyed to a
+// whole sim *day* rather than one exact moment (e.g. the Weather tab's
+// 10-day forecast, one row per `WeatherForecast.day_index` with no
+// specific hour of its own) -- same month/day/year math, minus the
+// time-of-day/shift half nothing on a given day needs yet.
+function formatSimDay(dayIndex) {
+  const daysPerMonth = worldTimeBaseline ? worldTimeBaseline.daysPerMonth : DEFAULT_DAYS_PER_MONTH;
+  const day = (dayIndex % daysPerMonth) + 1;
+  const month = (Math.floor(dayIndex / daysPerMonth) % 12) + 1;
+  const year = Math.floor(dayIndex / (daysPerMonth * 12)) + 1;
+  return `Month ${month}, Day ${day}, Year ${year}`;
+}
+
 function renderWorldClock() {
   if (!worldTimeBaseline) return;
   const { tick, updatedAtMs, tickIntervalSeconds, ticksPerDay, daysPerMonth } = worldTimeBaseline;
@@ -920,6 +1081,137 @@ async function refreshWorldTime() {
   }
 }
 
+// Reaction-event pop-ups (`panem_shared.reactions`) -- no more DM from a
+// Discord-side background loop; the *only* place a fresh one ever gets
+// rolled now is this poll's own call to `/activity/dashboard/reactions/
+// .../status` (see that route's docstring), which only runs while this
+// page is actually open, so "pops up occasionally while the Activity is
+// open" falls out of polling itself rather than needing its own
+// presence check. Floats above whichever tab is currently showing --
+// unlike the Reactions tab's own (read-only) archetype panel, this isn't
+// scoped to that one tab, since a pop-up can land while the player is on
+// any of them. `REACTION_EVENT_DASHBOARD_POLL_SECONDS`'s own docstring
+// is the other half of this interval's math -- keep the two in sync.
+const REACTIONS_POLL_INTERVAL_MS = 5000;
+let reactionOverlay = null;
+let reactionPollInFlight = false;
+
+function buildReactionOverlay() {
+  const overlay = el("div", { class: "modal-overlay reaction-modal-overlay" });
+  const promptEl = el("p", { class: "tab-status" });
+  const countdownEl = el("p", { class: "tab-status" });
+  const buttonsHost = el("div", { class: "field-row" });
+  const resultEl = el("p", { class: "result-line" });
+  const card = el(
+    "div",
+    { class: "reaction-modal-card", onclick: (event) => event.stopPropagation() },
+    el("h2", { text: "Something's Happening" }),
+    promptEl,
+    countdownEl,
+    buttonsHost,
+    resultEl
+  );
+  overlay.append(card);
+
+  let currentLogId = null;
+  let countdownTimer = null;
+  let answered = false;
+
+  function stopCountdown() {
+    if (countdownTimer) {
+      clearInterval(countdownTimer);
+      countdownTimer = null;
+    }
+  }
+
+  function close() {
+    stopCountdown();
+    overlay.classList.remove("open");
+    currentLogId = null;
+  }
+
+  function renderCountdown(expiresAtMs) {
+    stopCountdown();
+    const tick = () => {
+      const secondsLeft = Math.max(0, Math.round((expiresAtMs - Date.now()) / 1000));
+      countdownEl.textContent =
+        secondsLeft > 0
+          ? `You have about ${secondsLeft}s left to answer.`
+          : "This pop-up is about to expire.";
+      if (secondsLeft <= 0) {
+        stopCountdown();
+        if (!answered) close();
+      }
+    };
+    tick();
+    countdownTimer = setInterval(tick, 1000);
+  }
+
+  async function choose(choice, buttons) {
+    if (answered) return;
+    answered = true;
+    for (const button of buttons) button.disabled = true;
+    try {
+      const result = await fetchJson(`/activity/dashboard/reactions/${state.characterId}/respond`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ discord_id: getDiscordId(), choice }),
+      });
+      resultEl.className = "result-line win";
+      resultEl.textContent = `Reading now: ${result.archetype_label} (score ${result.archetype_score.toFixed(1)}).`;
+      stopCountdown();
+      setTimeout(close, 2500);
+    } catch (err) {
+      resultEl.className = "result-line lose";
+      resultEl.textContent = err.message;
+      answered = false;
+      for (const button of buttons) button.disabled = false;
+    }
+  }
+
+  function show(pending) {
+    // Already showing this exact pop-up (or mid-answer on it) -- a later
+    // poll finding the same still-pending log shouldn't re-render out
+    // from under an in-progress click, or restart its countdown.
+    if (currentLogId === pending.log_id && overlay.classList.contains("open")) return;
+
+    answered = false;
+    currentLogId = pending.log_id;
+    promptEl.textContent = pending.prompt;
+    resultEl.textContent = "";
+    resultEl.className = "result-line";
+    buttonsHost.innerHTML = "";
+    const buttons = [];
+    for (const option of pending.options) {
+      const button = el("button", { class: "btn", type: "button" }, option.label);
+      button.addEventListener("click", () => choose(option.choice, buttons));
+      buttons.push(button);
+      buttonsHost.append(button);
+    }
+    renderCountdown(Date.now() + pending.expires_in_seconds * 1000);
+    overlay.classList.add("open");
+  }
+
+  return { element: overlay, show, close };
+}
+
+async function refreshReactions() {
+  if (!state.characterId || !getDiscordId() || reactionPollInFlight) return;
+  reactionPollInFlight = true;
+  try {
+    const status = await fetchJson(
+      `/activity/dashboard/reactions/${state.characterId}/status?discord_id=${encodeURIComponent(getDiscordId())}`
+    );
+    if (status.pending && reactionOverlay) {
+      reactionOverlay.show(status.pending);
+    }
+  } catch (err) {
+    console.warn("Could not poll reaction status:", err);
+  } finally {
+    reactionPollInFlight = false;
+  }
+}
+
 async function main() {
   initClickSFX();
   const soundPickerEl = document.getElementById("sound-picker");
@@ -940,6 +1232,11 @@ async function main() {
   refreshWorldTime();
   setInterval(refreshWorldTime, WORLD_TIME_POLL_INTERVAL_MS);
   setInterval(renderWorldClock, WORLD_CLOCK_RENDER_INTERVAL_MS);
+
+  reactionOverlay = buildReactionOverlay();
+  document.body.append(reactionOverlay.element);
+  refreshReactions();
+  setInterval(refreshReactions, REACTIONS_POLL_INTERVAL_MS);
 
   state.discordUser = await authenticateWithDiscord();
   if (!state.discordUser) {

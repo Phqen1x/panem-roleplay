@@ -1,0 +1,77 @@
+/* The Rumors tab's minigame page (`rumor_investigate.html`/`rumor_
+   investigate.js`) -- self-contained, same as crime.css/work.css/vitals.
+   css each duplicate the base `main`/`#status`/`#result`/`.instructions`/
+   `#board` rules rather than importing another page's stylesheet just
+   for those.
+*/
+
+main {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 16px;
+  text-align: center;
+  min-width: 0;
+}
+
+#status {
+  color: var(--muted);
+  font-size: 16px;
+}
+
+#result {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+#result.win {
+  color: #7cd992;
+}
+
+#result.lose {
+  color: #e0736b;
+}
+
+.instructions {
+  color: var(--muted);
+  font-size: 15px;
+  font-style: italic;
+  line-height: 1.4;
+  margin: 4px auto 12px;
+  max-width: 420px;
+}
+
+#board {
+  margin: 16px auto;
+  max-width: 100%;
+  position: relative;
+}
+
+.oddoneout-meta {
+  color: var(--muted);
+  font-size: 15px;
+  margin: 0 0 10px;
+}
+
+.oddoneout-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  max-width: 360px;
+  margin: 0 auto;
+}
+
+.oddoneout-cell {
+  aspect-ratio: 1;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.oddoneout-cell:hover:not(:disabled) {
+  transform: scale(1.05);
+}
+
+.oddoneout-cell:disabled {
+  cursor: default;
+}

@@ -56,25 +56,33 @@ from panem_api.dashboard_routes import (
     build_affliction_types_router,
     build_ambient_router,
     build_blackmarket_router,
+    build_bulletin_router,
     build_characters_router,
     build_crime_router,
     build_district_lore_router,
+    build_events_router,
+    build_hobbies_router,
     build_housing_router,
     build_identify_router,
     build_jail_router,
     build_layers_router,
     build_market_router,
+    build_museum_router,
     build_pay_router,
+    build_reactions_router,
     build_residents_router,
     build_rp_mode_router,
+    build_rumors_router,
     build_social_router,
     build_staff_router,
     build_theme_router,
     build_trade_router,
     build_travel_router,
     build_vitals_router,
+    build_weather_router,
     build_work_router,
 )
+from panem_api.map3d_routes import build_map3d_routers
 from panem_api.party_routes import build_party_router
 from panem_shared import constants, simtime
 from panem_shared.content.loader import ContentBundle
@@ -918,6 +926,43 @@ def create_app(
     app.include_router(build_housing_router(content=content, session_factory=session_factory))
     app.include_router(build_vitals_router(content=content, session_factory=session_factory))
     app.include_router(
+        build_hobbies_router(
+            content=content,
+            session_factory=session_factory,
+            discord_token=discord_token,
+            discord_guild_id=discord_guild_id,
+            staff_role_id=staff_role_id,
+        )
+    )
+    app.include_router(build_museum_router(content=content, session_factory=session_factory))
+    app.include_router(build_weather_router(session_factory=session_factory))
+    app.include_router(
+        build_bulletin_router(
+            session_factory=session_factory,
+            discord_token=discord_token,
+            discord_guild_id=discord_guild_id,
+            staff_role_id=staff_role_id,
+        )
+    )
+    app.include_router(
+        build_reactions_router(
+            session_factory=session_factory,
+            discord_token=discord_token,
+            discord_guild_id=discord_guild_id,
+            staff_role_id=staff_role_id,
+        )
+    )
+    app.include_router(build_events_router(content=content, session_factory=session_factory))
+    app.include_router(
+        build_rumors_router(
+            content=content,
+            session_factory=session_factory,
+            discord_token=discord_token,
+            discord_guild_id=discord_guild_id,
+            staff_role_id=staff_role_id,
+        )
+    )
+    app.include_router(
         build_rp_mode_router(session_factory=session_factory, redis_client=redis_client)
     )
     app.include_router(build_pay_router(session_factory=session_factory))
@@ -951,6 +996,8 @@ def create_app(
     )
     app.include_router(build_party_router())
     app.include_router(build_ambient_router(session_factory=session_factory))
+    for map3d_router in build_map3d_routers(content=content, session_factory=session_factory):
+        app.include_router(map3d_router)
 
     uploads_root = static_dir or STATIC_DIR
     if uploads_root != STATIC_DIR:

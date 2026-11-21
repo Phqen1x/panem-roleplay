@@ -158,6 +158,14 @@ header {
   right: 0;
 }
 
+/* Added by `tabs/_shared.js`'s `dropdown()` when there isn't enough room
+   below the toggle to show the menu in full -- opens upward from the
+   toggle's top edge instead of spilling down past the viewport. */
+.custom-select-menu.open-up {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
 .custom-select-menu button {
   display: block;
   width: 100%;
@@ -218,48 +226,106 @@ header {
   50% { opacity: 0.6; transform: scale(0.9); }
 }
 
+/* The launcher shell: a persistent sidebar (`#tab-nav`) alongside the
+   open tab's own content (`#tab-root`), replacing the old header-row
+   tab bar now that there are enough tabs (19, plus 3 staff-only) that a
+   horizontal strip no longer fit without its own horizontal scroller.
+   Below the `max-width: 700px` breakpoint this collapses to a single
+   column with the sidebar hidden entirely -- `#tab-dock` (a small fixed
+   set of shortcuts) and Home's own app grid take over as the way to
+   reach a tab instead, the same "a few pinned apps plus a home screen"
+   split a phone's own launcher uses. */
+#shell-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  align-items: stretch;
+}
+
 #tab-nav {
   display: flex;
-  align-items: center;
-  gap: 5px;
+  flex-direction: column;
+  gap: 3px;
+  width: 220px;
+  flex-shrink: 0;
   background: color-mix(in srgb, var(--bg) 75%, var(--panel));
-  padding: 4px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  /* Staff sees enough extra tabs (Staff, History, ...) that this nav's
-     natural width can outgrow the header -- without `min-width: 0` a flex
-     item never shrinks past its content's own intrinsic width (the same
-     flexbox trap work.css's own `main` rule documents), so `header`'s
-     `flex-wrap: wrap` (style.css) had nowhere to reclaim space from except
-     wrapping everything *after* this nav -- world clock, character select,
-     and the theme picker last of all -- onto a second line, left-aligned
-     under the brand instead of staying pinned to the header's right edge.
-     Letting this nav scroll horizontally instead keeps every later header
-     item on the first line regardless of how many tabs are showing. */
-  min-width: 0;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
+  padding: 14px 10px;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
   scrollbar-width: thin;
+  /* `body` only sets `min-height: 100vh` (not a fixed height), so the
+     page itself -- not some inner panel -- is what actually scrolls once
+     `#tab-root`'s content runs long. `position: sticky` is what keeps
+     this sidebar in view through that scroll without needing to know the
+     header's exact height: it scrolls normally until its own top edge
+     reaches the viewport's top (`top: 0`), then holds there while the
+     rest of the page keeps moving underneath it -- no fragile pixel
+     offset to keep in sync with the header's (variable, safe-area-
+     dependent) real height. `align-self: flex-start` opts this one flex
+     item out of `#shell-body`'s default cross-axis stretch -- stretched
+     to `#tab-root`'s full height, it would already fill the available
+     space with nowhere left to "stick" to. */
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  max-height: 100vh;
 }
 
 #tab-nav button {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 10px;
+  width: 100%;
   background: transparent;
   color: var(--muted);
   border: 1px solid transparent;
-  padding: 7px 14px;
+  padding: 9px 12px;
   border-radius: 6px;
   font-family: var(--font-sans);
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.18s ease;
   white-space: nowrap;
+  text-align: left;
+}
+
+/* The mobile bottom dock (`#tab-dock`) -- hidden entirely on desktop,
+   where the sidebar above already reaches every tab. Shares the same
+   button/icon styling as the sidebar (`#tab-nav button`/`svg` rules
+   above) via this combined selector, just laid out as an icon-over-
+   label column instead of an icon-beside-label row. */
+#tab-dock {
+  display: none;
+}
+
+#tab-dock button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid transparent;
+  padding: 6px 4px;
+  border-radius: 8px;
+  font-family: var(--font-sans);
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+}
+
+#tab-dock button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 #tab-nav button svg,
+#tab-dock button svg,
 .tab-icon {
   width: 15px !important;
   height: 15px !important;
@@ -272,12 +338,14 @@ header {
   transition: opacity 0.18s ease;
 }
 
-#tab-nav button:hover {
+#tab-nav button:hover,
+#tab-dock button:hover {
   color: var(--text);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
-#tab-nav button.active {
+#tab-nav button.active,
+#tab-dock button.active {
   background: linear-gradient(
     180deg,
     color-mix(in srgb, var(--accent) 26%, var(--panel)) 0%,
@@ -289,7 +357,8 @@ header {
   font-weight: 600;
 }
 
-#tab-nav button.active svg {
+#tab-nav button.active svg,
+#tab-dock button.active svg {
   opacity: 1;
   color: var(--accent);
   filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 60%, transparent));
@@ -300,14 +369,19 @@ header {
   max-width: 1460px;
   width: 100%;
   margin: 0 auto;
-  /* `body` is a flex container (style.css), making this a flex item --
-     flex items default to `min-width: auto`, which refuses to shrink
-     below their content's intrinsic size regardless of `width: 100%`
-     above (the classic flexbox "overflow:auto child doesn't actually
-     scroll, it blows out its ancestor instead" trap). Without this, an
-     oversized child (e.g. a wide table.data-table on a narrow phone)
-     would widen this box -- and the whole page -- past the viewport
-     instead of scrolling within its own `overflow-x: auto`. */
+  /* `#shell-body` is a row flex container, making this a flex item on
+     that axis too -- `flex: 1` is what actually claims the width left
+     over after the sidebar's fixed 220px, same as `#shell-body` itself
+     claiming its own share of `body`'s column flex below the header.
+     `min-width: 0` is still needed alongside it: flex items default to
+     `min-width: auto`, which refuses to shrink below their content's
+     intrinsic size regardless of `flex`/`width` above (the classic
+     flexbox "overflow:auto child doesn't actually scroll, it blows out
+     its ancestor instead" trap). Without this, an oversized child (e.g.
+     a wide table.data-table on a narrow phone) would widen this box --
+     and the whole page -- past the viewport instead of scrolling within
+     its own `overflow-x: auto`. */
+  flex: 1;
   min-width: 0;
 }
 
@@ -480,6 +554,19 @@ table.data-table td.lose {
   font-weight: 700;
   letter-spacing: 0.8px;
   color: #fff;
+}
+
+/* An optional image attached to a bulletin post (tabs/bulletin.js,
+   BulletinEntry.image_url) -- capped height so a huge or oddly-sized
+   image a player links to can't blow out the whole panel/page. */
+.bulletin-entry-image {
+  display: block;
+  width: 100%;
+  max-height: 260px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  margin-bottom: 10px;
 }
 
 .field-row {
@@ -733,6 +820,31 @@ table.data-table tr.clickable-row {
 
 table.data-table tr.clickable-row:hover {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+/* A plain `<input>` dropped straight into a `table.data-table` cell (e.g.
+   the Museum tab's "Wing"/"Position" fields, `tabs/museum.js`) had no
+   themed ancestor to match -- unlike a `.field-row`'s own inputs (see
+   that rule above), a table cell is neither, so these rendered as a
+   stock white browser box against the dark panel. `.qty-input` below
+   (Market's Qty column) already carries its own narrower override, which
+   wins on specificity regardless of rule order, so this stays the
+   general-purpose default for everything else. */
+table.data-table input:not([type="checkbox"]):not([type="radio"]) {
+  background: color-mix(in srgb, var(--bg) 75%, var(--panel));
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  transition: border-color 0.2s, box-shadow 0.2s, background-color 0.2s;
+}
+
+table.data-table input:not([type="checkbox"]):not([type="radio"]):focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 table.data-table .qty-input {
@@ -1086,6 +1198,37 @@ table.data-table .stock-empty {
   transform: translateY(0);
 }
 
+/* Reaction-event pop-up (`panem_shared.reactions`, `app.js`'s own global
+   poll) -- shares `.modal-overlay` above (fixed/centered/backdrop) but
+   isn't the dossier's header+avatar layout, just a prompt, a countdown,
+   and up to 3 choice buttons, so it gets its own plain card instead of
+   `.dossier-card`. Not closeable by clicking outside it (no close
+   button, no overlay click handler) -- answering it, or letting it time
+   out, is the point. */
+.reaction-modal-card {
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  box-shadow: 0 0 30px rgba(0, 0, 0, 0.8), 0 0 20px color-mix(in srgb, var(--accent) 25%, transparent);
+  border-radius: 12px;
+  width: 90%;
+  max-width: 480px;
+  padding: 22px 24px;
+  transform: translateY(20px);
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.modal-overlay.open .reaction-modal-card {
+  transform: translateY(0);
+}
+
+.reaction-modal-card h2 {
+  margin-top: 0;
+  font-family: var(--font-serif);
+  font-size: 17px;
+  font-weight: 700;
+  color: #fff;
+}
+
 .dossier-header {
   padding: 18px 24px;
   background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 14%, var(--panel)) 0%, var(--panel) 100%);
@@ -1236,13 +1379,120 @@ table.data-table .btn {
   width: 100%;
   max-width: 320px;
   aspect-ratio: 3 / 4;
-  border-radius: 8px;
+  border-radius: 12px;
   background: #171a20;
   overflow: hidden;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border);
 }
 
 .avatar-preview.small {
   max-width: 160px;
+}
+
+.avatar-portrait-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+  border-radius: inherit;
+  transition: opacity 0.2s ease;
+}
+
+.avatar-portrait-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  color: var(--text-muted, #8e95a5);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+  border-radius: inherit;
+  text-align: center;
+  user-select: none;
+}
+
+.avatar-portrait-placeholder svg {
+  width: 36px;
+  height: 36px;
+  opacity: 0.6;
+}
+
+.avatar-portrait-placeholder span {
+  font-size: 11.5px;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+  opacity: 0.85;
+}
+
+.avatar-upload-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0 12px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.avatar-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.avatar-file-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.avatar-file-label {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  user-select: none;
+}
+
+.avatar-file-label svg {
+  width: 15px;
+  height: 15px;
+  stroke: currentColor;
+}
+
+.avatar-file-name {
+  font-size: 12px;
+  color: var(--text-muted, #8e95a5);
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.avatar-file-name.has-file {
+  color: var(--text, #e2e8f0);
+  font-weight: 500;
+}
+
+.avatar-file-name.is-uploaded {
+  color: #10b981;
+  font-weight: 500;
 }
 
 .layer-stack {
@@ -1758,6 +2008,446 @@ svg.ui-icon {
   max-height: 48px;
 }
 
+/* Home's own app shortcuts ("Jump back in"/"Recent"/"All Apps") -- the
+   same icon+label shape `#tab-nav`/`#tab-dock` buttons use, just laid
+   out as a wrapping grid of tiles instead of a fixed list/row, since
+   this is the one place every tab (not just the dock's curated few) has
+   to be reachable without the desktop sidebar -- see `#shell-body`'s own
+   comment above for why that sidebar is desktop-only. */
+.app-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 10px;
+}
+
+.app-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  background: color-mix(in srgb, var(--bg) 70%, var(--panel));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 6px;
+  color: var(--text);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-align: center;
+  transition: border-color 0.15s ease, transform 0.1s ease;
+}
+
+.app-tile:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.app-tile svg {
+  width: 22px !important;
+  height: 22px !important;
+  max-width: 22px !important;
+  max-height: 22px !important;
+  opacity: 0.85;
+}
+
+/* Home's own app-grid tiles (`tabs/home.js`'s `TAB_TILE_COLORS`) -- a
+   solid per-app color instead of the plain dark card every other
+   `.app-tile` (and everything else on this page) uses, so the grid
+   actually pops the way a phone's own home-screen icons do rather than
+   reading as one more uniformly dark panel. `color: #fff` here is what
+   turns the icon white too -- `renderTabIcon`'s SVGs stroke in
+   `currentColor`, which resolves against this. */
+.app-tile.app-tile-colored {
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+.app-tile.app-tile-colored:hover {
+  border-color: rgba(255, 255, 255, 0.5);
+  filter: brightness(1.12);
+}
+
+.app-tile.app-tile-colored svg {
+  opacity: 1;
+}
+
+.app-tile span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+/* =========================================================================
+   Home Hub Redesign: Welcoming Header, Search, Recently Opened & Categorized Rows
+   ========================================================================= */
+
+.home-launcher-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.home-welcome-header {
+  padding: 8px 4px 4px 4px;
+}
+
+.home-welcome-title {
+  font-family: var(--font-serif);
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text);
+  margin: 0 0 4px 0;
+  line-height: 1.25;
+}
+
+.home-welcome-sub {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0;
+  line-height: 1.4;
+}
+
+/* Rounded Pill Search Bar */
+.home-search-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.home-search-icon {
+  position: absolute;
+  left: 14px;
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.home-search-input {
+  width: 100%;
+  background: color-mix(in srgb, var(--panel) 75%, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 11px 38px 11px 40px;
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  color: var(--text);
+  outline: none;
+  transition: all 0.2s ease;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.home-search-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+  background: color-mix(in srgb, var(--panel) 90%, var(--bg));
+}
+
+.home-search-clear {
+  position: absolute;
+  right: 12px;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 50%;
+  transition: color 0.15s ease;
+}
+
+.home-search-clear:hover {
+  color: var(--text);
+}
+
+/* Section Header */
+.home-section-header h2 {
+  font-family: var(--font-serif);
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  margin: 0 0 10px 2px;
+  text-transform: none;
+}
+
+.home-section-header.browse-header h2 {
+  font-size: 17px;
+  margin-top: 12px;
+  margin-bottom: 10px;
+}
+
+/* Recently Opened Shelf */
+.home-recent-section {
+  margin-top: 6px;
+  margin-bottom: 8px;
+}
+
+.home-recent-shelf {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  overflow-x: auto;
+  padding: 2px 2px 8px 2px;
+  scrollbar-width: thin;
+}
+
+.home-recent-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  background: color-mix(in srgb, var(--panel) 60%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 8px 10px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  flex-shrink: 0;
+}
+
+.home-recent-tile:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+}
+
+.home-recent-tile:active {
+  transform: scale(0.96);
+}
+
+.home-recent-icon-wrap {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+  transition: transform 0.18s ease;
+}
+
+.home-recent-icon-wrap svg {
+  width: 22px !important;
+  height: 22px !important;
+  opacity: 1 !important;
+}
+
+.home-recent-label {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text);
+  text-align: center;
+  max-width: 64px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* DESKTOP SPEC: Only show the icon in recently opened, NO TEXT */
+@media (min-width: 701px) {
+  .home-recent-tile {
+    padding: 6px;
+    border-radius: 15px;
+    gap: 0;
+  }
+  .home-recent-label {
+    display: none !important;
+  }
+}
+
+/* Category Filter Bar */
+.home-category-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 2px 10px 2px;
+  margin-bottom: 6px;
+  scrollbar-width: none;
+}
+
+.home-category-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.home-category-tab {
+  background: color-mix(in srgb, var(--panel) 60%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 7px 15px;
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.18s ease;
+  white-space: nowrap;
+}
+
+.home-category-tab:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+}
+
+.home-category-tab.active {
+  background: color-mix(in srgb, var(--accent) 20%, var(--panel));
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+/* Categorized Apps Group Card */
+.home-category-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+.home-category-card {
+  background: color-mix(in srgb, var(--panel) 80%, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.home-category-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 18px;
+  background: color-mix(in srgb, var(--panel) 95%, var(--bg));
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+}
+
+.home-category-card-title {
+  font-family: var(--font-serif);
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.home-category-card-count {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* Clickable App Rows */
+.home-app-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-top: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+  padding: 13px 18px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.18s ease;
+  color: var(--text);
+  font-family: var(--font-sans);
+}
+
+.home-app-row:first-child {
+  border-top: none;
+}
+
+.home-app-row:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.home-app-row:active {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  transform: scale(0.992);
+}
+
+.home-app-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  transition: transform 0.18s ease;
+}
+
+.home-app-icon svg {
+  width: 20px !important;
+  height: 20px !important;
+  opacity: 1 !important;
+}
+
+.home-app-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.home-app-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-app-subtitle {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-app-chevron {
+  font-size: 20px;
+  line-height: 1;
+  color: var(--muted);
+  padding-left: 6px;
+  transition: transform 0.18s ease, color 0.18s ease;
+}
+
+.home-app-row:hover .home-app-chevron {
+  color: var(--accent);
+  transform: translateX(3px);
+}
+
+.home-empty-search {
+  padding: 40px 16px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+  background: color-mix(in srgb, var(--panel) 40%, transparent);
+  border: 1px dashed var(--border);
+  border-radius: 16px;
+}
+
 .meter-row {
   margin-bottom: 10px;
 }
@@ -1804,18 +2494,60 @@ svg.ui-icon {
 @media (max-width: 700px) {
   #tab-root {
     padding: 16px 14px;
+    /* Room for the fixed `#tab-dock` bar below, same reasoning the dock's
+       own rule documents -- otherwise the last bit of every tab's content
+       sits behind it, reachable only by scrolling the dock itself out of
+       the way (it's fixed, so that never happens). */
+    padding-bottom: calc(76px + var(--safe-bottom));
   }
 
   .panel {
     padding: 16px 16px;
   }
 
+  /* The sidebar is desktop-only -- below this breakpoint, `#tab-dock`'s
+     small fixed set of shortcuts plus Home's own app grid are how a tab
+     gets reached instead (see this file's `#shell-body` comment). */
   #tab-nav {
-    gap: 4px;
-    padding: 3px;
-    width: 100%;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
+    display: none;
+  }
+
+  /* `global-footer`'s district/motto telemetry is a nice-to-have on a
+     wide desktop view; on a phone it would otherwise sit directly above
+     (or, worse, get visually confused with) the fixed dock bar below, so
+     it's dropped here the same way `.brand-subtitle`/`#discord-status-
+     text` already are in style.css's own mobile breakpoint. */
+  #global-footer {
+    display: none;
+  }
+
+  #tab-dock {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 15;
+    justify-content: space-around;
+    align-items: center;
+    background: color-mix(in srgb, var(--bg) 92%, black);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-top: 1px solid var(--border);
+    padding: 6px 8px calc(6px + var(--safe-bottom));
+    padding-left: calc(8px + var(--safe-left));
+    padding-right: calc(8px + var(--safe-right));
+  }
+
+  #tab-dock button {
+    padding: 6px 4px;
+    border-radius: 12px;
+    transition: all 0.16s ease;
+  }
+
+  #tab-dock button.active {
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
   }
 
   #tab-nav button {
@@ -2021,4 +2753,141 @@ svg.ui-icon {
 
 .sound-actions {
   margin-top: 10px;
+}
+
+/* The Capitol's 3D map (`map3d/city.js`) and everything it opens --
+   customizer, pet store, property interior. */
+
+.map3d-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: relative;
+}
+
+.map3d-toolbar {
+  display: flex;
+  gap: 10px;
+}
+
+.map3d-canvas-wrap {
+  position: relative;
+}
+
+.map3d-canvas {
+  display: block;
+  width: 100%;
+  max-width: 960px;
+  aspect-ratio: 960 / 540;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #1a2230;
+}
+
+.map3d-hud {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  padding: 6px 12px;
+  background: rgba(10, 12, 16, 0.75);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text);
+  pointer-events: none;
+  min-height: 1em;
+}
+
+.map3d-overlay-host:empty {
+  display: none;
+}
+
+.map3d-popup {
+  max-width: 640px;
+}
+
+.map3d-customizer {
+  max-width: 720px;
+  max-height: 75vh;
+  overflow-y: auto;
+}
+
+.map3d-customizer-section {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  margin-top: 10px;
+}
+
+.map3d-customizer-section:first-of-type {
+  border-top: none;
+  margin-top: 0;
+}
+
+.map3d-customizer h3 {
+  font-size: 15px;
+  font-family: var(--font-serif);
+  margin: 0 0 6px;
+}
+
+.map3d-customizer-subhead {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin: 10px 0 6px;
+}
+
+.map3d-swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 40px);
+  gap: 6px;
+}
+
+.map3d-swatch,
+.map3d-letter-swatch {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  border: 2px solid var(--border);
+  background-color: #222;
+  background-size: cover;
+  background-position: center top;
+  cursor: pointer;
+  padding: 0;
+}
+
+.map3d-letter-swatch {
+  color: var(--text);
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.map3d-swatch.active,
+.map3d-letter-swatch.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.map3d-swatch-palette {
+  background-size: 300% 300%;
+}
+
+.map3d-interior-layout {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.map3d-interior-sidebar {
+  flex: 1 1 220px;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.map3d-nudge-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 40px);
+  gap: 4px;
 }

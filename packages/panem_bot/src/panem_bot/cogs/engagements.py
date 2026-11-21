@@ -26,6 +26,7 @@ from panem_bot.services import proxy as proxy_svc
 from panem_bot.services import travel as travel_svc
 from panem_bot.strings import t
 from panem_shared import constants, simtime
+from panem_shared import feature_flags as feature_flags_svc
 from panem_shared.db.models import (
     Character,
     DialogueSettings,
@@ -423,6 +424,24 @@ class EngagementCog(commands.Cog):
                     t("npc_interaction_mode_forbidden", name=char.name), ephemeral=True
                 )
                 return
+
+            if matched_npcs:
+                is_staff = isinstance(
+                    interaction.user, discord.Member
+                ) and await self.bot.is_staff(  # type: ignore[attr-defined]
+                    interaction.user
+                )
+                flag_state = await feature_flags_svc.get_state(
+                    session, feature_flags_svc.NPC_INTERACTION
+                )
+                if not feature_flags_svc.is_allowed(flag_state, is_staff=is_staff):
+                    reason = (
+                        "npc_interaction_staff_only"
+                        if flag_state is feature_flags_svc.FlagState.STAFF_ONLY
+                        else "npc_interaction_disabled"
+                    )
+                    await interaction.followup.send(t(reason, name=char.name), ephemeral=True)
+                    return
 
             char_rows = (
                 (

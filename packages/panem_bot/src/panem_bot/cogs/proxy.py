@@ -23,6 +23,7 @@ from panem_bot.services import proxy as proxy_svc
 from panem_bot.services import shifts as shifts_svc
 from panem_bot.strings import t
 from panem_shared import constants, hostility, relationships
+from panem_shared import feature_flags as feature_flags_svc
 from panem_shared.db.models import (
     Character,
     DialogueLog,
@@ -346,8 +347,23 @@ class ProxyCog(commands.Cog):
         # (`/talk`/`/engage` can attach NPCs to *any* scene -- an ambient
         # thread, an open `/scene`, not just a dedicated `SceneKind.
         # ENGAGEMENT` thread -- see `cogs/dialogue.py`'s docstring), not
-        # merely that the scene's `kind` is ENGAGEMENT.
-        is_engagement = scene is not None and bool(scene.participants.get("npcs"))
+        # merely that the scene's `kind` is ENGAGEMENT. If an admin has
+        # since disabled/restricted NPC interaction (`/staff feature set
+        # npc_interaction`), an already-joined NPC just goes quiet rather
+        # than erroring on every message in what's likely an old thread --
+        # the flag's real job is stopping *new* `/talk`/`/engage` NPC
+        # invites, which are gated loudly at their own command instead.
+        npc_scene = scene is not None and bool(scene.participants.get("npcs"))
+        npc_interaction_ok = True
+        if npc_scene:
+            author_is_staff = isinstance(
+                message.author, discord.Member
+            ) and await self.bot.is_staff(message.author)  # type: ignore[attr-defined]
+            flag_state = await feature_flags_svc.get_state(
+                session, feature_flags_svc.NPC_INTERACTION
+            )
+            npc_interaction_ok = feature_flags_svc.is_allowed(flag_state, is_staff=author_is_staff)
+        is_engagement = npc_scene and npc_interaction_ok
 
         async def send_chunk(chunk: str, files: list[discord.File], *, is_last: bool) -> None:
             sent = await webhook.send(

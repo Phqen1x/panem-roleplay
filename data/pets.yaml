@@ -1,0 +1,126 @@
+# The Capitol Market's pet store catalog (`panem_api.map3d_routes`'s
+# `/activity/dashboard/pets/*` routes) -- one entry per vendored Cube Pets
+# model (`static/assets3d/pets/animal-{model}.glb`). Prices sit in the same
+# small-number economy as `data/goods.yaml` (median job wage 15, starting
+# money 40): common companions are an easy impulse buy, the Capitol's more
+# exotic imports cost a season's wages.
+- id: chick
+  name: Chick
+  model: chick
+  price: 20
+  description: A fluffy yellow chick that peeps underfoot.
+- id: bunny
+  name: Bunny
+  model: bunny
+  price: 25
+  description: A twitchy-nosed rabbit, easy to keep happy.
+- id: cat
+  name: Cat
+  model: cat
+  price: 30
+  description: A block-cube cat that mostly ignores you, elegantly.
+- id: dog
+  name: Dog
+  model: dog
+  price: 30
+  description: A loyal companion that never strays far.
+- id: fish
+  name: Fish
+  model: fish
+  price: 20
+  description: A small ornamental fish for a bowl by the window.
+- id: pig
+  name: Pig
+  model: pig
+  price: 35
+  description: A pink, good-natured pig.
+- id: cow
+  name: Cow
+  model: cow
+  price: 40
+  description: A gentle cow, oddly popular with Capitol children.
+- id: deer
+  name: Deer
+  model: deer
+  price: 45
+  description: A slim, alert deer -- District Twelve imports a few every season.
+- id: beaver
+  name: Beaver
+  model: beaver
+  price: 50
+  description: A industrious beaver that's forever gnawing something.
+- id: fox
+  name: Fox
+  model: fox
+  price: 55
+  description: A sly orange fox, bred tame for generations.
+- id: koala
+  name: Koala
+  model: koala
+  price: 60
+  description: A sleepy koala that naps through most of the day.
+- id: hog
+  name: Hog
+  model: hog
+  price: 60
+  description: A sturdy, bristled hog.
+- id: crab
+  name: Crab
+  model: crab
+  price: 65
+  description: A small shore crab, imported from the District Four coast.
+- id: parrot
+  name: Parrot
+  model: parrot
+  price: 90
+  description: A bright, chattering parrot -- a Capitol apartment favorite.
+- id: caterpillar
+  name: Caterpillar
+  model: caterpillar
+  price: 70
+  description: A fuzzy caterpillar, sold in a little terrarium.
+- id: bee
+  name: Bee
+  model: bee
+  price: 75
+  description: A single oversized bee, strictly decorative and stingless.
+- id: penguin
+  name: Penguin
+  model: penguin
+  price: 150
+  description: A waddling penguin kept cool in a Capitol apartment's chilled room.
+- id: monkey
+  name: Monkey
+  model: monkey
+  price: 160
+  description: A mischievous monkey that's forever getting into things.
+- id: panda
+  name: Panda
+  model: panda
+  price: 220
+  description: A rare panda cub, the talk of every Capitol dinner party.
+- id: polar
+  name: Polar Bear Cub
+  model: polar
+  price: 250
+  description: A pampered polar bear cub, kept in a climate-cooled room.
+- id: giraffe
+  name: Giraffe
+  model: giraffe
+  price: 260
+  description: A tiny-for-its-kind giraffe that still needs high ceilings.
+- id: tiger
+  name: Tiger Cub
+  model: tiger
+  price: 280
+  description: A tiger cub, status symbol of the Capitol's wealthiest households.
+- id: lion
+  name: Lion Cub
+  model: lion
+  price: 280
+  description: A lion cub with an outsized sense of its own importance.
+- id: elephant
+  name: Elephant Calf
+  model: elephant
+  price: 300
+  description: An elephant calf, the single most expensive pet money can buy here.

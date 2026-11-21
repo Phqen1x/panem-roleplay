@@ -19,8 +19,18 @@ from panem_bot.services import characters as characters_svc
 from panem_bot.services import housing as housing_svc
 from panem_bot.strings import t
 from panem_shared import constants, simtime
+from panem_shared import weather as weather_svc
 from panem_shared.db.models import ApartmentLease, Character, Property, PropertyAuction, WorldClock
-from panem_shared.enums import OwnerKind, PropertyKind
+from panem_shared.enums import OwnerKind, PropertyKind, WeatherKind
+
+_PREPARABLE_WEATHER_KINDS = (
+    WeatherKind.THUNDERSTORM,
+    WeatherKind.HAILSTORM,
+    WeatherKind.BLIZZARD,
+    WeatherKind.FLASH_FLOOD,
+    WeatherKind.HEATWAVE,
+    WeatherKind.WINDSTORM,
+)
 
 
 class HousingCog(commands.Cog):
@@ -52,7 +62,9 @@ class HousingCog(commands.Cog):
     @app_commands.autocomplete(character=autocomplete.own_approved)
     async def list_housing(self, interaction: discord.Interaction, character: str) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -99,7 +111,9 @@ class HousingCog(commands.Cog):
         financed: bool = False,
     ) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -188,7 +202,9 @@ class HousingCog(commands.Cog):
         self, interaction: discord.Interaction, character: str, complex_id: str
     ) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -239,7 +255,9 @@ class HousingCog(commands.Cog):
         self, interaction: discord.Interaction, character: str, property_id: int, amount: float
     ) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -285,7 +303,9 @@ class HousingCog(commands.Cog):
         price: float | None = None,
     ) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -327,7 +347,9 @@ class HousingCog(commands.Cog):
         self, interaction: discord.Interaction, character: str, property_id: int, price: float
     ) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -375,7 +397,9 @@ class HousingCog(commands.Cog):
         minimum_bid: float,
     ) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -435,7 +459,9 @@ class HousingCog(commands.Cog):
         self, interaction: discord.Interaction, character: str, property_id: int, amount: float
     ) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -475,7 +501,9 @@ class HousingCog(commands.Cog):
         self, interaction: discord.Interaction, character: str, property_id: int
     ) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -526,7 +554,9 @@ class HousingCog(commands.Cog):
     @app_commands.autocomplete(character=autocomplete.own_approved)
     async def move_out(self, interaction: discord.Interaction, character: str) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -557,7 +587,9 @@ class HousingCog(commands.Cog):
     @app_commands.autocomplete(character=autocomplete.own_approved)
     async def status(self, interaction: discord.Interaction, character: str) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -581,7 +613,9 @@ class HousingCog(commands.Cog):
         self, interaction: discord.Interaction, character: str, property_id: int
     ) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -624,7 +658,9 @@ class HousingCog(commands.Cog):
         self, interaction: discord.Interaction, character: str, ticks: int | None = None
     ) -> None:
         async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(session, interaction.user.id, character)
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
             if char is None:
                 await interaction.response.send_message(t("character_not_found"), ephemeral=True)
                 return
@@ -647,6 +683,81 @@ class HousingCog(commands.Cog):
         await interaction.response.send_message(
             t("sleep_ok", name=name, ticks=sleep_ticks, restored=round(restored), fatigue=fatigue),
             ephemeral=True,
+        )
+
+    # ------------------------------------------------------- weather prep
+
+    async def _home_property(self, session: AsyncSession, character: Character) -> Property | None:
+        if character.housing_property_id is None:
+            return None
+        return await session.get(Property, character.housing_property_id)
+
+    @group.command(
+        name="prepare", description="Spend lumber + money to prepare your home for a weather kind"
+    )
+    @app_commands.describe(
+        character="Character name", kind="Which inclement weather to prepare for"
+    )
+    @app_commands.autocomplete(character=autocomplete.own_approved)
+    @app_commands.choices(
+        kind=[
+            app_commands.Choice(name=k.value.replace("_", " ").title(), value=k.value)
+            for k in _PREPARABLE_WEATHER_KINDS
+        ]
+    )
+    async def prepare(self, interaction: discord.Interaction, character: str, kind: str) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
+            if char is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            home = await self._home_property(session, char)
+            if home is None:
+                await interaction.response.send_message(t("weather_no_property"), ephemeral=True)
+                return
+            try:
+                level = await weather_svc.prepare_property(
+                    session, character=char, property_row=home, kind=kind
+                )
+            except ServiceError as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+            label = f"{home.kind.title()} #{home.id}"
+        await interaction.response.send_message(
+            t("weather_prep_ok", property=label, kind=kind.replace("_", " "), level=level)
+        )
+
+    @group.command(name="repair", description="Spend money to repair weather damage to your home")
+    @app_commands.describe(character="Character name", points="How many points of damage to repair")
+    @app_commands.autocomplete(character=autocomplete.own_approved)
+    async def repair(self, interaction: discord.Interaction, character: str, points: int) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
+            if char is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            home = await self._home_property(session, char)
+            if home is None:
+                await interaction.response.send_message(t("weather_no_property"), ephemeral=True)
+                return
+            try:
+                cost = await weather_svc.repair_property(
+                    session, character=char, property_row=home, points=points
+                )
+            except ServiceError as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+            label = f"{home.kind.title()} #{home.id}"
+        await interaction.response.send_message(
+            t("weather_repair_ok", property=label, points=points, cost=cost)
         )
 
 
