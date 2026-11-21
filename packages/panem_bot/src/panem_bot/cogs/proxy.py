@@ -26,6 +26,7 @@ from panem_shared import constants, hostility, relationships
 from panem_shared.db.models import (
     Character,
     DialogueLog,
+    DialogueSettings,
     DiscordChannel,
     DistrictLore,
     DistrictState,
@@ -508,6 +509,8 @@ class ProxyCog(commands.Cog):
             history_entries = (await session.execute(select(PanemHistoryEntry))).scalars().all()
             world_lore = await session.get(WorldLoreSettings, 1)
             world_notes = world_lore.alternate_universe_notes if world_lore is not None else None
+            dialogue_settings = await session.get(DialogueSettings, 1)
+            dialogue_enabled = dialogue_settings is None or dialogue_settings.enabled
 
             # A hostile action (spitting on, hitting, attacking, or
             # otherwise harming/annoying an NPC) tanks that NPC's opinion
@@ -613,6 +616,7 @@ class ProxyCog(commands.Cog):
                     district_on_edge=jail_svc.is_crackdown_active(district_state, current_tick),
                     district_lore=district_lore,
                     is_black_market_contact=is_black_market_contact,
+                    dialogue_enabled=dialogue_enabled,
                 )
 
                 sent = await webhook.send(

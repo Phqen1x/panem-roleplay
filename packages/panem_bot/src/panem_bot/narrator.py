@@ -43,6 +43,7 @@ from panem_bot.strings import t
 from panem_shared import constants
 from panem_shared.db.models import (
     Character,
+    DialogueSettings,
     DiscordChannel,
     Npc,
     PanemHistoryEntry,
@@ -220,6 +221,8 @@ async def _handle_npc_chatter(bot: PanemBot, event: NpcChatter) -> None:
         history_entries = (await session.execute(select(PanemHistoryEntry))).scalars().all()
         world_lore = await session.get(WorldLoreSettings, 1)
         world_notes = world_lore.alternate_universe_notes if world_lore is not None else None
+        dialogue_settings = await session.get(DialogueSettings, 1)
+        dialogue_enabled = dialogue_settings is None or dialogue_settings.enabled
 
     if forum_row is None or forum_row.webhook_id is None or forum_row.webhook_token is None:
         logger.warning(
@@ -257,6 +260,7 @@ async def _handle_npc_chatter(bot: PanemBot, event: NpcChatter) -> None:
             history=history,
             history_entries=history_entries,
             world_notes=world_notes,
+            dialogue_enabled=dialogue_enabled,
         )
         transcript.append((speaker.id, reply))
         lines.append((speaker, reply))

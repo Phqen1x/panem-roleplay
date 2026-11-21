@@ -30,6 +30,7 @@ from panem_shared import lore as lore_svc
 from panem_shared.content.traits import speech_tone
 from panem_shared.db.models import (
     Character,
+    DialogueSettings,
     DistrictState,
     EngagementSettings,
     Inventory,
@@ -81,6 +82,12 @@ class StaffCog(commands.Cog):
     )
     engagement_group = app_commands.Group(
         name="engagement", description="Tune NPC engagement settings", parent=group
+    )
+    dialogue_group = app_commands.Group(
+        name="dialogue", description="Turn LLM-backed NPC dialogue on/off guild-wide", parent=group
+    )
+    channel_group = app_commands.Group(
+        name="channel", description="Lock/unlock a channel's visibility for a role", parent=group
     )
     npc_group = app_commands.Group(
         name="npc", description="Add NPCs and edit their identity retroactively", parent=group
@@ -801,6 +808,136 @@ class StaffCog(commands.Cog):
         await interaction.response.send_message(
             f"Engagements now auto-close after **{minutes}** minute(s) of no player message.",
             ephemeral=True,
+        )
+
+    # -------------------------------------------------------------- dialogue
+
+    async def _set_dialogue_enabled(
+        self, interaction: discord.Interaction, *, enabled: bool
+    ) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            settings_row = await session.get(DialogueSettings, 1)
+            if settings_row is None:
+                settings_row = DialogueSettings(id=1, enabled=enabled)
+                session.add(settings_row)
+            else:
+                settings_row.enabled = enabled
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="dialogue_set_enabled",
+                target="dialogue_settings",
+                payload={"enabled": enabled},
+            )
+        if enabled:
+            message = (
+                "NPC dialogue re-enabled -- replies now follow `DIALOGUE_PROVIDER` / "
+                "each NPC's own override again."
+            )
+        else:
+            message = (
+                "NPC dialogue **disabled**. Every `/talk`, ambient chatter, and engagement "
+                "summary now falls back to canned templates, overriding `DIALOGUE_PROVIDER` "
+                "and any individual NPC's LLM override."
+            )
+        await interaction.response.send_message(message, ephemeral=True)
+
+    @dialogue_group.command(
+        name="disable", description="Force every NPC reply to canned templates, guild-wide"
+    )
+    @app_commands.check(_is_staff)
+    async def dialogue_disable(self, interaction: discord.Interaction) -> None:
+        await self._set_dialogue_enabled(interaction, enabled=False)
+
+    @dialogue_group.command(
+        name="enable", description="Undo /staff dialogue disable"
+    )
+    @app_commands.check(_is_staff)
+    async def dialogue_enable(self, interaction: discord.Interaction) -> None:
+        await self._set_dialogue_enabled(interaction, enabled=True)
+
+    # --------------------------------------------------------------- channel
+
+    @channel_group.command(
+        name="unlock", description="Let a role see (and post in) a channel or forum"
+    )
+    @app_commands.describe(
+        channel="The channel, forum, or category to unlock",
+        role="The role to grant view/post access to",
+    )
+    @app_commands.check(_is_staff)
+    async def channel_unlock(
+        self,
+        interaction: discord.Interaction,
+        channel: discord.abc.GuildChannel | discord.Thread,
+        role: discord.Role,
+    ) -> None:
+        target = channel.parent if isinstance(channel, discord.Thread) else channel
+        if target is None:
+            await interaction.response.send_message(
+                "Couldn't find that thread's parent channel.", ephemeral=True
+            )
+            return
+        overwrite = target.overwrites_for(role)
+        overwrite.view_channel = True
+        overwrite.send_messages = True
+        if isinstance(target, discord.ForumChannel):
+            overwrite.send_messages_in_threads = True
+        await target.set_permissions(
+            role, overwrite=overwrite, reason=f"Unlocked by {interaction.user} ({interaction.user.id})"
+        )
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="channel_unlock",
+                target=str(target.id),
+                payload={"role_id": role.id},
+            )
+        await interaction.response.send_message(
+            f"{role.mention} can now see and post in {target.mention}.", ephemeral=True
+        )
+
+    @channel_group.command(
+        name="lock", description="Hide a channel or forum from a role again"
+    )
+    @app_commands.describe(
+        channel="The channel, forum, or category to lock",
+        role="The role to revoke view/post access from",
+    )
+    @app_commands.check(_is_staff)
+    async def channel_lock(
+        self,
+        interaction: discord.Interaction,
+        channel: discord.abc.GuildChannel | discord.Thread,
+        role: discord.Role,
+    ) -> None:
+        target = channel.parent if isinstance(channel, discord.Thread) else channel
+        if target is None:
+            await interaction.response.send_message(
+                "Couldn't find that thread's parent channel.", ephemeral=True
+            )
+            return
+        overwrite = target.overwrites_for(role)
+        overwrite.view_channel = False
+        overwrite.send_messages = None
+        overwrite.send_messages_in_threads = None
+        await target.set_permissions(
+            role, overwrite=overwrite, reason=f"Locked by {interaction.user} ({interaction.user.id})"
+        )
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="channel_lock",
+                target=str(target.id),
+                payload={"role_id": role.id},
+            )
+        await interaction.response.send_message(
+            f"{role.mention} can no longer see {target.mention}.", ephemeral=True
         )
 
     # ------------------------------------------------------------------ npc

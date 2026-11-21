@@ -609,6 +609,22 @@ class EngagementSettings(Base):
     idle_timeout_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+class DialogueSettings(Base):
+    """Single-row staff kill switch for LLM-backed NPC dialogue (`/staff
+    dialogue disable`/`enable`), mirroring `EngagementSettings`'/
+    `WorldClock`'s singleton shape. When `enabled` is false,
+    `panem_bot.services.dialogue.resolve_provider` returns `"template"`
+    unconditionally -- overriding both `Settings.dialogue_provider` and
+    any individual `Npc.provider_override` -- so every dialogue path
+    (`/talk`, ambient NPC chatter, engagement summaries) falls back to
+    canned/no-op behavior without an env edit or restart of any process."""
+
+    __tablename__ = "dialogue_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
 class PanemHistoryEntry(TimestampMixin, Base):
     """One staff-authored fact of Panem-wide history/canon, tagged with
     comma-separated keywords a staff member typed in (`/staff lore

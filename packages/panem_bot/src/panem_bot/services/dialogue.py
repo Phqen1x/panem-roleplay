@@ -90,7 +90,15 @@ async def check_and_spend_stamina(
         raise NotAllowed("npc_needs_a_moment", name=npc.name)
 
 
-def resolve_provider(npc: Npc, settings: Settings) -> str:
+def resolve_provider(npc: Npc, settings: Settings, *, dialogue_enabled: bool = True) -> str:
+    """`dialogue_enabled` is the staff kill switch (`DialogueSettings.
+    enabled`, `/staff dialogue disable`/`enable`) -- false forces
+    `"template"` unconditionally, overriding both `settings.
+    dialogue_provider` and `npc.provider_override` alike, so a staff
+    member can stop every LLM call without touching `.env` or restarting
+    anything."""
+    if not dialogue_enabled:
+        return "template"
     return npc.provider_override or settings.dialogue_provider
 
 
@@ -423,14 +431,18 @@ async def generate_npc_to_npc_reply(
     history: Sequence[dict[str, str]] = (),
     history_entries: Sequence[PanemHistoryEntry] = (),
     world_notes: str | None = None,
+    dialogue_enabled: bool = True,
 ) -> str:
     """`npc` is who's about to speak next; `other_npc` is who they're
     replying to. `message` is the other NPC's last line -- or, for the
     very first line of the exchange, an OOC stage direction (`(( ... ))`,
     the same convention `lemonade/system_prompt.md` already documents
     for out-of-character instructions) rather than anything literally
-    said, since nothing prompted this conversation but proximity."""
-    provider = resolve_provider(npc, settings)
+    said, since nothing prompted this conversation but proximity.
+
+    `dialogue_enabled` is the caller's pre-fetched `DialogueSettings.
+    enabled` -- see `resolve_provider`."""
+    provider = resolve_provider(npc, settings, dialogue_enabled=dialogue_enabled)
     if provider == "template":
         return template_reply(npc, "neutral", message)
 
@@ -473,8 +485,11 @@ async def generate_reply(
     district_on_edge: bool = False,
     district_lore: DistrictLore | None = None,
     is_black_market_contact: bool = False,
+    dialogue_enabled: bool = True,
 ) -> str:
-    provider = resolve_provider(npc, settings)
+    """`dialogue_enabled` is the caller's pre-fetched `DialogueSettings.
+    enabled` -- see `resolve_provider`."""
+    provider = resolve_provider(npc, settings, dialogue_enabled=dialogue_enabled)
     if provider == "template":
         return template_reply(npc, stance, message, is_black_market_contact=is_black_market_contact)
 
@@ -513,6 +528,7 @@ async def summarize_engagement(
     transcript: Sequence[str],
     previous_summary: str | None,
     settings: Settings,
+    dialogue_enabled: bool = True,
 ) -> str | None:
     """Folds a just-closed engagement's transcript (`"Name: line"` strings,
     oldest first -- player lines and every joined NPC's own replies alike)
@@ -528,10 +544,11 @@ async def summarize_engagement(
     any LLM failure all just return `previous_summary` unchanged, exactly
     as if this engagement had never been summarized; the caller persists
     whatever comes back, so a `None` in and a `None` out both mean 'still
-    nothing known'."""
+    nothing known'. `dialogue_enabled` is the caller's pre-fetched
+    `DialogueSettings.enabled` -- see `resolve_provider`."""
     if not transcript:
         return previous_summary
-    provider = resolve_provider(npc, settings)
+    provider = resolve_provider(npc, settings, dialogue_enabled=dialogue_enabled)
     if provider == "template":
         return previous_summary
 

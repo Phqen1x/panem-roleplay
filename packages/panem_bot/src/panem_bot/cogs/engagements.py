@@ -28,6 +28,7 @@ from panem_bot.strings import t
 from panem_shared import constants, simtime
 from panem_shared.db.models import (
     Character,
+    DialogueSettings,
     DiscordChannel,
     EngagementSettings,
     Npc,
@@ -178,6 +179,9 @@ class EngagementCog(commands.Cog):
         if not characters:
             return
 
+        dialogue_settings = await session.get(DialogueSettings, 1)
+        dialogue_enabled = dialogue_settings is None or dialogue_settings.enabled
+
         for npc_id in npc_ids:
             npc_row = await session.get(Npc, npc_id)
             if npc_row is None:
@@ -201,6 +205,7 @@ class EngagementCog(commands.Cog):
                 transcript=transcript,
                 previous_summary=previous_summary,
                 settings=self.bot.settings,  # type: ignore[attr-defined]
+                dialogue_enabled=dialogue_enabled,
             )
             if summary is None:
                 continue
