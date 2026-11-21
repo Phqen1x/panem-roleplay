@@ -224,6 +224,12 @@ async def _handle_npc_chatter(bot: PanemBot, event: NpcChatter) -> None:
         dialogue_settings = await session.get(DialogueSettings, 1)
         dialogue_enabled = dialogue_settings is None or dialogue_settings.enabled
 
+    if not dialogue_enabled:
+        # The staff kill switch (`/staff dialogue disable`) silences NPCs
+        # entirely, not just the LLM -- no ambient chatter at all rather
+        # than falling back to a burst of canned lines.
+        return
+
     if forum_row is None or forum_row.webhook_id is None or forum_row.webhook_token is None:
         logger.warning(
             "npc_chatter_no_webhook", district_id=event.district_id, location_id=event.location_id

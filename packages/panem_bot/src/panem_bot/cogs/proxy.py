@@ -559,6 +559,9 @@ class ProxyCog(commands.Cog):
                 except NotAllowed:
                     continue
 
+                if not dialogue_enabled:
+                    continue
+
                 key = relationship_key(
                     (OwnerKind.CHARACTER.value, str(speaker.id)), (OwnerKind.NPC.value, npc.id)
                 )

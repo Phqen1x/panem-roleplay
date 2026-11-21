@@ -637,14 +637,17 @@ class EngagementSettings(Base):
 
 
 class DialogueSettings(Base):
-    """Single-row staff kill switch for LLM-backed NPC dialogue (`/staff
+    """Single-row staff kill switch for NPC dialogue entirely (`/staff
     dialogue disable`/`enable`), mirroring `EngagementSettings`'/
     `WorldClock`'s singleton shape. When `enabled` is false,
-    `panem_bot.services.dialogue.resolve_provider` returns `"template"`
-    unconditionally -- overriding both `Settings.dialogue_provider` and
-    any individual `Npc.provider_override` -- so every dialogue path
-    (`/talk`, ambient NPC chatter, engagement summaries) falls back to
-    canned/no-op behavior without an env edit or restart of any process."""
+    `panem_bot.services.dialogue.generate_reply`/`generate_npc_to_npc_
+    reply` return `None` -- not even a canned template line -- so `/talk`
+    and ambient NPC chatter produce no reply at all, overriding both
+    `Settings.dialogue_provider` and any individual `Npc.provider_
+    override`, without an env edit or restart of any process. Engagement
+    summaries (`summarize_engagement`) aren't a "reply" -- they still
+    just skip the LLM and leave the existing summary unchanged, same as
+    the ordinary `dialogue_provider="template"` path."""
 
     __tablename__ = "dialogue_settings"
 
