@@ -1624,6 +1624,7 @@ class TestDashboardIdentify:
                 "profile_id": None,
             },
             "theme_profiles": [],
+            "hidden_tabs": [],
         }
 
     async def test_is_staff_true_when_discord_reports_the_staff_role(
