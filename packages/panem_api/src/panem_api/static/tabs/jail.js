@@ -145,7 +145,9 @@ export function mount(root, ctx) {
         `/activity/dashboard/jail/${characterId}?discord_id=${encodeURIComponent(discordId)}`
       );
       cellWrap.innerHTML = "";
-      cellWrap.append(jailCellSvg({ occupied: status.jailed, avatarUrl: status.avatar_url }));
+      cellWrap.append(
+        jailCellSvg({ occupied: status.jailed, avatarUrl: ctx.mediaUrl(status.avatar_url) })
+      );
       if (status.jailed) {
         setStatusText(statusEl, `${status.character_name} is behind bars.`);
         detailEl.textContent = `Bail: ${status.bail_cost} money -- Lockpick tries left: ${status.tries_left}/${status.tries_used + status.tries_left}`;

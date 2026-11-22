@@ -25,7 +25,14 @@ set -euo pipefail
 
 CONTAINER="${1:-panem}"
 HOSTNAME_ARG="${2:?Usage: $0 [container] <hostname> [tunnel-name]}"
-TUNNEL_NAME="${3:-panem}"
+# Defaults to the container's own name, not a fixed "panem" -- a second
+# bot's container run through this script with no third argument used to
+# silently reuse (not create) the first bot's "panem" tunnel, since
+# `cloudflared tunnel create` no-ops when a tunnel by that name already
+# exists. That leaves the new container with a config.yml pointing at a
+# tunnel ID it never has credentials for -- same failure this comment is
+# here to prevent, not just explain.
+TUNNEL_NAME="${3:-$CONTAINER}"
 
 if ! command -v lxc >/dev/null 2>&1; then
   echo "lxc not found. Install LXD first: sudo snap install lxd && sudo lxd init" >&2
@@ -87,8 +94,18 @@ INNER
 "
 
 echo "==> Installing and starting the cloudflared systemd service"
+# `cloudflared service install` only copies /root/.cloudflared/config.yml
+# into /etc/cloudflared/config.yml (the path the systemd unit's ExecStart
+# actually reads) the *first* time it installs the unit -- a re-run after
+# that silently skips the copy, leaving the systemd service running
+# whatever config.yml existed at install time even after this script
+# rewrites the real one above. Copy it explicitly every run instead of
+# relying on `service install` to notice.
 lxc exec "$CONTAINER" -- cloudflared service install || true
-lxc exec "$CONTAINER" -- systemctl enable --now cloudflared
+lxc exec "$CONTAINER" -- mkdir -p /etc/cloudflared
+lxc exec "$CONTAINER" -- cp /root/.cloudflared/config.yml /etc/cloudflared/config.yml
+lxc exec "$CONTAINER" -- systemctl enable cloudflared
+lxc exec "$CONTAINER" -- systemctl restart cloudflared
 
 cat <<EOF
 
@@ -102,5 +119,6 @@ Last step: point ACTIVITY_PUBLIC_URL at it and restart the api daemon:
   lxc exec $CONTAINER -- snap restart panem.api
 
 Re-run this script any time (e.g. after a hostname change); it reuses the
-existing tunnel and overwrites config.yml in place.
+existing '$TUNNEL_NAME' tunnel, overwrites both config.yml copies in
+place, and restarts the service so the change actually takes effect.
 EOF
