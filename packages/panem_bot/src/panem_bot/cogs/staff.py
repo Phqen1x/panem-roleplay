@@ -104,7 +104,7 @@ class StaffCog(commands.Cog):
         name="engagement", description="Tune NPC engagement settings", parent=group
     )
     dialogue_group = app_commands.Group(
-        name="dialogue", description="Turn LLM-backed NPC dialogue on/off guild-wide", parent=group
+        name="dialogue", description="Silence or restore all NPC dialogue guild-wide", parent=group
     )
     channel_group = app_commands.Group(
         name="channel", description="Lock/unlock a channel's visibility for a role", parent=group
@@ -867,19 +867,20 @@ class StaffCog(commands.Cog):
             )
         if enabled:
             message = (
-                "NPC dialogue re-enabled -- replies now follow `DIALOGUE_PROVIDER` / "
-                "each NPC's own override again."
+                "NPC dialogue re-enabled -- `/talk` and ambient chatter reply again, "
+                "following `DIALOGUE_PROVIDER` / each NPC's own override as usual."
             )
         else:
             message = (
-                "NPC dialogue **disabled**. Every `/talk`, ambient chatter, and engagement "
-                "summary now falls back to canned templates, overriding `DIALOGUE_PROVIDER` "
-                "and any individual NPC's LLM override."
+                "NPC dialogue **disabled**. NPCs stay silent -- `/talk` and ambient chatter "
+                "produce no reply at all (not even a canned template line), overriding "
+                "`DIALOGUE_PROVIDER` and any individual NPC's LLM override."
             )
         await interaction.response.send_message(message, ephemeral=True)
 
     @dialogue_group.command(
-        name="disable", description="Force every NPC reply to canned templates, guild-wide"
+        name="disable",
+        description="Silence every NPC reply (not even canned templates), guild-wide",
     )
     @app_commands.check(_is_staff)
     async def dialogue_disable(self, interaction: discord.Interaction) -> None:

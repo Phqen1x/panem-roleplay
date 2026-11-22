@@ -93,10 +93,15 @@ async def check_and_spend_stamina(
 def resolve_provider(npc: Npc, settings: Settings, *, dialogue_enabled: bool = True) -> str:
     """`dialogue_enabled` is the staff kill switch (`DialogueSettings.
     enabled`, `/staff dialogue disable`/`enable`) -- false forces
-    `"template"` unconditionally, overriding both `settings.
-    dialogue_provider` and `npc.provider_override` alike, so a staff
-    member can stop every LLM call without touching `.env` or restarting
-    anything."""
+    `"template"` unconditionally here, overriding both `settings.
+    dialogue_provider` and `npc.provider_override` alike. `generate_reply`/
+    `generate_npc_to_npc_reply` don't actually rely on that, though: they
+    check `dialogue_enabled` themselves and return `None` before ever
+    calling this (no reply at all, not even a template line) -- this
+    function's own "template" fallback only still matters to
+    `summarize_engagement`, which has no reply to suppress in the first
+    place and just skips the LLM, same as it already does for the
+    ordinary `dialogue_provider="template"` case."""
     if not dialogue_enabled:
         return "template"
     return npc.provider_override or settings.dialogue_provider
@@ -434,7 +439,7 @@ async def generate_npc_to_npc_reply(
     history_entries: Sequence[PanemHistoryEntry] = (),
     world_notes: str | None = None,
     dialogue_enabled: bool = True,
-) -> str:
+) -> str | None:
     """`npc` is who's about to speak next; `other_npc` is who they're
     replying to. `message` is the other NPC's last line -- or, for the
     very first line of the exchange, an OOC stage direction (`(( ... ))`,
@@ -443,7 +448,14 @@ async def generate_npc_to_npc_reply(
     said, since nothing prompted this conversation but proximity.
 
     `dialogue_enabled` is the caller's pre-fetched `DialogueSettings.
-    enabled` -- see `resolve_provider`."""
+    enabled` -- `False` means `None` back, not a template line: the
+    staff kill switch (`/staff dialogue disable`) silences NPCs
+    entirely rather than just turning off the LLM, so the caller skips
+    posting anything for this NPC instead of falling back to canned
+    chatter. See `resolve_provider` for the LLM-vs-template choice this
+    skips past when disabled."""
+    if not dialogue_enabled:
+        return None
     provider = resolve_provider(npc, settings, dialogue_enabled=dialogue_enabled)
     if provider == "template":
         return template_reply(npc, "neutral", message)
@@ -488,9 +500,13 @@ async def generate_reply(
     district_lore: DistrictLore | None = None,
     is_black_market_contact: bool = False,
     dialogue_enabled: bool = True,
-) -> str:
+) -> str | None:
     """`dialogue_enabled` is the caller's pre-fetched `DialogueSettings.
-    enabled` -- see `resolve_provider`."""
+    enabled` -- `False` means `None` back, not a template line: see
+    `generate_npc_to_npc_reply`'s docstring for why the staff kill
+    switch silences NPCs entirely rather than only turning off the LLM."""
+    if not dialogue_enabled:
+        return None
     provider = resolve_provider(npc, settings, dialogue_enabled=dialogue_enabled)
     if provider == "template":
         return template_reply(npc, stance, message, is_black_market_contact=is_black_market_contact)

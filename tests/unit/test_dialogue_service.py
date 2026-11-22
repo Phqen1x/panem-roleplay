@@ -143,6 +143,10 @@ class TestResolveProvider:
         npc = make_npc(provider_override="llm")
         assert dialogue.resolve_provider(npc, make_settings()) == "llm"
 
+    def test_dialogue_enabled_false_forces_template_even_with_an_npc_override(self):
+        npc = make_npc(provider_override="llm")
+        assert dialogue.resolve_provider(npc, make_settings(), dialogue_enabled=False) == "template"
+
 
 class TestStamina:
     async def test_allows_up_to_the_cap(self):
@@ -622,6 +626,24 @@ class TestGenerateReply:
         )
         assert reply == dialogue.template_reply(npc, "likes", "hello")
 
+    async def test_dialogue_disabled_returns_none_not_a_template_line(self):
+        """`/staff dialogue disable` silences NPCs entirely -- unlike the
+        ordinary `dialogue_provider="template"` path above, no canned
+        reply comes back at all, even for an NPC with `provider_
+        override="llm"`."""
+        reply = await dialogue.generate_reply(
+            npc=make_npc(provider_override="llm"),
+            district=make_district(),
+            location=make_district().locations[-1],
+            character=make_character(),
+            stance="likes",
+            memories=[],
+            message="hello",
+            settings=make_settings(dialogue_provider="llm"),
+            dialogue_enabled=False,
+        )
+        assert reply is None
+
 
 class TestLengthMatchedMaxWords:
     def test_short_message_clamps_to_the_floor(self):
@@ -894,6 +916,20 @@ class TestNpcToNpcReply:
             settings=make_settings(dialogue_provider="llm"),
         )
         assert reply == dialogue.template_reply(ferro, "neutral", "(( opener ))")
+
+    async def test_dialogue_disabled_returns_none_not_a_template_line(self):
+        ferro = make_npc(provider_override="llm")
+        sae = make_npc(id="npc2", name="Greasy Sae")
+        reply = await dialogue.generate_npc_to_npc_reply(
+            npc=ferro,
+            other_npc=sae,
+            district=make_district(),
+            location=make_district().locations[-1],
+            message="(( opener ))",
+            settings=make_settings(dialogue_provider="llm"),
+            dialogue_enabled=False,
+        )
+        assert reply is None
 
 
 class TestSummarizeEngagement:
