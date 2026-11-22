@@ -643,7 +643,7 @@ function dossierModal(ctx) {
         appearanceEl.textContent = profile.appearance || "No appearance description given.";
         backstoryEl.textContent = profile.backstory || "No backstory given.";
         if (profile.avatar_url) {
-          avatarImgEl.src = profile.avatar_url;
+          avatarImgEl.src = ctx.mediaUrl(profile.avatar_url);
           avatarImgEl.hidden = false;
           avatarEl.hidden = true;
         }

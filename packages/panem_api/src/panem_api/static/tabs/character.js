@@ -233,7 +233,7 @@ function characterCard(ctx, character, catalog, { onChanged }) {
       : null;
 
   // The primary character image shown at the top of the card is the uploaded portrait.
-  const portrait = characterPortrait(character.avatar_url, {
+  const portrait = characterPortrait(ctx.mediaUrl(character.avatar_url), {
     small: true,
     placeholderText: "No portrait uploaded",
   });
@@ -244,7 +244,7 @@ function characterCard(ctx, character, catalog, { onChanged }) {
     placeholder: "https://...",
   });
   avatarInput.addEventListener("input", () => {
-    portrait.setUrl(avatarInput.value);
+    portrait.setUrl(ctx.mediaUrl(avatarInput.value));
   });
 
   const tagInput = el("input", { type: "text", value: character.proxy_tag || "", placeholder: "tag::" });
@@ -303,7 +303,7 @@ function characterCard(ctx, character, catalog, { onChanged }) {
       );
       character.avatar_url = updated.avatar_url;
       avatarInput.value = updated.avatar_url || "";
-      portrait.setUrl(updated.avatar_url);
+      portrait.setUrl(ctx.mediaUrl(updated.avatar_url));
       avatarFileName.className = "avatar-file-name is-uploaded";
       avatarFileName.textContent = `✓ Current: ${file.name}`;
       avatarUploadResult.className = "result-line win";
@@ -331,7 +331,7 @@ function characterCard(ctx, character, catalog, { onChanged }) {
       });
       character.avatar_url = avatarInput.value || null;
       character.proxy_tag = tagInput.value || null;
-      portrait.setUrl(character.avatar_url);
+      portrait.setUrl(ctx.mediaUrl(character.avatar_url));
       resultLine.className = "result-line win";
       resultLine.textContent = "Saved.";
     } catch (err) {
@@ -442,7 +442,7 @@ function createForm(ctx, catalog, { onCreated }) {
     placeholder: "https://... or choose a file below",
   });
   avatarUrlInput.addEventListener("input", () => {
-    portrait.setUrl(avatarUrlInput.value);
+    portrait.setUrl(ctx.mediaUrl(avatarUrlInput.value));
   });
 
   const avatarFileInput = el("input", {
@@ -490,7 +490,7 @@ function createForm(ctx, catalog, { onCreated }) {
         body: formData,
       });
       avatarUrlInput.value = res.avatar_url || "";
-      portrait.setUrl(res.avatar_url);
+      portrait.setUrl(ctx.mediaUrl(res.avatar_url));
       avatarFileName.className = "avatar-file-name is-uploaded";
       avatarFileName.textContent = `✓ Current: ${file.name}`;
       avatarUploadResult.className = "result-line win";

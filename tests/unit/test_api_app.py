@@ -827,12 +827,28 @@ class TestActivityConfig:
     def test_returns_empty_client_id_when_unconfigured(self, client: TestClient):
         response = client.get("/activity/config")
         assert response.status_code == 200
-        assert response.json() == {"client_id": ""}
+        assert response.json() == {"client_id": "", "activity_public_url": ""}
 
     def test_returns_configured_client_id(self, oauth_client: TestClient):
         response = oauth_client.get("/activity/config")
         assert response.status_code == 200
-        assert response.json() == {"client_id": "test-client-id"}
+        assert response.json() == {"client_id": "test-client-id", "activity_public_url": ""}
+
+    def test_returns_configured_activity_public_url(self):
+        content = make_content()
+        redis_client = FakeRedis()
+        app = create_app(
+            content=content,
+            redis_client=redis_client,
+            activity_public_url="https://rpg.example.com",
+        )
+        with TestClient(app) as test_client:
+            response = test_client.get("/activity/config")
+        assert response.status_code == 200
+        assert response.json() == {
+            "client_id": "",
+            "activity_public_url": "https://rpg.example.com",
+        }
 
 
 class TestActivityToken:

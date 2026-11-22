@@ -211,6 +211,18 @@ class WorldTimeResponse(BaseModel):
 
 class ActivityConfig(BaseModel):
     client_id: str
+    # Lets the frontend turn an absolute, `ACTIVITY_PUBLIC_URL`-based link
+    # (an uploaded avatar's `Character.avatar_url`, same string Discord's
+    # webhook posting needs verbatim) into a page-relative one before
+    # rendering it as an `<img>` inside the Activity -- Discord serves the
+    # Activity's HTML from its own `*.discordsays.com` origin and only
+    # proxies *relative*-path requests back to this app's real domain, so
+    # an absolute URL naming that real domain explicitly is still
+    # cross-origin from the iframe's own point of view and gets blocked by
+    # its CSP, even though it is "our own" server. Empty when unset, same
+    # as `activity_public_url` itself -- the frontend then leaves every
+    # URL untouched (today's behavior).
+    activity_public_url: str = ""
 
 
 class TokenExchangeRequest(BaseModel):
@@ -490,9 +502,9 @@ def create_app(
     @app.get("/activity/config", response_model=ActivityConfig)
     async def activity_config() -> ActivityConfig:
         """The Activity frontend's own client id (not a secret -- Discord
-        Activities embed it in the iframe URL already); lets the static
-        frontend avoid hardcoding it at build time."""
-        return ActivityConfig(client_id=discord_client_id)
+        Activities embed it in the iframe URL already) and public base URL;
+        lets the static frontend avoid hardcoding either at build time."""
+        return ActivityConfig(client_id=discord_client_id, activity_public_url=activity_public_url)
 
     @app.post("/activity/debug")
     async def activity_debug(report: ClientErrorReport) -> dict[str, bool]:

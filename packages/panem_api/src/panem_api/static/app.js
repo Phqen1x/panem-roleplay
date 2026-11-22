@@ -42,6 +42,34 @@ const STEP_TIMEOUT_MS = 8000;
 // which `openExternalLink()` below falls back around.
 let discordSdk = null;
 
+// `/activity/config`'s `activity_public_url`, captured once in
+// `authenticateWithDiscord()` -- see `toSameOriginUrl()`'s own docstring
+// for why this exists. Stays "" (a no-op) if that fetch fails or the
+// server has no `ACTIVITY_PUBLIC_URL` configured, same as `discordSdk`
+// staying null outside a real Activity.
+let activityPublicUrl = "";
+
+// Turns an absolute, `ACTIVITY_PUBLIC_URL`-based link (an uploaded
+// avatar's `Character.avatar_url`/`Npc.avatar_url`, the same string
+// Discord's webhook posting needs verbatim and so can't be stored as a
+// relative path instead) into a page-relative one. Discord serves the
+// Activity's HTML from its own `*.discordsays.com` origin and only
+// proxies *relative*-path requests back to this app's real domain --
+// an absolute URL naming that real domain explicitly is still cross-
+// origin from the iframe's own point of view and gets blocked by its
+// CSP, even though it's "our own" server. A URL that doesn't start with
+// `activityPublicUrl` (a genuine third-party link someone pasted into
+// the avatar URL field, or a local `blob:` preview) is returned
+// untouched -- there's nothing this trick can do for an actual
+// different host, and Discord's CSP still blocks those same as before.
+function toSameOriginUrl(url) {
+  if (!url || typeof url !== "string" || !activityPublicUrl) return url;
+  const base = activityPublicUrl.replace(/\/+$/, "");
+  if (!url.startsWith(base)) return url;
+  const rest = url.slice(base.length);
+  return rest.startsWith("/") ? rest : `/${rest}`;
+}
+
 // Deep links (e.g. "Continue in Discord" -> a specific channel/thread)
 // can't just be a plain `<a target="_blank">`: the Activity iframe is
 // sandboxed and silently swallows that navigation instead of opening
@@ -63,7 +91,7 @@ async function openExternalLink(url) {
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "65";
+const ASSET_VERSION = "66";
 
 // District names mapping for Capitol and Districts 1-12
 const DISTRICT_NAMES = {
@@ -535,7 +563,8 @@ async function reportClientError(step, err) {
 async function authenticateWithDiscord() {
   let clientId = "";
   try {
-    ({ client_id: clientId } = await fetchJson("/activity/config"));
+    ({ client_id: clientId, activity_public_url: activityPublicUrl } =
+      await fetchJson("/activity/config"));
   } catch (err) {
     console.warn("Could not reach /activity/config:", err);
   }
@@ -780,6 +809,7 @@ function buildCtx() {
       state.districtMottos[String(id)] || DEFAULT_DISTRICT_MOTTOS[String(id)] || "Excellence Endures",
     districtName: (id) => DISTRICT_NAMES[id] || `District ${id}`,
     apiFetch: fetchJson,
+    mediaUrl: toSameOriginUrl,
     formatTick: formatSimMoment,
     formatDay: formatSimDay,
     refreshIdentity,
