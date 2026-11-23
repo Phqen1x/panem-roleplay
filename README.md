@@ -4335,3 +4335,78 @@ low-end hardware; a remote player's appearance change doesn't rebuild
 their already-on-screen 3D model for *other* connected clients mid-session
 (only a fresh join picks up the new look) -- the same limitation the
 single-outfit version had, not a regression, just not solved yet either.
+
+## Sleep reworked: automatic nightly fatigue restoration by housing status, plus coffee/tea
+
+Per the request ("people don't need to click a button to sleep anymore"), the manual
+`/sleep` command (and its dashboard Housing-tab/Vitals-tab controls) is gone entirely.
+Fatigue now restores automatically at the midnight sim-day rollover
+(`panem_sim.systems.needs._apply_character_nightly_needs`, same `tick % TICKS_PER_DAY
+== 0` gate the exhaustion check and every other nightly system already used), by a flat
+amount that depends on housing status -- the four categories the request named, each a
+new constant in `constants.py`:
+
+- **Owns a home** (`Property.kind == HOUSE`, `Character.housing_property_id` points at
+  it) -- `FATIGUE_RESTORE_OWNED_HOME` (90), the most.
+- **Rents an apartment** (same field, `Property.kind == APARTMENT`) --
+  `FATIGUE_RESTORE_APARTMENT` (75).
+- **Paid for an inn that day** -- `FATIGUE_RESTORE_INN` (60). This needed a new column,
+  `Character.last_inn_stay_tick` (migration `0be5d42ad310`), since an inn stay was
+  previously a pure one-off transaction with no "today" state of its own; `/housing
+  inn-stay` (bot and dashboard) now stamps it instead of instantly restoring fatigue
+  itself, and the nightly check reads it the same `tick // TICKS_PER_DAY == day_index`
+  way `last_entertained_tick` already does for sanity.
+- **Homeless** (none of the above) -- `FATIGUE_RESTORE_HOMELESS` (25), mirroring the old
+  manual `/sleep`-on-the-ground halved rate. This is also the fallback a character with a
+  home property row that's somehow missing (`state.properties.get(...)` returns `None`)
+  gets, rather than a crash.
+
+The priority is home > apartment > inn > homeless, checked in that order in a new
+`panem_shared.housing.nightly_fatigue_restore_amount`/`apply_nightly_fatigue_
+restoration` pair (replacing `has_a_bed`/`fatigue_restored`/`apply_fatigue_restoration`/
+`check_can_sleep`, all removed). The existing fatigue-exhaustion health penalty still
+checks fatigue *before* this restoration applies, same as before -- it's about whether
+the character made it through the day's work/RP without running themselves into the
+ground, not about tonight's rest.
+
+**Coffee and tea**, requested as the way to push fatigue higher than the nightly
+restoration alone: two new `data/goods.yaml` entries, both produced by District Eleven
+(`data/districts/d11.yaml`) and imported by every other district including the Capitol,
+so they're buyable everywhere. `Good` gained a `fatigue_value` field (mirroring `hunger_
+value`/`thirst_value`/`heal_value`) -- coffee restores more fatigue (20) for less thirst
+relief (10) than tea (15/15), a minor flavor distinction, not a mechanical requirement
+from the request. A new `panem_shared.sustenance.restore_fatigue` (same shape as `eat`/
+`drink`/`heal`: consumes one unit, clamps to `FATIGUE_MAX`) is reachable via a new
+dedicated `/energize` Discord command and a `good_row.fatigue_value > 0` branch in the
+generic `/use` dispatcher -- checked ahead of hunger/thirst there, since coffee/tea's
+whole point is the fatigue effect, with `/drink` still available for the thirst relief
+specifically. The dashboard's Vitals tab gained a matching "Energize" panel (and
+`/activity/dashboard/vitals/{id}/energize` route) replacing the removed Sleep panel; the
+Housing tab's own status panel now just shows fatigue read-only with no sleep controls.
+
+**Interpretation calls:** the exact restore amounts (90/75/60/25) and coffee/tea's
+price/thirst/fatigue values have no spec to pull from, so they're picked to roughly
+preserve the old manual `/sleep`-in-a-bed-for-a-full-night-phase feel for owning a home,
+scaling down from there -- flagged as tunable rather than treated as load-bearing. Buying
+coffee/tea nationally via every district's `imports` list (rather than also adding
+`routes.yaml` entries for District Eleven to literally export them) still makes them
+purchasable everywhere through the existing national-redistribution pricing mechanism
+(`panem_sim.systems.economy`); real point-to-point caravan routes for them would be a
+reasonable follow-up, not required for "purchasable in every district."
+
+### Verification
+
+`tests/unit/test_housing_service.py`'s old `TestFatigue`/`TestCheckCanSleep` replaced
+with `TestNightlyFatigueRestoreAmount`/`TestApplyNightlyFatigueRestoration` (all four
+housing tiers, the inn-stay same-day-vs-different-day boundary, max-clamping). New
+`TestNightlyFatigueRestoration` in `test_needs.py` covers the same tiers end-to-end
+through `_apply_character_nightly_needs`, plus that the exhaustion penalty still reads
+pre-restoration fatigue. `test_api_app.py`'s old sleep-endpoint test removed; `inn-stay`'s
+test now asserts `last_inn_stay_tick` gets stamped instead of asserting a fatigue change;
+new `energize`-endpoint tests mirror the existing `heal` ones. Content loader smoke-
+checked by hand (`load_content` picks up `coffee`/`tea` as goods and confirms every
+district's `produces`/`imports` resolves them). Migration `0be5d42ad310` verified both
+directions (`alembic upgrade head`/`downgrade -1`) against a real local Postgres. Full
+suite: **1634 passed**. A pre-existing, unrelated mypy gap in `dashboard_routes.py`
+(`GlobalEvent`/`WeatherEvent` mix-up around the personal/global events code, and one
+`Returning Any` note) was confirmed present before this change too and left alone.

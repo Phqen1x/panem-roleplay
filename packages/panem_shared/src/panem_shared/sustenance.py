@@ -1,11 +1,13 @@
-"""`/eat`/`/drink`/`/heal`/`/entertain` -- the player-initiated, proactive half of
-Simulation mode's hunger/thirst/health/sanity meters (Vitals tab feature).
+"""`/eat`/`/drink`/`/heal`/`/use`/`/entertain` -- the player-initiated,
+proactive half of Simulation mode's hunger/thirst/health/fatigue/sanity
+meters (Vitals tab feature).
 
 Full rewrite from this module's original once-per-sim-day/flat-cost shape:
-eating/drinking/healing now consume a specific owned `Good` from inventory (each
-good carries its own `hunger_value`/`thirst_value`/`heal_value`, content-authored --
+eating/drinking/healing/using now consume a specific owned `Good` from
+inventory (each good carries its own `hunger_value`/`thirst_value`/
+`heal_value`/`fatigue_value`, content-authored --
 `panem_shared.content.schemas.Good`), and there's no daily cooldown on
-either -- the passive per-phase hunger/thirst decay
+any of them -- the passive per-phase hunger/thirst decay
 (`panem_sim.systems.needs`, `constants.HUNGER_PHASE_DECAY_MIN`/`MAX`) is
 what keeps this balanced now, not a cooldown. `eat`'s `bonus` flag applies
 `constants.COOK_BONUS_MULTIPLIER` when the cook/bake minigame's timing
@@ -14,6 +16,10 @@ dashboard's Vitals router) is responsible for only ever passing
 `bonus=True` when that minigame actually reported a win, the same trust
 model `panem_shared.shifts.resolve_shift_game`'s client-reported `won`
 already uses for every other Activity minigame in this codebase.
+`restore_fatigue` (a stimulant good like coffee or tea) stacks on top of
+the midnight housing-based restoration (`panem_shared.housing.
+apply_nightly_fatigue_restoration`) rather than replacing it -- there's
+no `/sleep` command anymore for this to mirror a daily cooldown against.
 
 Entertainment stays fully decoupled from inventory -- picking one of the
 six `/work` leisure minigames (`constants.ENTERTAINMENT_SANITY_VALUES`)
@@ -21,10 +27,9 @@ and completing it (win or lose) credits `sanity` by that game's flat
 value, uncapped repeats, bounded only by `SANITY_MAX`.
 
 Needs a `session` (unlike the old pure-function shape) since eating/
-drinking now mutates `Inventory` via `panem_shared.market.adjust_inventory`
--- `check_can_*` stays pure/sync for the "can this happen at all" gate,
-mirroring `panem_shared.housing`'s `check_can_sleep`/`apply_fatigue_
-restoration` split.
+drinking/using now mutates `Inventory` via `panem_shared.market.
+adjust_inventory` -- `check_can_*` stays pure/sync for the "can this
+happen at all" gate.
 """
 
 from __future__ import annotations
@@ -76,7 +81,10 @@ async def owned_consumables(
     for row in rows:
         good = goods.get(row.good_id)
         if good is not None and (
-            good.hunger_value > 0 or good.thirst_value > 0 or good.heal_value > 0
+            good.hunger_value > 0
+            or good.thirst_value > 0
+            or good.heal_value > 0
+            or good.fatigue_value > 0
         ):
             pairs.append((row, good))
     return pairs
@@ -150,6 +158,31 @@ async def heal(session: AsyncSession, character: Character, good: Good, current_
     await market.adjust_inventory(session, character, good.id, -1)
     character.health = min(constants.HEALTH_MAX, character.health + good.heal_value)
     return character.health
+
+
+def check_can_restore_fatigue(character: Character, good: Good, qty_owned: int) -> None:
+    _check_alive_approved_sim(character)
+    if good.fatigue_value <= 0:
+        raise NotAllowed("good_not_energizing", name=character.name, good=good.name)
+    if qty_owned < 1:
+        raise NotAllowed("sustenance_no_inventory", name=character.name, good=good.name)
+
+
+async def restore_fatigue(
+    session: AsyncSession, character: Character, good: Good, current_tick: int
+) -> float:
+    """Consumes one unit of `good` (coffee, tea -- any stimulant with
+    `fatigue_value > 0`), restores `fatigue` by that value, clamped to
+    `constants.FATIGUE_MAX`. Stacks on top of the midnight housing-based
+    restoration (`panem_shared.housing.apply_nightly_fatigue_
+    restoration`) rather than replacing it -- there's no `/sleep` button
+    for this to share a cooldown with. Returns the character's new
+    `fatigue`."""
+    qty_owned = await _owned_qty(session, character, good.id)
+    check_can_restore_fatigue(character, good, qty_owned)
+    await market.adjust_inventory(session, character, good.id, -1)
+    character.fatigue = min(constants.FATIGUE_MAX, character.fatigue + good.fatigue_value)
+    return character.fatigue
 
 
 def check_can_entertain(character: Character) -> None:

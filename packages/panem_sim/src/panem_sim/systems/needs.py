@@ -18,7 +18,13 @@ Two cadences now, not one:
 - `_apply_character_nightly_needs` -- everything else, unchanged
   cadence: `NIGHTLY_LIVING_COST` (now a plain money deduction when
   affordable -- it no longer drives hunger, since real inventory-based
-  eating does that job now), fatigue-exhaustion, sanity decay + its own
+  eating does that job now), fatigue-exhaustion (checked against the
+  day's fatigue *before* the restoration below), the midnight fatigue
+  restoration itself (`panem_shared.housing.
+  apply_nightly_fatigue_restoration` -- no `/sleep` button anymore;
+  everyone rests automatically at the sim-day rollover, by an amount
+  that depends on housing status: owned home > leased apartment > a
+  paid inn stay that same day > no bed at all), sanity decay + its own
   health threshold, and the auto-affliction/auto-death checks.
 
 Characters and NPCs are handled by separate small helpers rather than
@@ -50,6 +56,7 @@ from panem_shared.afflictions import (
 from panem_shared.db.models import Character, Npc
 from panem_shared.enums import RpMode
 from panem_shared.events import AnyWorldEvent, CharacterDied
+from panem_shared.housing import apply_nightly_fatigue_restoration
 from panem_sim.state import TickContext, WorldState
 
 
@@ -90,12 +97,20 @@ def _apply_character_nightly_needs(character: Character, state: WorldState, day_
         character.money -= constants.NIGHTLY_LIVING_COST
 
     if character.fatigue <= constants.FATIGUE_EXHAUSTION_THRESHOLD:
-        # Never made it to a real sleep (`/sleep`) before the night ended
-        # too exhausted -- an independent need with its own threshold and
-        # penalty.
+        # Checked against *tonight's* fatigue, before the midnight
+        # restoration just below applies -- still too exhausted from the
+        # day's work/RP to make it through the night unscathed, an
+        # independent need with its own threshold and penalty.
         character.health = max(
             constants.HEALTH_MIN, character.health - constants.FATIGUE_EXHAUSTION_HEALTH_PENALTY
         )
+
+    home_property = (
+        state.properties.get(character.housing_property_id)
+        if character.housing_property_id is not None
+        else None
+    )
+    apply_nightly_fatigue_restoration(character, home_property, day_index)
 
     if (
         character.last_entertained_tick is None

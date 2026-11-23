@@ -6,6 +6,7 @@ produces:
 - weapons
 - career_training
 imports:
+- coffee
 - fish
 - grain
 - livestock
@@ -13,6 +14,7 @@ imports:
 - medicine
 - power
 - produce
+- tea
 - textiles
 - transport
 illicit_produces:

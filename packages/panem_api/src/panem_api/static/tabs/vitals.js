@@ -1,8 +1,9 @@
-// The "Vitals" tab: eat/drink/sleep/entertain, mirroring `/activity/
-// dashboard/vitals` (Milestone 5) and embedding vitals.html (Milestone 6)
-// in an <iframe> for the cook/bake minigame and the Entertainment panel's
-// six leisure games -- the same same-origin-iframe-embedding approach
-// static/tabs/work.js already established for work.html.
+// The "Vitals" tab: eat/drink/heal/energize/entertain, mirroring
+// `/activity/dashboard/vitals` (Milestone 5) and embedding vitals.html
+// (Milestone 6) in an <iframe> for the cook/bake minigame and the
+// Entertainment panel's six leisure games -- the same same-origin-
+// iframe-embedding approach static/tabs/work.js already established for
+// work.html.
 //
 // Simulation-mode gating reuses `/activity/dashboard/mode/{id}/status`
 // (the Home tab's own endpoint, Milestone 11 of the RP Modes feature)
@@ -11,13 +12,11 @@
 // already uses, before this tab ever calls the Vitals endpoints those
 // characters would just get refused from anyway.
 //
-// Sleep has no dedicated backend route of its own (per the plan) -- this
-// panel POSTs straight to the existing `/activity/dashboard/housing/{id}/
-// sleep` endpoint the Housing tab's own (simpler) sleep control already
-// uses, just with a live client-side "you'll restore ~X fatigue" preview
-// on top, computed from the Vitals status endpoint's `has_bed`/
-// `max_sleep_ticks`/`fatigue_restore_per_tick` so no round trip is needed
-// per keystroke.
+// There's no Sleep panel anymore -- fatigue restores automatically at
+// the midnight sim-day rollover based on housing status (see the
+// Housing tab's own status panel). "Energize" (coffee, tea, any good
+// with a `fatigue_value`) is the only proactive way to push it higher
+// than that, same shape as Eat/Drink/Heal.
 import { el, watchIframeResize } from "./_shared.js?v=9";
 
 const RESULT_DISPLAY_MS = 4000;
@@ -40,7 +39,7 @@ export function mount(root, ctx) {
   const eatHost = el("div", {});
   const drinkHost = el("div", {});
   const healHost = el("div", {});
-  const sleepHost = el("div", {});
+  const energizeHost = el("div", {});
   const entertainHost = el("div", {});
 
   root.append(
@@ -56,7 +55,7 @@ export function mount(root, ctx) {
     el("div", { class: "panel" }, el("h2", { text: "Eat" }), eatHost),
     el("div", { class: "panel" }, el("h2", { text: "Drink" }), drinkHost),
     el("div", { class: "panel" }, el("h2", { text: "Heal" }), healHost),
-    el("div", { class: "panel" }, el("h2", { text: "Sleep" }), sleepHost),
+    el("div", { class: "panel" }, el("h2", { text: "Energize" }), energizeHost),
     el("div", { class: "panel" }, el("h2", { text: "Entertainment" }), entertainHost)
   );
 
@@ -230,54 +229,42 @@ export function mount(root, ctx) {
     }
   }
 
-  function renderSleep(status, characterId, discordId) {
-    sleepHost.innerHTML = "";
-    const ticksInput = el("input", {
-      type: "number",
-      min: "1",
-      max: String(status.max_sleep_ticks),
-      placeholder: `ticks (max ${status.max_sleep_ticks})`,
-    });
-    const previewEl = el("p", { class: "tab-status" });
-    const sleepBtn = el("button", { class: "btn", type: "button" }, "Sleep");
-    const restBtn = el("button", { class: "btn secondary", type: "button" }, "Sleep the rest of the phase");
-
-    function updatePreview() {
-      const raw = ticksInput.value ? Number(ticksInput.value) : status.max_sleep_ticks;
-      const ticks = Math.max(1, Math.min(status.max_sleep_ticks, raw || 1));
-      const restored = Math.round(ticks * status.fatigue_restore_per_tick * 10) / 10;
-      previewEl.textContent = `You'll restore ~${restored} fatigue${status.has_bed ? "" : " (no bed -- half rate)"}.`;
+  function renderEnergize(status, characterId, discordId) {
+    energizeHost.innerHTML = "";
+    const items = status.fatigueable || [];
+    if (items.length === 0) {
+      energizeHost.append(
+        el("p", { class: "tab-status" }, "No fatigue-restoring goods (coffee, tea, ...) in inventory.")
+      );
+      return;
     }
-    updatePreview();
-    ticksInput.addEventListener("input", updatePreview);
-
-    async function doSleep(ticks) {
-      resultLine.textContent = "";
-      try {
-        const body = await ctx.apiFetch(`/activity/dashboard/housing/${characterId}/sleep`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ discord_id: discordId, ticks }),
-        });
-        resultLine.className = "result-line win";
-        resultLine.textContent = `Slept ${body.ticks} ticks, restored ${body.restored} fatigue.`;
-        refresh();
-      } catch (err) {
-        resultLine.className = "result-line lose";
-        resultLine.textContent = err.message;
-      }
+    for (const good of items) {
+      const energizeBtn = el("button", { class: "btn", type: "button" }, "Have");
+      energizeBtn.addEventListener("click", async () => {
+        resultLine.textContent = "";
+        try {
+          const body = await ctx.apiFetch(`/activity/dashboard/vitals/${characterId}/energize`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ discord_id: discordId, good_id: good.good_id }),
+          });
+          resultLine.className = "result-line win";
+          resultLine.textContent = `${body.good_name} had -- fatigue now ${body.fatigue}/100.`;
+          refresh();
+        } catch (err) {
+          resultLine.className = "result-line lose";
+          resultLine.textContent = err.message;
+        }
+      });
+      energizeHost.append(
+        el(
+          "div",
+          { class: "field-row" },
+          el("span", {}, `${good.name} x${good.qty} (+${good.fatigue_value} fatigue)`),
+          energizeBtn
+        )
+      );
     }
-
-    sleepBtn.addEventListener("click", () => {
-      doSleep(ticksInput.value ? Number(ticksInput.value) : null);
-    });
-    restBtn.addEventListener("click", () => doSleep(null));
-
-    sleepHost.append(
-      el("div", { class: "field-row" }, el("label", { text: "Ticks" }), ticksInput),
-      previewEl,
-      el("div", { class: "field-row" }, sleepBtn, restBtn)
-    );
   }
 
   function renderEntertain(status, characterId, discordId) {
@@ -306,7 +293,7 @@ export function mount(root, ctx) {
     eatHost.innerHTML = "";
     drinkHost.innerHTML = "";
     healHost.innerHTML = "";
-    sleepHost.innerHTML = "";
+    energizeHost.innerHTML = "";
     entertainHost.innerHTML = "";
     const characterId = ctx.characterId();
     const discordId = ctx.discordId();
@@ -350,7 +337,7 @@ export function mount(root, ctx) {
     renderEat(status, characterId, discordId);
     renderDrink(status, characterId, discordId);
     renderHeal(status, characterId, discordId);
-    renderSleep(status, characterId, discordId);
+    renderEnergize(status, characterId, discordId);
     renderEntertain(status, characterId, discordId);
   }
 

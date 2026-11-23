@@ -268,11 +268,15 @@ class Character(TimestampMixin, Base):
     fatigue: Mapped[float] = mapped_column(Float, nullable=False, default=100.0)
     """100 = fully rested. Drained by working a shift
     (`panem_shared.shifts.apply_shift_outcome`) and by proxied RP
-    (`panem_bot.cogs.proxy`); restored by `/sleep` (full rate in a bed --
-    an owned house, a leased apartment, or an inn stay -- half on the bare
-    ground) or by paying for a night at an inn. `panem_sim.systems.needs`
-    docks health on a night it ends too low, mirroring the existing
-    hunger->health pattern."""
+    (`panem_bot.cogs.proxy`); restored automatically at the midnight
+    sim-day rollover (`panem_sim.systems.needs`, via `panem_shared.
+    housing.apply_nightly_fatigue_restoration`) by an amount that depends
+    on housing status -- owning a home restores the most, a leased
+    apartment next, a paid inn stay (`last_inn_stay_tick`) less, and no
+    bed at all the least. A good with `fatigue_value > 0` (coffee, tea --
+    `/use`, `panem_shared.sustenance`) restores more on top of that.
+    `panem_sim.systems.needs` docks health on a night it ends too low,
+    mirroring the existing hunger->health pattern."""
     hospitalized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     thirst: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     """Simulation-mode only (see `panem_sim.systems.needs`); same 0=fine/
@@ -297,6 +301,13 @@ class Character(TimestampMixin, Base):
     money-gated, unchanged) -- it only rate-limits `/eat` itself, added for
     symmetry with `/drink`/`/entertain` so a player has an explicit action
     for all three meters the feature asks for."""
+    last_inn_stay_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """The tick of this character's last paid `/housing inn-stay`. Same
+    `tick // constants.TICKS_PER_DAY` day-match idiom as `last_entertained_
+    tick` -- the nightly midnight fatigue restoration (`panem_shared.
+    housing.nightly_fatigue_restore_amount`) reads this to tell "paid for
+    an inn today" apart from owning a home, renting an apartment, or
+    having no bed at all."""
 
     jailed_until_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
     jail_sentence_ticks: Mapped[int | None] = mapped_column(Integer, nullable=True)

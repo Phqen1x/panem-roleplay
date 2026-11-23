@@ -1,8 +1,13 @@
 """`/housing` (buying houses, apartment units/complexes, inn stays,
 renting, moving out, financed purchases, refinancing, listing/auctioning
-a property you own) and `/sleep` (the fatigue/rest mechanic housing ties
-into). Staff price overrides live in `panem_bot.cogs.staff` instead, next
-to the rest of the staff toolkit.
+a property you own). There's no `/sleep` command anymore -- fatigue
+restores automatically at the midnight sim-day rollover
+(`panem_sim.systems.needs`, via `panem_shared.housing.
+apply_nightly_fatigue_restoration`), by an amount that depends on
+housing status; `inn-stay` here just pays for the night and stamps
+`Character.last_inn_stay_tick` so that night's restoration counts it.
+Staff price overrides live in `panem_bot.cogs.staff` instead, next to the
+rest of the staff toolkit.
 """
 
 from __future__ import annotations
@@ -17,7 +22,7 @@ from panem_bot import autocomplete, utils
 from panem_bot.errors import ServiceError
 from panem_bot.services import housing as housing_svc
 from panem_bot.strings import t
-from panem_shared import constants, simtime
+from panem_shared import constants
 from panem_shared import weather as weather_svc
 from panem_shared.db.models import ApartmentLease, Character, Property, PropertyAuction, WorldClock
 from panem_shared.enums import OwnerKind, PropertyKind, WeatherKind
@@ -638,50 +643,11 @@ class HousingCog(commands.Cog):
             char.money -= price
             if owner is not None:
                 owner.money += price
-            housing_svc.apply_fatigue_restoration(char, simtime.TICKS_PER_PHASE, has_bed=True)
+            char.last_inn_stay_tick = await self._current_tick(session)
             char.hunger = max(constants.HUNGER_MIN, char.hunger - constants.HUNGER_DECREASE_MET)
             name, total = char.name, price
         await interaction.response.send_message(
             t("housing_inn_stay_ok", name=name, price=total), ephemeral=True
-        )
-
-    # --------------------------------------------------------------- /sleep
-
-    @app_commands.command(name="sleep", description="Sleep to restore fatigue (night phase only)")
-    @app_commands.describe(
-        character="Character name",
-        ticks="How many ticks to sleep (default: the rest of the night)",
-    )
-    @app_commands.autocomplete(character=autocomplete.own_approved)
-    async def sleep(
-        self, interaction: discord.Interaction, character: str, ticks: int | None = None
-    ) -> None:
-        async with self.bot.db() as session:  # type: ignore[attr-defined]
-            char = await utils.get_character_case_insensitive(
-                session, interaction.user.id, character
-            )
-            if char is None:
-                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
-                return
-            current_tick = await self._current_tick(session)
-            _tick, phase, _day, _month = simtime.current(current_tick)
-            try:
-                housing_svc.check_can_sleep(char, phase)
-            except ServiceError as exc:
-                await interaction.response.send_message(
-                    t(exc.reason_key, **exc.fmt), ephemeral=True
-                )
-                return
-
-            max_ticks = simtime.ticks_remaining_in_phase(current_tick)
-            sleep_ticks = max(1, min(ticks, max_ticks)) if ticks is not None else max_ticks
-            restored = housing_svc.apply_fatigue_restoration(
-                char, sleep_ticks, has_bed=housing_svc.has_a_bed(char)
-            )
-            name, fatigue = char.name, round(char.fatigue)
-        await interaction.response.send_message(
-            t("sleep_ok", name=name, ticks=sleep_ticks, restored=round(restored), fatigue=fatigue),
-            ephemeral=True,
         )
 
     # ------------------------------------------------------- weather prep

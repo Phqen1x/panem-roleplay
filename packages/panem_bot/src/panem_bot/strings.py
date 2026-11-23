@@ -285,7 +285,8 @@ STRINGS: dict[str, str] = {
     "shipment_already_tried": "This shipment has already been tried!",
     "crimelog_header": "**{name}**'s recent crime log:",
     "crimelog_empty": "**{name}** hasn't attempted any crimes yet.",
-    # Housing (buying/renting houses/apartments/inns, fatigue, sleep)
+    # Housing (buying/renting houses/apartments/inns; fatigue now restores
+    # automatically at midnight based on housing status, no /sleep command)
     "housing_not_found": "No property by that id.",
     "housing_nothing_available": "Nothing is available in this district right now.",
     "housing_not_for_sale": "That property isn't for sale.",
@@ -329,21 +330,19 @@ STRINGS: dict[str, str] = {
     "housing_auction_not_found": "No open auction for that property.",
     "housing_bid_too_low": "That bid isn't higher than the current one.",
     "housing_bid_ok": "**{name}** bids {amount} on `#{property_id}`.",
-    "sleep_wrong_phase": "**{name}** can only sleep between the end of the evening shift and "
-    "the start of the morning one.",
-    "sleep_ok": "**{name}** sleeps {ticks} tick(s) and restores {restored} fatigue "
-    "(now {fatigue}/100).",
-    # Sustenance (Simulation mode: /eat, /drink, /entertain -- Vitals tab feature)
+    # Sustenance (Simulation mode: /eat, /drink, /heal, /use, /entertain -- Vitals tab feature)
     "sustenance_mode_forbidden": "**{name}** doesn't need to eat, drink, or entertain "
     "themselves in their current RP mode.",
     "good_not_edible": "**{good}** isn't something {name} can eat.",
     "good_not_drinkable": "**{good}** isn't something {name} can drink.",
     "good_not_healing": "**{good}** isn't something {name} can use to heal.",
+    "good_not_energizing": "**{good}** isn't something {name} can use to perk up.",
     "sustenance_no_inventory": "**{name}** doesn't have any **{good}** to consume.",
     "unknown_game": "**{game}** isn't one of the Vitals tab's entertainment games.",
     "eat_ok": "**{name}** eats some **{good}** and feels better (hunger now {hunger}/100).",
     "drink_ok": "**{name}** drinks some **{good}** (thirst now {thirst}/100).",
     "heal_ok": "**{name}** uses some **{good}** to treat their injuries (health now {health}/100).",
+    "energize_ok": "**{name}** has some **{good}** and perks up (fatigue now {fatigue}/100).",
     "entertain_ok": "**{name}** takes some time to unwind (sanity now {sanity}/100).",
     # NPC engagements (group RP threads with one or more NPCs, plus other players'
     # characters by invitation)

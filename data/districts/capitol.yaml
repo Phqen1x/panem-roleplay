@@ -5,6 +5,7 @@ produces:
 - medicine
 imports:
 - coal
+- coffee
 - fish
 - grain
 - livestock
@@ -12,6 +13,7 @@ imports:
 - masonry
 - power
 - produce
+- tea
 - textiles
 - transport
 - weapons

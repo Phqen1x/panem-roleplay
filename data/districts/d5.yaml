@@ -4,12 +4,14 @@ industry: power
 produces:
 - power
 imports:
+- coffee
 - electronics
 - fish
 - grain
 - livestock
 - medicine
 - produce
+- tea
 - textiles
 - transport
 illicit_produces:

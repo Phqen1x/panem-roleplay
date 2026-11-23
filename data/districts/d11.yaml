@@ -4,6 +4,8 @@ industry: produce
 produces:
 - produce
 - oil
+- coffee
+- tea
 imports:
 - fish
 - grain

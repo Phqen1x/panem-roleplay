@@ -87,6 +87,26 @@
   perishable: true
   category: food
   thirst_value: 25.0
+- id: coffee
+  name: Coffee
+  base_price: 6.0
+  perishable: true
+  category: food
+  thirst_value: 10.0
+  fatigue_value: 20.0
+  # District Eleven's `produces` (every other district's `imports`) --
+  # the one good besides tea with `fatigue_value > 0`: a `/use` on top of
+  # the automatic midnight housing-based restoration
+  # (`panem_shared.housing.apply_nightly_fatigue_restoration`), for a
+  # character who needs more rest than their bed alone gives them.
+- id: tea
+  name: Tea
+  base_price: 5.0
+  perishable: true
+  category: food
+  thirst_value: 15.0
+  fatigue_value: 15.0
+  # Gentler than coffee on fatigue, more hydrating -- same role otherwise.
 - id: medicine
   name: Medicine
   base_price: 15.0

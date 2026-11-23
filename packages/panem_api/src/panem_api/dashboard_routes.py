@@ -76,7 +76,7 @@ from panem_shared import trades as trades_svc
 from panem_shared import travel as travel_svc
 from panem_shared import weather as weather_svc
 from panem_shared.content.loader import ContentBundle
-from panem_shared.content.schemas import Location
+from panem_shared.content.schemas import Good, Location
 from panem_shared.content.traits import speech_tone
 from panem_shared.db.models import (
     AfflictionType,
@@ -2300,11 +2300,12 @@ def build_residents_router(
         """`"engaged"` wins over location -- a character mid-conversation in
         their own home still reads as talking, not sleeping. Otherwise,
         `"sleeping"` is inferred from standing in a `RESIDENTIAL` location
-        (home, an inn) rather than a real "currently asleep" flag: `/sleep`
-        is a one-shot fatigue-restoring action with no lasting state of its
-        own (see `panem_shared.housing`), so this is the closest real signal
-        to "probably resting" the data actually offers. Anyone else is
-        `"idle"` -- present in the district, not doing anything trackable."""
+        (home, an inn) rather than a real "currently asleep" flag: fatigue
+        restoration is automatic at the midnight rollover with no lasting
+        "asleep" state of its own (see `panem_shared.housing`), so this is
+        the closest real signal to "probably resting" the data actually
+        offers. Anyone else is `"idle"` -- present in the district, not
+        doing anything trackable."""
         if char.id in engaged_character_ids:
             return "engaged"
         location = locations_by_id.get(char.location_id) if char.location_id else None
@@ -2987,30 +2988,23 @@ class HousingInnStayRequest(BaseModel):
 class HousingInnStayResponse(BaseModel):
     property_id: int
     price: int
-    fatigue: float
-
-
-class HousingSleepRequest(BaseModel):
-    discord_id: int
-    ticks: int | None = None
-
-
-class HousingSleepResponse(BaseModel):
-    ticks: int
-    restored: float
-    fatigue: float
 
 
 def build_housing_router(
     *, content: ContentBundle, session_factory: async_sessionmaker[AsyncSession] | None
 ) -> APIRouter:
-    """The Housing tab's REST surface: mirrors every `/housing` subcommand
-    plus `/sleep`. Unlike the split Discord commands (each its own
-    `character`/`property_id` pair typed by hand), every write here
-    targets `{property_id}` in the URL path the same way the Jail/Crime/
-    Market routers already do -- `property_id` is exactly the id
-    `/activity/dashboard/housing/{character_id}`'s own listing already
-    returns, so the dashboard never needs a separate autocomplete step."""
+    """The Housing tab's REST surface: mirrors every `/housing`
+    subcommand. There's no `/sleep` route anymore -- fatigue restores
+    automatically at the midnight sim-day rollover based on housing
+    status (`panem_shared.housing.apply_nightly_fatigue_restoration`);
+    `inn-stay` here just pays for the night and stamps `Character.
+    last_inn_stay_tick` so that night's restoration counts it. Unlike
+    the split Discord commands (each its own `character`/`property_id`
+    pair typed by hand), every write here targets `{property_id}` in the
+    URL path the same way the Jail/Crime/Market routers already do --
+    `property_id` is exactly the id `/activity/dashboard/housing/
+    {character_id}`'s own listing already returns, so the dashboard
+    never needs a separate autocomplete step."""
     router = APIRouter(prefix="/activity/dashboard/housing", tags=["dashboard"])
 
     def _listing(property_: Property, buyer: Character) -> HousingListing:
@@ -3456,38 +3450,11 @@ def build_housing_router(
             character.money -= price
             if owner is not None:
                 owner.money += price
-            housing_svc.apply_fatigue_restoration(character, simtime.TICKS_PER_PHASE, has_bed=True)
+            character.last_inn_stay_tick = await _current_tick(session)
             character.hunger = max(
                 constants.HUNGER_MIN, character.hunger - constants.HUNGER_DECREASE_MET
             )
-            return HousingInnStayResponse(
-                property_id=inn.id, price=price, fatigue=round(character.fatigue, 1)
-            )
-
-    @router.post("/{character_id}/sleep", response_model=HousingSleepResponse)
-    async def sleep(character_id: int, body: HousingSleepRequest) -> HousingSleepResponse:
-        factory = _require_session_factory(session_factory)
-        async with session_scope(factory) as session:
-            character = await _resolve_owned_character(
-                session, discord_id=body.discord_id, character_id=character_id
-            )
-            current_tick = await _current_tick(session)
-            _tick, phase, _day, _month = simtime.current(current_tick)
-            try:
-                housing_svc.check_can_sleep(character, phase)
-            except ServiceError as exc:
-                raise _http_from_service_error(exc) from exc
-
-            max_ticks = simtime.ticks_remaining_in_phase(current_tick)
-            sleep_ticks = (
-                max(1, min(body.ticks, max_ticks)) if body.ticks is not None else max_ticks
-            )
-            restored = housing_svc.apply_fatigue_restoration(
-                character, sleep_ticks, has_bed=housing_svc.has_a_bed(character)
-            )
-            return HousingSleepResponse(
-                ticks=sleep_ticks, restored=round(restored, 1), fatigue=round(character.fatigue, 1)
-            )
+            return HousingInnStayResponse(property_id=inn.id, price=price)
 
     return router
 
@@ -3509,6 +3476,7 @@ class VitalsConsumable(BaseModel):
     hunger_value: float = 0.0
     thirst_value: float = 0.0
     heal_value: float = 0.0
+    fatigue_value: float = 0.0
     cook_method: str | None = None
 
 
@@ -3524,12 +3492,10 @@ class VitalsStatusResponse(BaseModel):
     sanity: float
     fatigue: float
     health: float
-    has_bed: bool
-    max_sleep_ticks: int
-    fatigue_restore_per_tick: float
     edible: list[VitalsConsumable]
     drinkable: list[VitalsConsumable]
     healable: list[VitalsConsumable]
+    fatigueable: list[VitalsConsumable]
     entertainment: list[VitalsEntertainmentOption]
 
 
@@ -3567,6 +3533,17 @@ class VitalsHealResponse(BaseModel):
     health: float
 
 
+class VitalsEnergizeRequest(BaseModel):
+    discord_id: int
+    good_id: str
+
+
+class VitalsEnergizeResponse(BaseModel):
+    good_id: str
+    good_name: str
+    fatigue: float
+
+
 class VitalsEntertainRequest(BaseModel):
     discord_id: int
     game_id: str
@@ -3580,13 +3557,27 @@ class VitalsEntertainResponse(BaseModel):
 def build_vitals_router(
     *, content: ContentBundle, session_factory: async_sessionmaker[AsyncSession] | None
 ) -> APIRouter:
-    """The Vitals tab's REST surface: eat/drink/entertain, inventory-gated
-    per `panem_shared.sustenance`'s rewrite (see that module's docstring).
-    Sleep has no route of its own here -- the frontend calls the existing
-    `POST /activity/dashboard/housing/{id}/sleep` directly; this router's
-    status endpoint just hands back what that panel needs for its live
-    preview (`has_bed`/`max_sleep_ticks`/`fatigue_restore_per_tick`)."""
+    """The Vitals tab's REST surface: eat/drink/heal/energize/entertain,
+    inventory-gated per `panem_shared.sustenance`'s rewrite (see that
+    module's docstring). There's no sleep route anymore -- fatigue
+    restores automatically at the midnight sim-day rollover based on
+    housing status (`panem_shared.housing.
+    apply_nightly_fatigue_restoration`); `energize` (a stimulant good
+    like coffee or tea) is the only proactive way to push it higher than
+    that, on top of it."""
     router = APIRouter(prefix="/activity/dashboard/vitals", tags=["dashboard"])
+
+    def _consumable(row: Inventory, good: Good) -> VitalsConsumable:
+        return VitalsConsumable(
+            good_id=good.id,
+            name=good.name,
+            qty=row.qty,
+            hunger_value=good.hunger_value,
+            thirst_value=good.thirst_value,
+            heal_value=good.heal_value,
+            fatigue_value=good.fatigue_value,
+            cook_method=good.cook_method,
+        )
 
     @router.get("/{character_id}/status", response_model=VitalsStatusResponse)
     async def vitals_status(character_id: int, discord_id: int) -> VitalsStatusResponse:
@@ -3595,47 +3586,11 @@ def build_vitals_router(
             character = await _resolve_owned_character(
                 session, discord_id=discord_id, character_id=character_id
             )
-            current_tick = await _current_tick(session)
             pairs = await sustenance_svc.owned_consumables(session, character, content.goods)
-            edible = [
-                VitalsConsumable(
-                    good_id=good.id,
-                    name=good.name,
-                    qty=row.qty,
-                    hunger_value=good.hunger_value,
-                    thirst_value=good.thirst_value,
-                    heal_value=good.heal_value,
-                    cook_method=good.cook_method,
-                )
-                for row, good in pairs
-                if good.hunger_value > 0
-            ]
-            drinkable = [
-                VitalsConsumable(
-                    good_id=good.id,
-                    name=good.name,
-                    qty=row.qty,
-                    hunger_value=good.hunger_value,
-                    thirst_value=good.thirst_value,
-                    heal_value=good.heal_value,
-                    cook_method=good.cook_method,
-                )
-                for row, good in pairs
-                if good.thirst_value > 0
-            ]
-            healable = [
-                VitalsConsumable(
-                    good_id=good.id,
-                    name=good.name,
-                    qty=row.qty,
-                    hunger_value=good.hunger_value,
-                    thirst_value=good.thirst_value,
-                    heal_value=good.heal_value,
-                    cook_method=good.cook_method,
-                )
-                for row, good in pairs
-                if good.heal_value > 0
-            ]
+            edible = [_consumable(row, good) for row, good in pairs if good.hunger_value > 0]
+            drinkable = [_consumable(row, good) for row, good in pairs if good.thirst_value > 0]
+            healable = [_consumable(row, good) for row, good in pairs if good.heal_value > 0]
+            fatigueable = [_consumable(row, good) for row, good in pairs if good.fatigue_value > 0]
             entertainment = [
                 VitalsEntertainmentOption(
                     game_id=game_id,
@@ -3644,21 +3599,16 @@ def build_vitals_router(
                 )
                 for game_id, sanity_value in constants.ENTERTAINMENT_SANITY_VALUES.items()
             ]
-            has_bed = housing_svc.has_a_bed(character)
-            max_sleep_ticks = simtime.ticks_remaining_in_phase(current_tick)
-            fatigue_restore_per_tick = housing_svc.fatigue_restored(1, has_bed=has_bed)
         return VitalsStatusResponse(
             hunger=round(character.hunger, 1),
             thirst=round(character.thirst, 1),
             sanity=round(character.sanity, 1),
             fatigue=round(character.fatigue, 1),
             health=round(character.health, 1),
-            has_bed=has_bed,
-            max_sleep_ticks=max_sleep_ticks,
-            fatigue_restore_per_tick=round(fatigue_restore_per_tick, 2),
             edible=edible,
             drinkable=drinkable,
             healable=healable,
+            fatigueable=fatigueable,
             entertainment=entertainment,
         )
 
@@ -3714,6 +3664,29 @@ def build_vitals_router(
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
         return VitalsHealResponse(good_id=good.id, good_name=good.name, health=round(health, 1))
+
+    @router.post("/{character_id}/energize", response_model=VitalsEnergizeResponse)
+    async def vitals_energize(
+        character_id: int, body: VitalsEnergizeRequest
+    ) -> VitalsEnergizeResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            good = content.goods.get(body.good_id)
+            if good is None:
+                raise HTTPException(status_code=404, detail="good_not_energizing")
+            current_tick = await _current_tick(session)
+            try:
+                fatigue = await sustenance_svc.restore_fatigue(
+                    session, character, good, current_tick
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return VitalsEnergizeResponse(
+            good_id=good.id, good_name=good.name, fatigue=round(fatigue, 1)
+        )
 
     @router.post("/{character_id}/entertain", response_model=VitalsEntertainResponse)
     async def vitals_entertain(

@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 
 from panem_shared import constants, simtime
-from panem_shared.db.models import AfflictionType, Character, CharacterAffliction, Npc
-from panem_shared.enums import AfflictionSource, CharacterStatus, DayPhase, RpMode
+from panem_shared.db.models import AfflictionType, Character, CharacterAffliction, Npc, Property
+from panem_shared.enums import AfflictionSource, CharacterStatus, DayPhase, PropertyKind, RpMode
 from panem_sim.rng import tick_rng
 from panem_sim.state import TickContext, WorldState
 from panem_sim.systems import needs
@@ -42,6 +42,25 @@ def make_character(**overrides: object) -> Character:
     character = Character(**defaults)  # type: ignore[arg-type]
     character.id = 1
     return character
+
+
+def make_property(**overrides: object) -> Property:
+    defaults: dict[str, object] = dict(
+        district_id=1,
+        kind=PropertyKind.HOUSE.value,
+        tier="apprentice",
+        owner_kind="npc",
+        for_sale=False,
+        suggested_price=500.0,
+        mortgage_principal=0.0,
+        mortgage_payment=0.0,
+        mortgage_next_due_tick=None,
+        mortgage_missed_payments=0,
+    )
+    defaults.update(overrides)
+    property_ = Property(**defaults)  # type: ignore[arg-type]
+    property_.id = 1
+    return property_
 
 
 def make_npc(**overrides: object) -> Npc:
@@ -196,6 +215,80 @@ class TestFatigueExhaustion:
         )
         needs._apply_character_nightly_needs(character, state, day_index=0)
         assert character.health == constants.HEALTH_MIN
+
+
+class TestNightlyFatigueRestoration:
+    def test_owned_home_restores_fatigue(self):
+        home = make_property(kind=PropertyKind.HOUSE.value)
+        character = make_character(fatigue=5.0, housing_property_id=home.id)
+        state = WorldState(
+            districts={},
+            npcs={},
+            npc_schedules={},
+            characters={1: character},
+            open_shifts=[],
+            properties={home.id: home},
+        )
+        needs._apply_character_nightly_needs(character, state, day_index=0)
+        assert character.fatigue == 5.0 + constants.FATIGUE_RESTORE_OWNED_HOME
+
+    def test_leased_apartment_restores_less_than_owning(self):
+        apartment = make_property(kind=PropertyKind.APARTMENT.value)
+        character = make_character(fatigue=5.0, housing_property_id=apartment.id)
+        state = WorldState(
+            districts={},
+            npcs={},
+            npc_schedules={},
+            characters={1: character},
+            open_shifts=[],
+            properties={apartment.id: apartment},
+        )
+        needs._apply_character_nightly_needs(character, state, day_index=0)
+        assert character.fatigue == 5.0 + constants.FATIGUE_RESTORE_APARTMENT
+
+    def test_inn_stay_that_same_day_restores_less_than_a_real_home(self):
+        character = make_character(fatigue=5.0, housing_property_id=None, last_inn_stay_tick=5)
+        state = WorldState(
+            districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
+        )
+        needs._apply_character_nightly_needs(character, state, day_index=0)
+        assert character.fatigue == 5.0 + constants.FATIGUE_RESTORE_INN
+
+    def test_no_home_and_no_inn_stay_restores_the_least(self):
+        character = make_character(fatigue=5.0, housing_property_id=None, last_inn_stay_tick=None)
+        state = WorldState(
+            districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
+        )
+        needs._apply_character_nightly_needs(character, state, day_index=0)
+        assert character.fatigue == 5.0 + constants.FATIGUE_RESTORE_HOMELESS
+
+    def test_exhaustion_penalty_checks_fatigue_before_the_nightly_restoration(self):
+        # Still exhausted going into the night -- the health penalty fires
+        # even though this same call then restores fatigue afterward.
+        character = make_character(
+            health=90.0,
+            fatigue=constants.FATIGUE_EXHAUSTION_THRESHOLD,
+            housing_property_id=None,
+            last_inn_stay_tick=None,
+        )
+        state = WorldState(
+            districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
+        )
+        needs._apply_character_nightly_needs(character, state, day_index=0)
+        assert character.health == 90.0 - constants.FATIGUE_EXHAUSTION_HEALTH_PENALTY
+        assert character.fatigue == (
+            constants.FATIGUE_EXHAUSTION_THRESHOLD + constants.FATIGUE_RESTORE_HOMELESS
+        )
+
+    def test_non_simulation_characters_are_left_untouched(self):
+        character = make_character(
+            rp_mode=RpMode.STORY.value, fatigue=5.0, housing_property_id=None
+        )
+        state = WorldState(
+            districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
+        )
+        needs._apply_character_nightly_needs(character, state, day_index=0)
+        assert character.fatigue == 5.0
 
 
 class TestNpcNeeds:

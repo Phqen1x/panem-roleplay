@@ -4,12 +4,14 @@ industry: lumber
 produces:
 - lumber
 imports:
+- coffee
 - fish
 - grain
 - livestock
 - medicine
 - power
 - produce
+- tea
 - textiles
 - transport
 illicit_produces:

@@ -520,10 +520,12 @@ def market_app(db_session_factory):
 
 
 def make_content_with_vitals() -> ContentBundle:
-    """`grain` (cookable/bakeable, `hunger_value=15`, `cook_method="oven"`)
-    and `produce` (drinkable, `thirst_value=25`) -- for `/activity/
-    dashboard/vitals` tests. `coal` stays a pure ingredient (no consumption
-    value) so an "owned but not edible/drinkable" good is available too."""
+    """`grain` (cookable/bakeable, `hunger_value=15`, `cook_method="oven"`),
+    `produce` (drinkable, `thirst_value=25`), and `coffee` (drinkable and
+    fatigue-restoring, `thirst_value=10`/`fatigue_value=20`) -- for
+    `/activity/dashboard/vitals` tests. `coal` stays a pure ingredient (no
+    consumption value) so an "owned but not edible/drinkable" good is
+    available too."""
     return ContentBundle(
         districts={0: make_district(0, "The Capitol"), 1: make_district(1, "District 1")},
         goods={
@@ -541,6 +543,14 @@ def make_content_with_vitals() -> ContentBundle:
                 base_price=3.0,
                 category="food",
                 thirst_value=25.0,
+            ),
+            "coffee": Good(
+                id="coffee",
+                name="Coffee",
+                base_price=6.0,
+                category="food",
+                thirst_value=10.0,
+                fatigue_value=20.0,
             ),
             "coal": Good(id="coal", name="Coal", base_price=1.0, category="fuel"),
             "medicine": Good(
@@ -4609,22 +4619,6 @@ class TestDashboardHousing:
             )
         assert response.status_code == 400
 
-    async def test_sleep_restores_fatigue_at_night(self, housing_app, db_session_factory):
-        char_id = await seed_character(
-            db_session_factory, discord_id=42, character_overrides={"fatigue": 0.0}
-        )
-        transport = httpx.ASGITransport(app=housing_app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.post(
-                f"/activity/dashboard/housing/{char_id}/sleep", json={"discord_id": 42}
-            )
-        assert response.status_code == 200
-        body = response.json()
-        assert body["restored"] > 0
-        async with db_session_factory() as session:
-            character = await session.get(Character, char_id)
-            assert character.fatigue == body["fatigue"]
-
     async def test_inn_stay_happy_path(self, housing_app, db_session_factory):
         char_id = await seed_character(
             db_session_factory, discord_id=42, character_overrides={"money": 200}
@@ -4643,6 +4637,7 @@ class TestDashboardHousing:
         async with db_session_factory() as session:
             character = await session.get(Character, char_id)
             assert character.money == 180
+            assert character.last_inn_stay_tick is not None
 
 
 async def give_inventory(session_factory, character_id: int, good_id: str, qty: int) -> None:
@@ -4665,6 +4660,7 @@ class TestDashboardVitals:
         await give_inventory(db_session_factory, char_id, "grain", 2)
         await give_inventory(db_session_factory, char_id, "produce", 1)
         await give_inventory(db_session_factory, char_id, "medicine", 1)
+        await give_inventory(db_session_factory, char_id, "coffee", 1)
         await give_inventory(db_session_factory, char_id, "coal", 3)
         transport = httpx.ASGITransport(app=vitals_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -4675,10 +4671,11 @@ class TestDashboardVitals:
         body = response.json()
         assert [g["good_id"] for g in body["edible"]] == ["grain"]
         assert body["edible"][0]["cook_method"] == "oven"
-        assert [g["good_id"] for g in body["drinkable"]] == ["produce"]
+        assert sorted(g["good_id"] for g in body["drinkable"]) == ["coffee", "produce"]
         assert [g["good_id"] for g in body["healable"]] == ["medicine"]
         assert body["healable"][0]["heal_value"] == 30.0
-        assert body["has_bed"] is False
+        assert [g["good_id"] for g in body["fatigueable"]] == ["coffee"]
+        assert body["fatigueable"][0]["fatigue_value"] == 20.0
         assert len(body["entertainment"]) == 6
         assert {g["game_id"] for g in body["entertainment"]} == {
             "minesweeper",
@@ -4788,6 +4785,37 @@ class TestDashboardVitals:
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(
                 f"/activity/dashboard/vitals/{char_id}/heal",
+                json={"discord_id": 5, "good_id": "coal"},
+            )
+        assert response.status_code == 400
+
+    async def test_energize_consumes_inventory_and_restores_fatigue(
+        self, vitals_app, db_session_factory
+    ):
+        char_id = await seed_character(
+            db_session_factory, discord_id=5, character_overrides={"fatigue": 50.0}
+        )
+        await give_inventory(db_session_factory, char_id, "coffee", 2)
+        transport = httpx.ASGITransport(app=vitals_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/vitals/{char_id}/energize",
+                json={"discord_id": 5, "good_id": "coffee"},
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["fatigue"] == 70.0
+        async with db_session_factory() as session:
+            row = await session.get(Inventory, (OwnerKind.CHARACTER.value, str(char_id), "coffee"))
+            assert row.qty == 1
+
+    async def test_energize_refuses_a_non_energizing_good(self, vitals_app, db_session_factory):
+        char_id = await seed_character(db_session_factory, discord_id=5)
+        await give_inventory(db_session_factory, char_id, "coal", 1)
+        transport = httpx.ASGITransport(app=vitals_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/vitals/{char_id}/energize",
                 json={"discord_id": 5, "good_id": "coal"},
             )
         assert response.status_code == 400
