@@ -70,6 +70,20 @@ class TestSwitchMode:
             rp_modes.switch_mode(character, RpMode.LIFE, NOW)
         assert character.rp_mode == RpMode.SIMULATION.value
 
+    def test_switching_to_simulation_reenables_crime(self):
+        character = make_character(
+            rp_mode=RpMode.LIFE.value, rp_mode_changed_at=None, crime_enabled=False
+        )
+        rp_modes.switch_mode(character, RpMode.SIMULATION, NOW)
+        assert character.crime_enabled is True
+
+    def test_switching_to_life_leaves_crime_enabled_untouched(self):
+        character = make_character(
+            rp_mode=RpMode.STORY.value, rp_mode_changed_at=None, crime_enabled=False
+        )
+        rp_modes.switch_mode(character, RpMode.LIFE, NOW)
+        assert character.crime_enabled is False
+
 
 class TestModeSwitchNeedsJobInfo:
     def test_false_for_switching_to_story(self):
@@ -124,6 +138,34 @@ class TestStageAndApplyModeSwitch:
         assert character.pending_job_title is None
         assert character.pending_shift_phase is None
         assert character.pending_job_is_illicit is False
+
+    def test_apply_reenables_crime_when_switching_into_simulation(self):
+        character = make_character(
+            rp_mode=RpMode.STORY.value, job_title=None, crime_enabled=False
+        )
+        rp_modes.stage_mode_switch(
+            character,
+            RpMode.SIMULATION,
+            job_title="Baker",
+            shift_phase="morning",
+            job_is_illicit=False,
+        )
+        rp_modes.apply_staged_mode_switch(character, NOW)
+        assert character.crime_enabled is True
+
+    def test_apply_leaves_crime_untouched_when_switching_into_life(self):
+        character = make_character(
+            rp_mode=RpMode.STORY.value, job_title=None, crime_enabled=False
+        )
+        rp_modes.stage_mode_switch(
+            character,
+            RpMode.LIFE,
+            job_title="Baker",
+            shift_phase="morning",
+            job_is_illicit=False,
+        )
+        rp_modes.apply_staged_mode_switch(character, NOW)
+        assert character.crime_enabled is False
 
     def test_discard_clears_staging_without_touching_the_real_mode(self):
         character = make_character(rp_mode=RpMode.STORY.value, job_title=None)

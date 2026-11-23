@@ -49,6 +49,8 @@ def switch_mode(character: Character, new_mode: RpMode, now: dt.datetime) -> Non
     check_can_switch_mode(character, new_mode, now)
     character.rp_mode = new_mode.value
     character.rp_mode_changed_at = now
+    if new_mode == RpMode.SIMULATION:
+        character.crime_enabled = True
 
 
 def mode_switch_needs_job_info(character: Character, new_mode: RpMode) -> bool:
@@ -92,6 +94,8 @@ def apply_staged_mode_switch(character: Character, now: dt.datetime) -> None:
     character.shift_phase = character.pending_shift_phase
     character.job_is_illicit = character.pending_job_is_illicit
     character.rp_mode_changed_at = now
+    if character.pending_rp_mode == RpMode.SIMULATION.value:
+        character.crime_enabled = True
     discard_staged_mode_switch(character)
 
 

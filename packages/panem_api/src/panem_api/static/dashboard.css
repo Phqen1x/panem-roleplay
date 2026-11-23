@@ -1051,6 +1051,19 @@ table.data-table .stock-empty {
   align-items: start;
 }
 
+/* Grid items default to `min-width: auto`, which floors them at their
+   content's min-content size instead of the track's actual width -- here
+   that's the residents table/toolbar, wide enough that the panel (and
+   with it the whole grid) blows out past the viewport on a phone, and
+   `body`'s own `overflow-x: hidden` (style.css) then just clips the
+   overflow instead of letting it scroll, cutting the tab off rather than
+   showing all of it. `min-width: 0` lets each panel actually shrink to
+   its track, so the table's nearer `overflow-x: auto` (below) is what
+   scrolls instead. */
+.social-layout > .panel {
+  min-width: 0;
+}
+
 @media (max-width: 1080px) {
   .social-layout {
     grid-template-columns: 1fr;
