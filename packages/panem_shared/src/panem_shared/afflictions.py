@@ -166,12 +166,14 @@ async def apply_auto_afflictions(
 def _auto_death_cause(character: Character) -> str:
     """`apply_auto_death` only sees the final `health` value, not which
     meter actually drove it to zero -- this ranks whichever of hunger/
-    thirst/fatigue/sanity is furthest past its own `HEALTH_DECAY_*`
-    threshold at the moment of death (the strongest signal available
-    without tracking history) and returns a human cause for it. Falls
-    back to `AUTO_DEATH_MESSAGE` if none crossed a threshold (health can
-    also be zeroed by accumulated small decays with nothing currently
-    over the line)."""
+    thirst/sanity is furthest past its own `HEALTH_DECAY_*` threshold at
+    the moment of death (the strongest signal available without tracking
+    history) and returns a human cause for it. Falls back to
+    `AUTO_DEATH_MESSAGE` if none crossed a threshold (health can also be
+    zeroed by accumulated small decays with nothing currently over the
+    line). Fatigue isn't a candidate here -- bottoming out passes the
+    character out (`panem_shared.exhaustion.apply_passed_out`) rather
+    than eroding health, so it never drives a death on its own."""
     candidates: list[tuple[float, str]] = []
     if character.thirst >= constants.HEALTH_DECAY_THIRST_THRESHOLD:
         span = constants.THIRST_MAX - constants.HEALTH_DECAY_THIRST_THRESHOLD
@@ -191,12 +193,6 @@ def _auto_death_cause(character: Character) -> str:
             (constants.HEALTH_DECAY_SANITY_THRESHOLD - character.sanity) / span if span else 1.0
         )
         candidates.append((severity, "Succumbed after a complete mental breakdown."))
-    if character.fatigue <= constants.FATIGUE_EXHAUSTION_THRESHOLD:
-        span = constants.FATIGUE_EXHAUSTION_THRESHOLD - constants.FATIGUE_MIN
-        severity = (
-            (constants.FATIGUE_EXHAUSTION_THRESHOLD - character.fatigue) / span if span else 1.0
-        )
-        candidates.append((severity, "Collapsed from sheer exhaustion, having gone without sleep."))
     if not candidates:
         return AUTO_DEATH_MESSAGE
     return max(candidates, key=lambda pair: pair[0])[1]

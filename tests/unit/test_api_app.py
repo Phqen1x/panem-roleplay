@@ -30,6 +30,7 @@ from panem_shared.db.models import (
     Character,
     DistrictState,
     EngagementSettings,
+    ExhaustionSettings,
     Inventory,
     LayerCategory,
     LayerOption,
@@ -1778,6 +1779,19 @@ class TestDashboardIdentify:
         assert character["jailed_until_tick"] == 500
         assert character["jailed"] is True
 
+    async def test_surfaces_passed_out_until_tick(self, work_app, db_session_factory):
+        await seed_character(
+            db_session_factory,
+            discord_id=42,
+            character_overrides={"passed_out_until_tick": 500},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/activity/dashboard/identify", json={"discord_id": 42})
+        character = response.json()["characters"][0]
+        assert character["passed_out_until_tick"] == 500
+        assert character["passed_out"] is True
+
     async def test_jailed_flag_is_false_once_the_stale_sentence_has_lapsed(
         self, work_app, db_session_factory
     ):
@@ -3370,6 +3384,24 @@ class TestDashboardWork:
             )
         assert response.status_code == 400
         assert response.json()["detail"] == "work_jailed"
+
+    async def test_start_refuses_while_passed_out(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={
+                "job_title": "Miner",
+                "shift_phase": "morning",
+                "passed_out_until_tick": 1_000_000,
+            },
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/work/{char_id}/start", json={"discord_id": 5}
+            )
+        assert response.status_code == 400
+        assert response.json()["detail"] == "work_passed_out"
 
     async def test_start_refuses_with_no_open_shift_and_no_gamemaker_position(
         self, work_app, db_session_factory
@@ -5406,6 +5438,42 @@ class TestDashboardStaffExtras:
         async with db_session_factory() as session:
             settings_row = await session.get(EngagementSettings, 1)
             assert settings_row.idle_timeout_minutes == 30
+
+    async def test_exhaustion_duration_creates_then_updates_the_singleton_row(
+        self, staff_app, db_session_factory
+    ):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                first = await client.post(
+                    "/activity/dashboard/staff/exhaustion/duration",
+                    json={"discord_id": 42, "ticks": 6},
+                )
+                second = await client.post(
+                    "/activity/dashboard/staff/exhaustion/duration",
+                    json={"discord_id": 42, "ticks": 18},
+                )
+        assert first.status_code == 200 and first.json()["ticks"] == 6
+        assert second.status_code == 200 and second.json()["ticks"] == 18
+        async with db_session_factory() as session:
+            settings_row = await session.get(ExhaustionSettings, 1)
+            assert settings_row.passed_out_ticks == 18
+
+    async def test_exhaustion_duration_refuses_a_non_positive_value(
+        self, staff_app, db_session_factory
+    ):
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/activity/dashboard/staff/exhaustion/duration",
+                    json={"discord_id": 42, "ticks": 0},
+                )
+        assert response.status_code == 400
 
     async def test_district_state_view_and_crackdown(self, staff_app, db_session_factory):
         async with db_session_factory() as session, session.begin():

@@ -34,8 +34,10 @@ from panem_shared.content.traits import speech_tone
 from panem_shared.db.models import (
     Character,
     DialogueSettings,
+    DiscordChannel,
     DistrictState,
     EngagementSettings,
+    ExhaustionSettings,
     GlobalEvent,
     Inventory,
     Npc,
@@ -46,6 +48,7 @@ from panem_shared.db.models import (
 )
 from panem_shared.enums import (
     BulletinSourceKind,
+    ChannelKind,
     CharacterStatus,
     DayPhase,
     Gender,
@@ -102,6 +105,9 @@ class StaffCog(commands.Cog):
     )
     engagement_group = app_commands.Group(
         name="engagement", description="Tune NPC engagement settings", parent=group
+    )
+    exhaustion_group = app_commands.Group(
+        name="exhaustion", description="Tune the passed-out-from-exhaustion duration", parent=group
     )
     dialogue_group = app_commands.Group(
         name="dialogue", description="Silence or restore all NPC dialogue guild-wide", parent=group
@@ -845,6 +851,36 @@ class StaffCog(commands.Cog):
             ephemeral=True,
         )
 
+    @exhaustion_group.command(
+        name="set-duration",
+        description="Set how long a character stays passed out from exhaustion",
+    )
+    @app_commands.describe(ticks="Ticks a character stays passed out once fatigue bottoms out")
+    @app_commands.check(_is_staff)
+    async def exhaustion_set_duration(self, interaction: discord.Interaction, ticks: int) -> None:
+        if ticks < 1:
+            await interaction.response.send_message("Ticks must be at least 1.", ephemeral=True)
+            return
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            settings_row = await session.get(ExhaustionSettings, 1)
+            if settings_row is None:
+                settings_row = ExhaustionSettings(id=1, passed_out_ticks=ticks)
+                session.add(settings_row)
+            else:
+                settings_row.passed_out_ticks = ticks
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="exhaustion_set_duration",
+                target="exhaustion_settings",
+                payload={"ticks": ticks},
+            )
+        await interaction.response.send_message(
+            f"Characters now stay passed out from exhaustion for **{ticks}** tick(s).",
+            ephemeral=True,
+        )
+
     # -------------------------------------------------------------- dialogue
 
     async def _set_dialogue_enabled(
@@ -975,6 +1011,92 @@ class StaffCog(commands.Cog):
         await interaction.response.send_message(
             f"{role.mention} can no longer see {target.mention}.", ephemeral=True
         )
+
+    @channel_group.command(
+        name="unlock-all",
+        description="Let a role see (and post in) every registered roleplay channel at once",
+    )
+    @app_commands.describe(
+        role="The role to grant view/post access to (defaults to the configured roleplay role)"
+    )
+    @app_commands.check(_is_staff)
+    async def channel_unlock_all(
+        self, interaction: discord.Interaction, role: discord.Role | None = None
+    ) -> None:
+        """One-shot version of `channel_unlock`, applied to every channel
+        `scripts/setup_guild.py` registered as community-viewable --
+        `ChannelKind.FORUM` (one per district) and `ChannelKind.OOC` --
+        never `APPROVAL`/`LOG`/`BOARD` (a `Board` thread inherits its
+        parent forum's permissions, same reasoning `channel_unlock`'s own
+        thread-to-parent resolution relies on, so it needs no entry of its
+        own here). Meant to be run once, right after setup, to open the
+        whole server to the "Roleplay" role in a single command instead of
+        unlocking each district's forum by hand."""
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message(t("staff_only"), ephemeral=True)
+            return
+        resolved_role = role
+        if resolved_role is None:
+            roleplay_role_id = self.bot.settings.roleplay_role_id  # type: ignore[attr-defined]
+            if not roleplay_role_id:
+                await interaction.response.send_message(
+                    "No role given and ROLEPLAY_ROLE_ID isn't set in .env -- pass `role:` "
+                    "explicitly.",
+                    ephemeral=True,
+                )
+                return
+            resolved_role = guild.get_role(roleplay_role_id)
+            if resolved_role is None:
+                await interaction.response.send_message(
+                    "ROLEPLAY_ROLE_ID is set but no role with that id exists in this guild.",
+                    ephemeral=True,
+                )
+                return
+
+        await interaction.response.defer(ephemeral=True)
+        unlocked: list[int] = []
+        missing: list[int] = []
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            rows = (
+                await session.execute(
+                    select(DiscordChannel).where(
+                        DiscordChannel.kind.in_([ChannelKind.FORUM.value, ChannelKind.OOC.value])
+                    )
+                )
+            ).scalars()
+            for row in rows:
+                target = guild.get_channel(row.channel_id)
+                if target is None:
+                    missing.append(row.channel_id)
+                    continue
+                overwrite = target.overwrites_for(resolved_role)
+                overwrite.view_channel = True
+                overwrite.send_messages = True
+                if isinstance(target, discord.ForumChannel):
+                    overwrite.send_messages_in_threads = True
+                await target.set_permissions(
+                    resolved_role,
+                    overwrite=overwrite,
+                    reason=f"Global unlock by {interaction.user} ({interaction.user.id})",
+                )
+                unlocked.append(target.id)
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="channel_unlock_all",
+                target=str(resolved_role.id),
+                payload={"unlocked_channel_ids": unlocked, "missing_channel_ids": missing},
+            )
+
+        summary = f"{resolved_role.mention} can now see and post in {len(unlocked)} channel(s)."
+        if missing:
+            summary += (
+                f" {len(missing)} registered channel(s) no longer exist in this guild and "
+                "were skipped."
+            )
+        await interaction.followup.send(summary, ephemeral=True)
 
     # ------------------------------------------------------------------ npc
 

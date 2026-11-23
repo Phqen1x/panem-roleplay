@@ -225,7 +225,8 @@ function characterCard(ctx, character, catalog, { onChanged }) {
   const statusLine = el(
     "p",
     { class: "tab-status" },
-    `${character.status}${character.jailed ? " -- jailed" : ""}`
+    `${character.status}${character.jailed ? " -- jailed" : ""}` +
+      `${character.passed_out ? " -- passed out from exhaustion" : ""}`
   );
   const deathCauseLine =
     character.status === "dead" && character.death_cause

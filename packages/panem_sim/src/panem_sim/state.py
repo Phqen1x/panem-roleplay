@@ -25,6 +25,7 @@ from panem_shared.db.models import (
     Character,
     CharacterAffliction,
     DistrictState,
+    ExhaustionSettings,
     JobHistory,
     MarketPrice,
     Memory,
@@ -164,3 +165,11 @@ class WorldState:
     new_character_afflictions: list[CharacterAffliction] = field(default_factory=list)
     """`CharacterAffliction` rows `needs.py` auto-applies this tick;
     persisted by `tick.py` like `new_shifts`."""
+    exhaustion_settings: ExhaustionSettings | None = None
+    """The `ExhaustionSettings` singleton row (`None` only if it's somehow
+    missing -- the migration that created the table seeds it), loaded
+    once per tick so `needs.py` can read today's staff-configured
+    pass-out duration without a DB session of its own. Read-only here --
+    staff change it directly via `/staff exhaustion set-duration`,
+    outside the tick loop, the same way `EngagementSettings` is managed
+    entirely outside `panem_sim`."""

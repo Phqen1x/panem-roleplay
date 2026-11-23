@@ -20,6 +20,7 @@ from panem_shared.content.schemas import District, Location
 from panem_shared.db.models import Character, Inventory
 from panem_shared.enums import CharacterStatus, DayPhase, LocationKind, OwnerKind, Position, RpMode
 from panem_shared.errors import NotAllowed, NotFound
+from panem_shared.exhaustion import check_not_passed_out
 from panem_shared.jail import check_not_jailed
 from panem_shared.location_access import has_location_access
 from panem_shared.simtime import current as current_time
@@ -47,6 +48,7 @@ def check_can_travel(*, character: Character, location: Location, current_tick: 
     if character.status != CharacterStatus.APPROVED.value:
         raise NotAllowed("character_not_approved")
     check_not_jailed(character, current_tick, "travel_jailed")
+    check_not_passed_out(character, current_tick, "travel_passed_out")
     if location.kind == LocationKind.OUTSKIRTS:
         _, phase, _, _ = current_time(current_tick)
         if phase != DayPhase.NIGHT:
@@ -128,6 +130,7 @@ def check_can_travel_district(
     if character.status != CharacterStatus.APPROVED.value:
         raise NotAllowed("character_not_approved")
     check_not_jailed(character, current_tick, "travel_jailed")
+    check_not_passed_out(character, current_tick, "travel_passed_out")
     if (
         character.in_transit_until_tick is not None
         and character.in_transit_until_tick > current_tick

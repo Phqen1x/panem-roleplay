@@ -3,7 +3,14 @@ from __future__ import annotations
 import pytest
 
 from panem_shared import constants, simtime
-from panem_shared.db.models import AfflictionType, Character, CharacterAffliction, Npc, Property
+from panem_shared.db.models import (
+    AfflictionType,
+    Character,
+    CharacterAffliction,
+    ExhaustionSettings,
+    Npc,
+    Property,
+)
 from panem_shared.enums import AfflictionSource, CharacterStatus, DayPhase, PropertyKind, RpMode
 from panem_sim.rng import tick_rng
 from panem_sim.state import TickContext, WorldState
@@ -192,29 +199,46 @@ class TestCharacterNightlyNeeds:
 
 
 class TestFatigueExhaustion:
-    def test_exhausted_fatigue_docks_health(self):
-        character = make_character(health=90.0, fatigue=constants.FATIGUE_EXHAUSTION_THRESHOLD)
+    def test_exhausted_fatigue_passes_the_character_out(self):
+        character = make_character(
+            health=90.0, fatigue=constants.FATIGUE_EXHAUSTION_THRESHOLD, housing_property_id=None
+        )
         state = WorldState(
             districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
         )
         needs._apply_character_nightly_needs(character, state, day_index=0)
-        assert character.health == 90.0 - constants.FATIGUE_EXHAUSTION_HEALTH_PENALTY
+        # day_index=0 -> the real tick is (0 + 1) * TICKS_PER_DAY.
+        expected_tick = constants.TICKS_PER_DAY + constants.PASSED_OUT_DEFAULT_TICKS
+        assert character.passed_out_until_tick == expected_tick
+        assert character.health == 90.0  # no health penalty anymore
 
-    def test_rested_fatigue_costs_no_extra_health(self):
-        character = make_character(health=90.0, fatigue=constants.FATIGUE_EXHAUSTION_THRESHOLD + 1)
+    def test_rested_fatigue_does_not_pass_the_character_out(self):
+        character = make_character(
+            health=90.0,
+            fatigue=constants.FATIGUE_EXHAUSTION_THRESHOLD + 1,
+            housing_property_id=None,
+        )
         state = WorldState(
             districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
         )
         needs._apply_character_nightly_needs(character, state, day_index=0)
+        assert character.passed_out_until_tick is None
         assert character.health == 90.0
 
-    def test_exhaustion_penalty_is_clamped_to_health_min(self):
-        character = make_character(health=constants.HEALTH_MIN, fatigue=0.0)
+    def test_passed_out_duration_reads_the_staff_configured_setting(self):
+        character = make_character(fatigue=0.0, housing_property_id=None)
         state = WorldState(
-            districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
+            districts={},
+            npcs={},
+            npc_schedules={},
+            characters={1: character},
+            open_shifts=[],
+            exhaustion_settings=ExhaustionSettings(id=1, passed_out_ticks=5),
         )
-        needs._apply_character_nightly_needs(character, state, day_index=0)
-        assert character.health == constants.HEALTH_MIN
+        needs._apply_character_nightly_needs(character, state, day_index=2)
+        # day_index=2 -> the real tick is (2 + 1) * TICKS_PER_DAY.
+        expected_tick = 3 * constants.TICKS_PER_DAY + 5
+        assert character.passed_out_until_tick == expected_tick
 
 
 class TestNightlyFatigueRestoration:
@@ -262,9 +286,9 @@ class TestNightlyFatigueRestoration:
         needs._apply_character_nightly_needs(character, state, day_index=0)
         assert character.fatigue == 5.0 + constants.FATIGUE_RESTORE_HOMELESS
 
-    def test_exhaustion_penalty_checks_fatigue_before_the_nightly_restoration(self):
-        # Still exhausted going into the night -- the health penalty fires
-        # even though this same call then restores fatigue afterward.
+    def test_passed_out_check_uses_fatigue_before_the_nightly_restoration(self):
+        # Still exhausted going into the night -- passes out even though
+        # this same call then restores fatigue afterward.
         character = make_character(
             health=90.0,
             fatigue=constants.FATIGUE_EXHAUSTION_THRESHOLD,
@@ -275,7 +299,9 @@ class TestNightlyFatigueRestoration:
             districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
         )
         needs._apply_character_nightly_needs(character, state, day_index=0)
-        assert character.health == 90.0 - constants.FATIGUE_EXHAUSTION_HEALTH_PENALTY
+        expected_tick = constants.TICKS_PER_DAY + constants.PASSED_OUT_DEFAULT_TICKS
+        assert character.passed_out_until_tick == expected_tick
+        assert character.health == 90.0
         assert character.fatigue == (
             constants.FATIGUE_EXHAUSTION_THRESHOLD + constants.FATIGUE_RESTORE_HOMELESS
         )

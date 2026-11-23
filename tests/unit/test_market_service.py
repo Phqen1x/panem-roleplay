@@ -94,19 +94,25 @@ class TestResolveMarketLocation:
 
 class TestCheckCanTrade:
     def test_approved_character_allowed(self):
-        market_svc.check_can_trade(make_character())  # no raise
+        market_svc.check_can_trade(make_character(), 0)  # no raise
 
     def test_non_approved_character_refused(self):
         character = make_character(status=CharacterStatus.PENDING.value)
         with pytest.raises(NotAllowed) as exc_info:
-            market_svc.check_can_trade(character)
+            market_svc.check_can_trade(character, 0)
         assert exc_info.value.reason_key == "character_not_approved"
 
     def test_story_mode_character_refused(self):
         character = make_character(rp_mode=RpMode.STORY.value)
         with pytest.raises(NotAllowed) as exc_info:
-            market_svc.check_can_trade(character)
+            market_svc.check_can_trade(character, 0)
         assert exc_info.value.reason_key == "market_mode_forbidden"
+
+    def test_passed_out_character_refused(self):
+        character = make_character(passed_out_until_tick=10)
+        with pytest.raises(NotAllowed) as exc_info:
+            market_svc.check_can_trade(character, 5)
+        assert exc_info.value.reason_key == "market_passed_out"
 
 
 class TestResolveGood:

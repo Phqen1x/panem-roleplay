@@ -142,6 +142,13 @@ class TestCheckCanSteal:
         victim = make_npc()
         stealing_svc.check_can_steal(character, victim, 10)  # no raise
 
+    def test_raises_when_passed_out(self):
+        character = make_character(passed_out_until_tick=100)
+        victim = make_npc()
+        with pytest.raises(NotAllowed) as exc_info:
+            stealing_svc.check_can_steal(character, victim, 10)
+        assert exc_info.value.reason_key == "steal_passed_out"
+
     def test_refuses_a_story_mode_actor(self):
         character = make_character(rp_mode=RpMode.STORY.value)
         victim = make_npc()
@@ -382,6 +389,14 @@ class TestCheckCanBurgle:
         with pytest.raises(NotAllowed) as exc_info:
             stealing_svc.check_can_burgle(character, house, 10)
         assert exc_info.value.reason_key == "burgle_jailed"
+
+    def test_raises_when_passed_out(self):
+        character = make_character(current_district_id=1, passed_out_until_tick=100)
+        character.id = 1
+        house = make_house(district_id=1)
+        with pytest.raises(NotAllowed) as exc_info:
+            stealing_svc.check_can_burgle(character, house, 10)
+        assert exc_info.value.reason_key == "burgle_passed_out"
 
     def test_allowed_for_a_stranger_s_house(self):
         character = make_character(current_district_id=1)

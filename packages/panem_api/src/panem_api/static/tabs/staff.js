@@ -1207,6 +1207,48 @@ function housingEngagementPanel(ctx) {
   );
 }
 
+function exhaustionPanel(ctx) {
+  const durationResult = el("p", { class: "result-line" });
+  const durationInput = el("input", { type: "number", value: "12", min: "1" });
+  const durationBtn = el("button", { class: "btn", type: "button" }, "Set Duration");
+  durationBtn.addEventListener("click", async () => {
+    durationResult.textContent = "";
+    const ticks = Number(durationInput.value);
+    if (!Number.isFinite(ticks) || ticks < 1) {
+      durationResult.className = "result-line lose";
+      durationResult.textContent = "Enter a positive number of ticks.";
+      return;
+    }
+    try {
+      const body = await fetchJson("/activity/dashboard/staff/exhaustion/duration", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ discord_id: ctx.discordId(), ticks }),
+      });
+      durationResult.className = "result-line win";
+      durationResult.textContent = `Characters now stay passed out from exhaustion for ${body.ticks} tick(s).`;
+    } catch (err) {
+      durationResult.className = "result-line lose";
+      durationResult.textContent = err.message;
+    }
+  });
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "Exhaustion" }),
+    el(
+      "p",
+      { class: "tab-status" },
+      "How long a character stays passed out (unable to work, commit crime, trade, travel, or be roleplayed) once their fatigue bottoms out."
+    ),
+    el("h3", { text: "Passed-out duration" }),
+    el("div", { class: "field-row" }, el("label", { text: "Ticks" }), durationInput),
+    el("div", { class: "field-row" }, durationBtn),
+    durationResult
+  );
+}
+
 function districtAdminPanel(ctx) {
   const districtSelect = districtDropdown(ctx);
   const stateStatus = el("p", { class: "tab-status" });
@@ -1856,6 +1898,7 @@ export function mount(root, ctx) {
     npcAdminPanel(ctx),
     ambientMusicPanel(ctx),
     housingEngagementPanel(ctx),
+    exhaustionPanel(ctx),
     marketStockPanel(ctx),
     mottosPanel(ctx),
     layersPanel(ctx),

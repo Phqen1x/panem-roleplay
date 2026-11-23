@@ -98,6 +98,14 @@ class TestCheckCanTravel:
             character=character, location=location, current_tick=100
         )  # no raise
 
+    def test_refuses_passed_out_character(self):
+        district = make_district()
+        character = make_character(passed_out_until_tick=200)
+        location = travel_svc.resolve_location(district, "square")
+        with pytest.raises(NotAllowed) as exc_info:
+            travel_svc.check_can_travel(character=character, location=location, current_tick=100)
+        assert exc_info.value.reason_key == "travel_passed_out"
+
     def test_refuses_restricted_location_without_access(self):
         district = make_district()
         character = make_character(job_title=None, positions=[])
@@ -291,6 +299,15 @@ class TestCheckCanTravelDistrict:
         travel_svc.check_can_travel_district(
             character=character, district=district, destination_id=1, current_tick=100
         )  # no raise
+
+    def test_refuses_passed_out_character(self):
+        district = make_district()
+        character = make_character(location_id="station", passed_out_until_tick=200)
+        with pytest.raises(NotAllowed) as exc_info:
+            travel_svc.check_can_travel_district(
+                character=character, district=district, destination_id=1, current_tick=100
+            )
+        assert exc_info.value.reason_key == "travel_passed_out"
 
     def test_refuses_character_already_in_transit(self):
         district = make_district()

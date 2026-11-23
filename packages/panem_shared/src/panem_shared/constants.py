@@ -585,10 +585,19 @@ FATIGUE_RESTORE_HOMELESS = 25.0
 """Same nightly restoration, for a character with no bed at all --
 mirrors the old `/sleep`-on-the-ground halved rate."""
 FATIGUE_EXHAUSTION_THRESHOLD = 20.0
-FATIGUE_EXHAUSTION_HEALTH_PENALTY = 2.0
-"""If fatigue is still at or below the threshold at the nightly needs
-check, health takes this extra hit -- mirrors `HEALTH_DECAY_PER_NIGHT`'s
-hunger-driven decay in `panem_sim.systems.needs`, same nightly cadence."""
+"""If fatigue is still at or below this at the nightly needs check, the
+character passes out from exhaustion (`panem_shared.exhaustion.
+apply_passed_out`) rather than taking a health hit -- `PASSED_OUT_
+DEFAULT_TICKS` below is how long for, until staff change the live
+value."""
+PASSED_OUT_DEFAULT_TICKS = 12
+"""Seed value for the `ExhaustionSettings` singleton row on first
+migrate -- staff can change the live value afterward with `/staff
+exhaustion set-duration`; this constant is never read again once that
+row exists (same pattern as `ENGAGEMENT_DEFAULT_IDLE_TIMEOUT_MINUTES`).
+Also the in-memory fallback if the row is somehow missing. Half a
+sim-day (`TICKS_PER_DAY` is 24) -- long enough to be a real consequence,
+not a second jail sentence."""
 
 # Housing: mortgages (financed purchases + refinancing against equity),
 # auctions, and foreclosure. Same "no spec, reasonable placeholder" caveat.

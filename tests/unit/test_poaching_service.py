@@ -165,6 +165,13 @@ class TestCheckCanPoach:
         # no raise -- tick 3 is still within night (0..5) and past the jail term
         poaching_svc.check_can_poach(character, district, make_goods(), 3)
 
+    def test_raises_when_passed_out(self):
+        district = make_district()
+        character = make_character(passed_out_until_tick=100)
+        with pytest.raises(NotAllowed) as exc_info:
+            poaching_svc.check_can_poach(character, district, make_goods(), 10)
+        assert exc_info.value.reason_key == "poach_passed_out"
+
 
 class TestPoachDifficulty:
     def test_flat_and_derived_from_the_archery_base_success_constant(self):

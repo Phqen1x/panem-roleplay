@@ -52,6 +52,7 @@ from panem_shared import characters as characters_svc
 from panem_shared import constants, hobby_levels, job_levels, simtime
 from panem_shared import crime_log as crime_log_svc
 from panem_shared import district_lore as district_lore_svc
+from panem_shared import exhaustion as exhaustion_svc
 from panem_shared import feature_flags as feature_flags_svc
 from panem_shared import global_events as global_events_svc
 from panem_shared import hobbies as hobbies_svc
@@ -91,6 +92,7 @@ from panem_shared.db.models import (
     DistrictLorePerson,
     DistrictState,
     EngagementSettings,
+    ExhaustionSettings,
     GlobalEvent,
     Inventory,
     LayerCategory,
@@ -162,6 +164,8 @@ class DashboardCharacterSummary(BaseModel):
     money: int
     jailed_until_tick: int | None = None
     jailed: bool = False
+    passed_out_until_tick: int | None = None
+    passed_out: bool = False
     # Only ever non-null for a currently donor account (see `_theme_for_
     # user`'s old docstring, now `_resolve_theme`) -- lets the theme
     # picker's profile list show which characters a profile is assigned to
@@ -449,6 +453,9 @@ def build_identify_router(
                         jailed_until_tick=c.jailed_until_tick,
                         jailed=c.jailed_until_tick is not None
                         and c.jailed_until_tick > current_tick,
+                        passed_out_until_tick=c.passed_out_until_tick,
+                        passed_out=c.passed_out_until_tick is not None
+                        and c.passed_out_until_tick > current_tick,
                         theme_profile_id=c.theme_profile_id if is_donor else None,
                     )
                     for c in characters
@@ -788,6 +795,8 @@ class CharacterDetail(BaseModel):
     money: int
     jailed_until_tick: int | None = None
     jailed: bool = False
+    passed_out_until_tick: int | None = None
+    passed_out: bool = False
     rp_mode: str = RpMode.SIMULATION.value
     death_cause: str | None = None
 
@@ -817,6 +826,11 @@ def _character_detail(
         jailed_until_tick=character.jailed_until_tick,
         jailed=(
             character.jailed_until_tick is not None and character.jailed_until_tick > current_tick
+        ),
+        passed_out_until_tick=character.passed_out_until_tick,
+        passed_out=(
+            character.passed_out_until_tick is not None
+            and character.passed_out_until_tick > current_tick
         ),
         rp_mode=character.rp_mode,
         death_cause=character.death_cause,
@@ -1745,6 +1759,7 @@ def build_work_router(*, session_factory: async_sessionmaker[AsyncSession] | Non
             current_tick = await _current_tick(session)
             try:
                 jail_svc.check_not_jailed(character, current_tick, "work_jailed")
+                exhaustion_svc.check_not_passed_out(character, current_tick, "work_passed_out")
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
 
@@ -1945,7 +1960,8 @@ def build_blackmarket_router(
             trusted = False
             try:
                 fence = blackmarket_svc.resolve_fence(district.id, content.npcs)
-                await blackmarket_svc.check_can_trade(session, character, fence)
+                current_tick = await _current_tick(session)
+                await blackmarket_svc.check_can_trade(session, character, fence, current_tick)
                 trusted = True
             except ServiceError:
                 trusted = False
@@ -3972,6 +3988,15 @@ class StaffEngagementTimeoutResponse(BaseModel):
     minutes: int
 
 
+class StaffExhaustionDurationRequest(BaseModel):
+    discord_id: int
+    ticks: int
+
+
+class StaffExhaustionDurationResponse(BaseModel):
+    ticks: int
+
+
 class StaffCrackdownRequest(BaseModel):
     discord_id: int
     district_id: int
@@ -5027,6 +5052,31 @@ def build_staff_router(
                 )
             )
         return StaffEngagementTimeoutResponse(minutes=body.minutes)
+
+    @router.post("/exhaustion/duration", response_model=StaffExhaustionDurationResponse)
+    async def set_exhaustion_duration(
+        body: StaffExhaustionDurationRequest,
+    ) -> StaffExhaustionDurationResponse:
+        await _require_staff(body.discord_id)
+        if body.ticks < 1:
+            raise HTTPException(status_code=400, detail="invalid_ticks")
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            settings_row = await session.get(ExhaustionSettings, 1)
+            if settings_row is None:
+                settings_row = ExhaustionSettings(id=1, passed_out_ticks=body.ticks)
+                session.add(settings_row)
+            else:
+                settings_row.passed_out_ticks = body.ticks
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="exhaustion_set_duration",
+                    target="exhaustion_settings",
+                    payload={"ticks": body.ticks},
+                )
+            )
+        return StaffExhaustionDurationResponse(ticks=body.ticks)
 
     @router.get("/district/{district_id}", response_model=StaffDistrictStateResponse)
     async def district_state(district_id: int, discord_id: int) -> StaffDistrictStateResponse:

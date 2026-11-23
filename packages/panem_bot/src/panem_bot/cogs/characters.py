@@ -1455,6 +1455,11 @@ class CharacterCog(commands.Cog):
             jailed_value = (
                 f"Until {clock_string(row.jailed_until_tick)}" if row.jailed_until_tick else "No"
             )
+            passed_out_value = (
+                f"Until {clock_string(row.passed_out_until_tick)}"
+                if row.passed_out_until_tick
+                else "No"
+            )
             active_afflictions = (
                 await session.execute(
                     select(CharacterAffliction, AfflictionType)
@@ -1484,6 +1489,7 @@ class CharacterCog(commands.Cog):
         embed.add_field(name="Location", value=location_name)
         embed.add_field(name="Reputation", value=f"{row.reputation:.1f}")
         embed.add_field(name="Jailed", value=jailed_value)
+        embed.add_field(name="Passed Out", value=passed_out_value)
         if row.positions:
             embed.add_field(
                 name="Positions", value=", ".join(p.title() for p in sorted(row.positions))

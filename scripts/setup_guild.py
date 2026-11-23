@@ -31,6 +31,17 @@ guild-wide staff role, approval channel, and log channel in their own
 name, but `.env`'s `CAPITOL_ROLE_ID` / `DISTRICT_N_ROLE_ID` (see
 `.env.example`) can point it at an existing role instead.
 
+Also creates (or finds, if it already exists) a guild-wide "Roleplay"
+role -- a separate opt-in from a district role, so a member assigned a
+district role (via Discord's own Onboarding) doesn't automatically see
+every roleplay channel unless they actually want to roleplay. This
+script prints its id at the end to paste into `.env` as
+`ROLEPLAY_ROLE_ID` (same as `APPROVAL_CHANNEL_ID`/`LOG_CHANNEL_ID`
+below); nothing is unlocked to it automatically -- run `/staff channel
+unlock-all` once setup is otherwise finished (content proofed, district
+forums ready) to open every district's forum and `#ooc` up to it in one
+shot, or `/staff channel unlock` per channel for finer control.
+
 Per-district categories from the Plan's original layout are intentionally
 not created: a single guild-wide OOC channel with player-made threads
 covers OOC chat without 13 near-empty channels. The board is a thread
@@ -76,6 +87,7 @@ CLOSED_TAG = "Closed"
 BOARD_TAG = "Board"
 BOARD_THREAD_NAME = "Board"
 RP_CATEGORY_NAME = "Roleplay"
+ROLEPLAY_ROLE_NAME = "Roleplay"
 OOC_CHANNEL_NAME = "ooc"
 STAFF_CATEGORY_NAME = "Panem Staff"
 APPROVAL_CHANNEL_NAME = "character-approvals"
@@ -529,6 +541,21 @@ async def run(settings: Settings) -> None:
                 staff_role = await ensure_role(guild, "Panem Staff")
                 await setup_staff_channels(session, guild, staff_role)
             logger.info("staff_channels_committed")
+
+            # A separate opt-in from any district role -- holding a district
+            # role alone (assigned via Discord's own Onboarding) shouldn't
+            # mean automatically seeing every roleplay channel. Not unlocked
+            # to anything here; `/staff channel unlock-all` (or `unlock` per
+            # channel) does that once staff are ready.
+            roleplay_role = await ensure_role(guild, ROLEPLAY_ROLE_NAME)
+            logger.info(
+                "roleplay_role_ready",
+                role_id=roleplay_role.id,
+                hint=(
+                    "put this ID in .env as ROLEPLAY_ROLE_ID, then run /staff channel "
+                    "unlock-all once setup is otherwise finished"
+                ),
+            )
 
             async with session_factory() as session, session.begin():
                 rp_category = await setup_roleplay_category(session, guild, staff_role)

@@ -35,6 +35,7 @@ from panem_shared.crime_log import record_crime_log
 from panem_shared.db.models import Character, DistrictState, Inventory, Shipment
 from panem_shared.enums import CharacterStatus, OwnerKind, RpMode
 from panem_shared.errors import NotAllowed, NotFound
+from panem_shared.exhaustion import check_not_passed_out
 from panem_shared.jail import (
     check_not_jailed,
     commit_to_jail,
@@ -90,6 +91,7 @@ def check_can_steal_shipment(character: Character, shipment: Shipment, current_t
     if character.crime_enabled is False:
         raise NotAllowed("crime_disabled_by_actor", name=character.name)
     check_not_jailed(character, current_tick, "shipment_jailed")
+    check_not_passed_out(character, current_tick, "shipment_passed_out")
     if (
         character.current_district_id != shipment.district_id
         or character.location_id != shipment.location_id

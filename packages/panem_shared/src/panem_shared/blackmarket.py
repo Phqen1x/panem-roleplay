@@ -41,6 +41,7 @@ from panem_shared.db.models import (
 )
 from panem_shared.enums import CharacterStatus, DayPhase, LocationKind, OwnerKind, RpMode, Stance
 from panem_shared.errors import NotAllowed, NotFound
+from panem_shared.exhaustion import check_not_passed_out
 from panem_shared.jail import commit_to_jail, crackdown_bad_odds
 from panem_shared.relationships import relationship_key
 from panem_shared.simtime import current as current_time
@@ -96,7 +97,9 @@ def resolve_black_market_location(
     return location
 
 
-async def check_can_trade(session: AsyncSession, character: Character, fence: NpcContent) -> None:
+async def check_can_trade(
+    session: AsyncSession, character: Character, fence: NpcContent, current_tick: int
+) -> None:
     """Raises `NotAllowed` unless `character` is approved and has good
     relations (`TRUSTED_STANCES`) with `fence` specifically -- a stranger
     to the fence, or someone they merely tolerate, gets nothing."""
@@ -104,6 +107,7 @@ async def check_can_trade(session: AsyncSession, character: Character, fence: Np
         raise NotAllowed("character_not_approved")
     if character.rp_mode == RpMode.STORY.value:
         raise NotAllowed("market_mode_forbidden", name=character.name)
+    check_not_passed_out(character, current_tick, "blackmarket_passed_out")
     key = relationship_key(
         (OwnerKind.CHARACTER.value, str(character.id)), (OwnerKind.NPC.value, fence.id)
     )
@@ -219,7 +223,7 @@ async def buy(
 ) -> BlackMarketTradeResult:
     resolve_black_market_location(character, district, tick)
     fence = resolve_fence(district.id, npcs)
-    await check_can_trade(session, character, fence)
+    await check_can_trade(session, character, fence, tick)
     good = resolve_good(district, goods, good_id)
     price = await get_price(session, district.id, good)
     total = round(qty * price)
@@ -263,7 +267,7 @@ async def sell(
 ) -> BlackMarketTradeResult:
     resolve_black_market_location(character, district, tick)
     fence = resolve_fence(district.id, npcs)
-    await check_can_trade(session, character, fence)
+    await check_can_trade(session, character, fence, tick)
     good = resolve_good(district, goods, good_id)
     price = await get_price(session, district.id, good) * constants.SELL_DISCOUNT
     total = round(qty * price)

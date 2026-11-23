@@ -34,6 +34,7 @@ from panem_shared.db.models import (
     Character,
     CharacterAffliction,
     DistrictState,
+    ExhaustionSettings,
     MarketPrice,
     Memory,
     Npc,
@@ -113,6 +114,7 @@ async def _load_state(session: AsyncSession) -> tuple[WorldState, WorldClock]:
             await session.execute(select(Shipment).where(Shipment.expires_tick > clock.tick))
         ).scalars()
     }
+    exhaustion_settings = await session.get(ExhaustionSettings, 1)
     affliction_types = list((await session.execute(select(AfflictionType))).scalars())
     active_afflictions: dict[int, list[CharacterAffliction]] = {}
     for affliction_row in (
@@ -140,6 +142,7 @@ async def _load_state(session: AsyncSession) -> tuple[WorldState, WorldClock]:
         shipments=shipments,
         affliction_types=affliction_types,
         active_afflictions=active_afflictions,
+        exhaustion_settings=exhaustion_settings,
     )
     return state, clock
 

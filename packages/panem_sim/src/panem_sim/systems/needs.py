@@ -19,8 +19,10 @@ Two cadences now, not one:
   cadence: `NIGHTLY_LIVING_COST` (now a plain money deduction when
   affordable -- it no longer drives hunger, since real inventory-based
   eating does that job now), fatigue-exhaustion (checked against the
-  day's fatigue *before* the restoration below), the midnight fatigue
-  restoration itself (`panem_shared.housing.
+  day's fatigue *before* the restoration below -- bottoming out passes
+  the character out, `panem_shared.exhaustion.apply_passed_out`, for a
+  staff-configurable duration rather than docking health), the midnight
+  fatigue restoration itself (`panem_shared.housing.
   apply_nightly_fatigue_restoration` -- no `/sleep` button anymore;
   everyone rests automatically at the sim-day rollover, by an amount
   that depends on housing status: owned home > leased apartment > a
@@ -56,6 +58,7 @@ from panem_shared.afflictions import (
 from panem_shared.db.models import Character, Npc
 from panem_shared.enums import RpMode
 from panem_shared.events import AnyWorldEvent, CharacterDied
+from panem_shared.exhaustion import apply_passed_out, passed_out_duration_ticks
 from panem_shared.housing import apply_nightly_fatigue_restoration
 from panem_sim.state import TickContext, WorldState
 
@@ -99,11 +102,15 @@ def _apply_character_nightly_needs(character: Character, state: WorldState, day_
     if character.fatigue <= constants.FATIGUE_EXHAUSTION_THRESHOLD:
         # Checked against *tonight's* fatigue, before the midnight
         # restoration just below applies -- still too exhausted from the
-        # day's work/RP to make it through the night unscathed, an
-        # independent need with its own threshold and penalty.
-        character.health = max(
-            constants.HEALTH_MIN, character.health - constants.FATIGUE_EXHAUSTION_HEALTH_PENALTY
-        )
+        # day's work/RP to make it through the night unscathed. Passes the
+        # character out (`passed_out_until_tick`) rather than docking
+        # health: this only ever runs on a day boundary
+        # (`ctx.tick % TICKS_PER_DAY == 0`), so `(day_index + 1) *
+        # TICKS_PER_DAY` recovers the real tick without needing it passed
+        # in separately.
+        current_tick = (day_index + 1) * constants.TICKS_PER_DAY
+        duration = passed_out_duration_ticks(state.exhaustion_settings)
+        apply_passed_out(character, duration, current_tick)
 
     home_property = (
         state.properties.get(character.housing_property_id)

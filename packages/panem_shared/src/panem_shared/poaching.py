@@ -36,6 +36,7 @@ from panem_shared.crime_log import record_crime_log
 from panem_shared.db.models import Character, DistrictState, Inventory
 from panem_shared.enums import CharacterStatus, DayPhase, LocationKind, OwnerKind, RpMode
 from panem_shared.errors import NotAllowed, NotFound
+from panem_shared.exhaustion import check_not_passed_out
 from panem_shared.jail import check_not_jailed, commit_to_jail
 from panem_shared.simtime import TICKS_PER_PHASE
 from panem_shared.simtime import current as current_time
@@ -99,6 +100,7 @@ def check_can_poach(
     if character.rp_mode == RpMode.STORY.value:
         raise NotAllowed("crime_mode_forbidden", name=character.name)
     check_not_jailed(character, current_tick, "poach_jailed")
+    check_not_passed_out(character, current_tick, "poach_passed_out")
     location = resolve_outskirts(district)
     if character.location_id != location.id:
         raise NotAllowed("poach_not_at_outskirts", name=character.name, location=location.name)

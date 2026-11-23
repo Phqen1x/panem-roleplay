@@ -46,6 +46,7 @@ STRINGS: dict[str, str] = {
     "proxy_no_access": "**{name}** can't be here: {reason}.",
     "proxy_character_dead": "dead",
     "proxy_character_jailed": "jailed",
+    "proxy_passed_out": "passed out from exhaustion",
     "proxy_location_restricted": "no access to this location",
     "proxy_wrong_district": "not assigned to or currently in this district",
     "proxy_not_traveled": "hasn't traveled to this location yet",
@@ -67,6 +68,7 @@ STRINGS: dict[str, str] = {
     "where_ok": "**{name}** is at **{location}** ({district}).",
     "travel_pick_one": "Give either `location` or `district`, not both or neither.",
     "travel_jailed": "**{name}** is locked up and isn't going anywhere.",
+    "travel_passed_out": "**{name}** has passed out from exhaustion and isn't going anywhere.",
     "travel_already_in_transit": "**{name}** is already on a train -- check `/character status`.",
     "travel_same_district": "**{name}** is already there.",
     "travel_not_at_station": "**{name}** needs to be at **{station}** to catch a train.",
@@ -84,6 +86,7 @@ STRINGS: dict[str, str] = {
     "job_none_set": "**{name}** doesn't have a job set -- ask staff to set one with "
     "`/staff give job`.",
     "work_jailed": "**{name}** is locked up and can't work a shift.",
+    "work_passed_out": "**{name}** has passed out from exhaustion and can't work a shift.",
     "job_no_open_shift": "**{name}** doesn't have a shift open right now.",
     "job_wrong_district": "**{name}** isn't in their home district right now and can't work "
     "this shift -- come back once you've returned home.",
@@ -136,6 +139,7 @@ STRINGS: dict[str, str] = {
     "poach_nothing_to_poach": "There's nothing worth poaching here.",
     "poach_on_cooldown": "**{name}** already tried poaching this phase of the day.",
     "poach_jailed": "**{name}** is locked up and can't go poaching.",
+    "poach_passed_out": "**{name}** has passed out from exhaustion and can't go poaching.",
     "poach_ok": "**{name}** slips back with {qty}x {good}, unseen.",
     "poach_miss": "**{name}** can't land the shot and comes back empty-handed.",
     "poach_game_ready": "**{name}** nocks an arrow at the treeline -- go make the shot!",
@@ -171,6 +175,12 @@ STRINGS: dict[str, str] = {
         "**{name}** is in Life mode, which has no housing access -- burglary isn't available."
     ),
     "market_mode_forbidden": "**{name}** is in Story mode and has no access to the markets.",
+    "market_passed_out": (
+        "**{name}** has passed out from exhaustion and can't buy or sell right now."
+    ),
+    "blackmarket_passed_out": (
+        "**{name}** has passed out from exhaustion and can't trade right now."
+    ),
     "housing_mode_forbidden": (
         "**{name}** doesn't have access to the housing system in their current RP mode."
     ),
@@ -245,6 +255,7 @@ STRINGS: dict[str, str] = {
     "steal_not_here": "**{name}** needs to be at the same location as the mark to try this.",
     "steal_on_cooldown": "**{name}** already tried to steal something this phase of the day.",
     "steal_jailed": "**{name}** is locked up and can't try that.",
+    "steal_passed_out": "**{name}** has passed out from exhaustion and can't try that.",
     "steal_ok": "**{name}** lifts {amount}x {good} off {target}, unnoticed.",
     "steal_miss": "**{name}** comes up empty-handed -- and, as far as they can tell, unnoticed.",
     "steal_alerted_escape": "**{name}** is spotted going for {target}'s pocket -- and bolts clear.",
@@ -255,6 +266,7 @@ STRINGS: dict[str, str] = {
     "steal_game_ready": "**{name}** eyes {target}'s pocket -- go make the lift!",
     "steal_already_tried": "This lift has already been tried!",
     "burgle_jailed": "**{name}** is locked up and can't try that.",
+    "burgle_passed_out": "**{name}** has passed out from exhaustion and can't try that.",
     "burgle_owner_not_found": "No character by that name owns a house here.",
     "burgle_not_a_house": "That property isn't a house.",
     "burgle_wrong_district": "**{name}** needs to be in the house's district to break in.",
@@ -272,6 +284,7 @@ STRINGS: dict[str, str] = {
     # Shipment heists (contraband system: /shipment)
     "shipment_none_here": "There's no shipment sitting here right now.",
     "shipment_jailed": "**{name}** is locked up and can't try that.",
+    "shipment_passed_out": "**{name}** has passed out from exhaustion and can't try that.",
     "shipment_not_here": "**{name}** needs to be at the shipment's location to try this.",
     "shipment_gone": "The peacekeepers already cleared that shipment out.",
     "shipment_ok": "**{name}** slips {amount}x {good} off the shipment before anyone notices.",

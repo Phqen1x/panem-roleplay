@@ -11,6 +11,7 @@ from panem_shared.constants import PROXY_MESSAGE_MAX_LEN
 from panem_shared.content.schemas import District, Location
 from panem_shared.db.models import Character, Npc, Scene
 from panem_shared.enums import CharacterStatus, Position, RpMode, SceneKind
+from panem_shared.exhaustion import is_passed_out
 from panem_shared.jail import find_jail_location
 from panem_shared.location_access import has_location_access as has_location_access
 
@@ -163,6 +164,10 @@ def check_can_proxy(
         ):
             return ProxyRefusal("proxy_character_jailed")
         return None
+    if is_passed_out(character, current_tick):
+        # Unlike jail, no location carve-out -- passing out has no in-
+        # fiction "cell" a character could still be roleplayed in.
+        return ProxyRefusal("proxy_passed_out")
     if not can_rp_in_district(character, district.id):
         return ProxyRefusal("proxy_wrong_district")
 
