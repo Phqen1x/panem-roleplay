@@ -38,11 +38,12 @@ from panem_shared.db.models import (
     AfflictionType,
     Character,
     CharacterAffliction,
+    DiscordChannel,
     Shift,
     User,
     WorldClock,
 )
-from panem_shared.enums import CharacterStatus, DayPhase, RpMode, ShiftResult
+from panem_shared.enums import ChannelKind, CharacterStatus, DayPhase, RpMode, ShiftResult
 from panem_shared.logging import get_logger
 from panem_shared.redis_keys import CHARACTER_MODE_SWITCH_PENDING_CHANNEL, CHARACTER_PENDING_CHANNEL
 from panem_shared.simtime import clock_string, phase_time_range
@@ -124,16 +125,16 @@ class CharacterCog(commands.Cog):
     group = app_commands.Group(name="character", description="Manage your characters")
 
     @group.command(name="create", description="Create a new character")
-    async def create(self, interaction: discord.Interaction) -> None:
+    @app_commands.describe(district="Which district to create this character in")
+    @app_commands.autocomplete(district=autocomplete.districts)
+    async def create(self, interaction: discord.Interaction, district: int) -> None:
         assert interaction.guild is not None
         assert isinstance(interaction.user, discord.Member)
 
-        matches = self.bot.districts_for_member(interaction.user)
-        if len(matches) != 1:
-            key = "no_district_role" if not matches else "ambiguous_district_role"
-            await interaction.response.send_message(t(key), ephemeral=True)
+        if district not in self.bot.content.districts:
+            await interaction.response.send_message(t("invalid_district"), ephemeral=True)
             return
-        district_id = matches[0]
+        district_id = district
 
         async with self.bot.db() as session:
             user = await characters_svc.get_or_create_user(session, interaction.user.id)
@@ -681,7 +682,16 @@ class CharacterCog(commands.Cog):
                 await interaction.response.send_message("Already handled.", ephemeral=True)
                 return
             user = await session.get(User, character.user_id)
-            char_name, discord_id = character.name, user.discord_id
+            char_name, discord_id, district_id = character.name, user.discord_id, district.id
+            forum_row = (
+                await session.execute(
+                    select(DiscordChannel).where(
+                        DiscordChannel.district_id == district_id,
+                        DiscordChannel.kind == ChannelKind.FORUM.value,
+                    )
+                )
+            ).scalar_one_or_none()
+            forum_channel_id = forum_row.channel_id if forum_row is not None else None
 
         await self._disable_approval_message(interaction, f"Approved by {interaction.user.mention}")
         await interaction.response.send_message(f"Approved **{char_name}**.", ephemeral=True)
@@ -694,6 +704,67 @@ class CharacterCog(commands.Cog):
                 await member.send(
                     t("character_approved_dm", name=char_name, district=district.name)
                 )
+            await self._grant_district_forum_access(
+                guild,
+                member=member,
+                forum_channel_id=forum_channel_id,
+                character_id=character_id,
+                district_id=district_id,
+                char_name=char_name,
+            )
+
+    async def _grant_district_forum_access(
+        self,
+        guild: discord.Guild,
+        *,
+        member: discord.Member,
+        forum_channel_id: int | None,
+        character_id: int,
+        district_id: int,
+        char_name: str,
+    ) -> None:
+        """Per-user, not per-role: there's no district role anymore for a
+        channel's own overwrites to key off of (see the module docstring),
+        so an approved character's own district forum grants its member
+        view+post access directly, same permission shape `/staff channel
+        unlock` grants a role -- except this one is only ever view+post
+        for exactly this one member on exactly this one forum, never a
+        standing role-wide grant. A role unlocked onto the forum (e.g. the
+        configured roleplay role, `ROLEPLAY_ROLE_ID`) still only ever gives
+        *view* access (`StaffCog.channel_unlock`/`channel_unlock_all`) --
+        posting stays exclusively this per-member path."""
+        if forum_channel_id is None:
+            logger.warning(
+                "character_approve_forum_not_registered",
+                character_id=character_id,
+                district_id=district_id,
+            )
+            return
+        forum = guild.get_channel(forum_channel_id)
+        if forum is None:
+            logger.warning(
+                "character_approve_forum_missing",
+                character_id=character_id,
+                district_id=district_id,
+                channel_id=forum_channel_id,
+            )
+            return
+        overwrite = forum.overwrites_for(member)
+        overwrite.view_channel = True
+        overwrite.send_messages = True
+        overwrite.send_messages_in_threads = True
+        try:
+            await forum.set_permissions(
+                member,
+                overwrite=overwrite,
+                reason=f"Character approved: {char_name}",
+            )
+        except discord.HTTPException:
+            logger.warning(
+                "character_approve_forum_grant_failed",
+                character_id=character_id,
+                district_id=district_id,
+            )
 
     async def _handle_changes(
         self, interaction: discord.Interaction, character_id: int, note: str

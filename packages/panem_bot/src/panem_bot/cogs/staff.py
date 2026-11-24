@@ -929,12 +929,10 @@ class StaffCog(commands.Cog):
 
     # --------------------------------------------------------------- channel
 
-    @channel_group.command(
-        name="unlock", description="Let a role see (and post in) a channel or forum"
-    )
+    @channel_group.command(name="unlock", description="Let a role see a channel or forum")
     @app_commands.describe(
         channel="The channel, forum, or category to unlock",
-        role="The role to grant view/post access to",
+        role="The role to grant view access to",
     )
     @app_commands.check(_is_staff)
     async def channel_unlock(
@@ -943,6 +941,9 @@ class StaffCog(commands.Cog):
         channel: discord.abc.GuildChannel | discord.Thread,
         role: discord.Role,
     ) -> None:
+        """View-only: a role is never granted posting access this way --
+        only a specific approved member is, automatically, to their own
+        character's district forum (`characters.py::_handle_approve`)."""
         target = channel.parent if isinstance(channel, discord.Thread) else channel
         if target is None:
             await interaction.response.send_message(
@@ -951,9 +952,6 @@ class StaffCog(commands.Cog):
             return
         overwrite = target.overwrites_for(role)
         overwrite.view_channel = True
-        overwrite.send_messages = True
-        if isinstance(target, discord.ForumChannel):
-            overwrite.send_messages_in_threads = True
         await target.set_permissions(
             role,
             overwrite=overwrite,
@@ -969,13 +967,13 @@ class StaffCog(commands.Cog):
                 payload={"role_id": role.id},
             )
         await interaction.response.send_message(
-            f"{role.mention} can now see and post in {target.mention}.", ephemeral=True
+            f"{role.mention} can now see {target.mention}.", ephemeral=True
         )
 
     @channel_group.command(name="lock", description="Hide a channel or forum from a role again")
     @app_commands.describe(
         channel="The channel, forum, or category to lock",
-        role="The role to revoke view/post access from",
+        role="The role to revoke view access from",
     )
     @app_commands.check(_is_staff)
     async def channel_lock(
@@ -1014,10 +1012,10 @@ class StaffCog(commands.Cog):
 
     @channel_group.command(
         name="unlock-all",
-        description="Let a role see (and post in) every registered roleplay channel at once",
+        description="Let a role see every registered roleplay channel at once",
     )
     @app_commands.describe(
-        role="The role to grant view/post access to (defaults to the configured roleplay role)"
+        role="The role to grant view access to (defaults to the configured roleplay role)"
     )
     @app_commands.check(_is_staff)
     async def channel_unlock_all(
@@ -1031,7 +1029,9 @@ class StaffCog(commands.Cog):
         thread-to-parent resolution relies on, so it needs no entry of its
         own here). Meant to be run once, right after setup, to open the
         whole server to the "Roleplay" role in a single command instead of
-        unlocking each district's forum by hand."""
+        unlocking each district's forum by hand. View-only, like `channel_
+        unlock` -- posting access is granted per-member, automatically, on
+        character approval (`characters.py::_handle_approve`)."""
         guild = interaction.guild
         if guild is None:
             await interaction.response.send_message(t("staff_only"), ephemeral=True)
@@ -1072,9 +1072,6 @@ class StaffCog(commands.Cog):
                     continue
                 overwrite = target.overwrites_for(resolved_role)
                 overwrite.view_channel = True
-                overwrite.send_messages = True
-                if isinstance(target, discord.ForumChannel):
-                    overwrite.send_messages_in_threads = True
                 await target.set_permissions(
                     resolved_role,
                     overwrite=overwrite,
@@ -1090,7 +1087,7 @@ class StaffCog(commands.Cog):
                 payload={"unlocked_channel_ids": unlocked, "missing_channel_ids": missing},
             )
 
-        summary = f"{resolved_role.mention} can now see and post in {len(unlocked)} channel(s)."
+        summary = f"{resolved_role.mention} can now see {len(unlocked)} channel(s)."
         if missing:
             summary += (
                 f" {len(missing)} registered channel(s) no longer exist in this guild and "

@@ -13,9 +13,7 @@ guild not yet re-run through that script since it started creating the
 `Board` thread (or a `discord_channels` row left pointing at a deleted
 thread) falls back to a loudly logged no-op / a caught, logged send
 failure rather than crashing the tick loop -- re-running `setup_guild.py`
-is idempotent and fixes both. `CharacterArrived` isn't a message at all
--- it's how `panem_sim` tells the bot a cross-district trip finished, so
-this can grant/revoke the "visitor" district role directly (FR-LOC-9).
+is idempotent and fixes both.
 
 Also subscribes to Redis `SIM_ALERTS_CHANNEL` (`panem_shared.redis_keys`)
 and forwards whatever `panem_sim` publishes there straight to
@@ -55,7 +53,6 @@ from panem_shared.enums import ChannelKind, SceneKind
 from panem_shared.events import (
     WORLD_EVENTS_CHANNEL,
     Bulletin,
-    CharacterArrived,
     CharacterDied,
     NarrationLine,
     NpcChatter,
@@ -296,71 +293,11 @@ async def _handle_npc_chatter(bot: PanemBot, event: NpcChatter) -> None:
         )
 
 
-async def _resolve_district_role(
-    bot: PanemBot, guild: discord.Guild, district_id: int
-) -> discord.Role | None:
-    """Finds (never creates -- that's `scripts/setup_guild.py`'s job) the
-    role gating that district's forum: the `.env` override if set,
-    otherwise the role named after it, matching `setup_guild.py`'s own
-    `ensure_district_role` resolution order."""
-    override_id = bot.settings.role_id_override_for_district(district_id)
-    if override_id:
-        return guild.get_role(override_id)
-    district = bot.content.districts.get(district_id)
-    if district is None:
-        return None
-    return discord.utils.get(guild.roles, name=district.name)
-
-
-async def _handle_character_arrived(bot: PanemBot, event: CharacterArrived) -> None:
-    """FR-LOC-9: grant the destination district's role and drop the
-    origin's, for whichever of the two isn't the character's home
-    district (`Character.district_id`) -- the bot never grants or
-    revokes a character's home role itself (Discord onboarding is the
-    only path there, see the README), only the temporary "visiting
-    somewhere else" state this event represents. Not routed through
-    `OutboundQueue`: that queue paces *messages* per-thread, and a role
-    edit isn't one."""
-    guild = bot.get_guild(bot.settings.discord_guild_id)
-    if guild is None:
-        logger.warning("character_arrived_no_guild", character_id=event.character_id)
-        return
-
-    async with bot.db() as session:
-        character = await session.get(Character, event.character_id)
-        user = await session.get(User, character.user_id) if character is not None else None
-
-    if character is None or user is None:
-        logger.warning("character_arrived_no_character", character_id=event.character_id)
-        return
-
-    member = guild.get_member(user.discord_id)
-    if member is None:
-        try:
-            member = await guild.fetch_member(user.discord_id)
-        except discord.HTTPException:
-            logger.warning("character_arrived_no_member", character_id=event.character_id)
-            return
-
-    home_id = character.district_id
-    try:
-        if event.origin_district_id != home_id:
-            origin_role = await _resolve_district_role(bot, guild, event.origin_district_id)
-            if origin_role is not None and origin_role in member.roles:
-                await member.remove_roles(origin_role, reason="Panem travel: departed")
-        if event.district_id != home_id:
-            destination_role = await _resolve_district_role(bot, guild, event.district_id)
-            if destination_role is not None:
-                await member.add_roles(destination_role, reason="Panem travel: visiting")
-    except discord.HTTPException:
-        logger.warning("character_arrived_role_swap_failed", character_id=event.character_id)
-
-
 async def _handle_character_died(bot: PanemBot, event: CharacterDied) -> None:
     """A Simulation-mode character's `health` bottomed out
     (`panem_sim.systems.needs`/`apply_auto_death`) -- DM the owner so a
     death that happened with nobody watching the tick doesn't go
-    unnoticed, matching `CharacterArrived`'s guild/member lookup."""
+    unnoticed."""
     guild = bot.get_guild(bot.settings.discord_guild_id)
     if guild is None:
         logger.warning("character_died_no_guild", character_id=event.character_id)
@@ -398,8 +335,6 @@ async def _dispatch(bot: PanemBot, raw: Any) -> None:
         await _handle_narration(bot, event)
     elif isinstance(event, Bulletin):
         await _handle_bulletin(bot, event)
-    elif isinstance(event, CharacterArrived):
-        await _handle_character_arrived(bot, event)
     elif isinstance(event, NpcChatter):
         await _handle_npc_chatter(bot, event)
     elif isinstance(event, CharacterDied):

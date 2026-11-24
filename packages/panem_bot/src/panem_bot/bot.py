@@ -165,23 +165,12 @@ class PanemBot(commands.Bot):
                 await interaction.response.send_message(message, ephemeral=True)
 
     async def is_staff(self, member: discord.Member) -> bool:
-        return any(role.id == self.settings.staff_role_id for role in member.roles)
-
-    def districts_for_member(self, member: discord.Member) -> list[int]:
-        """Every district (or Capitol) role this member holds, resolved the
-        same way `setup_guild.py` resolves a district's role: an `.env`
-        `CAPITOL_ROLE_ID` / `DISTRICT_N_ROLE_ID` override by id if set,
-        otherwise a role named after the district. Members pick their
-        district role during onboarding, so this -- not a menu at character
-        creation -- is what a character's district is allowed to be."""
-        member_role_ids = {role.id for role in member.roles}
-        matches: list[int] = []
-        for district in self.content.districts.values():
-            override_id = self.settings.role_id_override_for_district(district.id)
-            if override_id:
-                if override_id in member_role_ids:
-                    matches.append(district.id)
-                continue
-            if discord.utils.get(member.roles, name=district.name) is not None:
-                matches.append(district.id)
-        return matches
+        """ "Panem staff" is an admin-configured set of specific roles and/or
+        specific members (`STAFF_ROLE_IDS`/`STAFF_USER_IDS`), not a single
+        auto-created role -- `scripts/setup_guild.py` no longer creates
+        one. Checking the member-id set first needs no role lookup at
+        all."""
+        if member.id in self.settings.staff_user_id_set():
+            return True
+        staff_role_ids = self.settings.staff_role_id_set()
+        return any(role.id in staff_role_ids for role in member.roles)

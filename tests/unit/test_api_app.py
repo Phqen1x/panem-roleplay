@@ -646,7 +646,7 @@ def staff_app(db_session_factory):
         session_factory=db_session_factory,
         discord_guild_id=999,
         discord_token="test-bot-token",
-        staff_role_id=777,
+        staff_role_ids=frozenset({777}),
         log_channel_id=0,
     )
     app.state.fake_redis = redis_client  # type: ignore[attr-defined]
@@ -667,7 +667,7 @@ def staff_market_app(db_session_factory):
         session_factory=db_session_factory,
         discord_guild_id=999,
         discord_token="test-bot-token",
-        staff_role_id=777,
+        staff_role_ids=frozenset({777}),
         log_channel_id=0,
     )
     app.state.fake_redis = redis_client  # type: ignore[attr-defined]
@@ -681,7 +681,7 @@ def _fake_member_response(role_ids: list[int]) -> httpx.Response:
 @pytest.fixture
 def donor_app(db_session_factory):
     """Same shape as `staff_app`, but configured with `donor_role_ids`
-    instead of `staff_role_id` -- for the dashboard theme (color-wheel)
+    instead of `staff_role_ids` -- for the dashboard theme (color-wheel)
     tests. `888` is this fixture's donor role id, mirroring `staff_app`'s
     `777` for the staff role."""
     content = make_content()
@@ -712,7 +712,7 @@ def staff_app_with_uploads(db_session_factory, tmp_path):
         session_factory=db_session_factory,
         discord_guild_id=999,
         discord_token="test-bot-token",
-        staff_role_id=777,
+        staff_role_ids=frozenset({777}),
         log_channel_id=0,
         static_dir=tmp_path,
     )

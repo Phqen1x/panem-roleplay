@@ -18,10 +18,6 @@ STRINGS: dict[str, str] = {
     "mastery_needs_value": "Provide either shifts_completed or level.",
     "invalid_shifts_completed": "shifts_completed must be zero or greater.",
     "invalid_district": "Not a valid district.",
-    "no_district_role": "You don't have a district role yet -- pick one during onboarding, or "
-    "ask staff to assign one, before creating a character.",
-    "ambiguous_district_role": "You have more than one district role, so it's not clear which "
-    "district to create a character in -- ask staff to fix your roles.",
     "character_not_found": "Character not found.",
     "character_not_yours": "That's not your character.",
     "character_not_approved": "That character isn't approved yet.",

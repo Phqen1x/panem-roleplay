@@ -161,23 +161,20 @@ runs inside a rolled-back savepoint.
 - **Approval/log channels** are read from `.env` (`APPROVAL_CHANNEL_ID`,
   `LOG_CHANNEL_ID`), matching the Plan's `.env` schema; `setup_guild.py`
   creates them and prints the ids to copy in.
-- **District roles** are looked up by exact name match (the district's
-  `name` field in its YAML) rather than a stored role id, unless a
-  `CAPITOL_ROLE_ID` / `DISTRICT_N_ROLE_ID` override is set in `.env` (see
-  `.env.example`), in which case `setup_guild.py` uses that existing role
-  instead of finding/creating one by name.
-- **A member's district role picks their character's district, not a
-  dropdown.** Members are expected to already hold exactly one district
-  role (via Discord's own onboarding flow) before running `/character
-  create`; the bot skips straight to the creation modal for that district.
-  Someone with no district role, or with more than one, is refused with a
-  message telling them why. The bot no longer grants or removes a
-  district role itself on approval/retirement — onboarding is the only
-  source of truth for who's in which district now. Add the district roles
-  `setup_guild.py` creates (or your own, if using the `_ROLE_ID`
-  overrides) as choosable options in Discord's own Server Settings →
-  Onboarding, ideally in a single-select group so members land in exactly
-  one.
+- **No district roles.** `setup_guild.py` creates no per-district role and
+  requires none: a member picks their character's district as a `/character
+  create` command parameter (autocompleted from `data/districts/*.yaml`),
+  not from a Discord role they're expected to already hold. On approval the
+  bot grants that specific member posting access to their own district's
+  forum directly (`characters.py::_handle_approve`) — no role swap, no
+  onboarding flow to configure.
+- **Staff is admin-configured roles/members, not a created role.**
+  `setup_guild.py` creates no "Panem Staff" role either; `.env`'s
+  `STAFF_ROLE_IDS`/`STAFF_USER_IDS` (comma-separated snowflake ids, see
+  `.env.example`) name whichever existing role(s) and/or specific member(s)
+  should count as staff (`Settings.staff_role_id_set`/`staff_user_id_set`,
+  `PanemBot.is_staff`). Set at least one before relying on any `/staff`
+  command — with both unset, every staff check fails closed.
 - **One active character per user by default.** `MAX_CHARACTERS_PER_USER`
   in `.env` sets the guild-wide default (1); staff can raise or lower it
   for one specific person with `/staff character_limit <user> [limit]`
@@ -460,19 +457,17 @@ Completes Phase 2 (Plan §5.5/5.6, FR-LOC-7/8/9, T-2.1).
   clock, but "is it time yet" for a character's journey has no more
   natural home among the fixed systems, and this avoids adding a new
   system to `FIXED_ORDER` for one `Character`-mutating step. On arrival
-  the character lands at the destination's station, a `CharacterArrived`
-  event (new `WorldEvent` kind) tells the bot to swap the district
-  "visitor" role, and a `NarrationLine` announces them there the same as
-  any other arrival.
-- **The bot never grants or revokes a character's home district role**,
-  only a temporary one for wherever they're currently visiting
-  (`narrator.py::_handle_character_arrived`) -- consistent with Phase 1's
-  choice to leave home-role assignment to Discord onboarding entirely.
-  Multi-hop travel (home → A → B) drops A's visitor role and grants B's;
-  the home role, whichever district that is, is never touched.
-  Role-swap failures (missing roles, permissions) are caught and logged,
-  not raised -- a guild not yet run through `setup_guild.py`'s role setup
-  shouldn't break the tick loop over it.
+  the character lands at the destination's station, and a `NarrationLine`
+  announces them there the same as any other arrival.
+- **(Superseded.) ~~A `CharacterArrived` event swapped a district
+  "visitor" role on travel~~** -- removed once district roles themselves
+  were removed (see the "No district roles" note under Setup):
+  `narrator.py::_handle_character_arrived` and the `CharacterArrived`
+  dispatch no longer exist. Access to a district's forum is no longer
+  role-based at all, so there's nothing for travel to swap; only the
+  approved member's own home-district posting grant
+  (`characters.py::_handle_approve`) matters, and it isn't touched by
+  travel.
 - **A shift missed while traveling is excused, not missed** (a new
   `Character.away_since_tick` column, migration `f3a1c9d7b4e2`): the
   existing `TRANSIT_TICKS`/`AWAY_GRACE_DAYS` constants were already in

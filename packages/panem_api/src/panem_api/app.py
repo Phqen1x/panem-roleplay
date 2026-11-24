@@ -390,7 +390,8 @@ def create_app(
     max_characters_per_user: int = 1,
     discord_guild_id: int = 0,
     discord_token: str = "",
-    staff_role_id: int = 0,
+    staff_role_ids: frozenset[int] = frozenset(),
+    staff_user_ids: frozenset[int] = frozenset(),
     donor_role_ids: frozenset[int] = frozenset(),
     log_channel_id: int = 0,
     roleplay_role_id: int = 0,
@@ -890,7 +891,8 @@ def create_app(
             content=content,
             discord_token=discord_token,
             discord_guild_id=discord_guild_id,
-            staff_role_id=staff_role_id,
+            staff_role_ids=staff_role_ids,
+            staff_user_ids=staff_user_ids,
             donor_role_ids=donor_role_ids,
         )
     )
@@ -932,7 +934,8 @@ def create_app(
             session_factory=session_factory,
             discord_token=discord_token,
             discord_guild_id=discord_guild_id,
-            staff_role_id=staff_role_id,
+            staff_role_ids=staff_role_ids,
+            staff_user_ids=staff_user_ids,
         )
     )
     app.include_router(build_housing_router(content=content, session_factory=session_factory))
@@ -943,7 +946,8 @@ def create_app(
             session_factory=session_factory,
             discord_token=discord_token,
             discord_guild_id=discord_guild_id,
-            staff_role_id=staff_role_id,
+            staff_role_ids=staff_role_ids,
+            staff_user_ids=staff_user_ids,
         )
     )
     app.include_router(build_museum_router(content=content, session_factory=session_factory))
@@ -953,7 +957,8 @@ def create_app(
             session_factory=session_factory,
             discord_token=discord_token,
             discord_guild_id=discord_guild_id,
-            staff_role_id=staff_role_id,
+            staff_role_ids=staff_role_ids,
+            staff_user_ids=staff_user_ids,
         )
     )
     app.include_router(
@@ -961,7 +966,8 @@ def create_app(
             session_factory=session_factory,
             discord_token=discord_token,
             discord_guild_id=discord_guild_id,
-            staff_role_id=staff_role_id,
+            staff_role_ids=staff_role_ids,
+            staff_user_ids=staff_user_ids,
         )
     )
     app.include_router(build_events_router(content=content, session_factory=session_factory))
@@ -971,7 +977,8 @@ def create_app(
             session_factory=session_factory,
             discord_token=discord_token,
             discord_guild_id=discord_guild_id,
-            staff_role_id=staff_role_id,
+            staff_role_ids=staff_role_ids,
+            staff_user_ids=staff_user_ids,
         )
     )
     app.include_router(
@@ -993,7 +1000,8 @@ def create_app(
             static_dir=static_dir or STATIC_DIR,
             discord_token=discord_token,
             discord_guild_id=discord_guild_id,
-            staff_role_id=staff_role_id,
+            staff_role_ids=staff_role_ids,
+            staff_user_ids=staff_user_ids,
             log_channel_id=log_channel_id,
             roleplay_role_id=roleplay_role_id,
         )
@@ -1003,7 +1011,8 @@ def create_app(
             session_factory=session_factory,
             discord_token=discord_token,
             discord_guild_id=discord_guild_id,
-            staff_role_id=staff_role_id,
+            staff_role_ids=staff_role_ids,
+            staff_user_ids=staff_user_ids,
         )
     )
     app.include_router(build_party_router())

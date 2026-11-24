@@ -339,7 +339,8 @@ async def _require_tab_access(
     tab_name: str,
     discord_token: str,
     discord_guild_id: int,
-    staff_role_id: int,
+    staff_role_ids: frozenset[int],
+    staff_user_ids: frozenset[int],
 ) -> None:
     """Server-side enforcement mirroring `/identify`'s `hidden_tabs`: a
     mutating action behind a `staff_only`/`disabled` tab (`/staff feature
@@ -355,7 +356,8 @@ async def _require_tab_access(
         discord_id,
         bot_token=discord_token,
         guild_id=discord_guild_id,
-        staff_role_id=staff_role_id,
+        staff_role_ids=staff_role_ids,
+        staff_user_ids=staff_user_ids,
     )
     state = await feature_flags_svc.get_state(session, feature_flags_svc.tab_key(tab_name))
     if not feature_flags_svc.is_allowed(state, is_staff=is_staff):
@@ -368,7 +370,8 @@ def build_identify_router(
     content: ContentBundle | None = None,
     discord_token: str = "",
     discord_guild_id: int = 0,
-    staff_role_id: int = 0,
+    staff_role_ids: frozenset[int] = frozenset(),
+    staff_user_ids: frozenset[int] = frozenset(),
     donor_role_ids: frozenset[int] = frozenset(),
 ) -> APIRouter:
     router = APIRouter(prefix="/activity/dashboard", tags=["dashboard"])
@@ -396,7 +399,8 @@ def build_identify_router(
             body.discord_id,
             bot_token=discord_token,
             guild_id=discord_guild_id,
-            staff_role_id=staff_role_id,
+            staff_role_ids=staff_role_ids,
+            staff_user_ids=staff_user_ids,
         )
         is_donor = await discord_staff.fetch_has_any_role(
             body.discord_id,
@@ -2254,7 +2258,8 @@ def build_residents_router(
     session_factory: async_sessionmaker[AsyncSession] | None,
     discord_token: str = "",
     discord_guild_id: int = 0,
-    staff_role_id: int = 0,
+    staff_role_ids: frozenset[int] = frozenset(),
+    staff_user_ids: frozenset[int] = frozenset(),
 ) -> APIRouter:
     """The Residents tab's REST surface: mirrors `/resident list|where|
     profile`. Unlike the split Discord commands, `list` here already
@@ -2262,7 +2267,7 @@ def build_residents_router(
     spirit as the Crime tab's burgle-targets -- avoiding a second
     request per NPC the dashboard would otherwise need to make).
 
-    `discord_token`/`discord_guild_id`/`staff_role_id` back a real (not
+    `discord_token`/`discord_guild_id`/`staff_role_ids`/`staff_user_ids` back a real (not
     cosmetic) `discord_staff.fetch_is_staff` check in both routes below,
     to decide `is_black_market_contact` -- unlike `/identify`'s own
     `is_staff` (UI-only, re-checked at the actual point of write), this
@@ -2276,7 +2281,8 @@ def build_residents_router(
             discord_id,
             bot_token=discord_token,
             guild_id=discord_guild_id,
-            staff_role_id=staff_role_id,
+            staff_role_ids=staff_role_ids,
+            staff_user_ids=staff_user_ids,
         )
 
     async def _resolve_npc(session: AsyncSession, character: Character, name: str) -> Npc:
@@ -4300,7 +4306,8 @@ def build_staff_router(
     static_dir: Path,
     discord_token: str = "",
     discord_guild_id: int = 0,
-    staff_role_id: int = 0,
+    staff_role_ids: frozenset[int] = frozenset(),
+    staff_user_ids: frozenset[int] = frozenset(),
     log_channel_id: int = 0,
     roleplay_role_id: int = 0,
 ) -> APIRouter:
@@ -4321,7 +4328,8 @@ def build_staff_router(
             discord_id,
             bot_token=discord_token,
             guild_id=discord_guild_id,
-            staff_role_id=staff_role_id,
+            staff_role_ids=staff_role_ids,
+            staff_user_ids=staff_user_ids,
         )
         if not ok:
             raise HTTPException(status_code=403, detail="staff_only")
@@ -4513,7 +4521,6 @@ def build_staff_router(
             roleplay_role_id,
             bot_token=discord_token,
             locked=body.locked,
-            is_forum=(kind == ChannelKind.FORUM.value),
         )
         if not ok:
             raise HTTPException(status_code=502, detail="discord_permission_edit_failed")
@@ -5603,7 +5610,8 @@ def build_district_lore_router(
     session_factory: async_sessionmaker[AsyncSession] | None,
     discord_token: str = "",
     discord_guild_id: int = 0,
-    staff_role_id: int = 0,
+    staff_role_ids: frozenset[int] = frozenset(),
+    staff_user_ids: frozenset[int] = frozenset(),
 ) -> APIRouter:
     """The Activity's staff-only History tab: staff-authored district
     context (adjectives, accent notes, urban/rural feel, career academy
@@ -5624,7 +5632,8 @@ def build_district_lore_router(
             discord_id,
             bot_token=discord_token,
             guild_id=discord_guild_id,
-            staff_role_id=staff_role_id,
+            staff_role_ids=staff_role_ids,
+            staff_user_ids=staff_user_ids,
         )
         if not ok:
             raise HTTPException(status_code=403, detail="staff_only")
@@ -5970,7 +5979,8 @@ def build_hobbies_router(
     session_factory: async_sessionmaker[AsyncSession] | None,
     discord_token: str = "",
     discord_guild_id: int = 0,
-    staff_role_id: int = 0,
+    staff_role_ids: frozenset[int] = frozenset(),
+    staff_user_ids: frozenset[int] = frozenset(),
 ) -> APIRouter:
     """The Hobbies tab's REST surface -- mirrors `/hobby select|forget|
     play` (`panem_shared.hobbies`). `/play` requires `timing_hit` (the
@@ -6029,7 +6039,8 @@ def build_hobbies_router(
                 tab_name="hobbies",
                 discord_token=discord_token,
                 discord_guild_id=discord_guild_id,
-                staff_role_id=staff_role_id,
+                staff_role_ids=staff_role_ids,
+                staff_user_ids=staff_user_ids,
             )
             try:
                 await hobbies_svc.select_hobby(session, character, body.hobby_id, content)
@@ -6051,7 +6062,8 @@ def build_hobbies_router(
                 tab_name="hobbies",
                 discord_token=discord_token,
                 discord_guild_id=discord_guild_id,
-                staff_role_id=staff_role_id,
+                staff_role_ids=staff_role_ids,
+                staff_user_ids=staff_user_ids,
             )
             try:
                 await hobbies_svc.forget_hobby(session, character, body.hobby_id)
@@ -6085,7 +6097,8 @@ def build_hobbies_router(
                 tab_name="hobbies",
                 discord_token=discord_token,
                 discord_guild_id=discord_guild_id,
-                staff_role_id=staff_role_id,
+                staff_role_ids=staff_role_ids,
+                staff_user_ids=staff_user_ids,
             )
             current_tick = await _current_tick(session)
             try:
@@ -6609,7 +6622,8 @@ def build_bulletin_router(
     session_factory: async_sessionmaker[AsyncSession] | None,
     discord_token: str = "",
     discord_guild_id: int = 0,
-    staff_role_id: int = 0,
+    staff_role_ids: frozenset[int] = frozenset(),
+    staff_user_ids: frozenset[int] = frozenset(),
 ) -> APIRouter:
     """The Bulletin tab's REST surface (`panem_shared.bulletin`) -- the
     board itself, posting/retracting, interest marking, reminders, and
@@ -6665,7 +6679,8 @@ def build_bulletin_router(
                 tab_name="bulletin",
                 discord_token=discord_token,
                 discord_guild_id=discord_guild_id,
-                staff_role_id=staff_role_id,
+                staff_role_ids=staff_role_ids,
+                staff_user_ids=staff_user_ids,
             )
             current_tick = await _current_tick(session)
             try:
@@ -6701,7 +6716,8 @@ def build_bulletin_router(
                 tab_name="bulletin",
                 discord_token=discord_token,
                 discord_guild_id=discord_guild_id,
-                staff_role_id=staff_role_id,
+                staff_role_ids=staff_role_ids,
+                staff_user_ids=staff_user_ids,
             )
             try:
                 await bulletin_svc.retract(session, user=user, entry_id=body.entry_id)
@@ -6725,7 +6741,8 @@ def build_bulletin_router(
                 tab_name="bulletin",
                 discord_token=discord_token,
                 discord_guild_id=discord_guild_id,
-                staff_role_id=staff_role_id,
+                staff_role_ids=staff_role_ids,
+                staff_user_ids=staff_user_ids,
             )
             try:
                 await bulletin_svc.set_interest(
@@ -6749,7 +6766,8 @@ def build_bulletin_router(
                 tab_name="bulletin",
                 discord_token=discord_token,
                 discord_guild_id=discord_guild_id,
-                staff_role_id=staff_role_id,
+                staff_role_ids=staff_role_ids,
+                staff_user_ids=staff_user_ids,
             )
             try:
                 await bulletin_svc.set_hidden(
@@ -6776,7 +6794,8 @@ def build_bulletin_router(
                 tab_name="bulletin",
                 discord_token=discord_token,
                 discord_guild_id=discord_guild_id,
-                staff_role_id=staff_role_id,
+                staff_role_ids=staff_role_ids,
+                staff_user_ids=staff_user_ids,
             )
             current_tick = await _current_tick(session)
             try:
@@ -6807,7 +6826,8 @@ def build_bulletin_router(
                 tab_name="bulletin",
                 discord_token=discord_token,
                 discord_guild_id=discord_guild_id,
-                staff_role_id=staff_role_id,
+                staff_role_ids=staff_role_ids,
+                staff_user_ids=staff_user_ids,
             )
             try:
                 await bulletin_svc.move_entry(
@@ -6837,7 +6857,8 @@ def build_bulletin_router(
                 tab_name="bulletin",
                 discord_token=discord_token,
                 discord_guild_id=discord_guild_id,
-                staff_role_id=staff_role_id,
+                staff_role_ids=staff_role_ids,
+                staff_user_ids=staff_user_ids,
             )
             await bulletin_svc.reset_organization(session, user_id=user.id)
         return {"ok": True}
@@ -6897,7 +6918,8 @@ def build_reactions_router(
     session_factory: async_sessionmaker[AsyncSession] | None,
     discord_token: str = "",
     discord_guild_id: int = 0,
-    staff_role_id: int = 0,
+    staff_role_ids: frozenset[int] = frozenset(),
+    staff_user_ids: frozenset[int] = frozenset(),
 ) -> APIRouter:
     """The Reactions tab's REST surface (`panem_shared.reactions`) -- the
     character's current archetype standing, plus triggering/answering a
@@ -6943,7 +6965,8 @@ def build_reactions_router(
                     discord_id,
                     bot_token=discord_token,
                     guild_id=discord_guild_id,
-                    staff_role_id=staff_role_id,
+                    staff_role_ids=staff_role_ids,
+                    staff_user_ids=staff_user_ids,
                 )
                 if feature_flags_svc.is_allowed(reactions_state, is_staff=is_staff):
                     current_tick = await _current_tick(session)
@@ -7332,7 +7355,8 @@ def build_rumors_router(
     session_factory: async_sessionmaker[AsyncSession] | None,
     discord_token: str = "",
     discord_guild_id: int = 0,
-    staff_role_id: int = 0,
+    staff_role_ids: frozenset[int] = frozenset(),
+    staff_user_ids: frozenset[int] = frozenset(),
 ) -> APIRouter:
     """The Rumors tab's REST surface (`panem_shared.rumors`) -- every
     rumor currently floating around the character's own current
@@ -7391,7 +7415,8 @@ def build_rumors_router(
                 tab_name="rumors",
                 discord_token=discord_token,
                 discord_guild_id=discord_guild_id,
-                staff_role_id=staff_role_id,
+                staff_role_ids=staff_role_ids,
+                staff_user_ids=staff_user_ids,
             )
             try:
                 rumor = await rumors_svc.get_rumor(session, body.rumor_id)
@@ -7429,7 +7454,8 @@ def build_rumors_router(
                 tab_name="rumors",
                 discord_token=discord_token,
                 discord_guild_id=discord_guild_id,
-                staff_role_id=staff_role_id,
+                staff_role_ids=staff_role_ids,
+                staff_user_ids=staff_user_ids,
             )
             # 404s on an already-gone rumor via `get_rumor` rather than a
             # silent no-op -- consistent with every other dashboard
