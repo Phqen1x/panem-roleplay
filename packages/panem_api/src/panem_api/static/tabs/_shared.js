@@ -124,6 +124,8 @@ export function dropdown(initialOptions) {
     }
   }
 
+  const MENU_GAP = 4;
+
   toggle.addEventListener("click", () => {
     if (toggle.disabled) return;
     const opening = menu.hidden;
@@ -136,14 +138,34 @@ export function dropdown(initialOptions) {
     // Activity iframe) rendered its tail end past the viewport's bottom
     // edge, which reads identically to "the dropdown is cut off" even
     // though the content is technically still there to scroll to.
+    //
+    // Opening up only helps if there's actually *more* room up there --
+    // a toggle near the top of the viewport (e.g. Travel's "Location"
+    // field, the very first control in its panel) used to flip up
+    // whenever spaceAbove > spaceBelow even though spaceAbove was still
+    // nowhere near enough, rendering the menu's top edge above y:0. Only
+    // flip up when it truly fits there; otherwise clamp the menu's
+    // height to whichever side has more room so it never spills past
+    // either viewport edge.
     menu.classList.remove("open-up");
+    menu.style.maxHeight = "";
     const toggleRect = toggle.getBoundingClientRect();
     const menuHeight = menu.getBoundingClientRect().height;
     const spaceBelow = window.innerHeight - toggleRect.bottom;
     const spaceAbove = toggleRect.top;
-    if (menuHeight > spaceBelow && spaceAbove > spaceBelow) {
-      menu.classList.add("open-up");
+    const fitsBelow = menuHeight <= spaceBelow - MENU_GAP;
+    const fitsAbove = menuHeight <= spaceAbove - MENU_GAP;
+    let openUp = false;
+    if (!fitsBelow) {
+      if (fitsAbove) {
+        openUp = true;
+      } else {
+        openUp = spaceAbove > spaceBelow;
+        const available = Math.max(0, (openUp ? spaceAbove : spaceBelow) - MENU_GAP);
+        menu.style.maxHeight = `${available}px`;
+      }
     }
+    if (openUp) menu.classList.add("open-up");
   });
   document.addEventListener("click", (event) => {
     if (!menu.hidden && !event.composedPath().includes(wrapper)) close();
@@ -177,6 +199,153 @@ export function dropdown(initialOptions) {
     toggle.textContent = match ? match.label : "No options";
     toggle.disabled = opts.length === 0;
     renderMenu();
+  };
+
+  if (initialOptions) wrapper.setOptions(initialOptions);
+  return wrapper;
+}
+
+// A free-typed, narrow-as-you-type combobox standing in for a plain text
+// input when there's a known (possibly long) list of valid values -- e.g.
+// "pick a good by name" instead of asking a player to type an opaque good
+// id from memory (`tabs/social.js`'s trade-offer form used to be exactly
+// that: a raw "Good id" text box). A native `<datalist>` would be the
+// obvious choice, but it's exactly the kind of browser-native popup
+// `dropdown()`'s own comment above already warns breaks inside Discord's
+// Activity iframe scaling, so this is hand-rolled the same way: a
+// `position: relative` wrapper, a real `<input>` the player types into,
+// and a `.custom-select-menu`-styled `<ul>` filtered to whatever
+// substring-matches the typed text, reusing `dropdown()`'s open-up-or-
+// clamp viewport logic verbatim. Exposes the same `value`/`disabled`
+// getter-setter and `setOptions()`/"change" surface as `dropdown()`, so
+// a call site looks almost the same either way.
+export function searchableCombobox(initialOptions, { placeholder } = {}) {
+  const wrapper = el("div", { class: "custom-select searchable-combobox" });
+  const input = el("input", {
+    type: "text",
+    class: "search-input",
+    placeholder: placeholder || "Type to search...",
+    autocomplete: "off",
+  });
+  const menu = el("ul", { class: "custom-select-menu" });
+  menu.hidden = true;
+  wrapper.append(input, menu);
+
+  let opts = [];
+  let current = "";
+
+  function close() {
+    menu.hidden = true;
+  }
+
+  function matchByValue(value) {
+    return opts.find((o) => o.value === value);
+  }
+
+  function renderMenu(query) {
+    const q = (query || "").toLowerCase().trim();
+    const visible = q ? opts.filter((o) => o.label.toLowerCase().includes(q)) : opts;
+    menu.innerHTML = "";
+    if (visible.length === 0) {
+      menu.append(el("li", { class: "custom-select-empty" }, "No matches"));
+      return;
+    }
+    for (const opt of visible) {
+      const button = el(
+        "button",
+        {
+          type: "button",
+          class: opt.value === current ? "active" : "",
+          onclick: () => {
+            current = opt.value;
+            input.value = opt.label;
+            close();
+            wrapper.dispatchEvent(new Event("change"));
+          },
+        },
+        opt.label
+      );
+      menu.append(el("li", {}, button));
+    }
+  }
+
+  const MENU_GAP = 4;
+
+  function open() {
+    menu.hidden = false;
+    renderMenu(input.value);
+    menu.classList.remove("open-up");
+    menu.style.maxHeight = "";
+    const inputRect = input.getBoundingClientRect();
+    const menuHeight = menu.getBoundingClientRect().height;
+    const spaceBelow = window.innerHeight - inputRect.bottom;
+    const spaceAbove = inputRect.top;
+    const fitsBelow = menuHeight <= spaceBelow - MENU_GAP;
+    const fitsAbove = menuHeight <= spaceAbove - MENU_GAP;
+    let openUp = false;
+    if (!fitsBelow) {
+      if (fitsAbove) {
+        openUp = true;
+      } else {
+        openUp = spaceAbove > spaceBelow;
+        const available = Math.max(0, (openUp ? spaceAbove : spaceBelow) - MENU_GAP);
+        menu.style.maxHeight = `${available}px`;
+      }
+    }
+    if (openUp) menu.classList.add("open-up");
+  }
+
+  input.addEventListener("focus", () => {
+    if (!input.disabled) open();
+  });
+  input.addEventListener("input", () => {
+    // Typing again after a selection (or from scratch) clears the
+    // stored value until the text matches a real option again --
+    // otherwise the submitted id and the visibly displayed text could
+    // silently disagree.
+    const match = matchByValue(current);
+    if (!match || match.label !== input.value) current = "";
+    if (menu.hidden) open();
+    else renderMenu(input.value);
+  });
+  input.addEventListener("blur", () => {
+    // Deferred so a menu-option's own click (which blurs this input
+    // first, per standard mousedown-before-click ordering) still lands
+    // and sets `current` before this runs.
+    setTimeout(() => {
+      const match = matchByValue(current);
+      input.value = match ? match.label : "";
+    }, 150);
+  });
+  document.addEventListener("click", (event) => {
+    if (!menu.hidden && !event.composedPath().includes(wrapper)) close();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") close();
+  });
+
+  Object.defineProperty(wrapper, "value", {
+    get: () => current,
+    set(v) {
+      current = String(v);
+      const match = matchByValue(current);
+      input.value = match ? match.label : "";
+    },
+  });
+  Object.defineProperty(wrapper, "disabled", {
+    get: () => input.disabled,
+    set(v) {
+      input.disabled = v;
+    },
+  });
+
+  wrapper.setOptions = (entries) => {
+    opts = entries.map((entry) => ({ value: String(entry.value), label: entry.label }));
+    if (current && !matchByValue(current)) {
+      current = "";
+      input.value = "";
+    }
+    if (!menu.hidden) renderMenu(input.value);
   };
 
   if (initialOptions) wrapper.setOptions(initialOptions);

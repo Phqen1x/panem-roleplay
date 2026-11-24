@@ -132,6 +132,7 @@ from panem_shared.enums import (
     TradeStatus,
     WeatherEventStatus,
 )
+from panem_shared.error_messages import error_message
 from panem_shared.errors import NotAllowed, NotFound, ServiceError
 from panem_shared.logging import get_logger
 from panem_shared.redis_keys import (
@@ -267,7 +268,7 @@ def _http_from_service_error(exc: ServiceError) -> HTTPException:
     Discord, so this reuses it as the HTTP detail rather than inventing a
     second set of messages."""
     status = 404 if isinstance(exc, NotFound) else 400
-    return HTTPException(status_code=status, detail=exc.reason_key)
+    return HTTPException(status_code=status, detail=error_message(exc.reason_key, **exc.fmt))
 
 
 def _theme_profile_summary(profile: ThemeProfile) -> ThemeProfileSummary:
@@ -361,7 +362,7 @@ async def _require_tab_access(
     )
     state = await feature_flags_svc.get_state(session, feature_flags_svc.tab_key(tab_name))
     if not feature_flags_svc.is_allowed(state, is_staff=is_staff):
-        raise HTTPException(status_code=403, detail="tab_disabled")
+        raise HTTPException(status_code=403, detail=error_message("tab_disabled"))
 
 
 def build_identify_router(
@@ -560,7 +561,7 @@ def build_theme_router(
 
     async def _require_donor(discord_id: int) -> None:
         if not await _is_donor(discord_id):
-            raise HTTPException(status_code=403, detail="donor_only")
+            raise HTTPException(status_code=403, detail=error_message("donor_only"))
 
     async def _resolve_owned_profile(
         session: AsyncSession, *, discord_id: int, profile_id: int
@@ -628,7 +629,9 @@ def build_theme_router(
                 .where(ThemeProfile.user_id == user.id)
             )
             if count_row.scalar_one() >= MAX_THEME_PROFILES_PER_USER:
-                raise HTTPException(status_code=400, detail="theme_profile_limit_reached")
+                raise HTTPException(
+                    status_code=400, detail=error_message("theme_profile_limit_reached")
+                )
             profile = ThemeProfile(
                 user_id=user.id,
                 name=name,
@@ -1492,7 +1495,7 @@ def build_crime_router(
             )
             victim = await _resolve_steal_victim(session, character, body.target)
             if victim is None:
-                raise HTTPException(status_code=404, detail="steal_target_not_found")
+                raise HTTPException(status_code=404, detail=error_message("steal_target_not_found"))
             current_tick = await _current_tick(session)
             try:
                 stealing_svc.check_can_steal(character, victim, current_tick)
@@ -1564,7 +1567,7 @@ def build_crime_router(
                     .first()
                 )
             if house is None:
-                raise HTTPException(status_code=404, detail="burgle_owner_not_found")
+                raise HTTPException(status_code=404, detail=error_message("burgle_owner_not_found"))
 
             current_tick = await _current_tick(session)
             try:
@@ -1660,7 +1663,7 @@ def build_crime_router(
             current_tick = await _current_tick(session)
             found = await shipments_svc.find_shipment_here(session, character, current_tick)
             if found is None:
-                raise HTTPException(status_code=404, detail="shipment_none_here")
+                raise HTTPException(status_code=404, detail=error_message("shipment_none_here"))
             try:
                 shipments_svc.check_can_steal_shipment(character, found, current_tick)
             except ServiceError as exc:
@@ -1770,7 +1773,7 @@ def build_work_router(*, session_factory: async_sessionmaker[AsyncSession] | Non
                 session, discord_id=body.discord_id, character_id=character_id
             )
             if not has_job(character):
-                raise HTTPException(status_code=400, detail="job_none_set")
+                raise HTTPException(status_code=400, detail=error_message("job_none_set"))
             current_tick = await _current_tick(session)
             try:
                 jail_svc.check_not_jailed(character, current_tick, "work_jailed")
@@ -1784,7 +1787,7 @@ def build_work_router(*, session_factory: async_sessionmaker[AsyncSession] | Non
                 session, character, current_tick, is_staff=is_gamemaker
             )
             if open_shift is None:
-                raise HTTPException(status_code=400, detail="job_no_open_shift")
+                raise HTTPException(status_code=400, detail=error_message("job_no_open_shift"))
             if not is_gamemaker and not can_work_from_current_location(character, current_tick):
                 raise HTTPException(
                     status_code=400,
@@ -1908,7 +1911,7 @@ def build_market_router(
     async def _trade(character_id: int, body: TradeRequest, *, side: str) -> TradeResponse:
         factory = _require_session_factory(session_factory)
         if body.qty <= 0:
-            raise HTTPException(status_code=400, detail="market_invalid_qty")
+            raise HTTPException(status_code=400, detail=error_message("market_invalid_qty"))
         async with session_scope(factory) as session:
             character = await _resolve_owned_character(
                 session, discord_id=body.discord_id, character_id=character_id
@@ -1994,7 +1997,7 @@ def build_blackmarket_router(
     async def _trade(character_id: int, body: TradeRequest, *, side: str) -> TradeResponse:
         factory = _require_session_factory(session_factory)
         if body.qty <= 0:
-            raise HTTPException(status_code=400, detail="market_invalid_qty")
+            raise HTTPException(status_code=400, detail=error_message("market_invalid_qty"))
         async with session_scope(factory) as session:
             character = await _resolve_owned_character(
                 session, discord_id=body.discord_id, character_id=character_id
@@ -2305,7 +2308,7 @@ def build_residents_router(
             )
         ).scalar_one_or_none()
         if npc is None:
-            raise HTTPException(status_code=404, detail="resident_not_found")
+            raise HTTPException(status_code=404, detail=error_message("resident_not_found"))
         return npc
 
     async def _resolve_other_character(session: AsyncSession, name: str) -> Character:
@@ -2324,7 +2327,7 @@ def build_residents_router(
             )
         ).scalar_one_or_none()
         if other is None:
-            raise HTTPException(status_code=404, detail="resident_not_found")
+            raise HTTPException(status_code=404, detail=error_message("resident_not_found"))
         return other
 
     def _character_status(
@@ -2630,7 +2633,7 @@ def build_pay_router(*, session_factory: async_sessionmaker[AsyncSession] | None
                 await session.execute(select(Character).where(Character.name == body.target))
             ).scalar_one_or_none()
             if recipient is None:
-                raise HTTPException(status_code=404, detail="character_not_found")
+                raise HTTPException(status_code=404, detail=error_message("character_not_found"))
             try:
                 pay_svc.pay(sender, recipient, body.amount)
             except ServiceError as exc:
@@ -2748,7 +2751,7 @@ def build_trade_router(*, session_factory: async_sessionmaker[AsyncSession] | No
                 await session.execute(select(Character).where(Character.name == body.target))
             ).scalar_one_or_none()
             if recipient is None:
-                raise HTTPException(status_code=404, detail="character_not_found")
+                raise HTTPException(status_code=404, detail=error_message("character_not_found"))
             try:
                 trades_svc.check_can_trade(initiator, recipient)
                 trades_svc.validate_offer(
@@ -2790,7 +2793,7 @@ def build_trade_router(*, session_factory: async_sessionmaker[AsyncSession] | No
         )
         trade = await session.get(Trade, trade_id)
         if trade is None:
-            raise HTTPException(status_code=404, detail="trade_not_found")
+            raise HTTPException(status_code=404, detail=error_message("trade_not_found"))
         return trade, character
 
     @router.post("/{character_id}/{trade_id}/accept", response_model=TradeSummary)
@@ -2803,10 +2806,10 @@ def build_trade_router(*, session_factory: async_sessionmaker[AsyncSession] | No
                 session, discord_id=body.discord_id, character_id=character_id, trade_id=trade_id
             )
             if trade.recipient_character_id != character.id:
-                raise HTTPException(status_code=404, detail="trade_not_found")
+                raise HTTPException(status_code=404, detail=error_message("trade_not_found"))
             initiator = await session.get(Character, trade.initiator_character_id)
             if initiator is None:
-                raise HTTPException(status_code=404, detail="character_not_found")
+                raise HTTPException(status_code=404, detail=error_message("character_not_found"))
             try:
                 await trades_svc.accept_trade(
                     session,
@@ -2834,7 +2837,7 @@ def build_trade_router(*, session_factory: async_sessionmaker[AsyncSession] | No
                 session, discord_id=body.discord_id, character_id=character_id, trade_id=trade_id
             )
             if trade.recipient_character_id != character.id:
-                raise HTTPException(status_code=404, detail="trade_not_found")
+                raise HTTPException(status_code=404, detail=error_message("trade_not_found"))
             try:
                 trades_svc.decline_trade(trade, dt.datetime.now(dt.UTC))
             except ServiceError as exc:
@@ -2857,7 +2860,7 @@ def build_trade_router(*, session_factory: async_sessionmaker[AsyncSession] | No
                 session, discord_id=body.discord_id, character_id=character_id, trade_id=trade_id
             )
             if trade.initiator_character_id != character.id:
-                raise HTTPException(status_code=404, detail="trade_not_found")
+                raise HTTPException(status_code=404, detail=error_message("trade_not_found"))
             try:
                 trades_svc.cancel_trade(trade, dt.datetime.now(dt.UTC))
             except ServiceError as exc:
@@ -3064,7 +3067,7 @@ def build_housing_router(
         )
         property_ = await session.get(Property, property_id)
         if property_ is None:
-            raise HTTPException(status_code=404, detail="housing_not_found")
+            raise HTTPException(status_code=404, detail=error_message("housing_not_found"))
         return character, property_
 
     @router.get("/{character_id}", response_model=HousingStatusResponse)
@@ -3185,7 +3188,9 @@ def build_housing_router(
                 terms = housing_svc.financed_purchase_terms(price)
                 down_payment = round(terms.down_payment)
                 if character.money < down_payment:
-                    raise HTTPException(status_code=400, detail="housing_down_payment_too_much")
+                    raise HTTPException(
+                        status_code=400, detail=error_message("housing_down_payment_too_much")
+                    )
                 character.money -= down_payment
                 property_.mortgage_principal = terms.principal
                 property_.mortgage_payment = terms.payment
@@ -3196,7 +3201,9 @@ def build_housing_router(
                 payment = round(property_.mortgage_payment)
             else:
                 if character.money < price:
-                    raise HTTPException(status_code=400, detail="housing_insufficient_funds")
+                    raise HTTPException(
+                        status_code=400, detail=error_message("housing_insufficient_funds")
+                    )
                 character.money -= price
 
             property_.owner_kind = OwnerKind.CHARACTER.value
@@ -3244,7 +3251,9 @@ def build_housing_router(
 
             price = round(housing_svc.complex_purchase_price(list(units)))
             if character.money < price:
-                raise HTTPException(status_code=400, detail="housing_insufficient_funds")
+                raise HTTPException(
+                    status_code=400, detail=error_message("housing_insufficient_funds")
+                )
             character.money -= price
             for unit in units:
                 unit.owner_kind = OwnerKind.CHARACTER.value
@@ -3310,7 +3319,9 @@ def build_housing_router(
                 session, property_id, discord_id=body.discord_id, character_id=character_id
             )
             if property_.kind != PropertyKind.APARTMENT.value:
-                raise HTTPException(status_code=400, detail="housing_not_an_apartment")
+                raise HTTPException(
+                    status_code=400, detail=error_message("housing_not_an_apartment")
+                )
             try:
                 housing_svc.check_owns_property(character=character, property_=property_)
             except ServiceError as exc:
@@ -3321,7 +3332,9 @@ def build_housing_router(
                 )
             ).scalar_one_or_none()
             if existing_lease is not None:
-                raise HTTPException(status_code=400, detail="housing_unit_already_leased")
+                raise HTTPException(
+                    status_code=400, detail=error_message("housing_unit_already_leased")
+                )
 
             property_.asking_price = body.price
             return HousingRentOutResponse(property_id=property_.id, price=round(body.price))
@@ -3389,7 +3402,9 @@ def build_housing_router(
                 )
             ).scalar_one_or_none()
             if auction is None:
-                raise HTTPException(status_code=404, detail="housing_auction_not_found")
+                raise HTTPException(
+                    status_code=404, detail=error_message("housing_auction_not_found")
+                )
             try:
                 housing_svc.check_can_bid(character=character, auction=auction, amount=body.amount)
             except ServiceError as exc:
@@ -3447,14 +3462,14 @@ def build_housing_router(
                 session, discord_id=body.discord_id, character_id=character_id
             )
             if character.housing_property_id is None:
-                raise HTTPException(status_code=400, detail="housing_no_home")
+                raise HTTPException(status_code=400, detail=error_message("housing_no_home"))
             lease = (
                 await session.execute(
                     select(ApartmentLease).where(ApartmentLease.tenant_character_id == character.id)
                 )
             ).scalar_one_or_none()
             if lease is None:
-                raise HTTPException(status_code=400, detail="housing_not_a_tenant")
+                raise HTTPException(status_code=400, detail=error_message("housing_not_a_tenant"))
             await session.delete(lease)
             character.housing_property_id = None
             return HousingMoveOutResponse(character_name=character.name)
@@ -3469,7 +3484,7 @@ def build_housing_router(
                 session, property_id, discord_id=body.discord_id, character_id=character_id
             )
             if inn.kind != PropertyKind.INN.value:
-                raise HTTPException(status_code=400, detail="housing_not_an_inn")
+                raise HTTPException(status_code=400, detail=error_message("housing_not_an_inn"))
 
             owner = (
                 await session.get(Character, inn.owner_id)
@@ -3478,7 +3493,9 @@ def build_housing_router(
             )
             price = round(housing_svc.quoted_price(inn, character, seller=owner))
             if character.money < price:
-                raise HTTPException(status_code=400, detail="housing_insufficient_funds")
+                raise HTTPException(
+                    status_code=400, detail=error_message("housing_insufficient_funds")
+                )
 
             character.money -= price
             if owner is not None:
@@ -3654,7 +3671,7 @@ def build_vitals_router(
             )
             good = content.goods.get(body.good_id)
             if good is None:
-                raise HTTPException(status_code=404, detail="good_not_edible")
+                raise HTTPException(status_code=404, detail=error_message("good_not_edible"))
             current_tick = await _current_tick(session)
             try:
                 hunger = await sustenance_svc.eat(
@@ -3673,7 +3690,7 @@ def build_vitals_router(
             )
             good = content.goods.get(body.good_id)
             if good is None:
-                raise HTTPException(status_code=404, detail="good_not_drinkable")
+                raise HTTPException(status_code=404, detail=error_message("good_not_drinkable"))
             current_tick = await _current_tick(session)
             try:
                 thirst = await sustenance_svc.drink(session, character, good, current_tick)
@@ -3690,7 +3707,7 @@ def build_vitals_router(
             )
             good = content.goods.get(body.good_id)
             if good is None:
-                raise HTTPException(status_code=404, detail="good_not_healing")
+                raise HTTPException(status_code=404, detail=error_message("good_not_healing"))
             current_tick = await _current_tick(session)
             try:
                 health = await sustenance_svc.heal(session, character, good, current_tick)
@@ -3709,7 +3726,7 @@ def build_vitals_router(
             )
             good = content.goods.get(body.good_id)
             if good is None:
-                raise HTTPException(status_code=404, detail="good_not_energizing")
+                raise HTTPException(status_code=404, detail=error_message("good_not_energizing"))
             current_tick = await _current_tick(session)
             try:
                 fatigue = await sustenance_svc.restore_fatigue(
@@ -4266,7 +4283,7 @@ def build_rp_mode_router(
             if rp_modes_svc.mode_switch_needs_job_info(character, body.new_mode):
                 if not body.job_title or not body.shift_phase:
                     raise HTTPException(
-                        status_code=400, detail="job_title and shift_phase are required"
+                        status_code=400, detail=error_message("job_fields_required")
                     )
                 if body.shift_phase not in {phase.value for phase in DayPhase}:
                     raise HTTPException(status_code=400, detail="Invalid shift phase")
@@ -4354,13 +4371,13 @@ def build_staff_router(
             staff_user_ids=staff_user_ids,
         )
         if not ok:
-            raise HTTPException(status_code=403, detail="staff_only")
+            raise HTTPException(status_code=403, detail=error_message("staff_only"))
 
     @router.post("/jail", response_model=StaffJailResponse)
     async def jail_character(body: StaffJailRequest) -> StaffJailResponse:
         await _require_staff(body.discord_id)
         if body.ticks < 1:
-            raise HTTPException(status_code=400, detail="invalid_ticks")
+            raise HTTPException(status_code=400, detail=error_message("invalid_ticks"))
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             character = (
@@ -4369,7 +4386,7 @@ def build_staff_router(
                 )
             ).scalar_one_or_none()
             if character is None:
-                raise HTTPException(status_code=404, detail="character_not_found")
+                raise HTTPException(status_code=404, detail=error_message("character_not_found"))
             current_tick = await _current_tick(session)
             prior_bonus = (character.jail_count or 0) * constants.JAIL_PRIOR_TICKS_PER_COUNT
             applied = jail_svc.commit_to_jail(character, body.ticks, current_tick)
@@ -4416,9 +4433,9 @@ def build_staff_router(
         await _require_staff(body.discord_id)
         good = content.goods.get(body.good_id)
         if good is None:
-            raise HTTPException(status_code=404, detail="staff_good_not_found")
+            raise HTTPException(status_code=404, detail=error_message("staff_good_not_found"))
         if body.district_id not in content.districts:
-            raise HTTPException(status_code=404, detail="invalid_district")
+            raise HTTPException(status_code=404, detail=error_message("invalid_district"))
         district = content.district(body.district_id)
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
@@ -4485,7 +4502,9 @@ def build_staff_router(
     async def list_channel_access(discord_id: int) -> StaffChannelAccessListResponse:
         await _require_staff(discord_id)
         if not roleplay_role_id:
-            raise HTTPException(status_code=409, detail="roleplay_role_not_configured")
+            raise HTTPException(
+                status_code=409, detail=error_message("roleplay_role_not_configured")
+            )
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             rows = (
@@ -4531,7 +4550,9 @@ def build_staff_router(
     ) -> StaffChannelAccessEntry:
         await _require_staff(body.discord_id)
         if not roleplay_role_id:
-            raise HTTPException(status_code=409, detail="roleplay_role_not_configured")
+            raise HTTPException(
+                status_code=409, detail=error_message("roleplay_role_not_configured")
+            )
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             row = (
@@ -4543,7 +4564,7 @@ def build_staff_router(
                 )
             ).scalar_one_or_none()
             if row is None:
-                raise HTTPException(status_code=404, detail="channel_not_found")
+                raise HTTPException(status_code=404, detail=error_message("channel_not_found"))
             district_id, kind = row.district_id, row.kind
         ok = await discord_staff.set_role_channel_locked(
             channel_id,
@@ -4552,7 +4573,9 @@ def build_staff_router(
             locked=body.locked,
         )
         if not ok:
-            raise HTTPException(status_code=502, detail="discord_permission_edit_failed")
+            raise HTTPException(
+                status_code=502, detail=error_message("discord_permission_edit_failed")
+            )
         async with session_scope(factory) as session:
             session.add(
                 StaffAction(
@@ -4691,10 +4714,10 @@ def build_staff_router(
     async def update_district_motto(body: UpdateDistrictMottoRequest) -> DistrictMottoResponse:
         await _require_staff(body.discord_id)
         if body.district_id < 0 or body.district_id > 12:
-            raise HTTPException(status_code=400, detail="invalid_district_id")
+            raise HTTPException(status_code=400, detail=error_message("invalid_district_id"))
         motto = body.motto.strip()
         if not motto or len(motto) > 120:
-            raise HTTPException(status_code=400, detail="invalid_motto_length")
+            raise HTTPException(status_code=400, detail=error_message("invalid_motto_length"))
 
         mottos_file = static_dir / "district_mottos.json"
         data: dict[str, str] = {}
@@ -4795,7 +4818,7 @@ def build_staff_router(
             await session.execute(select(Character).where(Character.name == name))
         ).scalar_one_or_none()
         if row is None:
-            raise HTTPException(status_code=404, detail="character_not_found")
+            raise HTTPException(status_code=404, detail=error_message("character_not_found"))
         return row
 
     @router.get("/goods", response_model=list[StaffGoodOption])
@@ -4828,7 +4851,7 @@ def build_staff_router(
         await _require_staff(body.discord_id)
         good = content.goods.get(body.good_id)
         if good is None:
-            raise HTTPException(status_code=404, detail="staff_good_not_found")
+            raise HTTPException(status_code=404, detail=error_message("staff_good_not_found"))
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             character = await _find_character_by_name(session, body.character_name)
@@ -4922,9 +4945,9 @@ def build_staff_router(
     async def give_mastery(body: StaffGiveMasteryRequest) -> StaffGiveMasteryResponse:
         await _require_staff(body.discord_id)
         if body.shifts_completed is None and body.level is None:
-            raise HTTPException(status_code=400, detail="mastery_needs_value")
+            raise HTTPException(status_code=400, detail=error_message("mastery_needs_value"))
         if body.shifts_completed is not None and body.shifts_completed < 0:
-            raise HTTPException(status_code=400, detail="invalid_shifts_completed")
+            raise HTTPException(status_code=400, detail=error_message("invalid_shifts_completed"))
         new_shifts = (
             body.shifts_completed
             if body.shifts_completed is not None
@@ -4991,7 +5014,7 @@ def build_staff_router(
         async with session_scope(factory) as session:
             character = await _find_character_by_name(session, body.character_name)
             if character.status != CharacterStatus.PENDING.value:
-                raise HTTPException(status_code=400, detail="not_pending")
+                raise HTTPException(status_code=400, detail=error_message("not_pending"))
             char_id = character.id
             await session.delete(character)
             session.add(
@@ -5008,7 +5031,7 @@ def build_staff_router(
     async def set_character_limit(body: StaffCharacterLimitRequest) -> StaffCharacterLimitResponse:
         await _require_staff(body.discord_id)
         if body.limit is not None and body.limit < 0:
-            raise HTTPException(status_code=400, detail="invalid_limit")
+            raise HTTPException(status_code=400, detail=error_message("invalid_limit"))
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             user = await characters_svc.get_or_create_user(session, body.target_discord_id)
@@ -5074,7 +5097,7 @@ def build_staff_router(
         async with session_scope(factory) as session:
             property_ = await session.get(Property, body.property_id)
             if property_ is None:
-                raise HTTPException(status_code=404, detail="housing_not_found")
+                raise HTTPException(status_code=404, detail=error_message("housing_not_found"))
             property_.asking_price = body.price
             session.add(
                 StaffAction(
@@ -5092,7 +5115,7 @@ def build_staff_router(
     ) -> StaffEngagementTimeoutResponse:
         await _require_staff(body.discord_id)
         if body.minutes < 1:
-            raise HTTPException(status_code=400, detail="invalid_minutes")
+            raise HTTPException(status_code=400, detail=error_message("invalid_minutes"))
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             settings_row = await session.get(EngagementSettings, 1)
@@ -5117,7 +5140,7 @@ def build_staff_router(
     ) -> StaffExhaustionDurationResponse:
         await _require_staff(body.discord_id)
         if body.ticks < 1:
-            raise HTTPException(status_code=400, detail="invalid_ticks")
+            raise HTTPException(status_code=400, detail=error_message("invalid_ticks"))
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             settings_row = await session.get(ExhaustionSettings, 1)
@@ -5140,12 +5163,14 @@ def build_staff_router(
     async def district_state(district_id: int, discord_id: int) -> StaffDistrictStateResponse:
         await _require_staff(discord_id)
         if district_id not in content.districts:
-            raise HTTPException(status_code=404, detail="invalid_district")
+            raise HTTPException(status_code=404, detail=error_message("invalid_district"))
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             row = await session.get(DistrictState, district_id)
             if row is None:
-                raise HTTPException(status_code=404, detail="district_state_not_seeded")
+                raise HTTPException(
+                    status_code=404, detail=error_message("district_state_not_seeded")
+                )
             return StaffDistrictStateResponse(
                 district_id=district_id,
                 district_name=content.district(district_id).name,
@@ -5165,14 +5190,16 @@ def build_staff_router(
     async def trigger_crackdown(body: StaffCrackdownRequest) -> StaffCrackdownResponse:
         await _require_staff(body.discord_id)
         if body.district_id not in content.districts:
-            raise HTTPException(status_code=404, detail="invalid_district")
+            raise HTTPException(status_code=404, detail=error_message("invalid_district"))
         duration = body.duration_ticks or constants.CRACKDOWN_DEFAULT_DURATION_TICKS
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             current_tick = await _current_tick(session)
             row = await session.get(DistrictState, body.district_id)
             if row is None:
-                raise HTTPException(status_code=404, detail="district_state_not_seeded")
+                raise HTTPException(
+                    status_code=404, detail=error_message("district_state_not_seeded")
+                )
             row.crackdown_until_tick = current_tick + duration
             row.peacekeeper_pressure = min(
                 1.0, row.peacekeeper_pressure + constants.CRACKDOWN_PRESSURE_DELTA
@@ -5210,7 +5237,7 @@ def build_staff_router(
     ) -> list[StaffLocationOption]:
         await _require_staff(discord_id)
         if district_id not in content.districts:
-            raise HTTPException(status_code=404, detail="invalid_district")
+            raise HTTPException(status_code=404, detail=error_message("invalid_district"))
         return [
             StaffLocationOption(id=loc.id, name=loc.name)
             for loc in content.district(district_id).locations
@@ -5228,7 +5255,7 @@ def build_staff_router(
     async def _find_npc_by_id(session: AsyncSession, npc_id: str) -> Npc:
         row = await session.get(Npc, npc_id)
         if row is None:
-            raise HTTPException(status_code=404, detail="staff_npc_not_found")
+            raise HTTPException(status_code=404, detail=error_message("staff_npc_not_found"))
         return row
 
     @router.post("/npcs/rename", response_model=StaffNpcSummary)
@@ -5288,7 +5315,7 @@ def build_staff_router(
         await _require_staff(body.discord_id)
         trait_list = [t_.strip() for t_ in body.traits.split(",") if t_.strip()]
         if not trait_list:
-            raise HTTPException(status_code=400, detail="npc_needs_trait")
+            raise HTTPException(status_code=400, detail=error_message("npc_needs_trait"))
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             npc = await _find_npc_by_id(session, body.npc_id)
@@ -5324,19 +5351,19 @@ def build_staff_router(
     async def add_npc(body: StaffNpcAddRequest) -> StaffNpcSummary:
         await _require_staff(body.discord_id)
         if body.district_id not in content.districts:
-            raise HTTPException(status_code=404, detail="invalid_district")
+            raise HTTPException(status_code=404, detail=error_message("invalid_district"))
         district_content = content.district(body.district_id)
         location = next(
             (loc for loc in district_content.locations if loc.id == body.home_location_id), None
         )
         if location is None:
-            raise HTTPException(status_code=404, detail="invalid_location")
+            raise HTTPException(status_code=404, detail=error_message("invalid_location"))
         trait_list = [t_.strip() for t_ in body.traits.split(",") if t_.strip()]
         if not trait_list:
-            raise HTTPException(status_code=400, detail="npc_needs_trait")
+            raise HTTPException(status_code=400, detail=error_message("npc_needs_trait"))
         job_row = content.jobs.get(body.job_id) if body.job_id else None
         if body.job_id and (job_row is None or job_row.district != body.district_id):
-            raise HTTPException(status_code=404, detail="invalid_job")
+            raise HTTPException(status_code=404, detail=error_message("invalid_job"))
         npc_gender = body.gender if body.gender else random.choice(list(Gender)).value
         npc_id = f"staff_{body.district_id}_{uuid.uuid4().hex[:8]}"
         factory = _require_session_factory(session_factory)
@@ -5490,11 +5517,11 @@ def build_staff_router(
         await _require_staff(body.discord_id)
         clean_key = body.key.strip()
         if not clean_key:
-            raise HTTPException(status_code=400, detail="invalid_key")
+            raise HTTPException(status_code=400, detail=error_message("invalid_key"))
         try:
             state = feature_flags_svc.FlagState(body.state)
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail="invalid_state") from exc
+            raise HTTPException(status_code=400, detail=error_message("invalid_state")) from exc
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             await feature_flags_svc.set_state(
@@ -5687,7 +5714,7 @@ def build_district_lore_router(
             staff_user_ids=staff_user_ids,
         )
         if not ok:
-            raise HTTPException(status_code=403, detail="staff_only")
+            raise HTTPException(status_code=403, detail=error_message("staff_only"))
 
     @router.get("/districts", response_model=DistrictLoreCatalogResponse)
     async def all_district_lore(discord_id: int) -> DistrictLoreCatalogResponse:
@@ -6079,7 +6106,7 @@ def build_hobbies_router(
         factory = _require_session_factory(session_factory)
         hobby = content.hobbies.get(body.hobby_id)
         if hobby is None:
-            raise HTTPException(status_code=404, detail="hobby_not_found")
+            raise HTTPException(status_code=404, detail=error_message("hobby_not_found"))
         async with session_scope(factory) as session:
             character = await _resolve_owned_character(
                 session, discord_id=body.discord_id, character_id=character_id
@@ -6127,7 +6154,7 @@ def build_hobbies_router(
         factory = _require_session_factory(session_factory)
         hobby = content.hobbies.get(body.hobby_id)
         if hobby is None:
-            raise HTTPException(status_code=404, detail="hobby_not_found")
+            raise HTTPException(status_code=404, detail=error_message("hobby_not_found"))
         async with session_scope(factory) as session:
             character = await _resolve_owned_character(
                 session, discord_id=body.discord_id, character_id=character_id
@@ -6141,7 +6168,7 @@ def build_hobbies_router(
                 )
             ).scalar_one_or_none()
             if character_hobby is None:
-                raise HTTPException(status_code=400, detail="hobby_not_selected")
+                raise HTTPException(status_code=400, detail=error_message("hobby_not_selected"))
             await _require_tab_access(
                 session,
                 discord_id=body.discord_id,
@@ -6558,7 +6585,7 @@ def build_weather_router(*, session_factory: async_sessionmaker[AsyncSession] | 
                 else None
             )
             if home is None:
-                raise HTTPException(status_code=400, detail="weather_no_property")
+                raise HTTPException(status_code=400, detail=error_message("weather_no_property"))
             try:
                 level = await weather_svc.prepare_property(
                     session, character=character, property_row=home, kind=body.kind
@@ -6582,7 +6609,7 @@ def build_weather_router(*, session_factory: async_sessionmaker[AsyncSession] | 
                 else None
             )
             if home is None:
-                raise HTTPException(status_code=400, detail="weather_no_property")
+                raise HTTPException(status_code=400, detail=error_message("weather_no_property"))
             try:
                 cost = await weather_svc.repair_property(
                     session, character=character, property_row=home, points=body.points
@@ -6838,7 +6865,9 @@ def build_bulletin_router(
             user = await characters_svc.get_or_create_user(session, body.discord_id)
             entry = await session.get(BulletinEntry, body.entry_id)
             if entry is None:
-                raise HTTPException(status_code=404, detail="bulletin_entry_not_found")
+                raise HTTPException(
+                    status_code=404, detail=error_message("bulletin_entry_not_found")
+                )
             await _require_tab_access(
                 session,
                 discord_id=body.discord_id,
@@ -7048,7 +7077,7 @@ def build_reactions_router(
             now = dt.datetime.now(dt.UTC)
             log = await reactions_svc.latest_pending(session, character_id=character.id, now=now)
             if log is None:
-                raise HTTPException(status_code=404, detail="reaction_none_pending")
+                raise HTTPException(status_code=404, detail=error_message("reaction_none_pending"))
             try:
                 new_score = await reactions_svc.respond(
                     session, character=character, log=log, choice=ReactionChoice(body.choice)
@@ -7184,7 +7213,7 @@ def build_events_router(
             )
             chain = await _active_lost_item_chain(session, character.id)
             if chain is None:
-                raise HTTPException(status_code=404, detail="chain_none_active")
+                raise HTTPException(status_code=404, detail=error_message("chain_none_active"))
             current_tick = await _current_tick(session)
             try:
                 result = await personal_events_svc.investigate(
@@ -7205,7 +7234,7 @@ def build_events_router(
             )
             chain = await _active_lost_item_chain(session, character.id)
             if chain is None:
-                raise HTTPException(status_code=404, detail="chain_none_active")
+                raise HTTPException(status_code=404, detail=error_message("chain_none_active"))
             current_tick = await _current_tick(session)
             try:
                 result = await personal_events_svc.deliver(
@@ -7275,7 +7304,7 @@ def build_events_router(
             )
             event = await session.get(GlobalEvent, event_id)
             if event is None:
-                raise HTTPException(status_code=404, detail="global_event_not_found")
+                raise HTTPException(status_code=404, detail=error_message("global_event_not_found"))
             event_name = event.name
             entries = await global_events_svc.leaderboard(session, event_id, limit=10)
             summaries = []

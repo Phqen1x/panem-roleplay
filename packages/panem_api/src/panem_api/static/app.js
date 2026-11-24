@@ -23,7 +23,7 @@
 // every other dashboard endpoint re-validating discord_id+character_id
 // together) -- there's still no cryptographic auth here, same documented
 // gap as the rest of this process.
-import { fetchJson, el, renderTabIcon } from "./tabs/_shared.js?v=9";
+import { fetchJson, el, renderTabIcon } from "./tabs/_shared.js?v=11";
 import { mountThemePicker } from "./theme_picker.js?v=4";
 import { initClickSFX } from "./click_sfx.js?v=53";
 import { mountSoundPicker } from "./sound_picker.js?v=53";

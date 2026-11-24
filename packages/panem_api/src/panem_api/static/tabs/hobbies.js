@@ -7,7 +7,7 @@
 // probability roll, mirroring the Discord side's `HobbyTimingView`
 // button-press requirement exactly instead of skipping straight to the
 // roll.
-import { el, setStatusText, watchIframeResize } from "./_shared.js?v=9";
+import { el, setStatusText, watchIframeResize } from "./_shared.js?v=11";
 
 // How long hobby.html's own result text stays visible before this tab
 // clears the iframe -- same fix/reasoning as tabs/crime.js's identical

@@ -17,7 +17,7 @@
 // Housing tab's own status panel). "Energize" (coffee, tea, any good
 // with a `fatigue_value`) is the only proactive way to push it higher
 // than that, same shape as Eat/Drink/Heal.
-import { el, watchIframeResize } from "./_shared.js?v=9";
+import { el, watchIframeResize } from "./_shared.js?v=11";
 
 const RESULT_DISPLAY_MS = 4000;
 

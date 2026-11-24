@@ -8,7 +8,7 @@
 // The mode/meters section reads `/activity/dashboard/mode/{id}/status`
 // (Milestone 6), the same endpoint `/character mode`'s bot-side confirm
 // view is built against, so the two surfaces never drift apart.
-import { fetchJson, el, dropdown, setStatusText, renderTabIcon } from "./_shared.js?v=10";
+import { fetchJson, el, dropdown, setStatusText, renderTabIcon } from "./_shared.js?v=11";
 
 const MODE_LABELS = { story: "Story", life: "Life", simulation: "Simulation" };
 const SHIFT_PHASES = ["morning", "afternoon", "evening", "night"];

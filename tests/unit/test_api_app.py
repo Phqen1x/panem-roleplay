@@ -56,6 +56,7 @@ from panem_shared.enums import (
     SceneStatus,
     Stance,
 )
+from panem_shared.error_messages import error_message
 from panem_shared.redis_keys import (
     CHARACTER_PENDING_CHANNEL,
     crime_attempt_key,
@@ -3417,7 +3418,7 @@ class TestDashboardWork:
                 f"/activity/dashboard/work/{char_id}/start", json={"discord_id": 5}
             )
         assert response.status_code == 400
-        assert response.json()["detail"] == "work_jailed"
+        assert response.json()["detail"] == error_message("work_jailed")
 
     async def test_start_refuses_while_passed_out(self, work_app, db_session_factory):
         char_id = await seed_character(
@@ -3435,7 +3436,7 @@ class TestDashboardWork:
                 f"/activity/dashboard/work/{char_id}/start", json={"discord_id": 5}
             )
         assert response.status_code == 400
-        assert response.json()["detail"] == "work_passed_out"
+        assert response.json()["detail"] == error_message("work_passed_out")
 
     async def test_start_refuses_with_no_open_shift_and_no_gamemaker_position(
         self, work_app, db_session_factory
@@ -3666,7 +3667,7 @@ class TestDashboardBlackMarket:
                 json={"discord_id": 5, "good_id": "contraband", "qty": 1},
             )
         assert response.status_code == 400
-        assert response.json()["detail"] == "blackmarket_not_trusted"
+        assert response.json()["detail"] == error_message("blackmarket_not_trusted")
 
     async def test_buy_refuses_away_from_the_outskirts(self, market_app, db_session_factory):
         char_id = await seed_character(
@@ -3696,7 +3697,7 @@ class TestDashboardBlackMarket:
                 json={"discord_id": 5, "good_id": "contraband", "qty": 1},
             )
         assert response.status_code == 400
-        assert response.json()["detail"] == "blackmarket_not_at_market"
+        assert response.json()["detail"] == error_message("blackmarket_not_at_market")
 
     async def test_buy_succeeds_when_trusted(self, market_app, db_session_factory):
         char_id = await seed_character(
@@ -3785,7 +3786,7 @@ class TestDashboardTravel:
                 json={"discord_id": 42, "location_id": "station"},
             )
         assert response.status_code == 400
-        assert response.json()["detail"] == "travel_jailed"
+        assert response.json()["detail"] == error_message("travel_jailed")
 
     async def test_district_travel_home_is_free(self, travel_app, db_session_factory):
         """Traveling back to a character's home district never needs
@@ -4337,7 +4338,7 @@ class TestDashboardRpMode:
                 json={"discord_id": 5, "new_mode": "life"},
             )
         assert response.status_code == 400
-        assert response.json()["detail"] == "mode_switch_on_cooldown"
+        assert response.json()["detail"] == error_message("mode_switch_on_cooldown")
 
     async def test_crime_toggle_flips_and_stamps(self, work_app, db_session_factory):
         char_id = await seed_character(
@@ -4365,7 +4366,7 @@ class TestDashboardRpMode:
                 json={"discord_id": 5, "enabled": False},
             )
         assert response.status_code == 400
-        assert response.json()["detail"] == "crime_toggle_wrong_mode"
+        assert response.json()["detail"] == error_message("crime_toggle_wrong_mode")
 
     async def test_crime_toggle_refuses_within_the_cooldown_window(
         self, work_app, db_session_factory
@@ -4385,7 +4386,7 @@ class TestDashboardRpMode:
                 json={"discord_id": 5, "enabled": False},
             )
         assert response.status_code == 400
-        assert response.json()["detail"] == "crime_toggle_on_cooldown"
+        assert response.json()["detail"] == error_message("crime_toggle_on_cooldown")
 
     async def test_status_reports_has_job_info(self, work_app, db_session_factory):
         char_id = await seed_character(
@@ -4933,7 +4934,7 @@ class TestDashboardStaff:
                     json={"discord_id": 42, "character_name": "Wren", "ticks": 50},
                 )
         assert response.status_code == 403
-        assert response.json()["detail"] == "staff_only"
+        assert response.json()["detail"] == error_message("staff_only")
 
     async def test_jail_fails_closed_when_the_discord_lookup_errors(
         self, staff_app, db_session_factory
@@ -5032,7 +5033,7 @@ class TestDashboardStaff:
                     json={"discord_id": 42, "character_name": "Nobody", "ticks": 50},
                 )
         assert response.status_code == 404
-        assert response.json()["detail"] == "character_not_found"
+        assert response.json()["detail"] == error_message("character_not_found")
 
     async def test_jail_refuses_a_non_positive_tick_count(self, staff_app, db_session_factory):
         await seed_character(db_session_factory, character_overrides={"name": "Wren"})
@@ -5046,7 +5047,7 @@ class TestDashboardStaff:
                     json={"discord_id": 42, "character_name": "Wren", "ticks": 0},
                 )
         assert response.status_code == 400
-        assert response.json()["detail"] == "invalid_ticks"
+        assert response.json()["detail"] == error_message("invalid_ticks")
 
     async def test_post_staff_log_posts_to_the_configured_channel(self):
         # Exercised directly rather than through the `/staff/jail` route:
@@ -5716,7 +5717,7 @@ class TestDashboardStaffMarket:
                     json={"discord_id": 42, "district_id": 1, "good_id": "nonexistent", "qty": 1},
                 )
         assert response.status_code == 404
-        assert response.json()["detail"] == "staff_good_not_found"
+        assert response.json()["detail"] == error_message("staff_good_not_found")
 
     async def test_add_stock_rejects_a_non_positive_qty(self, staff_market_app):
         with patch.object(
@@ -5729,7 +5730,7 @@ class TestDashboardStaffMarket:
                     json={"discord_id": 42, "district_id": 1, "good_id": "grain", "qty": 0},
                 )
         assert response.status_code == 400
-        assert response.json()["detail"] == "market_stock_qty_must_be_positive"
+        assert response.json()["detail"] == error_message("market_stock_qty_must_be_positive")
 
 
 class TestDashboardStaffLayers:
@@ -5931,7 +5932,7 @@ class TestDashboardPanemHistory:
                     "/activity/dashboard/history/panem-history", params={"discord_id": 42}
                 )
         assert response.status_code == 403
-        assert response.json()["detail"] == "staff_only"
+        assert response.json()["detail"] == error_message("staff_only")
 
     async def test_create_then_list_round_trips(self, staff_app):
         with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=True)):
@@ -5968,7 +5969,7 @@ class TestDashboardPanemHistory:
                     json={"discord_id": 42, "keywords": ["  "], "text": "Some fact."},
                 )
         assert response.status_code == 400
-        assert response.json()["detail"] == "panem_history_needs_a_keyword"
+        assert response.json()["detail"] == error_message("panem_history_needs_a_keyword")
 
     async def test_delete_removes_the_entry(self, staff_app):
         with patch.object(discord_staff, "fetch_is_staff", AsyncMock(return_value=True)):
@@ -6284,7 +6285,7 @@ class TestDashboardPay:
                 json={"discord_id": 5, "target": "Mark", "amount": 10},
             )
         assert response.status_code == 400
-        assert response.json()["detail"] == "pay_mode_forbidden"
+        assert response.json()["detail"] == error_message("pay_mode_forbidden")
 
     async def test_refuses_insufficient_money(self, work_app, db_session_factory):
         sender_id = await seed_character(
@@ -6298,7 +6299,7 @@ class TestDashboardPay:
                 json={"discord_id": 5, "target": "Mark", "amount": 10},
             )
         assert response.status_code == 400
-        assert response.json()["detail"] == "pay_insufficient_money"
+        assert response.json()["detail"] == error_message("pay_insufficient_money")
 
 
 class TestDashboardTrade:
@@ -6387,7 +6388,7 @@ class TestDashboardTrade:
                 json={"discord_id": 5, "target": "Mark", "give_money": 10},
             )
         assert response.status_code == 400
-        assert response.json()["detail"] == "trade_mode_forbidden"
+        assert response.json()["detail"] == error_message("trade_mode_forbidden")
 
     async def test_decline_leaves_money_and_goods_untouched(self, work_app, db_session_factory):
         initiator_id = await seed_character(
@@ -6494,7 +6495,7 @@ class TestDashboardTrade:
                 json={"discord_id": 6},
             )
         assert accept_response.status_code == 400
-        assert accept_response.json()["detail"] == "trade_insufficient_inventory"
+        assert accept_response.json()["detail"] == error_message("trade_insufficient_inventory")
         async with db_session_factory() as session:
             trade = (await session.execute(select(Trade).where(Trade.id == trade_id))).scalar_one()
             assert trade.status == "pending"

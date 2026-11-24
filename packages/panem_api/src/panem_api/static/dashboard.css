@@ -188,6 +188,17 @@ header {
   font-weight: 600;
 }
 
+.custom-select-menu .custom-select-empty {
+  padding: 8px 14px;
+  color: var(--muted);
+  font-size: 13.5px;
+  font-style: italic;
+}
+
+.searchable-combobox .search-input {
+  width: 100%;
+}
+
 .world-clock {
   display: flex;
   flex-direction: column;
