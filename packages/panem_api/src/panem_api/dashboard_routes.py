@@ -4392,10 +4392,16 @@ def build_staff_router(
         await discord_staff.post_staff_log(
             channel_id=log_channel_id,
             bot_token=discord_token,
-            content=(
-                f"**Staff action:** <@{body.discord_id}> `jail` -> `{response.character_name}` "
-                f"(ticks={body.ticks}, applied={applied}, reason={body.reason!r})"
-            ),
+            action="jail",
+            staff_discord_id=body.discord_id,
+            target=str(character.id),
+            target_label=f"**{response.character_name}**",
+            payload={
+                "ticks": body.ticks,
+                "applied_ticks": applied,
+                "jailed_until_tick": response.jailed_until_tick,
+                "reason": body.reason,
+            },
         )
         return response
 
@@ -4445,10 +4451,11 @@ def build_staff_router(
         await discord_staff.post_staff_log(
             channel_id=log_channel_id,
             bot_token=discord_token,
-            content=(
-                f"**Staff action:** <@{body.discord_id}> `add_stock` -> district {district.id} "
-                f"`{good.name}` (+{body.qty}, now {response.new_supply})"
-            ),
+            action="add_stock",
+            staff_discord_id=body.discord_id,
+            target=f"{district.id}:{good.id}",
+            target_label=f"{district.name} -- {good.name}",
+            payload={"qty_added": body.qty, "new_supply": response.new_supply},
         )
         return response
 
@@ -4558,11 +4565,11 @@ def build_staff_router(
         await discord_staff.post_staff_log(
             channel_id=log_channel_id,
             bot_token=discord_token,
-            content=(
-                f"**Staff action:** <@{body.discord_id}> "
-                f"`{'channel_lock' if body.locked else 'channel_unlock'}` -> <#{channel_id}> "
-                f"for <@&{roleplay_role_id}>"
-            ),
+            action="channel_lock" if body.locked else "channel_unlock",
+            staff_discord_id=body.discord_id,
+            target=str(channel_id),
+            target_label=f"<#{channel_id}> ({_channel_label(district_id, kind)})",
+            payload={"role": f"<@&{roleplay_role_id}>"},
         )
         return StaffChannelAccessEntry(
             channel_id=channel_id,
@@ -4699,13 +4706,15 @@ def build_staff_router(
         data[str(body.district_id)] = motto
         mottos_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
+        district = content.districts.get(body.district_id)
         await discord_staff.post_staff_log(
             channel_id=log_channel_id,
             bot_token=discord_token,
-            content=(
-                f"**Staff action:** <@{body.discord_id}> updated District {body.district_id} motto "
-                f"to {motto!r}"
-            ),
+            action="district_motto",
+            staff_discord_id=body.discord_id,
+            target=str(body.district_id),
+            target_label=district.name if district is not None else f"District {body.district_id}",
+            payload={"motto": motto},
         )
         return DistrictMottoResponse(district_id=body.district_id, motto=motto)
 

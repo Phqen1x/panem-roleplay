@@ -243,15 +243,16 @@ class StaffCog(commands.Cog):
             row.peacekeeper_pressure = min(
                 1.0, row.peacekeeper_pressure + constants.CRACKDOWN_PRESSURE_DELTA
             )
+            district_name = self.bot.content.district(district).name  # type: ignore[attr-defined]
             await log_staff_action(
                 session,
                 bot=self.bot,
                 staff_discord_id=interaction.user.id,
                 action="crackdown",
                 target=str(district),
+                target_label=district_name,
                 payload={"duration_ticks": duration, "until_tick": row.crackdown_until_tick},
             )
-        district_name = self.bot.content.district(district).name  # type: ignore[attr-defined]
         await interaction.response.send_message(
             f"Peacekeepers crack down on **{district_name}** for {duration} ticks.",
             ephemeral=True,
@@ -276,6 +277,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="ban",
                 target=str(user.id),
+                target_label=user.mention,
             )
         await interaction.response.send_message(f"Banned {user.mention}.", ephemeral=True)
 
@@ -303,6 +305,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="character_limit",
                 target=str(user.id),
+                target_label=user.mention,
                 payload={"limit": limit},
             )
         if limit is None:
@@ -334,6 +337,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="capitol_authorize",
                 target=str(user.id),
+                target_label=user.mention,
             )
         if already:
             await interaction.response.send_message(
@@ -362,6 +366,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="capitol_revoke",
                 target=str(user.id),
+                target_label=user.mention,
             )
         if was_authorized:
             await interaction.response.send_message(
@@ -395,6 +400,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="kill",
                 target=str(row.id),
+                target_label=f"**{character}**",
                 payload={"reason": reason},
             )
         await interaction.response.send_message(f"**{character}** has died.", ephemeral=True)
@@ -440,7 +446,13 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="jail",
                 target=str(row.id),
-                payload={"ticks": ticks, "applied_ticks": applied, "reason": reason},
+                target_label=f"**{character}**",
+                payload={
+                    "ticks": ticks,
+                    "applied_ticks": applied,
+                    "jailed_until_tick": until_tick,
+                    "reason": reason,
+                },
             )
         await interaction.response.send_message(
             f"**{character}** has been jailed for {applied} ticks (until tick {until_tick}).",
@@ -465,6 +477,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="note",
                 target=str(row.id),
+                target_label=f"**{character}**",
                 payload={"text": text},
             )
         await interaction.response.send_message("Note logged.", ephemeral=True)
@@ -500,7 +513,8 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="delete_pending",
                 target=str(char_id),
-                payload={"name": char_name, "reason": reason},
+                target_label=f"**{char_name}**",
+                payload={"reason": reason},
             )
         await interaction.response.send_message(
             f"Deleted pending application **{char_name}**.", ephemeral=True
@@ -538,6 +552,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="scene_lock",
                 target=str(thread.id),
+                target_label=thread.mention,
             )
         await interaction.response.send_message("Scene locked.", ephemeral=True)
         await thread.edit(locked=True, reason=f"Locked by {interaction.user}")
@@ -561,6 +576,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="scene_archive",
                 target=str(thread.id),
+                target_label=thread.mention,
             )
         # Reply before archiving: an interaction response into an
         # already-archived thread is refused with 403 "Thread is archived".
@@ -634,6 +650,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="give_money",
                 target=str(row.id),
+                target_label=f"**{character}**",
                 payload={"amount": amount},
             )
             new_balance = row.money
@@ -680,6 +697,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="give_item",
                 target=str(row.id),
+                target_label=f"**{character}**",
                 payload={"good": good, "qty": qty},
             )
         await interaction.response.send_message(
@@ -733,6 +751,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="give_position",
                 target=str(row.id),
+                target_label=f"**{character}**",
                 payload={"position": position.value, "grant": grant},
             )
             current = row.positions
@@ -787,6 +806,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="give_job",
                 target=str(row.id),
+                target_label=f"**{character}**",
                 payload={
                     "job_title": job_title,
                     "shift_phase": shift_phase.value,
@@ -840,6 +860,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="give_mastery",
                 target=str(row.id),
+                target_label=f"**{character}**",
                 payload={"shifts_completed": new_shifts, "level": new_level.value},
             )
         await interaction.response.send_message(
@@ -871,6 +892,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="housing_set_price",
                 target=str(property_id),
+                target_label=f"Property #{property_id}",
                 payload={"price": price},
             )
         if price is None:
@@ -905,6 +927,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="engagement_set_timeout",
                 target="engagement_settings",
+                target_label="Engagement Settings",
                 payload={"minutes": minutes},
             )
         await interaction.response.send_message(
@@ -935,6 +958,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="exhaustion_set_duration",
                 target="exhaustion_settings",
+                target_label="Exhaustion Settings",
                 payload={"ticks": ticks},
             )
         await interaction.response.send_message(
@@ -960,6 +984,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="dialogue_set_enabled",
                 target="dialogue_settings",
+                target_label="Dialogue Settings",
                 payload={"enabled": enabled},
             )
         if enabled:
@@ -1025,6 +1050,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="channel_unlock",
                 target=str(target.id),
+                target_label=target.mention,
                 payload={"role_id": role.id},
             )
         await interaction.response.send_message(
@@ -1065,6 +1091,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="channel_lock",
                 target=str(target.id),
+                target_label=target.mention,
                 payload={"role_id": role.id},
             )
         await interaction.response.send_message(
@@ -1145,6 +1172,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="channel_unlock_all",
                 target=str(resolved_role.id),
+                target_label=resolved_role.mention,
                 payload={"unlocked_channel_ids": unlocked, "missing_channel_ids": missing},
             )
 
@@ -1195,6 +1223,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="npc_rename",
                 target=row.id,
+                target_label=f"**{old_name}**",
                 payload={"old_name": old_name, "new_name": new_name},
             )
         await interaction.response.send_message(
@@ -1226,6 +1255,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="npc_set_background",
                 target=row.id,
+                target_label=f"**{name}**",
                 payload={"backstory": backstory},
             )
         await interaction.response.send_message(
@@ -1257,6 +1287,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="npc_set_appearance",
                 target=row.id,
+                target_label=f"**{name}**",
                 payload={"appearance": appearance},
             )
         await interaction.response.send_message(
@@ -1285,6 +1316,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="npc_set_traits",
                 target=row.id,
+                target_label=f"**{name}**",
                 payload={"traits": trait_list},
             )
         await interaction.response.send_message(
@@ -1311,6 +1343,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="npc_set_speech",
                 target=row.id,
+                target_label=f"**{name}**",
                 payload={"tone": tone},
             )
         await interaction.response.send_message(
@@ -1399,6 +1432,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="npc_add",
                 target=npc_id,
+                target_label=f"**{name}**",
                 payload={"name": name, "district": district, "home_location": home_location},
             )
         await interaction.response.send_message(
@@ -1478,6 +1512,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="lore_history_add",
                 target=str(entry_id),
+                target_label=f"History Entry #{entry_id}",
                 payload={"keywords": parsed_keywords, "text": text},
             )
         await interaction.response.send_message(
@@ -1503,6 +1538,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="lore_history_remove",
                 target=str(entry_id),
+                target_label=f"History Entry #{entry_id}",
                 payload={"keywords": entry.keywords, "text": entry.text},
             )
         await interaction.response.send_message(
@@ -1546,6 +1582,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="lore_au_set",
                 target="world_lore_settings",
+                target_label="World Lore",
                 payload={"text": text},
             )
         await interaction.response.send_message("Alternate Universe notes updated.", ephemeral=True)
@@ -1626,6 +1663,7 @@ class StaffCog(commands.Cog):
                     staff_discord_id=interaction.user.id,
                     action="music_upload",
                     target=str(track.id),
+                    target_label=f"**{title}**",
                     payload={"title": title, "scope": scope.value, "file_path": rel_path},
                 )
         except Exception as exc:
@@ -1747,6 +1785,7 @@ class StaffCog(commands.Cog):
                     staff_discord_id=interaction.user.id,
                     action="event_create",
                     target=str(event.id),
+                    target_label=f"**{name}**",
                     payload={"hobby": hobby, "name": name},
                 )
             except ServiceError as exc:
@@ -1797,6 +1836,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="event_conclude",
                 target=str(event),
+                target_label=f"**{global_event.name}**",
                 payload={"winner_character_id": result.winner_character_id},
             )
         await interaction.response.send_message(text)
@@ -1827,6 +1867,7 @@ class StaffCog(commands.Cog):
                 staff_discord_id=interaction.user.id,
                 action="event_cancel",
                 target=str(event),
+                target_label=f"**{name}**",
                 payload={},
             )
         await interaction.response.send_message(t("global_event_cancelled", name=name))

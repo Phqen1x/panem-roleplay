@@ -13,6 +13,7 @@ from collections.abc import Collection
 import httpx
 
 from panem_shared.logging import get_logger
+from panem_shared.staff_log import build_staff_log_embed
 
 logger = get_logger(component="api")
 
@@ -89,21 +90,41 @@ async def fetch_has_any_role(
     return member_role_ids is not None and not member_role_ids.isdisjoint(role_ids)
 
 
-async def post_staff_log(*, channel_id: int, bot_token: str, content: str) -> None:
-    """Best-effort: posts a one-line audit summary to the same log channel
-    `panem_bot`'s `log_staff_action` uses, so a dashboard-issued staff
-    action shows up in the same place a Discord-issued one does. A missing
-    channel_id/token or a failed request just means no log line -- the
-    `StaffAction` DB row every staff route writes is the durable record,
-    same "logging must never fail the action" posture as `_post_to_log_
-    channel` on the bot side."""
+async def post_staff_log(
+    *,
+    channel_id: int,
+    bot_token: str,
+    action: str,
+    staff_discord_id: int,
+    target: str,
+    payload: dict[str, object] | None = None,
+    target_label: str | None = None,
+) -> None:
+    """Best-effort: posts a human-readable embed audit summary to the same
+    log channel `panem_bot`'s `log_staff_action` uses, so a dashboard-
+    issued staff action shows up in the same place a Discord-issued one
+    does, in the same format (`panem_shared.staff_log.build_staff_log_
+    embed` -- this module has no `discord.py` dependency, see its own
+    docstring, so it sends that embed dict straight to Discord's REST API
+    rather than building a `discord.Embed`). A missing channel_id/token or
+    a failed request just means no log line -- the `StaffAction` DB row
+    every staff route writes is the durable record, same "logging must
+    never fail the action" posture as `_post_to_log_channel` on the bot
+    side."""
     if not bot_token or not channel_id:
         return
+    embed = build_staff_log_embed(
+        action=action,
+        staff_discord_id=staff_discord_id,
+        target=target,
+        payload=payload,
+        target_label=target_label,
+    )
     url = f"{DISCORD_API_BASE}/channels/{channel_id}/messages"
     async with httpx.AsyncClient() as http_client:
         try:
             response = await http_client.post(
-                url, json={"content": content}, headers={"Authorization": f"Bot {bot_token}"}
+                url, json={"embeds": [embed]}, headers={"Authorization": f"Bot {bot_token}"}
             )
         except httpx.HTTPError as exc:
             logger.warning("staff_log_post_failed", channel_id=channel_id, error=str(exc))

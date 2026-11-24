@@ -261,7 +261,8 @@ class TestHandleSimAlert:
         await narrator._handle_sim_alert(bot, "Tick failed twice in a row, pausing: boom")
 
         log_channel.send.assert_awaited_once()
-        assert "boom" in log_channel.send.await_args.args[0]
+        embed = log_channel.send.await_args.kwargs["embed"]
+        assert "boom" in embed.description
 
     async def test_no_op_when_log_channel_not_configured(self, bot: FakeBot):
         bot.get_channel = MagicMock(return_value=None)
@@ -387,4 +388,5 @@ class TestRun:
         await narrator.run(bot)
 
         log_channel.send.assert_awaited_once()
-        assert "boom" in log_channel.send.await_args.args[0]
+        embed = log_channel.send.await_args.kwargs["embed"]
+        assert "boom" in embed.description

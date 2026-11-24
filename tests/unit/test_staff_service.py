@@ -50,9 +50,27 @@ class TestLogStaffAction:
         )
 
         log_channel.send.assert_awaited_once()
-        text = log_channel.send.await_args.args[0]
-        assert "give_money" in text
-        assert "7" in text
+        embed = log_channel.send.await_args.kwargs["embed"]
+        assert embed.title == "Staff Action: Give Money"
+        assert any(field.value == "`7`" for field in embed.fields)
+        assert any(field.value == "100" for field in embed.fields)
+
+    async def test_posts_with_a_human_readable_target_label_when_given(self, db_session):
+        log_channel = AsyncMock(spec=discord.TextChannel)
+        bot = FakeBot(log_channel)
+
+        await log_staff_action(
+            db_session,
+            staff_discord_id=42,
+            action="give_money",
+            target="7",
+            target_label="**Wren**",
+            payload={"amount": 100},
+            bot=bot,  # type: ignore[arg-type]
+        )
+
+        embed = log_channel.send.await_args.kwargs["embed"]
+        assert any(field.value == "**Wren**" for field in embed.fields)
 
     async def test_no_op_when_log_channel_not_configured(self, db_session):
         bot = FakeBot(None)

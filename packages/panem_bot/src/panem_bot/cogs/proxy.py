@@ -716,6 +716,7 @@ class ProxyCog(commands.Cog):
                     staff_discord_id=payload.user_id,
                     action="proxy_delete",
                     target=str(payload.message_id),
+                    target_label=channel.mention,
                     payload={"thread_id": payload.channel_id},
                 )
 

@@ -5062,17 +5062,26 @@ class TestDashboardStaff:
             httpx.AsyncClient, "post", AsyncMock(return_value=fake_response)
         ) as mock_post:
             await discord_staff.post_staff_log(
-                channel_id=555, bot_token="test-bot-token", content="**Staff action:** ... `Wren`"
+                channel_id=555,
+                bot_token="test-bot-token",
+                action="jail",
+                staff_discord_id=42,
+                target="7",
+                target_label="**Wren**",
             )
         mock_post.assert_awaited_once()
         args, kwargs = mock_post.call_args
         assert args[0] == f"{discord_staff.DISCORD_API_BASE}/channels/555/messages"
         assert kwargs["headers"]["Authorization"] == "Bot test-bot-token"
-        assert "Wren" in kwargs["json"]["content"]
+        embed = kwargs["json"]["embeds"][0]
+        assert embed["title"] == "Staff Action: Jail"
+        assert any(field["value"] == "**Wren**" for field in embed["fields"])
 
     async def test_post_staff_log_is_a_noop_without_a_channel_or_token(self):
         with patch.object(httpx.AsyncClient, "post", AsyncMock()) as mock_post:
-            await discord_staff.post_staff_log(channel_id=0, bot_token="", content="ignored")
+            await discord_staff.post_staff_log(
+                channel_id=0, bot_token="", action="jail", staff_discord_id=42, target="7"
+            )
         mock_post.assert_not_awaited()
 
     async def test_post_staff_log_swallows_a_failed_request(self):
@@ -5080,7 +5089,11 @@ class TestDashboardStaff:
             httpx.AsyncClient, "post", AsyncMock(side_effect=httpx.ConnectError("boom"))
         ):
             await discord_staff.post_staff_log(
-                channel_id=555, bot_token="test-bot-token", content="ignored"
+                channel_id=555,
+                bot_token="test-bot-token",
+                action="jail",
+                staff_discord_id=42,
+                target="7",
             )  # no raise
 
 

@@ -353,8 +353,14 @@ async def _handle_sim_alert(bot: PanemBot, raw: str) -> None:
     if not isinstance(channel, discord.TextChannel):
         logger.warning("sim_alert_no_log_channel", message=raw)
         return
+    embed = discord.Embed(
+        title="🚨 Sim Alert",
+        description=raw,
+        color=discord.Color.red(),
+        timestamp=discord.utils.utcnow(),
+    )
     try:
-        await channel.send(f":rotating_light: **Sim alert:** {raw}")
+        await channel.send(embed=embed)
     except discord.HTTPException:
         logger.exception("sim_alert_send_failed")
 
