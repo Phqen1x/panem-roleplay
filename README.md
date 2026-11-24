@@ -102,9 +102,11 @@ uv run python scripts/setup_guild.py
 ```
 
 Note the `APPROVAL_CHANNEL_ID` / `LOG_CHANNEL_ID` / `ROLEPLAY_ROLE_ID` it
-prints and add them to `.env`. The "Roleplay" role it creates is a
-separate opt-in from district roles (holding a district role alone
-doesn't mean seeing every roleplay channel) and isn't unlocked to
+prints and add them to `.env`, plus `STAFF_ROLE_IDS`/`STAFF_USER_IDS`
+(existing role(s) and/or specific member(s) you want to count as Panem
+staff — the script creates no staff role of its own). The "Roleplay"
+role it creates is a view-only opt-in (see it / don't see it) separate
+from actually being approved in a district, and isn't unlocked to
 anything yet — once setup is otherwise finished, run `/staff channel
 unlock-all` in Discord to open every district's forum and `#ooc` up to
 it in one shot (`/staff channel unlock` still works per channel for
