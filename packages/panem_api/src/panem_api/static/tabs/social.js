@@ -29,7 +29,7 @@ import {
   setStatusText,
   dropdown,
   searchableCombobox,
-} from "./_shared.js?v=11";
+} from "./_shared.js?v=13";
 import { mountAvatar } from "./avatar_creator.js?v=11";
 
 // Same one-shot cache pattern as tabs/character.js's own `loadLayerCatalog`

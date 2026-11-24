@@ -80,6 +80,118 @@ export function setStatusText(el, text, { error = false } = {}) {
   el.classList.toggle("error", error);
 }
 
+const MENU_GAP = 4;
+
+// `position: fixed` is normally relative to the viewport -- *unless* an
+// ancestor has a `transform`/`perspective`/`filter`/`backdrop-filter`/
+// `will-change` (of one of those) or a `contain` that includes layout or
+// paint, any of which makes CSS treat that ancestor's own box as the
+// containing block for fixed (and absolute) descendants instead, per
+// spec. Every `.panel` in this app sets `backdrop-filter: blur(...)`, so
+// without accounting for this, `menuEl.style.top = "0px"` here doesn't
+// land at the true viewport's top edge -- it lands at the *panel's* top
+// edge, which can itself be scrolled well above or below the visible
+// area. Returns that ancestor, or `null` if none exists (meaning the
+// viewport itself really is the containing block, same as a plain page).
+function findFixedContainingBlock(el) {
+  let node = el.parentElement;
+  while (node) {
+    const cs = getComputedStyle(node);
+    if (
+      cs.transform !== "none" ||
+      cs.perspective !== "none" ||
+      cs.filter !== "none" ||
+      cs.backdropFilter !== "none" ||
+      /transform|perspective|filter/.test(cs.willChange) ||
+      /layout|paint|strict|content/.test(cs.contain)
+    ) {
+      return node;
+    }
+    node = node.parentElement;
+  }
+  return null;
+}
+
+// Pins a `.custom-select-menu`-style popup (already unhidden, so it has
+// a real measurable size) to explicit, clamped viewport pixel
+// coordinates via `position: fixed`, instead of the CSS `top: calc(100%
+// + 4px)` / `.open-up`'s `bottom: calc(100% + 4px)` anchoring this used
+// before. That anchoring assumed `getBoundingClientRect()` and `window.
+// innerHeight`/`innerWidth` describe the same visible area a CSS
+// percentage/calc() anchor resolves against -- true in an ordinary page,
+// but Discord's Activity iframe embedding doesn't reliably hold that
+// assumption (the same reason a native `<select>` popup is unusable
+// here to begin with, per this module's own long-standing note on
+// `dropdown()` below): a menu that picked "open upward, CSS handles the
+// rest" could still render with its top edge above the visible area in
+// a real Activity even though the exact same layout looked fine in an
+// ordinary desktop browser tab. Computing the final box from measured
+// rects and clamping it into `[0, innerHeight]`/`[0, innerWidth]`
+// ourselves, then applying it as fixed pixel coordinates, means the menu
+// can only ever end up inside the viewport this code can actually see --
+// nothing is left for a CSS anchor to get wrong relative to some other
+// notion of "the viewport."
+function positionMenu(anchorEl, menuEl) {
+  menuEl.style.maxHeight = "";
+  menuEl.style.position = "fixed";
+  const anchorRect = anchorEl.getBoundingClientRect();
+  // The CSS's `min-width: 100%` means "100% of the containing block,"
+  // which silently switches from "the toggle's own width" to "the whole
+  // viewport's width" the moment `position` above becomes `fixed` --
+  // pinning it in pixels up front sidesteps that percentage entirely
+  // (and has to happen before the measurement below, since it can change
+  // the menu's actual rendered width).
+  menuEl.style.minWidth = `${anchorRect.width}px`;
+  const menuRect = menuEl.getBoundingClientRect();
+  const viewportHeight = window.innerHeight;
+  const viewportWidth = window.innerWidth;
+
+  const spaceBelow = viewportHeight - anchorRect.bottom;
+  const spaceAbove = anchorRect.top;
+  let top;
+  if (menuRect.height <= spaceBelow - MENU_GAP) {
+    top = anchorRect.bottom + MENU_GAP;
+  } else if (menuRect.height <= spaceAbove - MENU_GAP) {
+    top = anchorRect.top - MENU_GAP - menuRect.height;
+  } else if (spaceBelow >= spaceAbove) {
+    const clamped = Math.max(0, spaceBelow - MENU_GAP);
+    menuEl.style.maxHeight = `${clamped}px`;
+    top = anchorRect.bottom + MENU_GAP;
+  } else {
+    const clamped = Math.max(0, spaceAbove - MENU_GAP);
+    menuEl.style.maxHeight = `${clamped}px`;
+    top = anchorRect.top - MENU_GAP - clamped;
+  }
+  // Belt-and-suspenders: whatever the branch above computed, never let
+  // the final box actually land outside the viewport -- re-measuring
+  // after `maxHeight` is applied would be the "proper" way to get an
+  // exact height, but clamping `top` directly against the viewport using
+  // the (possibly still slightly stale) `menuRect.height` is simpler and
+  // every bit as effective at guaranteeing the visible result.
+  top = Math.max(0, Math.min(top, viewportHeight - menuRect.height));
+
+  let left = anchorRect.left;
+  if (left + menuRect.width > viewportWidth) {
+    left = anchorRect.right - menuRect.width;
+  }
+  left = Math.max(0, left);
+
+  // `top`/`left` above are true viewport coordinates; convert them into
+  // whatever box this menu's `position: fixed` actually resolves
+  // against (see `findFixedContainingBlock`) before writing them out, so
+  // the rendered result still lands at that same viewport position
+  // either way.
+  const containingBlock = findFixedContainingBlock(menuEl);
+  if (containingBlock) {
+    const containingRect = containingBlock.getBoundingClientRect();
+    top -= containingRect.top;
+    left -= containingRect.left;
+  }
+
+  menuEl.style.top = `${top}px`;
+  menuEl.style.left = `${left}px`;
+}
+
 // A hand-rolled dropdown standing in for a native <select> -- Discord
 // scales/transforms an Activity's iframe content for its own embedding,
 // which is known to break Chromium's native select-popup positioning in
@@ -124,48 +236,12 @@ export function dropdown(initialOptions) {
     }
   }
 
-  const MENU_GAP = 4;
-
   toggle.addEventListener("click", () => {
     if (toggle.disabled) return;
     const opening = menu.hidden;
     menu.hidden = !menu.hidden;
     if (!opening) return;
-    // Flip the menu to open upward instead of its default downward spill
-    // when there isn't enough room below the toggle to show it in full --
-    // without this, a dropdown low in a long panel (e.g. the Museum tab's
-    // first field-row, which can still sit near the bottom of a short
-    // Activity iframe) rendered its tail end past the viewport's bottom
-    // edge, which reads identically to "the dropdown is cut off" even
-    // though the content is technically still there to scroll to.
-    //
-    // Opening up only helps if there's actually *more* room up there --
-    // a toggle near the top of the viewport (e.g. Travel's "Location"
-    // field, the very first control in its panel) used to flip up
-    // whenever spaceAbove > spaceBelow even though spaceAbove was still
-    // nowhere near enough, rendering the menu's top edge above y:0. Only
-    // flip up when it truly fits there; otherwise clamp the menu's
-    // height to whichever side has more room so it never spills past
-    // either viewport edge.
-    menu.classList.remove("open-up");
-    menu.style.maxHeight = "";
-    const toggleRect = toggle.getBoundingClientRect();
-    const menuHeight = menu.getBoundingClientRect().height;
-    const spaceBelow = window.innerHeight - toggleRect.bottom;
-    const spaceAbove = toggleRect.top;
-    const fitsBelow = menuHeight <= spaceBelow - MENU_GAP;
-    const fitsAbove = menuHeight <= spaceAbove - MENU_GAP;
-    let openUp = false;
-    if (!fitsBelow) {
-      if (fitsAbove) {
-        openUp = true;
-      } else {
-        openUp = spaceAbove > spaceBelow;
-        const available = Math.max(0, (openUp ? spaceAbove : spaceBelow) - MENU_GAP);
-        menu.style.maxHeight = `${available}px`;
-      }
-    }
-    if (openUp) menu.classList.add("open-up");
+    positionMenu(toggle, menu);
   });
   document.addEventListener("click", (event) => {
     if (!menu.hidden && !event.composedPath().includes(wrapper)) close();
@@ -269,30 +345,10 @@ export function searchableCombobox(initialOptions, { placeholder } = {}) {
     }
   }
 
-  const MENU_GAP = 4;
-
   function open() {
     menu.hidden = false;
     renderMenu(input.value);
-    menu.classList.remove("open-up");
-    menu.style.maxHeight = "";
-    const inputRect = input.getBoundingClientRect();
-    const menuHeight = menu.getBoundingClientRect().height;
-    const spaceBelow = window.innerHeight - inputRect.bottom;
-    const spaceAbove = inputRect.top;
-    const fitsBelow = menuHeight <= spaceBelow - MENU_GAP;
-    const fitsAbove = menuHeight <= spaceAbove - MENU_GAP;
-    let openUp = false;
-    if (!fitsBelow) {
-      if (fitsAbove) {
-        openUp = true;
-      } else {
-        openUp = spaceAbove > spaceBelow;
-        const available = Math.max(0, (openUp ? spaceAbove : spaceBelow) - MENU_GAP);
-        menu.style.maxHeight = `${available}px`;
-      }
-    }
-    if (openUp) menu.classList.add("open-up");
+    positionMenu(input, menu);
   }
 
   input.addEventListener("focus", () => {

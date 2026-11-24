@@ -7,7 +7,7 @@
 // only), what you own (per-property sell/refinance/rent-out/auction
 // actions), and what's for sale/rent in your current district
 // (buy/rent/inn-stay).
-import { fetchJson, el, setStatusText } from "./_shared.js?v=11";
+import { fetchJson, el, setStatusText } from "./_shared.js?v=13";
 
 function priceLabelSuffix(label) {
   if (label === "night") return "/night";

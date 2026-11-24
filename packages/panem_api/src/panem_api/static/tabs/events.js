@@ -6,7 +6,7 @@
 // a chain and joining a global event both stay side effects of playing a
 // hobby (the Hobbies tab) -- there's no "start"/"join" button here, same
 // as there's no such Discord command either.
-import { el, setStatusText } from "./_shared.js?v=11";
+import { el, setStatusText } from "./_shared.js?v=13";
 
 function mysteryPanel(ctx, chain, resultLine, onChanged) {
   if (!chain) {
