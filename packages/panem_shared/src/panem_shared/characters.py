@@ -93,6 +93,15 @@ def effective_max_characters(user: User, settings: Settings) -> int:
     )
 
 
+def is_capitol_authorized(user: User) -> bool:
+    """A Capitol (`constants.CAPITOL_DISTRICT_ID`) character is sensitive
+    enough (Panem's ruling class, not an ordinary district) that it isn't
+    just another autocomplete choice -- staff grant it per user with
+    `/staff capitol authorize`, same shape as `effective_max_characters`'s
+    override."""
+    return user.capitol_authorized_at is not None
+
+
 async def ensure_name_available(
     session: AsyncSession, name: str, *, exclude_character_id: int | None = None
 ) -> None:

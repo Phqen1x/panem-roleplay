@@ -141,6 +141,14 @@ class CharacterCog(commands.Cog):
             if user.banned_at is not None:
                 await interaction.response.send_message(t("banned"), ephemeral=True)
                 return
+            if (
+                district_id == constants.CAPITOL_DISTRICT_ID
+                and not characters_svc.is_capitol_authorized(user)
+            ):
+                await interaction.response.send_message(
+                    t("capitol_requires_authorization"), ephemeral=True
+                )
+                return
             max_characters = characters_svc.effective_max_characters(user, self.bot.settings)
             count = await session.execute(
                 select(func.count())

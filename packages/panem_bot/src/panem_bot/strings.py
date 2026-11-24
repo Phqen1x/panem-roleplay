@@ -18,6 +18,10 @@ STRINGS: dict[str, str] = {
     "mastery_needs_value": "Provide either shifts_completed or level.",
     "invalid_shifts_completed": "shifts_completed must be zero or greater.",
     "invalid_district": "Not a valid district.",
+    "capitol_requires_authorization": (
+        "Creating a Capitol character needs staff sign-off first -- ask a staff member to run "
+        "`/staff capitol authorize` for you, then try again."
+    ),
     "character_not_found": "Character not found.",
     "character_not_yours": "That's not your character.",
     "character_not_approved": "That character isn't approved yet.",

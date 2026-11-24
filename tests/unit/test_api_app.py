@@ -2339,6 +2339,40 @@ class TestDashboardCharacters:
             )
         assert response.status_code == 400
 
+    async def test_create_rejects_capitol_without_authorization(self, work_app):
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/activity/dashboard/characters",
+                json={
+                    "discord_id": 1,
+                    "district_id": 0,
+                    "name": "Plutarch",
+                    "age": 45,
+                    "rp_mode": "story",
+                },
+            )
+        assert response.status_code == 403
+
+    async def test_create_allows_capitol_once_authorized(self, work_app, db_session_factory):
+        async with db_session_factory() as session, session.begin():
+            user = User(discord_id=1, capitol_authorized_at=dt.datetime.now(dt.UTC))
+            session.add(user)
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/activity/dashboard/characters",
+                json={
+                    "discord_id": 1,
+                    "district_id": 0,
+                    "name": "Plutarch",
+                    "age": 45,
+                    "rp_mode": "story",
+                },
+            )
+        assert response.status_code == 200
+        assert response.json()["district_id"] == 0
+
     async def test_create_rejects_an_invalid_shift_phase(self, work_app):
         transport = httpx.ASGITransport(app=work_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -5378,6 +5412,27 @@ class TestDashboardStaffExtras:
         async with db_session_factory() as session:
             user = (await session.execute(select(User).where(User.discord_id == 99))).scalar_one()
             assert user.max_characters_override is None
+
+    async def test_capitol_authorization_set_and_revoke(self, staff_app, db_session_factory):
+        await seed_character(db_session_factory, discord_id=99)
+        with patch.object(
+            httpx.AsyncClient, "get", AsyncMock(return_value=_fake_member_response([777]))
+        ):
+            transport = httpx.ASGITransport(app=staff_app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                set_resp = await client.post(
+                    "/activity/dashboard/staff/capitol-authorization",
+                    json={"discord_id": 42, "target_discord_id": 99, "authorized": True},
+                )
+                revoke_resp = await client.post(
+                    "/activity/dashboard/staff/capitol-authorization",
+                    json={"discord_id": 42, "target_discord_id": 99, "authorized": False},
+                )
+        assert set_resp.status_code == 200 and set_resp.json()["authorized"] is True
+        assert revoke_resp.status_code == 200 and revoke_resp.json()["authorized"] is False
+        async with db_session_factory() as session:
+            user = (await session.execute(select(User).where(User.discord_id == 99))).scalar_one()
+            assert user.capitol_authorized_at is None
 
     async def test_ban_sets_banned_at(self, staff_app, db_session_factory):
         with patch.object(

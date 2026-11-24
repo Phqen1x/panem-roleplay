@@ -613,6 +613,10 @@ function createForm(ctx, catalog, { onCreated }) {
     el("div", { class: "field-row" }, el("label", { text: "Name" }), nameInput),
     el("div", { class: "field-row" }, el("label", { text: "Age" }), ageInput),
     el("div", { class: "field-row" }, el("label", { text: "District" }), districtInput),
+    el("p", {
+      class: "tab-status",
+      text: "District 0 is The Capitol -- needs staff authorization first, or creation is refused.",
+    }),
     el("div", { class: "field-row" }, el("label", { text: "RP Mode" }), modeSelect),
     jobRow,
     shiftRow,

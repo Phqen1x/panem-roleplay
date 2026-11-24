@@ -62,6 +62,11 @@ class User(TimestampMixin, Base):
     banned_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     max_characters_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
     """`/staff character_limit`; NULL means the guild default applies."""
+    capitol_authorized_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    """`/staff capitol authorize`; NULL means this user may not create a
+    Capitol (district 0) character."""
 
     active_theme_profile_id: Mapped[int | None] = mapped_column(
         ForeignKey(

@@ -158,6 +158,16 @@ class TestEffectiveMaxCharacters:
         assert characters_svc.effective_max_characters(user, settings) == 0
 
 
+class TestIsCapitolAuthorized:
+    def test_unset_is_not_authorized(self):
+        user = User(discord_id=1, capitol_authorized_at=None)
+        assert characters_svc.is_capitol_authorized(user) is False
+
+    def test_set_is_authorized(self):
+        user = User(discord_id=1, capitol_authorized_at=dt.datetime.now(dt.UTC))
+        assert characters_svc.is_capitol_authorized(user) is True
+
+
 class TestCreateCharacter:
     async def test_happy_path(self, db_session):
         user = await make_user(db_session)

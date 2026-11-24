@@ -950,6 +950,17 @@ def build_characters_router(
             raise HTTPException(status_code=400, detail="Invalid shift phase")
         async with session_scope(factory) as session:
             user = await characters_svc.get_or_create_user(session, body.discord_id)
+            if (
+                body.district_id == constants.CAPITOL_DISTRICT_ID
+                and not characters_svc.is_capitol_authorized(user)
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        "Creating a Capitol character needs staff sign-off first -- ask a "
+                        "staff member to authorize you, then try again."
+                    ),
+                )
             # Same fallback `effective_max_characters` applies, inlined: that
             # helper takes a full `Settings` object just for this one field,
             # which isn't worth constructing here for the sake of reuse.
@@ -3969,6 +3980,17 @@ class StaffCharacterLimitResponse(BaseModel):
     limit: int | None
 
 
+class StaffCapitolAuthorizeRequest(BaseModel):
+    discord_id: int
+    target_discord_id: int
+    authorized: bool
+
+
+class StaffCapitolAuthorizeResponse(BaseModel):
+    target_discord_id: int
+    authorized: bool
+
+
 class StaffBanRequest(BaseModel):
     discord_id: int
     target_discord_id: int
@@ -4992,6 +5014,26 @@ def build_staff_router(
             )
         return StaffCharacterLimitResponse(
             target_discord_id=body.target_discord_id, limit=body.limit
+        )
+
+    @router.post("/capitol-authorization", response_model=StaffCapitolAuthorizeResponse)
+    async def set_capitol_authorization(
+        body: StaffCapitolAuthorizeRequest,
+    ) -> StaffCapitolAuthorizeResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            user = await characters_svc.get_or_create_user(session, body.target_discord_id)
+            user.capitol_authorized_at = dt.datetime.now(dt.UTC) if body.authorized else None
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="capitol_authorize" if body.authorized else "capitol_revoke",
+                    target=str(body.target_discord_id),
+                )
+            )
+        return StaffCapitolAuthorizeResponse(
+            target_discord_id=body.target_discord_id, authorized=body.authorized
         )
 
     @router.post("/ban")

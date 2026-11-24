@@ -1075,6 +1075,40 @@ function characterActionsPanel(ctx) {
     }
   });
 
+  const capitolResult = el("p", { class: "result-line" });
+  const capitolDiscordId = el("input", { type: "text", placeholder: "Player's Discord ID" });
+  const capitolAuthorizeBtn = el("button", { class: "btn secondary", type: "button" }, "Authorize");
+  const capitolRevokeBtn = el("button", { class: "btn secondary", type: "button" }, "Revoke");
+  const setCapitolAuthorization = async (authorized) => {
+    capitolResult.textContent = "";
+    const targetId = capitolDiscordId.value.trim();
+    if (!targetId) {
+      capitolResult.className = "result-line lose";
+      capitolResult.textContent = "Enter the player's Discord ID.";
+      return;
+    }
+    try {
+      await fetchJson("/activity/dashboard/staff/capitol-authorization", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          discord_id: ctx.discordId(),
+          target_discord_id: Number(targetId),
+          authorized,
+        }),
+      });
+      capitolResult.className = "result-line win";
+      capitolResult.textContent = authorized
+        ? "Can now create a Capitol character."
+        : "Can no longer create a Capitol character.";
+    } catch (err) {
+      capitolResult.className = "result-line lose";
+      capitolResult.textContent = err.message;
+    }
+  };
+  capitolAuthorizeBtn.addEventListener("click", () => setCapitolAuthorization(true));
+  capitolRevokeBtn.addEventListener("click", () => setCapitolAuthorization(false));
+
   const banResult = el("p", { class: "result-line" });
   const banDiscordId = el("input", { type: "text", placeholder: "Player's Discord ID" });
   const banBtn = el("button", { class: "btn secondary", type: "button" }, "Ban");
@@ -1125,6 +1159,10 @@ function characterActionsPanel(ctx) {
     el("div", { class: "field-row" }, el("label", { text: "Limit" }), limitValue),
     el("div", { class: "field-row" }, limitBtn),
     limitResult,
+    el("h3", { text: "Capitol character authorization" }),
+    el("div", { class: "field-row" }, el("label", { text: "Discord ID" }), capitolDiscordId),
+    el("div", { class: "field-row" }, capitolAuthorizeBtn, capitolRevokeBtn),
+    capitolResult,
     el("h3", { text: "Ban from the bot" }),
     el("div", { class: "field-row" }, el("label", { text: "Discord ID" }), banDiscordId),
     el("div", { class: "field-row" }, banBtn),

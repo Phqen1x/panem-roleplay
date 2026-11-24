@@ -138,6 +138,11 @@ class StaffCog(commands.Cog):
         description="Toggle beta tabs/commands/systems for players without a redeploy",
         parent=group,
     )
+    capitol_group = app_commands.Group(
+        name="capitol",
+        description="Allow/disallow a specific user to create a Capitol character",
+        parent=group,
+    )
 
     @group.command(name="whois", description="Look up who a proxied message belongs to")
     @app_commands.describe(message_link="Link to the proxied message")
@@ -309,6 +314,62 @@ class StaffCog(commands.Cog):
         else:
             await interaction.response.send_message(
                 f"Set {user.mention}'s character limit to {limit}.", ephemeral=True
+            )
+
+    @capitol_group.command(
+        name="authorize", description="Let a specific user create a Capitol character"
+    )
+    @app_commands.describe(user="User to authorize")
+    @app_commands.check(_is_staff)
+    async def capitol_authorize(
+        self, interaction: discord.Interaction, user: discord.Member
+    ) -> None:
+        async with self.bot.db() as session:
+            row = await characters_svc.get_or_create_user(session, user.id)
+            already = characters_svc.is_capitol_authorized(row)
+            row.capitol_authorized_at = discord.utils.utcnow()
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="capitol_authorize",
+                target=str(user.id),
+            )
+        if already:
+            await interaction.response.send_message(
+                f"{user.mention} is already authorized to create a Capitol character.",
+                ephemeral=True,
+            )
+        else:
+            await interaction.response.send_message(
+                f"{user.mention} can now create a Capitol character with `/character create`.",
+                ephemeral=True,
+            )
+
+    @capitol_group.command(
+        name="revoke", description="Revoke a user's permission to create a Capitol character"
+    )
+    @app_commands.describe(user="User to revoke")
+    @app_commands.check(_is_staff)
+    async def capitol_revoke(self, interaction: discord.Interaction, user: discord.Member) -> None:
+        async with self.bot.db() as session:
+            row = await characters_svc.get_or_create_user(session, user.id)
+            was_authorized = characters_svc.is_capitol_authorized(row)
+            row.capitol_authorized_at = None
+            await log_staff_action(
+                session,
+                bot=self.bot,
+                staff_discord_id=interaction.user.id,
+                action="capitol_revoke",
+                target=str(user.id),
+            )
+        if was_authorized:
+            await interaction.response.send_message(
+                f"{user.mention} can no longer create a Capitol character.", ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                f"{user.mention} wasn't authorized to create a Capitol character.", ephemeral=True
             )
 
     @group.command(name="kill", description="Kill a character")
