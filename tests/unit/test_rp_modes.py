@@ -140,9 +140,7 @@ class TestStageAndApplyModeSwitch:
         assert character.pending_job_is_illicit is False
 
     def test_apply_reenables_crime_when_switching_into_simulation(self):
-        character = make_character(
-            rp_mode=RpMode.STORY.value, job_title=None, crime_enabled=False
-        )
+        character = make_character(rp_mode=RpMode.STORY.value, job_title=None, crime_enabled=False)
         rp_modes.stage_mode_switch(
             character,
             RpMode.SIMULATION,
@@ -154,9 +152,7 @@ class TestStageAndApplyModeSwitch:
         assert character.crime_enabled is True
 
     def test_apply_leaves_crime_untouched_when_switching_into_life(self):
-        character = make_character(
-            rp_mode=RpMode.STORY.value, job_title=None, crime_enabled=False
-        )
+        character = make_character(rp_mode=RpMode.STORY.value, job_title=None, crime_enabled=False)
         rp_modes.stage_mode_switch(
             character,
             RpMode.LIFE,
