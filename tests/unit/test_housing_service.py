@@ -6,7 +6,7 @@ from panem_bot.errors import NotAllowed, NotFound
 from panem_bot.services import housing as housing_svc
 from panem_shared import constants
 from panem_shared.db.models import ApartmentLease, Character, Property, PropertyAuction
-from panem_shared.enums import CharacterStatus, DayPhase, OwnerKind, PropertyKind, RpMode
+from panem_shared.enums import CharacterStatus, OwnerKind, PropertyKind, RpMode
 
 
 def make_character(**overrides: object) -> Character:
@@ -228,28 +228,61 @@ class TestCheckCanBuyComplex:
         housing_svc.check_can_buy_complex(character=character, units=units)
 
 
-class TestFatigue:
-    def test_has_a_bed_true_when_housing_property_set(self):
+class TestNightlyFatigueRestoreAmount:
+    def test_owned_home_restores_the_most(self):
         character = make_character(housing_property_id=1)
-        assert housing_svc.has_a_bed(character) is True
-
-    def test_has_a_bed_false_without_a_home(self):
-        character = make_character(housing_property_id=None)
-        assert housing_svc.has_a_bed(character) is False
-
-    def test_fatigue_restored_full_rate_with_a_bed(self):
+        home = make_property(kind=PropertyKind.HOUSE.value)
         assert (
-            housing_svc.fatigue_restored(2, has_bed=True) == 2 * constants.FATIGUE_RESTORE_PER_TICK
+            housing_svc.nightly_fatigue_restore_amount(character, home, day_index=0)
+            == constants.FATIGUE_RESTORE_OWNED_HOME
         )
 
-    def test_fatigue_restored_halved_on_the_ground(self):
-        assert housing_svc.fatigue_restored(2, has_bed=False) == pytest.approx(
-            2 * constants.FATIGUE_RESTORE_PER_TICK * constants.FATIGUE_GROUND_SLEEP_MULT
+    def test_leased_apartment_restores_less_than_owning(self):
+        character = make_character(housing_property_id=1)
+        apartment = make_property(kind=PropertyKind.APARTMENT.value)
+        assert (
+            housing_svc.nightly_fatigue_restore_amount(character, apartment, day_index=0)
+            == constants.FATIGUE_RESTORE_APARTMENT
+        )
+        assert constants.FATIGUE_RESTORE_APARTMENT < constants.FATIGUE_RESTORE_OWNED_HOME
+
+    def test_inn_stay_that_same_day_restores_less_than_a_real_home(self):
+        character = make_character(housing_property_id=None, last_inn_stay_tick=5)
+        assert (
+            housing_svc.nightly_fatigue_restore_amount(character, None, day_index=0)
+            == constants.FATIGUE_RESTORE_INN
+        )
+        assert constants.FATIGUE_RESTORE_INN < constants.FATIGUE_RESTORE_APARTMENT
+
+    def test_inn_stay_from_a_different_day_does_not_count(self):
+        character = make_character(
+            housing_property_id=None, last_inn_stay_tick=constants.TICKS_PER_DAY
+        )
+        assert (
+            housing_svc.nightly_fatigue_restore_amount(character, None, day_index=0)
+            == constants.FATIGUE_RESTORE_HOMELESS
         )
 
-    def test_apply_fatigue_restoration_caps_at_max(self):
-        character = make_character(fatigue=95.0)
-        restored = housing_svc.apply_fatigue_restoration(character, 5, has_bed=True)
+    def test_no_home_and_no_inn_stay_restores_the_least(self):
+        character = make_character(housing_property_id=None, last_inn_stay_tick=None)
+        assert (
+            housing_svc.nightly_fatigue_restore_amount(character, None, day_index=0)
+            == constants.FATIGUE_RESTORE_HOMELESS
+        )
+        assert constants.FATIGUE_RESTORE_HOMELESS < constants.FATIGUE_RESTORE_INN
+
+
+class TestApplyNightlyFatigueRestoration:
+    def test_restores_fatigue_in_place(self):
+        character = make_character(housing_property_id=None, fatigue=50.0)
+        restored = housing_svc.apply_nightly_fatigue_restoration(character, None, day_index=0)
+        assert restored == constants.FATIGUE_RESTORE_HOMELESS
+        assert character.fatigue == 50.0 + constants.FATIGUE_RESTORE_HOMELESS
+
+    def test_caps_at_max(self):
+        character = make_character(housing_property_id=1, fatigue=95.0)
+        home = make_property(kind=PropertyKind.HOUSE.value)
+        restored = housing_svc.apply_nightly_fatigue_restoration(character, home, day_index=0)
         assert character.fatigue == constants.FATIGUE_MAX
         assert restored == pytest.approx(constants.FATIGUE_MAX - 95.0)
 
@@ -257,25 +290,6 @@ class TestFatigue:
         character = make_character(fatigue=2.0)
         housing_svc.dock_fatigue(character, 10.0)
         assert character.fatigue == constants.FATIGUE_MIN
-
-
-class TestCheckCanSleep:
-    def test_allows_night_phase(self):
-        character = make_character()
-        housing_svc.check_can_sleep(character, DayPhase.NIGHT)
-
-    def test_refuses_other_phases(self):
-        character = make_character()
-        for phase in (DayPhase.MORNING, DayPhase.AFTERNOON, DayPhase.EVENING):
-            with pytest.raises(NotAllowed) as exc_info:
-                housing_svc.check_can_sleep(character, phase)
-            assert exc_info.value.reason_key == "sleep_wrong_phase"
-
-    def test_refuses_a_non_simulation_character(self):
-        character = make_character(rp_mode=RpMode.LIFE.value)
-        with pytest.raises(NotAllowed) as exc_info:
-            housing_svc.check_can_sleep(character, DayPhase.NIGHT)
-        assert exc_info.value.reason_key == "housing_mode_forbidden"
 
 
 class TestFinancedPurchaseTerms:

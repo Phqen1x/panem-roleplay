@@ -13,19 +13,18 @@ from collections.abc import Collection
 import httpx
 
 from panem_shared.logging import get_logger
+from panem_shared.staff_log import build_staff_log_embed
 
 logger = get_logger(component="api")
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
 
-# Discord's own permission bitflags (https://discord.com/developers/docs/
-# topics/permissions) that `set_role_channel_locked`/`fetch_role_can_view_
-# channel` need -- `panem_api` has no `discord.py` dependency (no gateway
-# connection, see this module's docstring), so these are hand-kept
-# constants rather than `discord.Permissions` flags.
+# Discord's own VIEW_CHANNEL permission bitflag (https://discord.com/
+# developers/docs/topics/permissions) that `set_role_channel_locked`/
+# `fetch_role_can_view_channel` need -- `panem_api` has no `discord.py`
+# dependency (no gateway connection, see this module's docstring), so
+# this is a hand-kept constant rather than a `discord.Permissions` flag.
 _VIEW_CHANNEL = 1 << 10
-_SEND_MESSAGES = 1 << 11
-_SEND_MESSAGES_IN_THREADS = 1 << 38
 
 
 async def _fetch_member_role_ids(
@@ -51,19 +50,28 @@ async def _fetch_member_role_ids(
 
 
 async def fetch_is_staff(
-    discord_id: int, *, bot_token: str, guild_id: int, staff_role_id: int
+    discord_id: int,
+    *,
+    bot_token: str,
+    guild_id: int,
+    staff_role_ids: Collection[int],
+    staff_user_ids: Collection[int],
 ) -> bool:
-    """Mirrors `PanemBot.is_staff` for a process with no gateway connection:
-    fetches the member's role ids from Discord's REST API and checks for
-    `staff_role_id` among them. Any of these being unconfigured, or the
-    lookup failing/404ing (not a member of the guild), reads as "not
-    staff" -- fails closed, and is the actual enforcement point (never
-    trust a client-supplied flag for a privilege decision -- see
-    `build_staff_router`'s own docstring)."""
-    if not staff_role_id:
+    """Mirrors `PanemBot.is_staff` for a process with no gateway connection.
+    "Panem staff" is an admin-configured set of specific roles and/or
+    specific members (`Settings.staff_role_id_set`/`staff_user_id_set`),
+    not a single auto-created role -- checking `staff_user_ids` first
+    needs no REST call at all, since the caller's own id is already
+    known. Unconfigured, or the role lookup failing/404ing (not a member
+    of the guild), reads as "not staff" -- fails closed, and is the
+    actual enforcement point (never trust a client-supplied flag for a
+    privilege decision -- see `build_staff_router`'s own docstring)."""
+    if discord_id in staff_user_ids:
+        return True
+    if not staff_role_ids:
         return False
     role_ids = await _fetch_member_role_ids(discord_id, bot_token=bot_token, guild_id=guild_id)
-    return role_ids is not None and staff_role_id in role_ids
+    return role_ids is not None and not role_ids.isdisjoint(staff_role_ids)
 
 
 async def fetch_has_any_role(
@@ -82,21 +90,41 @@ async def fetch_has_any_role(
     return member_role_ids is not None and not member_role_ids.isdisjoint(role_ids)
 
 
-async def post_staff_log(*, channel_id: int, bot_token: str, content: str) -> None:
-    """Best-effort: posts a one-line audit summary to the same log channel
-    `panem_bot`'s `log_staff_action` uses, so a dashboard-issued staff
-    action shows up in the same place a Discord-issued one does. A missing
-    channel_id/token or a failed request just means no log line -- the
-    `StaffAction` DB row every staff route writes is the durable record,
-    same "logging must never fail the action" posture as `_post_to_log_
-    channel` on the bot side."""
+async def post_staff_log(
+    *,
+    channel_id: int,
+    bot_token: str,
+    action: str,
+    staff_discord_id: int,
+    target: str,
+    payload: dict[str, object] | None = None,
+    target_label: str | None = None,
+) -> None:
+    """Best-effort: posts a human-readable embed audit summary to the same
+    log channel `panem_bot`'s `log_staff_action` uses, so a dashboard-
+    issued staff action shows up in the same place a Discord-issued one
+    does, in the same format (`panem_shared.staff_log.build_staff_log_
+    embed` -- this module has no `discord.py` dependency, see its own
+    docstring, so it sends that embed dict straight to Discord's REST API
+    rather than building a `discord.Embed`). A missing channel_id/token or
+    a failed request just means no log line -- the `StaffAction` DB row
+    every staff route writes is the durable record, same "logging must
+    never fail the action" posture as `_post_to_log_channel` on the bot
+    side."""
     if not bot_token or not channel_id:
         return
+    embed = build_staff_log_embed(
+        action=action,
+        staff_discord_id=staff_discord_id,
+        target=target,
+        payload=payload,
+        target_label=target_label,
+    )
     url = f"{DISCORD_API_BASE}/channels/{channel_id}/messages"
     async with httpx.AsyncClient() as http_client:
         try:
             response = await http_client.post(
-                url, json={"content": content}, headers={"Authorization": f"Bot {bot_token}"}
+                url, json={"embeds": [embed]}, headers={"Authorization": f"Bot {bot_token}"}
             )
         except httpx.HTTPError as exc:
             logger.warning("staff_log_post_failed", channel_id=channel_id, error=str(exc))
@@ -141,23 +169,24 @@ async def set_role_channel_locked(
     *,
     bot_token: str,
     locked: bool,
-    is_forum: bool,
 ) -> bool:
-    """Grants/revokes `role_id`'s view+post access to `channel_id` -- the
+    """Grants/revokes `role_id`'s *view-only* access to `channel_id` -- the
     Activity Staff tab's counterpart to `/staff channel lock`/`unlock`.
     `locked=True` explicitly denies VIEW_CHANNEL and leaves every other
     bit neutral (same as `discord.PermissionOverwrite(view_channel=False,
     send_messages=None, send_messages_in_threads=None)` on the bot side);
-    `locked=False` explicitly allows VIEW_CHANNEL + SEND_MESSAGES (+
-    SEND_MESSAGES_IN_THREADS for a forum) and denies nothing. Returns
-    whether the Discord API call actually succeeded."""
+    `locked=False` explicitly allows VIEW_CHANNEL only and denies nothing
+    else -- a role is never granted posting access this way (or `/staff
+    channel unlock`'s), only a specific approved member is, automatically,
+    to their own district's forum (`panem_bot.cogs.characters.
+    _handle_approve`). Returns whether the Discord API call actually
+    succeeded."""
     if not bot_token or not channel_id or not role_id:
         return False
     if locked:
         allow, deny = 0, _VIEW_CHANNEL
     else:
-        allow = _VIEW_CHANNEL | _SEND_MESSAGES | (_SEND_MESSAGES_IN_THREADS if is_forum else 0)
-        deny = 0
+        allow, deny = _VIEW_CHANNEL, 0
     url = f"{DISCORD_API_BASE}/channels/{channel_id}/permissions/{role_id}"
     async with httpx.AsyncClient() as http_client:
         try:

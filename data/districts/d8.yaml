@@ -5,6 +5,7 @@ produces:
 - textiles
 imports:
 - coal
+- coffee
 - fish
 - grain
 - livestock
@@ -12,6 +13,7 @@ imports:
 - medicine
 - power
 - produce
+- tea
 - transport
 illicit_produces:
 - smuggled_luxuries

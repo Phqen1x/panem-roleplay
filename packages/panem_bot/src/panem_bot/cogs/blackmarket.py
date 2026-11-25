@@ -56,7 +56,8 @@ class BlackMarketCog(commands.Cog):
             is_trusted = False
             if fence:
                 try:
-                    await blackmarket_svc.check_can_trade(session, char, fence)
+                    current_tick = await self._current_tick(session)
+                    await blackmarket_svc.check_can_trade(session, char, fence, current_tick)
                     is_trusted = True
                 except ServiceError:
                     is_trusted = False

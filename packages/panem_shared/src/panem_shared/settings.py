@@ -66,9 +66,25 @@ class Settings(BaseSettings):
     lemonade_home: str = ""
     lemonade_embeddable_version: str = "11.9.0"
 
-    staff_role_id: DiscordId = 0
     approval_channel_id: DiscordId = 0
     log_channel_id: DiscordId = 0
+
+    # Comma-separated Discord role snowflake ids (e.g. "111,222") -- who
+    # counts as "Panem staff" (`PanemBot.is_staff`, `discord_staff.
+    # fetch_is_staff`) is no longer a single auto-created role: an admin
+    # names whichever existing role(s) should count, same shape as
+    # `donor_role_ids` below for the same reason (more than one tier --
+    # e.g. "Admin" and "Moderator" -- commonly needs to count). See
+    # `staff_role_id_set()`.
+    staff_role_ids: str = ""
+    # Comma-separated Discord *user* snowflake ids -- lets an admin grant
+    # staff-ness to a specific member directly, with no role at all
+    # (someone trusted without wanting a whole role's other side effects,
+    # or before any staff role exists on a fresh server). See
+    # `staff_user_id_set()`. Checking this needs no Discord API call at
+    # all (unlike a role check) since the caller's own id is already
+    # known, so `discord_staff.fetch_is_staff` tries this set first.
+    staff_user_ids: str = ""
 
     # The role the Activity's Staff tab grants/revokes when staff flip a
     # channel's lock/unlock toggle there (`StaffChannelAccessEntry` in
@@ -79,33 +95,19 @@ class Settings(BaseSettings):
     # Activity; staff can still grant/revoke any role, including this one,
     # per-channel via Discord's own `/staff channel lock`/`unlock`
     # (`panem_bot.cogs.staff.StaffCog`), which always takes an explicit
-    # role rather than reading this setting.
+    # role rather than reading this setting. Granting this role only ever
+    # gives *view* access to a channel -- posting is per-user only, granted
+    # automatically on character approval to that character's own district
+    # forum (`panem_bot.cogs.characters._handle_approve`).
     roleplay_role_id: DiscordId = 0
 
     # Comma-separated Discord role snowflake ids (e.g. "111,222") -- a
-    # donor perk unlike `staff_role_id` above is commonly granted by more
-    # than one role tier (multiple donation levels), so this is a list
-    # rather than a single `DiscordId` field. Whoever holds at least one
-    # of these can customize the Activity dashboard's background/accent
-    # colors (`POST /activity/dashboard/theme`); see `donor_role_id_set()`.
+    # donor perk is commonly granted by more than one role tier (multiple
+    # donation levels), so this is a list rather than a single `DiscordId`
+    # field. Whoever holds at least one of these can customize the
+    # Activity dashboard's background/accent colors (`POST /activity/
+    # dashboard/theme`); see `donor_role_id_set()`.
     donor_role_ids: str = ""
-
-    # Optional pre-existing role per district (+ the Capitol) that
-    # scripts/setup_guild.py should use instead of creating/finding a role
-    # by name. Unset (0) means "auto-manage by name", the default behavior.
-    capitol_role_id: DiscordId = 0
-    district_1_role_id: DiscordId = 0
-    district_2_role_id: DiscordId = 0
-    district_3_role_id: DiscordId = 0
-    district_4_role_id: DiscordId = 0
-    district_5_role_id: DiscordId = 0
-    district_6_role_id: DiscordId = 0
-    district_7_role_id: DiscordId = 0
-    district_8_role_id: DiscordId = 0
-    district_9_role_id: DiscordId = 0
-    district_10_role_id: DiscordId = 0
-    district_11_role_id: DiscordId = 0
-    district_12_role_id: DiscordId = 0
 
     scene_auto_archive_minutes: int = 1440
     max_active_scenes_per_district: int = 60
@@ -172,11 +174,22 @@ class Settings(BaseSettings):
     def resolved_api_internal_url(self) -> str:
         return self.api_internal_url or f"http://localhost:{self.api_port}"
 
-    def role_id_override_for_district(self, district_id: int) -> int:
-        """0 means unset (auto-manage by name); see `*_role_id` fields above."""
-        if district_id == 0:
-            return self.capitol_role_id
-        return int(getattr(self, f"district_{district_id}_role_id", 0))
+    def staff_role_id_set(self) -> frozenset[int]:
+        """Parses `staff_role_ids` ("111,222" -> {111, 222}); blank entries
+        (an empty string, a trailing comma) are dropped rather than
+        raising, same posture as `donor_role_id_set()` below -- `.env`
+        shipping this unset means "no staff roles configured", not an
+        error."""
+        return frozenset(
+            int(part.strip()) for part in self.staff_role_ids.split(",") if part.strip()
+        )
+
+    def staff_user_id_set(self) -> frozenset[int]:
+        """Parses `staff_user_ids` the same way `staff_role_id_set` parses
+        `staff_role_ids`."""
+        return frozenset(
+            int(part.strip()) for part in self.staff_user_ids.split(",") if part.strip()
+        )
 
     def donor_role_id_set(self) -> frozenset[int]:
         """Parses `donor_role_ids` ("111,222" -> {111, 222}); blank entries

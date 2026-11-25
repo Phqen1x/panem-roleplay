@@ -4,6 +4,7 @@ industry: coal
 produces:
 - coal
 imports:
+- coffee
 - fish
 - grain
 - livestock
@@ -11,6 +12,7 @@ imports:
 - medicine
 - power
 - produce
+- tea
 - textiles
 - transport
 illicit_produces:

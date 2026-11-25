@@ -26,6 +26,9 @@ from panem_shared.characters import (
     get_or_create_user as get_or_create_user,
 )
 from panem_shared.characters import (
+    is_capitol_authorized as is_capitol_authorized,
+)
+from panem_shared.characters import (
     is_frozen as is_frozen,
 )
 from panem_shared.characters import (

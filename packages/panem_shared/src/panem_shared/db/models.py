@@ -62,6 +62,11 @@ class User(TimestampMixin, Base):
     banned_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     max_characters_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
     """`/staff character_limit`; NULL means the guild default applies."""
+    capitol_authorized_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    """`/staff capitol authorize`; NULL means this user may not create a
+    Capitol (district 0) character."""
 
     active_theme_profile_id: Mapped[int | None] = mapped_column(
         ForeignKey(
@@ -268,11 +273,17 @@ class Character(TimestampMixin, Base):
     fatigue: Mapped[float] = mapped_column(Float, nullable=False, default=100.0)
     """100 = fully rested. Drained by working a shift
     (`panem_shared.shifts.apply_shift_outcome`) and by proxied RP
-    (`panem_bot.cogs.proxy`); restored by `/sleep` (full rate in a bed --
-    an owned house, a leased apartment, or an inn stay -- half on the bare
-    ground) or by paying for a night at an inn. `panem_sim.systems.needs`
-    docks health on a night it ends too low, mirroring the existing
-    hunger->health pattern."""
+    (`panem_bot.cogs.proxy`); restored automatically at the midnight
+    sim-day rollover (`panem_sim.systems.needs`, via `panem_shared.
+    housing.apply_nightly_fatigue_restoration`) by an amount that depends
+    on housing status -- owning a home restores the most, a leased
+    apartment next, a paid inn stay (`last_inn_stay_tick`) less, and no
+    bed at all the least. A good with `fatigue_value > 0` (coffee, tea --
+    `/use`, `panem_shared.sustenance`) restores more on top of that.
+    If it bottoms out at `FATIGUE_EXHAUSTION_THRESHOLD` or below at that
+    same midnight check, the character passes out
+    (`passed_out_until_tick`, `panem_shared.exhaustion`) rather than
+    taking a health hit."""
     hospitalized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     thirst: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     """Simulation-mode only (see `panem_sim.systems.needs`); same 0=fine/
@@ -297,6 +308,26 @@ class Character(TimestampMixin, Base):
     money-gated, unchanged) -- it only rate-limits `/eat` itself, added for
     symmetry with `/drink`/`/entertain` so a player has an explicit action
     for all three meters the feature asks for."""
+    last_inn_stay_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """The tick of this character's last paid `/housing inn-stay`. Same
+    `tick // constants.TICKS_PER_DAY` day-match idiom as `last_entertained_
+    tick` -- the nightly midnight fatigue restoration (`panem_shared.
+    housing.nightly_fatigue_restore_amount`) reads this to tell "paid for
+    an inn today" apart from owning a home, renting an apartment, or
+    having no bed at all."""
+
+    passed_out_until_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """Mirrors `jailed_until_tick` exactly -- an absolute tick deadline,
+    set by `panem_shared.exhaustion.apply_passed_out` once nightly fatigue
+    bottoms out (`Character.fatigue <= constants.FATIGUE_EXHAUSTION_
+    THRESHOLD` at the midnight needs check, `panem_sim.systems.needs`)
+    instead of the flat health penalty that used to apply there. While
+    this is in the future, `panem_shared.exhaustion.check_not_passed_out`
+    blocks work, crime, market trades, and travel the same way `jail.
+    check_not_jailed` does, and `panem_bot.services.proxy.check_can_proxy`
+    refuses proxied RP outright (no jail-style location carve-out). The
+    duration is staff-configurable (`ExhaustionSettings`, `/staff
+    exhaustion set-duration`) rather than a redeploy-only constant."""
 
     jailed_until_tick: Mapped[int | None] = mapped_column(Integer, nullable=True)
     jail_sentence_ticks: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -634,6 +665,20 @@ class EngagementSettings(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     idle_timeout_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class ExhaustionSettings(Base):
+    """Single-row staff-tunable settings for passing out from exhaustion,
+    mirroring `EngagementSettings`'s singleton shape exactly. `/staff
+    exhaustion set-duration` edits this row directly, and `panem_sim.
+    systems.needs`'s nightly needs check (loaded once per tick into
+    `WorldState.exhaustion_settings`) reads it fresh every tick, so a
+    change takes effect on the very next character that passes out."""
+
+    __tablename__ = "exhaustion_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    passed_out_ticks: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
 class DialogueSettings(Base):

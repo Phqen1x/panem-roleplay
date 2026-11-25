@@ -6,11 +6,13 @@ produces:
 - career_training
 imports:
 - coal
+- coffee
 - fish
 - livestock
 - medicine
 - power
 - produce
+- tea
 - textiles
 - transport
 illicit_produces:

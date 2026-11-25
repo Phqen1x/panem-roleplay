@@ -168,13 +168,13 @@ class TestCheckCanTrade:
         character = make_character()
         fence = make_fence()
         await add_trust(db_session, character.id, fence.id, Stance.LIKES.value)
-        await blackmarket_svc.check_can_trade(db_session, character, fence)  # no raise
+        await blackmarket_svc.check_can_trade(db_session, character, fence, 0)  # no raise
 
     async def test_stranger_refused(self, db_session):
         character = make_character()
         fence = make_fence()
         with pytest.raises(NotAllowed) as exc_info:
-            await blackmarket_svc.check_can_trade(db_session, character, fence)
+            await blackmarket_svc.check_can_trade(db_session, character, fence, 0)
         assert exc_info.value.reason_key == "blackmarket_not_trusted"
 
     async def test_neutral_stance_still_refused(self, db_session):
@@ -182,14 +182,14 @@ class TestCheckCanTrade:
         fence = make_fence()
         await add_trust(db_session, character.id, fence.id, Stance.NEUTRAL.value)
         with pytest.raises(NotAllowed):
-            await blackmarket_svc.check_can_trade(db_session, character, fence)
+            await blackmarket_svc.check_can_trade(db_session, character, fence, 0)
 
     async def test_non_approved_character_refused(self, db_session):
         character = make_character(status=CharacterStatus.PENDING.value)
         fence = make_fence()
         await add_trust(db_session, character.id, fence.id, Stance.LOVES.value)
         with pytest.raises(NotAllowed) as exc_info:
-            await blackmarket_svc.check_can_trade(db_session, character, fence)
+            await blackmarket_svc.check_can_trade(db_session, character, fence, 0)
         assert exc_info.value.reason_key == "character_not_approved"
 
     async def test_story_mode_character_refused(self, db_session):
@@ -197,8 +197,16 @@ class TestCheckCanTrade:
         fence = make_fence()
         await add_trust(db_session, character.id, fence.id, Stance.LOVES.value)
         with pytest.raises(NotAllowed) as exc_info:
-            await blackmarket_svc.check_can_trade(db_session, character, fence)
+            await blackmarket_svc.check_can_trade(db_session, character, fence, 0)
         assert exc_info.value.reason_key == "market_mode_forbidden"
+
+    async def test_passed_out_character_refused(self, db_session):
+        character = make_character(passed_out_until_tick=10)
+        fence = make_fence()
+        await add_trust(db_session, character.id, fence.id, Stance.LOVES.value)
+        with pytest.raises(NotAllowed) as exc_info:
+            await blackmarket_svc.check_can_trade(db_session, character, fence, 5)
+        assert exc_info.value.reason_key == "blackmarket_passed_out"
 
 
 class TestBuy:

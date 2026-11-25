@@ -22,7 +22,14 @@
 // Accept/Decline view does -- a recipient discovers a pending offer by
 // reopening this tab (or switching characters, which remounts it), same
 // "poll, don't push" posture the Engagement panel already has.
-import { fetchJson, el, renderIcon, setStatusText } from "./_shared.js?v=9";
+import {
+  fetchJson,
+  el,
+  renderIcon,
+  setStatusText,
+  dropdown,
+  searchableCombobox,
+} from "./_shared.js?v=13";
 import { mountAvatar } from "./avatar_creator.js?v=11";
 
 // Same one-shot cache pattern as tabs/character.js's own `loadLayerCatalog`
@@ -35,6 +42,19 @@ function loadLayerCatalog(ctx) {
     layerCatalogPromise = ctx.apiFetch("/activity/dashboard/layers").then((body) => body.categories);
   }
   return layerCatalogPromise;
+}
+
+// Same reasoning: the full goods catalog (every good that exists in the
+// game, not just this character's inventory) is content-authored and
+// effectively static for the tab's lifetime -- `tradePanel`'s "You want"
+// combobox reuses this one fetch instead of refetching the whole catalog
+// every time the trade form resets.
+let goodsCatalogPromise = null;
+function loadGoodsCatalog(ctx) {
+  if (!goodsCatalogPromise) {
+    goodsCatalogPromise = ctx.apiFetch("/activity/dashboard/staff/goods");
+  }
+  return goodsCatalogPromise;
 }
 
 function determineStatus(r) {
@@ -269,37 +289,30 @@ function residentsPanel(ctx, openDossierFn) {
 
     // Job options
     const jobsSet = Array.from(new Set(allResidents.map((r) => r.job_title))).sort();
-    const jobSelect = el(
-      "select",
-      { class: "filter-select", style: "min-width: 130px;" },
-      el("option", { value: "all" }, "All Jobs"),
-      ...jobsSet.map((j) =>
-        el("option", { value: j, selected: j === jobFilter ? "selected" : undefined }, j)
-      )
-    );
+    const jobSelect = dropdown([
+      { value: "all", label: "All Jobs" },
+      ...jobsSet.map((j) => ({ value: j, label: j })),
+    ]);
+    jobSelect.value = jobFilter;
 
     // Location options
     const locsSet = Array.from(
       new Set(allResidents.map((r) => r.location_name).filter(Boolean))
     ).sort();
-    const locSelect = el(
-      "select",
-      { class: "filter-select", style: "min-width: 140px;" },
-      el("option", { value: "all" }, "All Locations"),
-      ...locsSet.map((l) =>
-        el("option", { value: l, selected: l === locationFilter ? "selected" : undefined }, l)
-      )
-    );
+    const locSelect = dropdown([
+      { value: "all", label: "All Locations" },
+      ...locsSet.map((l) => ({ value: l, label: l })),
+    ]);
+    locSelect.value = locationFilter;
 
     // Type filter -- NPC residents vs. other players' characters currently
     // in this district (`r.kind`, dashboard_routes.py's `ResidentSummary`).
-    const kindSelect = el(
-      "select",
-      { class: "filter-select", style: "min-width: 110px;" },
-      el("option", { value: "all", selected: kindFilter === "all" ? "selected" : undefined }, "Everyone"),
-      el("option", { value: "npc", selected: kindFilter === "npc" ? "selected" : undefined }, "NPCs"),
-      el("option", { value: "user", selected: kindFilter === "user" ? "selected" : undefined }, "Players")
-    );
+    const kindSelect = dropdown([
+      { value: "all", label: "Everyone" },
+      { value: "npc", label: "NPCs" },
+      { value: "user", label: "Players" },
+    ]);
+    kindSelect.value = kindFilter;
 
     function onFilterChange() {
       renderTable(searchInput.value, jobSelect.value, locSelect.value, kindSelect.value);
@@ -784,10 +797,10 @@ function tradePanel(ctx) {
   const listEl = el("div", {});
 
   const targetInput = el("input", { type: "text", placeholder: "Character name" });
-  const giveGoodInput = el("input", { type: "text", placeholder: "Good id" });
+  const giveGoodInput = searchableCombobox([], { placeholder: "Type a good you have..." });
   const giveQtyInput = el("input", { type: "number", placeholder: "Qty", min: "1" });
   const giveMoneyInput = el("input", { type: "number", placeholder: "0", value: "0" });
-  const wantGoodInput = el("input", { type: "text", placeholder: "Good id" });
+  const wantGoodInput = searchableCombobox([], { placeholder: "Type any good..." });
   const wantQtyInput = el("input", { type: "number", placeholder: "Qty", min: "1" });
   const wantMoneyInput = el("input", { type: "number", placeholder: "0", value: "0" });
   const offerResult = el("p", { class: "result-line" });
@@ -801,8 +814,8 @@ function tradePanel(ctx) {
       offerResult.textContent = "Name who you're offering to.";
       return;
     }
-    const giveGood = giveGoodInput.value.trim() || null;
-    const wantGood = wantGoodInput.value.trim() || null;
+    const giveGood = giveGoodInput.value || null;
+    const wantGood = wantGoodInput.value || null;
     try {
       await ctx.apiFetch(`/activity/dashboard/trade/${ctx.characterId()}/offer`, {
         method: "POST",
@@ -834,6 +847,31 @@ function tradePanel(ctx) {
     }
   });
 
+  async function refreshGiveOptions(characterId, discordId) {
+    try {
+      const body = await ctx.apiFetch(
+        `/activity/dashboard/market/${characterId}?discord_id=${encodeURIComponent(discordId)}`
+      );
+      giveGoodInput.setOptions(
+        body.inventory.map((item) => ({
+          value: item.good_id,
+          label: `${item.name} ×${item.qty}`,
+        }))
+      );
+    } catch {
+      giveGoodInput.setOptions([]);
+    }
+  }
+
+  async function refreshWantOptions() {
+    try {
+      const goods = await loadGoodsCatalog(ctx);
+      wantGoodInput.setOptions(goods.map((g) => ({ value: g.id, label: g.name })));
+    } catch {
+      wantGoodInput.setOptions([]);
+    }
+  }
+
   async function refresh() {
     listEl.innerHTML = "";
     const characterId = ctx.characterId();
@@ -842,6 +880,8 @@ function tradePanel(ctx) {
       setStatusText(statusEl, "Pick a character above first.");
       return;
     }
+    refreshGiveOptions(characterId, discordId);
+    refreshWantOptions();
     try {
       const body = await ctx.apiFetch(
         `/activity/dashboard/trade/${characterId}/list?discord_id=${encodeURIComponent(discordId)}`

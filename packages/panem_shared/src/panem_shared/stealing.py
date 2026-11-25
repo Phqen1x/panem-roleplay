@@ -19,6 +19,7 @@ from panem_shared.crime_log import record_crime_log
 from panem_shared.db.models import Character, DistrictState, Inventory, Npc, Property
 from panem_shared.enums import CharacterStatus, OwnerKind, PropertyKind, RpMode
 from panem_shared.errors import NotAllowed
+from panem_shared.exhaustion import check_not_passed_out
 from panem_shared.jail import (
     check_not_jailed,
     commit_to_jail,
@@ -105,6 +106,7 @@ def check_can_steal(character: Character, victim: StealVictim, current_tick: int
     _check_crime_mode(character)
     _check_crime_victim_mode(victim)
     check_not_jailed(character, current_tick, "steal_jailed")
+    check_not_passed_out(character, current_tick, "steal_passed_out")
     if character.location_id is None or character.location_id != victim.location_id:
         raise NotAllowed("steal_not_here", name=character.name)
     if (
@@ -139,6 +141,7 @@ def check_can_burgle(
     if owner is not None:
         _check_crime_victim_mode(owner)
     check_not_jailed(character, current_tick, "burgle_jailed")
+    check_not_passed_out(character, current_tick, "burgle_passed_out")
     if house.kind != PropertyKind.HOUSE.value:
         raise NotAllowed("burgle_not_a_house")
     if character.current_district_id != house.district_id:

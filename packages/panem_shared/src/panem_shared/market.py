@@ -26,6 +26,7 @@ from panem_shared.content.schemas import District, Good, Location
 from panem_shared.db.models import Character, DistrictState, Inventory, MarketOrder, MarketPrice
 from panem_shared.enums import CharacterStatus, LocationKind, OwnerKind, RpMode
 from panem_shared.errors import NotAllowed, NotFound, ValidationFailed
+from panem_shared.exhaustion import check_not_passed_out
 from panem_shared.jail import commit_to_jail, crackdown_bad_odds
 
 ILLICIT_PRESSURE_DELTA = 0.05
@@ -59,11 +60,12 @@ def resolve_market_location(character: Character, district: District) -> Locatio
     return location
 
 
-def check_can_trade(character: Character) -> None:
+def check_can_trade(character: Character, current_tick: int) -> None:
     if character.status != CharacterStatus.APPROVED.value:
         raise NotAllowed("character_not_approved")
     if character.rp_mode == RpMode.STORY.value:
         raise NotAllowed("market_mode_forbidden", name=character.name)
+    check_not_passed_out(character, current_tick, "market_passed_out")
 
 
 def resolve_good(district: District, goods: dict[str, Good], good_id: str) -> Good:
@@ -204,7 +206,7 @@ async def buy(
     tick: int,
     rng: random.Random,
 ) -> TradeResult:
-    check_can_trade(character)
+    check_can_trade(character, tick)
     location = resolve_market_location(character, district)
     good = resolve_good(district, goods, good_id)
     price = await get_price(session, district.id, good)
@@ -246,7 +248,7 @@ async def sell(
     tick: int,
     rng: random.Random,
 ) -> TradeResult:
-    check_can_trade(character)
+    check_can_trade(character, tick)
     location = resolve_market_location(character, district)
     good = resolve_good(district, goods, good_id)
     price = await get_price(session, district.id, good) * constants.SELL_DISCOUNT

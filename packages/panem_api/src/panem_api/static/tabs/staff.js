@@ -15,7 +15,7 @@
 // use this panel, which is built to render sensibly on zero categories
 // (just the "New category" form, nothing else) rather than assuming
 // something is already there.
-import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=9";
+import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=13";
 
 // `panem_shared.enums.AfflictionStat`'s five values -- the only stats a
 // staff-authored affliction type's cure/auto-apply condition can name.
@@ -1075,6 +1075,40 @@ function characterActionsPanel(ctx) {
     }
   });
 
+  const capitolResult = el("p", { class: "result-line" });
+  const capitolDiscordId = el("input", { type: "text", placeholder: "Player's Discord ID" });
+  const capitolAuthorizeBtn = el("button", { class: "btn secondary", type: "button" }, "Authorize");
+  const capitolRevokeBtn = el("button", { class: "btn secondary", type: "button" }, "Revoke");
+  const setCapitolAuthorization = async (authorized) => {
+    capitolResult.textContent = "";
+    const targetId = capitolDiscordId.value.trim();
+    if (!targetId) {
+      capitolResult.className = "result-line lose";
+      capitolResult.textContent = "Enter the player's Discord ID.";
+      return;
+    }
+    try {
+      await fetchJson("/activity/dashboard/staff/capitol-authorization", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          discord_id: ctx.discordId(),
+          target_discord_id: Number(targetId),
+          authorized,
+        }),
+      });
+      capitolResult.className = "result-line win";
+      capitolResult.textContent = authorized
+        ? "Can now create a Capitol character."
+        : "Can no longer create a Capitol character.";
+    } catch (err) {
+      capitolResult.className = "result-line lose";
+      capitolResult.textContent = err.message;
+    }
+  };
+  capitolAuthorizeBtn.addEventListener("click", () => setCapitolAuthorization(true));
+  capitolRevokeBtn.addEventListener("click", () => setCapitolAuthorization(false));
+
   const banResult = el("p", { class: "result-line" });
   const banDiscordId = el("input", { type: "text", placeholder: "Player's Discord ID" });
   const banBtn = el("button", { class: "btn secondary", type: "button" }, "Ban");
@@ -1125,6 +1159,10 @@ function characterActionsPanel(ctx) {
     el("div", { class: "field-row" }, el("label", { text: "Limit" }), limitValue),
     el("div", { class: "field-row" }, limitBtn),
     limitResult,
+    el("h3", { text: "Capitol character authorization" }),
+    el("div", { class: "field-row" }, el("label", { text: "Discord ID" }), capitolDiscordId),
+    el("div", { class: "field-row" }, capitolAuthorizeBtn, capitolRevokeBtn),
+    capitolResult,
     el("h3", { text: "Ban from the bot" }),
     el("div", { class: "field-row" }, el("label", { text: "Discord ID" }), banDiscordId),
     el("div", { class: "field-row" }, banBtn),
@@ -1204,6 +1242,48 @@ function housingEngagementPanel(ctx) {
     el("div", { class: "field-row" }, el("label", { text: "Minutes" }), timeoutInput),
     el("div", { class: "field-row" }, timeoutBtn),
     timeoutResult
+  );
+}
+
+function exhaustionPanel(ctx) {
+  const durationResult = el("p", { class: "result-line" });
+  const durationInput = el("input", { type: "number", value: "12", min: "1" });
+  const durationBtn = el("button", { class: "btn", type: "button" }, "Set Duration");
+  durationBtn.addEventListener("click", async () => {
+    durationResult.textContent = "";
+    const ticks = Number(durationInput.value);
+    if (!Number.isFinite(ticks) || ticks < 1) {
+      durationResult.className = "result-line lose";
+      durationResult.textContent = "Enter a positive number of ticks.";
+      return;
+    }
+    try {
+      const body = await fetchJson("/activity/dashboard/staff/exhaustion/duration", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ discord_id: ctx.discordId(), ticks }),
+      });
+      durationResult.className = "result-line win";
+      durationResult.textContent = `Characters now stay passed out from exhaustion for ${body.ticks} tick(s).`;
+    } catch (err) {
+      durationResult.className = "result-line lose";
+      durationResult.textContent = err.message;
+    }
+  });
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "Exhaustion" }),
+    el(
+      "p",
+      { class: "tab-status" },
+      "How long a character stays passed out (unable to work, commit crime, trade, travel, or be roleplayed) once their fatigue bottoms out."
+    ),
+    el("h3", { text: "Passed-out duration" }),
+    el("div", { class: "field-row" }, el("label", { text: "Ticks" }), durationInput),
+    el("div", { class: "field-row" }, durationBtn),
+    durationResult
   );
 }
 
@@ -1856,6 +1936,7 @@ export function mount(root, ctx) {
     npcAdminPanel(ctx),
     ambientMusicPanel(ctx),
     housingEngagementPanel(ctx),
+    exhaustionPanel(ctx),
     marketStockPanel(ctx),
     mottosPanel(ctx),
     layersPanel(ctx),

@@ -155,6 +155,12 @@ class Good(BaseModel):
     """How much `Character.health` a Vitals-tab `/heal` of one unit restores
     (0.0 = not healing, the default for every non-medical good). Bounded by
     `constants.HEALTH_MAX` -- see `panem_shared.sustenance`."""
+    fatigue_value: float = Field(default=0.0, ge=0.0)
+    """How much `Character.fatigue` a `/use` of one unit restores (0.0 = no
+    effect, the default for every good that isn't a stimulant like coffee
+    or tea) -- stacks on top of the nightly housing-based restoration
+    (`panem_shared.housing.apply_nightly_fatigue_restoration`) rather than
+    replacing it. See `panem_shared.sustenance`."""
     cook_method: Literal["stove", "oven"] | None = None
     """Which Vitals-tab minigame (`static/games/cook.js` for `"stove"`,
     `bake.js` for `"oven"`) can be played on this good for the cook bonus.

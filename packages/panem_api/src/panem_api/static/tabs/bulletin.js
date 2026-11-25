@@ -7,7 +7,7 @@
 // board with -- `Retract` stays the separate, real, owner-only removal
 // of a player's own post (mirrors `/bulletin ...`, `panem_shared.
 // bulletin`).
-import { el, setStatusText } from "./_shared.js?v=9";
+import { el, setStatusText } from "./_shared.js?v=13";
 
 function hiddenRow(ctx, entry, resultLine, onChanged) {
   const unhideBtn = el("button", { class: "btn secondary", type: "button" }, "Unhide");

@@ -6,7 +6,7 @@
 // the player to be looking at this one tab in particular. This tab is
 // just the always-available place to check your current standing, same
 // as `/reaction archetype` is on Discord.
-import { el, setStatusText } from "./_shared.js?v=9";
+import { el, setStatusText } from "./_shared.js?v=13";
 
 function archetypePanel(status) {
   const children = [

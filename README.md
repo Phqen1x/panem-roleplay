@@ -101,8 +101,16 @@ for every district (idempotent — safe to re-run):
 uv run python scripts/setup_guild.py
 ```
 
-Note the `APPROVAL_CHANNEL_ID` / `LOG_CHANNEL_ID` it prints and add them to
-`.env`. Then run the bot:
+Note the `APPROVAL_CHANNEL_ID` / `LOG_CHANNEL_ID` / `ROLEPLAY_ROLE_ID` it
+prints and add them to `.env`, plus `STAFF_ROLE_IDS`/`STAFF_USER_IDS`
+(existing role(s) and/or specific member(s) you want to count as Panem
+staff — the script creates no staff role of its own). The "Roleplay"
+role it creates is a view-only opt-in (see it / don't see it) separate
+from actually being approved in a district, and isn't unlocked to
+anything yet — once setup is otherwise finished, run `/staff channel
+unlock-all` in Discord to open every district's forum and `#ooc` up to
+it in one shot (`/staff channel unlock` still works per channel for
+finer control). Then run the bot:
 
 ```bash
 uv run python -m panem_bot.main
@@ -155,23 +163,20 @@ runs inside a rolled-back savepoint.
 - **Approval/log channels** are read from `.env` (`APPROVAL_CHANNEL_ID`,
   `LOG_CHANNEL_ID`), matching the Plan's `.env` schema; `setup_guild.py`
   creates them and prints the ids to copy in.
-- **District roles** are looked up by exact name match (the district's
-  `name` field in its YAML) rather than a stored role id, unless a
-  `CAPITOL_ROLE_ID` / `DISTRICT_N_ROLE_ID` override is set in `.env` (see
-  `.env.example`), in which case `setup_guild.py` uses that existing role
-  instead of finding/creating one by name.
-- **A member's district role picks their character's district, not a
-  dropdown.** Members are expected to already hold exactly one district
-  role (via Discord's own onboarding flow) before running `/character
-  create`; the bot skips straight to the creation modal for that district.
-  Someone with no district role, or with more than one, is refused with a
-  message telling them why. The bot no longer grants or removes a
-  district role itself on approval/retirement — onboarding is the only
-  source of truth for who's in which district now. Add the district roles
-  `setup_guild.py` creates (or your own, if using the `_ROLE_ID`
-  overrides) as choosable options in Discord's own Server Settings →
-  Onboarding, ideally in a single-select group so members land in exactly
-  one.
+- **No district roles.** `setup_guild.py` creates no per-district role and
+  requires none: a member picks their character's district as a `/character
+  create` command parameter (autocompleted from `data/districts/*.yaml`),
+  not from a Discord role they're expected to already hold. On approval the
+  bot grants that specific member posting access to their own district's
+  forum directly (`characters.py::_handle_approve`) — no role swap, no
+  onboarding flow to configure.
+- **Staff is admin-configured roles/members, not a created role.**
+  `setup_guild.py` creates no "Panem Staff" role either; `.env`'s
+  `STAFF_ROLE_IDS`/`STAFF_USER_IDS` (comma-separated snowflake ids, see
+  `.env.example`) name whichever existing role(s) and/or specific member(s)
+  should count as staff (`Settings.staff_role_id_set`/`staff_user_id_set`,
+  `PanemBot.is_staff`). Set at least one before relying on any `/staff`
+  command — with both unset, every staff check fails closed.
 - **One active character per user by default.** `MAX_CHARACTERS_PER_USER`
   in `.env` sets the guild-wide default (1); staff can raise or lower it
   for one specific person with `/staff character_limit <user> [limit]`
@@ -454,19 +459,17 @@ Completes Phase 2 (Plan §5.5/5.6, FR-LOC-7/8/9, T-2.1).
   clock, but "is it time yet" for a character's journey has no more
   natural home among the fixed systems, and this avoids adding a new
   system to `FIXED_ORDER` for one `Character`-mutating step. On arrival
-  the character lands at the destination's station, a `CharacterArrived`
-  event (new `WorldEvent` kind) tells the bot to swap the district
-  "visitor" role, and a `NarrationLine` announces them there the same as
-  any other arrival.
-- **The bot never grants or revokes a character's home district role**,
-  only a temporary one for wherever they're currently visiting
-  (`narrator.py::_handle_character_arrived`) -- consistent with Phase 1's
-  choice to leave home-role assignment to Discord onboarding entirely.
-  Multi-hop travel (home → A → B) drops A's visitor role and grants B's;
-  the home role, whichever district that is, is never touched.
-  Role-swap failures (missing roles, permissions) are caught and logged,
-  not raised -- a guild not yet run through `setup_guild.py`'s role setup
-  shouldn't break the tick loop over it.
+  the character lands at the destination's station, and a `NarrationLine`
+  announces them there the same as any other arrival.
+- **(Superseded.) ~~A `CharacterArrived` event swapped a district
+  "visitor" role on travel~~** -- removed once district roles themselves
+  were removed (see the "No district roles" note under Setup):
+  `narrator.py::_handle_character_arrived` and the `CharacterArrived`
+  dispatch no longer exist. Access to a district's forum is no longer
+  role-based at all, so there's nothing for travel to swap; only the
+  approved member's own home-district posting grant
+  (`characters.py::_handle_approve`) matters, and it isn't touched by
+  travel.
 - **A shift missed while traveling is excused, not missed** (a new
   `Character.away_since_tick` column, migration `f3a1c9d7b4e2`): the
   existing `TRANSIT_TICKS`/`AWAY_GRACE_DAYS` constants were already in
@@ -4335,3 +4338,192 @@ low-end hardware; a remote player's appearance change doesn't rebuild
 their already-on-screen 3D model for *other* connected clients mid-session
 (only a fresh join picks up the new look) -- the same limitation the
 single-outfit version had, not a regression, just not solved yet either.
+
+## Sleep reworked: automatic nightly fatigue restoration by housing status, plus coffee/tea
+
+Per the request ("people don't need to click a button to sleep anymore"), the manual
+`/sleep` command (and its dashboard Housing-tab/Vitals-tab controls) is gone entirely.
+Fatigue now restores automatically at the midnight sim-day rollover
+(`panem_sim.systems.needs._apply_character_nightly_needs`, same `tick % TICKS_PER_DAY
+== 0` gate the exhaustion check and every other nightly system already used), by a flat
+amount that depends on housing status -- the four categories the request named, each a
+new constant in `constants.py`:
+
+- **Owns a home** (`Property.kind == HOUSE`, `Character.housing_property_id` points at
+  it) -- `FATIGUE_RESTORE_OWNED_HOME` (90), the most.
+- **Rents an apartment** (same field, `Property.kind == APARTMENT`) --
+  `FATIGUE_RESTORE_APARTMENT` (75).
+- **Paid for an inn that day** -- `FATIGUE_RESTORE_INN` (60). This needed a new column,
+  `Character.last_inn_stay_tick` (migration `0be5d42ad310`), since an inn stay was
+  previously a pure one-off transaction with no "today" state of its own; `/housing
+  inn-stay` (bot and dashboard) now stamps it instead of instantly restoring fatigue
+  itself, and the nightly check reads it the same `tick // TICKS_PER_DAY == day_index`
+  way `last_entertained_tick` already does for sanity.
+- **Homeless** (none of the above) -- `FATIGUE_RESTORE_HOMELESS` (25), mirroring the old
+  manual `/sleep`-on-the-ground halved rate. This is also the fallback a character with a
+  home property row that's somehow missing (`state.properties.get(...)` returns `None`)
+  gets, rather than a crash.
+
+The priority is home > apartment > inn > homeless, checked in that order in a new
+`panem_shared.housing.nightly_fatigue_restore_amount`/`apply_nightly_fatigue_
+restoration` pair (replacing `has_a_bed`/`fatigue_restored`/`apply_fatigue_restoration`/
+`check_can_sleep`, all removed). The existing fatigue-exhaustion health penalty still
+checks fatigue *before* this restoration applies, same as before -- it's about whether
+the character made it through the day's work/RP without running themselves into the
+ground, not about tonight's rest.
+
+**Coffee and tea**, requested as the way to push fatigue higher than the nightly
+restoration alone: two new `data/goods.yaml` entries, both produced by District Eleven
+(`data/districts/d11.yaml`) and imported by every other district including the Capitol,
+so they're buyable everywhere. `Good` gained a `fatigue_value` field (mirroring `hunger_
+value`/`thirst_value`/`heal_value`) -- coffee restores more fatigue (20) for less thirst
+relief (10) than tea (15/15), a minor flavor distinction, not a mechanical requirement
+from the request. A new `panem_shared.sustenance.restore_fatigue` (same shape as `eat`/
+`drink`/`heal`: consumes one unit, clamps to `FATIGUE_MAX`) is reachable via a new
+dedicated `/energize` Discord command and a `good_row.fatigue_value > 0` branch in the
+generic `/use` dispatcher -- checked ahead of hunger/thirst there, since coffee/tea's
+whole point is the fatigue effect, with `/drink` still available for the thirst relief
+specifically. The dashboard's Vitals tab gained a matching "Energize" panel (and
+`/activity/dashboard/vitals/{id}/energize` route) replacing the removed Sleep panel; the
+Housing tab's own status panel now just shows fatigue read-only with no sleep controls.
+
+**Interpretation calls:** the exact restore amounts (90/75/60/25) and coffee/tea's
+price/thirst/fatigue values have no spec to pull from, so they're picked to roughly
+preserve the old manual `/sleep`-in-a-bed-for-a-full-night-phase feel for owning a home,
+scaling down from there -- flagged as tunable rather than treated as load-bearing. Buying
+coffee/tea nationally via every district's `imports` list (rather than also adding
+`routes.yaml` entries for District Eleven to literally export them) still makes them
+purchasable everywhere through the existing national-redistribution pricing mechanism
+(`panem_sim.systems.economy`); real point-to-point caravan routes for them would be a
+reasonable follow-up, not required for "purchasable in every district."
+
+### Verification
+
+`tests/unit/test_housing_service.py`'s old `TestFatigue`/`TestCheckCanSleep` replaced
+with `TestNightlyFatigueRestoreAmount`/`TestApplyNightlyFatigueRestoration` (all four
+housing tiers, the inn-stay same-day-vs-different-day boundary, max-clamping). New
+`TestNightlyFatigueRestoration` in `test_needs.py` covers the same tiers end-to-end
+through `_apply_character_nightly_needs`, plus that the exhaustion penalty still reads
+pre-restoration fatigue. `test_api_app.py`'s old sleep-endpoint test removed; `inn-stay`'s
+test now asserts `last_inn_stay_tick` gets stamped instead of asserting a fatigue change;
+new `energize`-endpoint tests mirror the existing `heal` ones. Content loader smoke-
+checked by hand (`load_content` picks up `coffee`/`tea` as goods and confirms every
+district's `produces`/`imports` resolves them). Migration `0be5d42ad310` verified both
+directions (`alembic upgrade head`/`downgrade -1`) against a real local Postgres. Full
+suite: **1634 passed**. A pre-existing, unrelated mypy gap in `dashboard_routes.py`
+(`GlobalEvent`/`WeatherEvent` mix-up around the personal/global events code, and one
+`Returning Any` note) was confirmed present before this change too and left alone.
+
+## Passing out from exhaustion, replacing the nightly health penalty
+
+Per the request, running fatigue all the way down no longer just docks health at the
+nightly check -- the character passes out instead, locked out of work, crime
+(steal/burgle/poach/shipments), any market (legal or black), travel, and being
+roleplayed at all, for a duration staff can tune live from the dashboard.
+
+`Character.passed_out_until_tick` mirrors `jailed_until_tick` exactly -- an absolute
+tick deadline, checked the same way, in a new `panem_shared.exhaustion` module
+(`is_passed_out`/`check_not_passed_out`/`apply_passed_out`, the last two patterned
+directly on `panem_shared.jail`'s `check_not_jailed`/`commit_to_jail`). The nightly
+needs check (`panem_sim.systems.needs._apply_character_nightly_needs`) still evaluates
+`Character.fatigue <= FATIGUE_EXHAUSTION_THRESHOLD` at the same point in the sequence
+(before that night's housing-based restoration applies) -- only what happens on a hit
+changed, from `health -= FATIGUE_EXHAUSTION_HEALTH_PENALTY` (constant removed, no
+longer meaningful) to `apply_passed_out`. `_auto_death_cause`'s fatigue branch was
+removed too, since fatigue no longer erodes health on its own and so can never again be
+the strongest signal for a death's cause.
+
+**Duration is staff-configurable, not a redeploy-only constant** -- a new
+`ExhaustionSettings` singleton table (`passed_out_ticks`), mirroring `EngagementSettings`
+exactly down to the three-file chain: `/staff exhaustion set-duration` (bot),
+`POST /activity/dashboard/staff/exhaustion/duration` (dashboard), and a new "Exhaustion"
+panel on the Staff tab (`staff.js`). `panem_sim.systems.needs` reads it through
+`WorldState.exhaustion_settings`, loaded once per tick in `tick.py`'s `_load_state` the
+same way every other per-tick lookup table is -- staff's change takes effect on the next
+character that passes out, no restart. Seeded at 12 ticks (half a sim-day) by the
+migration, same `op.execute(INSERT ...)` pattern `engagement_settings` used.
+
+**Every gate mirrors `jail.check_not_jailed`'s call sites**, plus two the request named
+that jail itself doesn't bother gating: `travel.py` (both `check_can_travel` and
+`check_can_travel_district`), `poaching.py`, `shipments.py`, `stealing.py` (steal and
+burgle), the bot's `/work` and the dashboard's duplicate `/work/start` check, and newly
+`market.py`/`blackmarket.py`'s own `check_can_trade` (both gained a `current_tick`
+parameter for this). Proxied RP (`panem_bot.services.proxy.check_can_proxy`) gets an
+unconditional `ProxyRefusal("proxy_passed_out")` -- unlike jail, no location carve-out,
+since there's no in-fiction "cell" a passed-out character could still be played in.
+Status is surfaced the same places `jailed`/`jailed_until_tick` already are
+(`DashboardCharacterSummary`, `CharacterDetail`, `character.js`'s status badge, and a new
+"Passed Out" field on `/character status`'s embed) rather than only showing up as a
+refusal message when an action is attempted.
+
+**Interpretation calls:** "purchasing things" extended the gate to the legal and black
+markets even though jail itself never gated those, since the request named it
+explicitly. Player-to-player `/trade` (`trades_svc.check_can_trade`, a different
+function) was left ungated -- that reads more like a barter/gift RP action than "doing
+things with your character" in the sense meant here, and the request didn't call it out
+the way it did "purchasing things." 12 ticks/half a sim-day as the seeded default has no
+spec to pull from either, picked to be a real consequence without being a second jail
+sentence; staff can change it immediately via the new panel.
+
+### Verification
+
+New `tests/unit/test_exhaustion_service.py` covers `is_passed_out`/`check_not_passed_out`/
+`passed_out_duration_ticks`/`apply_passed_out` directly. `test_needs.py`'s old
+`TestFatigueExhaustion` health-penalty assertions replaced with pass-out assertions
+(including that the trigger still reads pre-restoration fatigue, and that the duration
+comes from `WorldState.exhaustion_settings`). Added a `test_raises_when_passed_out`/
+`test_refuses_passed_out_character` next to every existing `test_raises_when_jailed` in
+`test_travel_service.py`/`test_stealing_service.py`/`test_poaching_service.py`/
+`test_shipments_service.py`, updated `test_market_service.py`/`test_blackmarket_service.py`
+for the new `current_tick` parameter plus a passed-out case each, and added
+`test_proxy_service.py` coverage confirming passed-out has no jail-style location
+carve-out. `test_api_app.py` gained the `/work/start` passed-out refusal, the new staff
+duration route (create-then-update the singleton row, and a non-positive-value
+rejection), and `passed_out`/`passed_out_until_tick` exposure on the identify endpoint.
+Migration `b87637479773` verified both directions against a real local Postgres. Full
+suite: **1660 passed**. `ruff check`/`ruff format --check` clean; `mypy` on every touched
+module clean except the same pre-existing, unrelated gaps already present on `main`
+(confirmed by diffing against the unmodified files).
+
+## Setup: a separate "Roleplay" role, and a global unlock command
+
+`scripts/setup_guild.py` already had a `roleplay_role_id` setting (the role the Activity's
+Staff tab -- and `/staff channel lock`/`unlock` -- grants per-channel view access to), but
+nothing created that role; it had to be made and pasted into `.env` by hand. The script now
+also finds-or-creates a guild-wide "Roleplay" role and prints its id alongside
+`APPROVAL_CHANNEL_ID`/`LOG_CHANNEL_ID` for `.env`, per the request: holding a district role
+(assigned via Discord's own Onboarding) means being *from* that district, not automatically
+wanting to see every roleplay channel -- the two are now deliberately separate opt-ins.
+Nothing is unlocked to the new role automatically, matching every other channel this script
+creates (staff-only by default, opened up explicitly once ready, re-running the script never
+resets that choice -- see `ensure_forum`'s docstring).
+
+**`/staff channel unlock-all [role]`** (`panem_bot/cogs/staff.py`, next to the existing
+single-channel `channel_unlock`/`channel_lock`) is the new "global unlock": grants a role
+(defaults to `ROLEPLAY_ROLE_ID` if omitted) view+post access to every `DiscordChannel` row
+registered as community-viewable -- `ChannelKind.FORUM` (one per district) and
+`ChannelKind.OOC` -- in one command, the same overwrite logic `channel_unlock` already uses
+per-channel, just looped. `APPROVAL`/`LOG` (the "Panem Staff" category) are never touched --
+`BOARD` doesn't need its own entry either, since a thread always inherits its parent forum's
+permissions. Meant to be run once, right after setup (and any content proofing), instead of
+unlocking each district's forum by hand.
+
+**Interpretation calls:** no dashboard equivalent of `unlock-all` was added -- the request
+asked for "a command," which `channel_access`'s existing per-channel dashboard toggle
+doesn't currently have either (a bulk button there would be a reasonable, separable follow-up
+if wanted). A channel registered in `discord_channels` whose Discord-side object has since
+been deleted is skipped and reported back in the response rather than raising, matching
+`ensure_ambient_posts`/`ensure_board_thread`'s own "heal rather than crash" posture toward
+drift between the DB and the live guild.
+
+### Verification
+
+No existing test file covers `scripts/setup_guild.py` or any `StaffCog` channel command --
+both need a live Discord guild connection, the same untestability `README`'s own "Notes on
+this Phase 0 build" already documents for this area, so this followed that existing bar:
+`ruff check`/`ruff format --check` clean on both changed files, `mypy` showing the same
+pre-existing, unrelated error count on each (confirmed by diffing against the unmodified
+files -- discord.py overload gaps in `setup_guild.py`'s untouched functions, `Bot` attribute
+gaps throughout `staff.py`), and a plain `ast.parse`/import smoke check on both. Full
+suite: **1660 passed** (unchanged by this pass -- it touches no code any existing test
+exercises).

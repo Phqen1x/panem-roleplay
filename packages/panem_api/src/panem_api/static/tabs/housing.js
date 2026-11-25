@@ -1,8 +1,13 @@
-// The "Housing" tab: mirrors every `/housing` subcommand plus `/sleep`.
-// Three panels: your own status (home, fatigue, sleep controls), what
-// you own (per-property sell/refinance/rent-out/auction actions), and
-// what's for sale/rent in your current district (buy/rent/inn-stay).
-import { fetchJson, el, setStatusText } from "./_shared.js?v=9";
+// The "Housing" tab: mirrors every `/housing` subcommand. There's no
+// `/sleep` control anymore -- fatigue restores automatically at the
+// midnight sim-day rollover based on housing status (owned home > leased
+// apartment > a paid inn stay that same day > no bed at all); the Vitals
+// tab's "Energize" panel (coffee, tea, ...) is the only way to push it
+// higher than that. Three panels: your own status (home, fatigue, read-
+// only), what you own (per-property sell/refinance/rent-out/auction
+// actions), and what's for sale/rent in your current district
+// (buy/rent/inn-stay).
+import { fetchJson, el, setStatusText } from "./_shared.js?v=13";
 
 function priceLabelSuffix(label) {
   if (label === "night") return "/night";
@@ -10,41 +15,23 @@ function priceLabelSuffix(label) {
   return "";
 }
 
-function sleepPanel(ctx, status, resultLine, onChanged) {
-  const ticksInput = el("input", { type: "number", placeholder: "ticks (blank = rest of night)" });
-  const sleepBtn = el("button", { class: "btn", type: "button" }, "Sleep");
-  sleepBtn.addEventListener("click", async () => {
-    resultLine.textContent = "";
-    try {
-      const body = await ctx.apiFetch(`/activity/dashboard/housing/${ctx.characterId()}/sleep`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          discord_id: ctx.discordId(),
-          ticks: ticksInput.value ? Number(ticksInput.value) : null,
-        }),
-      });
-      resultLine.className = "result-line win";
-      resultLine.textContent = `Slept ${body.ticks} ticks, restored ${body.restored} fatigue.`;
-      onChanged();
-    } catch (err) {
-      resultLine.className = "result-line lose";
-      resultLine.textContent = err.message;
-    }
-  });
+function statusPanel(status) {
   return el(
     "div",
     { class: "panel" },
     el("h2", { text: "Status" }),
-    el("p", { class: "tab-status" }, `${status.character_name} -- fatigue ${status.fatigue}`),
+    el(
+      "p",
+      { class: "tab-status" },
+      `${status.character_name} -- fatigue ${status.fatigue}/100 (restores nightly based on housing)`
+    ),
     el(
       "p",
       { class: "tab-status" },
       status.home_property_id
         ? `Home: ${status.home_kind} #${status.home_property_id} in ${status.home_district_name}`
         : "No fixed home."
-    ),
-    el("div", { class: "field-row" }, el("label", { text: "Sleep" }), ticksInput, sleepBtn)
+    )
   );
 }
 
@@ -316,7 +303,7 @@ export function mount(root, ctx) {
       );
       setStatusText(statusLine, "");
       host.append(
-        sleepPanel(ctx, status, resultLine, refresh),
+        statusPanel(status),
         ownedPanel(ctx, status, resultLine, refresh),
         listingsPanel(ctx, status, resultLine, refresh),
         mortgageInfoPanel(status)

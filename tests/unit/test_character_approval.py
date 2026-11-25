@@ -12,6 +12,7 @@ import datetime as dt
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 
+import discord
 import pytest
 
 from panem_bot.cogs.characters import CharacterCog
@@ -331,3 +332,81 @@ class TestHandleModeSwitchDecline:
         assert refreshed.job_title is None
         assert refreshed.pending_rp_mode is None
         assert refreshed.pending_job_title is None
+
+
+class TestGrantDistrictForumAccess:
+    """`CharacterCog._grant_district_forum_access` -- the per-member (not
+    per-role) permission grant `_handle_approve` makes once a character's
+    approved, since there's no district role anymore for a channel's own
+    overwrites to key off of."""
+
+    async def test_grants_view_and_post_access_to_the_forum(self, cog: CharacterCog):
+        forum = MagicMock()
+        forum.overwrites_for = MagicMock(return_value=discord.PermissionOverwrite())
+        forum.set_permissions = AsyncMock()
+        guild = MagicMock()
+        guild.get_channel = MagicMock(return_value=forum)
+        member = MagicMock()
+
+        await cog._grant_district_forum_access(
+            guild,
+            member=member,
+            forum_channel_id=123,
+            character_id=1,
+            district_id=1,
+            char_name="Katniss",
+        )
+
+        guild.get_channel.assert_called_once_with(123)
+        forum.set_permissions.assert_awaited_once()
+        _, kwargs = forum.set_permissions.call_args
+        overwrite = kwargs["overwrite"]
+        assert overwrite.view_channel is True
+        assert overwrite.send_messages is True
+        assert overwrite.send_messages_in_threads is True
+
+    async def test_no_op_when_district_has_no_registered_forum(self, cog: CharacterCog):
+        guild = MagicMock()
+        member = MagicMock()
+
+        await cog._grant_district_forum_access(
+            guild,
+            member=member,
+            forum_channel_id=None,
+            character_id=1,
+            district_id=1,
+            char_name="Katniss",
+        )
+
+        guild.get_channel.assert_not_called()
+
+    async def test_no_op_when_the_forum_channel_no_longer_exists(self, cog: CharacterCog):
+        guild = MagicMock()
+        guild.get_channel = MagicMock(return_value=None)
+        member = MagicMock()
+
+        await cog._grant_district_forum_access(
+            guild,
+            member=member,
+            forum_channel_id=123,
+            character_id=1,
+            district_id=1,
+            char_name="Katniss",
+        )  # no raise
+
+    async def test_permission_grant_failure_is_caught_and_logged(self, cog: CharacterCog):
+        forum = MagicMock()
+        forum.overwrites_for = MagicMock(return_value=discord.PermissionOverwrite())
+        forum.set_permissions = AsyncMock(side_effect=discord.HTTPException(MagicMock(), "nope"))
+        guild = MagicMock()
+        guild.get_channel = MagicMock(return_value=forum)
+        member = MagicMock()
+
+        await cog._grant_district_forum_access(
+            guild,
+            member=member,
+            forum_channel_id=123,
+            character_id=1,
+            district_id=1,
+            char_name="Katniss",
+        )  # no raise

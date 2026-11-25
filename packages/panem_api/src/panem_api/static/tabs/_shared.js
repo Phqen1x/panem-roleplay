@@ -80,6 +80,118 @@ export function setStatusText(el, text, { error = false } = {}) {
   el.classList.toggle("error", error);
 }
 
+const MENU_GAP = 4;
+
+// `position: fixed` is normally relative to the viewport -- *unless* an
+// ancestor has a `transform`/`perspective`/`filter`/`backdrop-filter`/
+// `will-change` (of one of those) or a `contain` that includes layout or
+// paint, any of which makes CSS treat that ancestor's own box as the
+// containing block for fixed (and absolute) descendants instead, per
+// spec. Every `.panel` in this app sets `backdrop-filter: blur(...)`, so
+// without accounting for this, `menuEl.style.top = "0px"` here doesn't
+// land at the true viewport's top edge -- it lands at the *panel's* top
+// edge, which can itself be scrolled well above or below the visible
+// area. Returns that ancestor, or `null` if none exists (meaning the
+// viewport itself really is the containing block, same as a plain page).
+function findFixedContainingBlock(el) {
+  let node = el.parentElement;
+  while (node) {
+    const cs = getComputedStyle(node);
+    if (
+      cs.transform !== "none" ||
+      cs.perspective !== "none" ||
+      cs.filter !== "none" ||
+      cs.backdropFilter !== "none" ||
+      /transform|perspective|filter/.test(cs.willChange) ||
+      /layout|paint|strict|content/.test(cs.contain)
+    ) {
+      return node;
+    }
+    node = node.parentElement;
+  }
+  return null;
+}
+
+// Pins a `.custom-select-menu`-style popup (already unhidden, so it has
+// a real measurable size) to explicit, clamped viewport pixel
+// coordinates via `position: fixed`, instead of the CSS `top: calc(100%
+// + 4px)` / `.open-up`'s `bottom: calc(100% + 4px)` anchoring this used
+// before. That anchoring assumed `getBoundingClientRect()` and `window.
+// innerHeight`/`innerWidth` describe the same visible area a CSS
+// percentage/calc() anchor resolves against -- true in an ordinary page,
+// but Discord's Activity iframe embedding doesn't reliably hold that
+// assumption (the same reason a native `<select>` popup is unusable
+// here to begin with, per this module's own long-standing note on
+// `dropdown()` below): a menu that picked "open upward, CSS handles the
+// rest" could still render with its top edge above the visible area in
+// a real Activity even though the exact same layout looked fine in an
+// ordinary desktop browser tab. Computing the final box from measured
+// rects and clamping it into `[0, innerHeight]`/`[0, innerWidth]`
+// ourselves, then applying it as fixed pixel coordinates, means the menu
+// can only ever end up inside the viewport this code can actually see --
+// nothing is left for a CSS anchor to get wrong relative to some other
+// notion of "the viewport."
+function positionMenu(anchorEl, menuEl) {
+  menuEl.style.maxHeight = "";
+  menuEl.style.position = "fixed";
+  const anchorRect = anchorEl.getBoundingClientRect();
+  // The CSS's `min-width: 100%` means "100% of the containing block,"
+  // which silently switches from "the toggle's own width" to "the whole
+  // viewport's width" the moment `position` above becomes `fixed` --
+  // pinning it in pixels up front sidesteps that percentage entirely
+  // (and has to happen before the measurement below, since it can change
+  // the menu's actual rendered width).
+  menuEl.style.minWidth = `${anchorRect.width}px`;
+  const menuRect = menuEl.getBoundingClientRect();
+  const viewportHeight = window.innerHeight;
+  const viewportWidth = window.innerWidth;
+
+  const spaceBelow = viewportHeight - anchorRect.bottom;
+  const spaceAbove = anchorRect.top;
+  let top;
+  if (menuRect.height <= spaceBelow - MENU_GAP) {
+    top = anchorRect.bottom + MENU_GAP;
+  } else if (menuRect.height <= spaceAbove - MENU_GAP) {
+    top = anchorRect.top - MENU_GAP - menuRect.height;
+  } else if (spaceBelow >= spaceAbove) {
+    const clamped = Math.max(0, spaceBelow - MENU_GAP);
+    menuEl.style.maxHeight = `${clamped}px`;
+    top = anchorRect.bottom + MENU_GAP;
+  } else {
+    const clamped = Math.max(0, spaceAbove - MENU_GAP);
+    menuEl.style.maxHeight = `${clamped}px`;
+    top = anchorRect.top - MENU_GAP - clamped;
+  }
+  // Belt-and-suspenders: whatever the branch above computed, never let
+  // the final box actually land outside the viewport -- re-measuring
+  // after `maxHeight` is applied would be the "proper" way to get an
+  // exact height, but clamping `top` directly against the viewport using
+  // the (possibly still slightly stale) `menuRect.height` is simpler and
+  // every bit as effective at guaranteeing the visible result.
+  top = Math.max(0, Math.min(top, viewportHeight - menuRect.height));
+
+  let left = anchorRect.left;
+  if (left + menuRect.width > viewportWidth) {
+    left = anchorRect.right - menuRect.width;
+  }
+  left = Math.max(0, left);
+
+  // `top`/`left` above are true viewport coordinates; convert them into
+  // whatever box this menu's `position: fixed` actually resolves
+  // against (see `findFixedContainingBlock`) before writing them out, so
+  // the rendered result still lands at that same viewport position
+  // either way.
+  const containingBlock = findFixedContainingBlock(menuEl);
+  if (containingBlock) {
+    const containingRect = containingBlock.getBoundingClientRect();
+    top -= containingRect.top;
+    left -= containingRect.left;
+  }
+
+  menuEl.style.top = `${top}px`;
+  menuEl.style.left = `${left}px`;
+}
+
 // A hand-rolled dropdown standing in for a native <select> -- Discord
 // scales/transforms an Activity's iframe content for its own embedding,
 // which is known to break Chromium's native select-popup positioning in
@@ -129,21 +241,7 @@ export function dropdown(initialOptions) {
     const opening = menu.hidden;
     menu.hidden = !menu.hidden;
     if (!opening) return;
-    // Flip the menu to open upward instead of its default downward spill
-    // when there isn't enough room below the toggle to show it in full --
-    // without this, a dropdown low in a long panel (e.g. the Museum tab's
-    // first field-row, which can still sit near the bottom of a short
-    // Activity iframe) rendered its tail end past the viewport's bottom
-    // edge, which reads identically to "the dropdown is cut off" even
-    // though the content is technically still there to scroll to.
-    menu.classList.remove("open-up");
-    const toggleRect = toggle.getBoundingClientRect();
-    const menuHeight = menu.getBoundingClientRect().height;
-    const spaceBelow = window.innerHeight - toggleRect.bottom;
-    const spaceAbove = toggleRect.top;
-    if (menuHeight > spaceBelow && spaceAbove > spaceBelow) {
-      menu.classList.add("open-up");
-    }
+    positionMenu(toggle, menu);
   });
   document.addEventListener("click", (event) => {
     if (!menu.hidden && !event.composedPath().includes(wrapper)) close();
@@ -177,6 +275,133 @@ export function dropdown(initialOptions) {
     toggle.textContent = match ? match.label : "No options";
     toggle.disabled = opts.length === 0;
     renderMenu();
+  };
+
+  if (initialOptions) wrapper.setOptions(initialOptions);
+  return wrapper;
+}
+
+// A free-typed, narrow-as-you-type combobox standing in for a plain text
+// input when there's a known (possibly long) list of valid values -- e.g.
+// "pick a good by name" instead of asking a player to type an opaque good
+// id from memory (`tabs/social.js`'s trade-offer form used to be exactly
+// that: a raw "Good id" text box). A native `<datalist>` would be the
+// obvious choice, but it's exactly the kind of browser-native popup
+// `dropdown()`'s own comment above already warns breaks inside Discord's
+// Activity iframe scaling, so this is hand-rolled the same way: a
+// `position: relative` wrapper, a real `<input>` the player types into,
+// and a `.custom-select-menu`-styled `<ul>` filtered to whatever
+// substring-matches the typed text, reusing `dropdown()`'s open-up-or-
+// clamp viewport logic verbatim. Exposes the same `value`/`disabled`
+// getter-setter and `setOptions()`/"change" surface as `dropdown()`, so
+// a call site looks almost the same either way.
+export function searchableCombobox(initialOptions, { placeholder } = {}) {
+  const wrapper = el("div", { class: "custom-select searchable-combobox" });
+  const input = el("input", {
+    type: "text",
+    class: "search-input",
+    placeholder: placeholder || "Type to search...",
+    autocomplete: "off",
+  });
+  const menu = el("ul", { class: "custom-select-menu" });
+  menu.hidden = true;
+  wrapper.append(input, menu);
+
+  let opts = [];
+  let current = "";
+
+  function close() {
+    menu.hidden = true;
+  }
+
+  function matchByValue(value) {
+    return opts.find((o) => o.value === value);
+  }
+
+  function renderMenu(query) {
+    const q = (query || "").toLowerCase().trim();
+    const visible = q ? opts.filter((o) => o.label.toLowerCase().includes(q)) : opts;
+    menu.innerHTML = "";
+    if (visible.length === 0) {
+      menu.append(el("li", { class: "custom-select-empty" }, "No matches"));
+      return;
+    }
+    for (const opt of visible) {
+      const button = el(
+        "button",
+        {
+          type: "button",
+          class: opt.value === current ? "active" : "",
+          onclick: () => {
+            current = opt.value;
+            input.value = opt.label;
+            close();
+            wrapper.dispatchEvent(new Event("change"));
+          },
+        },
+        opt.label
+      );
+      menu.append(el("li", {}, button));
+    }
+  }
+
+  function open() {
+    menu.hidden = false;
+    renderMenu(input.value);
+    positionMenu(input, menu);
+  }
+
+  input.addEventListener("focus", () => {
+    if (!input.disabled) open();
+  });
+  input.addEventListener("input", () => {
+    // Typing again after a selection (or from scratch) clears the
+    // stored value until the text matches a real option again --
+    // otherwise the submitted id and the visibly displayed text could
+    // silently disagree.
+    const match = matchByValue(current);
+    if (!match || match.label !== input.value) current = "";
+    if (menu.hidden) open();
+    else renderMenu(input.value);
+  });
+  input.addEventListener("blur", () => {
+    // Deferred so a menu-option's own click (which blurs this input
+    // first, per standard mousedown-before-click ordering) still lands
+    // and sets `current` before this runs.
+    setTimeout(() => {
+      const match = matchByValue(current);
+      input.value = match ? match.label : "";
+    }, 150);
+  });
+  document.addEventListener("click", (event) => {
+    if (!menu.hidden && !event.composedPath().includes(wrapper)) close();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") close();
+  });
+
+  Object.defineProperty(wrapper, "value", {
+    get: () => current,
+    set(v) {
+      current = String(v);
+      const match = matchByValue(current);
+      input.value = match ? match.label : "";
+    },
+  });
+  Object.defineProperty(wrapper, "disabled", {
+    get: () => input.disabled,
+    set(v) {
+      input.disabled = v;
+    },
+  });
+
+  wrapper.setOptions = (entries) => {
+    opts = entries.map((entry) => ({ value: String(entry.value), label: entry.label }));
+    if (current && !matchByValue(current)) {
+      current = "";
+      input.value = "";
+    }
+    if (!menu.hidden) renderMenu(input.value);
   };
 
   if (initialOptions) wrapper.setOptions(initialOptions);

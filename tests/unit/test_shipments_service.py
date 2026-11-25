@@ -128,6 +128,13 @@ class TestCheckCanStealShipment:
             shipments_svc.check_can_steal_shipment(character, shipment, 10)
         assert exc_info.value.reason_key == "shipment_jailed"
 
+    def test_raises_when_passed_out(self):
+        character = make_character(passed_out_until_tick=100)
+        shipment = make_shipment()
+        with pytest.raises(NotAllowed) as exc_info:
+            shipments_svc.check_can_steal_shipment(character, shipment, 10)
+        assert exc_info.value.reason_key == "shipment_passed_out"
+
     def test_raises_when_expired(self):
         character = make_character()
         shipment = make_shipment(expires_tick=5)

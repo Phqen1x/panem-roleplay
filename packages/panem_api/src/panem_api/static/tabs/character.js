@@ -24,7 +24,7 @@
 // still returns its own `dispose()` (removes those DOM nodes) and every
 // function below that creates one calls it at the right lifecycle point,
 // mostly so a stale preview never lingers in a detached card.
-import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=9";
+import { fetchJson, el, dropdown, setStatusText } from "./_shared.js?v=13";
 import { mountAvatar } from "./avatar_creator.js?v=11";
 
 const SHIFT_PHASES = ["morning", "afternoon", "evening", "night"];
@@ -225,7 +225,8 @@ function characterCard(ctx, character, catalog, { onChanged }) {
   const statusLine = el(
     "p",
     { class: "tab-status" },
-    `${character.status}${character.jailed ? " -- jailed" : ""}`
+    `${character.status}${character.jailed ? " -- jailed" : ""}` +
+      `${character.passed_out ? " -- passed out from exhaustion" : ""}`
   );
   const deathCauseLine =
     character.status === "dead" && character.death_cause
@@ -612,6 +613,10 @@ function createForm(ctx, catalog, { onCreated }) {
     el("div", { class: "field-row" }, el("label", { text: "Name" }), nameInput),
     el("div", { class: "field-row" }, el("label", { text: "Age" }), ageInput),
     el("div", { class: "field-row" }, el("label", { text: "District" }), districtInput),
+    el("p", {
+      class: "tab-status",
+      text: "District 0 is The Capitol -- needs staff authorization first, or creation is refused.",
+    }),
     el("div", { class: "field-row" }, el("label", { text: "RP Mode" }), modeSelect),
     jobRow,
     shiftRow,

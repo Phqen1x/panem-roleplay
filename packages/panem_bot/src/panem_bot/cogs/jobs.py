@@ -27,6 +27,7 @@ from panem_shared import constants, job_levels, redis_keys
 from panem_shared.db.models import Character, Shift, WorldClock
 from panem_shared.enums import Position
 from panem_shared.errors import NotAllowed
+from panem_shared.exhaustion import check_not_passed_out
 from panem_shared.jail import check_not_jailed
 from panem_shared.logging import get_logger
 
@@ -179,7 +180,9 @@ class JobsCog(commands.Cog):
                 )
                 return
             try:
-                check_not_jailed(char, await self._current_tick(session), "work_jailed")
+                current_tick = await self._current_tick(session)
+                check_not_jailed(char, current_tick, "work_jailed")
+                check_not_passed_out(char, current_tick, "work_passed_out")
             except NotAllowed as exc:
                 await interaction.response.send_message(
                     t(exc.reason_key, **exc.fmt), ephemeral=True

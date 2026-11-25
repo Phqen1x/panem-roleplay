@@ -565,17 +565,39 @@ FATIGUE_COST_PER_INTERACTION = 3.0
 """Docked per qualifying proxied RP message (`panem_bot.cogs.proxy`,
 gated on the same length check as RP-credit shift completion so a
 one-word message doesn't drain it)."""
-FATIGUE_RESTORE_PER_TICK = 15.0
-"""Base fatigue restored per tick slept (`/sleep`), before the location
-multiplier below."""
-FATIGUE_GROUND_SLEEP_MULT = 0.5
-"""Sleeping with no bed at all -- no owned house, no leased apartment, no
-inn stay -- restores fatigue at half the rate of a real bed."""
+FATIGUE_RESTORE_OWNED_HOME = 90.0
+"""Fatigue restored automatically at the midnight sim-day rollover
+(`panem_sim.systems.needs`, via `panem_shared.housing.
+apply_nightly_fatigue_restoration`) for a character who owns their home
+(`Property.kind == HOUSE`) -- no button to click anymore, "people don't
+need to click a button to sleep." The best rest available, in the same
+ballpark as a full night of the old manual `/sleep` in a bed (`simtime.
+TICKS_PER_PHASE` ticks at the old 15.0/tick rate)."""
+FATIGUE_RESTORE_APARTMENT = 75.0
+"""Same nightly restoration, for a character leasing an apartment -- a
+real bed, just not fully their own, so a notch below owning."""
+FATIGUE_RESTORE_INN = 60.0
+"""Same nightly restoration, for a character with no fixed home who paid
+for a night at an inn that same sim-day (`Character.last_inn_stay_tick`,
+`/housing inn-stay`) -- a decent bed for the night, less restorative than
+a real home."""
+FATIGUE_RESTORE_HOMELESS = 25.0
+"""Same nightly restoration, for a character with no bed at all --
+mirrors the old `/sleep`-on-the-ground halved rate."""
 FATIGUE_EXHAUSTION_THRESHOLD = 20.0
-FATIGUE_EXHAUSTION_HEALTH_PENALTY = 2.0
-"""If fatigue is still at or below the threshold at the nightly needs
-check, health takes this extra hit -- mirrors `HEALTH_DECAY_PER_NIGHT`'s
-hunger-driven decay in `panem_sim.systems.needs`, same nightly cadence."""
+"""If fatigue is still at or below this at the nightly needs check, the
+character passes out from exhaustion (`panem_shared.exhaustion.
+apply_passed_out`) rather than taking a health hit -- `PASSED_OUT_
+DEFAULT_TICKS` below is how long for, until staff change the live
+value."""
+PASSED_OUT_DEFAULT_TICKS = 12
+"""Seed value for the `ExhaustionSettings` singleton row on first
+migrate -- staff can change the live value afterward with `/staff
+exhaustion set-duration`; this constant is never read again once that
+row exists (same pattern as `ENGAGEMENT_DEFAULT_IDLE_TIMEOUT_MINUTES`).
+Also the in-memory fallback if the row is somehow missing. Half a
+sim-day (`TICKS_PER_DAY` is 24) -- long enough to be a real consequence,
+not a second jail sentence."""
 
 # Housing: mortgages (financed purchases + refinancing against equity),
 # auctions, and foreclosure. Same "no spec, reasonable placeholder" caveat.

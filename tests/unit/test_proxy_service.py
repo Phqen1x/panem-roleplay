@@ -330,6 +330,33 @@ class TestCheckCanProxy:
         )
         assert refusal is None
 
+    def test_passed_out_refused(self):
+        character = make_character(passed_out_until_tick=100)
+        district = self.make_district([Location(id="sq", name="Square", kind="public")])
+        refusal = proxy_svc.check_can_proxy(
+            character=character, district=district, location_id=None, current_tick=10
+        )
+        assert refusal is not None and refusal.reason_key == "proxy_passed_out"
+
+    def test_passed_out_expired_allowed(self):
+        character = make_character(passed_out_until_tick=5)
+        district = self.make_district([Location(id="sq", name="Square", kind="public")])
+        refusal = proxy_svc.check_can_proxy(
+            character=character, district=district, location_id=None, current_tick=10
+        )
+        assert refusal is None
+
+    def test_passed_out_refused_even_in_a_jail_thread(self):
+        # Unlike jail, there's no location carve-out for being passed out.
+        character = make_character(
+            passed_out_until_tick=100, district_id=12, current_district_id=12
+        )
+        district = self.make_district([Location(id="cell", name="The Cell", kind="jail")])
+        refusal = proxy_svc.check_can_proxy(
+            character=character, district=district, location_id="cell", current_tick=10
+        )
+        assert refusal is not None and refusal.reason_key == "proxy_passed_out"
+
     def test_jailed_allowed_in_the_jail_thread_of_their_home_district(self):
         character = make_character(jailed_until_tick=100, district_id=12, current_district_id=12)
         district = self.make_district([Location(id="cell", name="The Cell", kind="jail")])

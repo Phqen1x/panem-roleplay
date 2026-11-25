@@ -55,6 +55,7 @@ from panem_shared.db.models import (
 )
 from panem_shared.db.session import session_scope
 from panem_shared.enums import PropertyKind
+from panem_shared.error_messages import error_message
 from panem_shared.errors import ServiceError
 from panem_shared.logging import get_logger
 from panem_shared.map3d_layout import CityLayout, build_city_layout, npc_scatter_offset
@@ -92,7 +93,7 @@ async def _current_tick(session: AsyncSession) -> int:
 
 
 def _http_from_service_error(exc: ServiceError) -> HTTPException:
-    return HTTPException(status_code=400, detail=exc.reason_key)
+    return HTTPException(status_code=400, detail=error_message(exc.reason_key, **exc.fmt))
 
 
 # --------------------------------------------------------------- appearance

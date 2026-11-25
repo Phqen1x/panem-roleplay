@@ -1,8 +1,14 @@
-"""`/eat`, `/drink`, `/heal`, `/use`, `/entertain` -- Simulation mode's proactive meter
-relief, alongside `/sleep` (`panem_bot.cogs.housing`) for fatigue.
+"""`/eat`, `/drink`, `/heal`, `/energize`, `/use`, `/entertain` --
+Simulation mode's proactive meter relief. There's no `/sleep` command
+anymore -- fatigue restores automatically at the midnight sim-day
+rollover based on housing status (`panem_shared.housing.
+apply_nightly_fatigue_restoration`); `/energize` (or `/use` on a
+fatigue-restoring good) is the only *proactive* way to push fatigue
+higher than that, on top of it.
 
-`/eat`/`/drink`/`/heal`/`/use` are inventory-based (Vitals tab feature): pick a specific
-owned good, relieved/restored by that good's own `hunger_value`/`thirst_value`/`heal_value`
+`/eat`/`/drink`/`/heal`/`/energize`/`/use` are inventory-based (Vitals
+tab feature): pick a specific owned good, relieved/restored by that
+good's own `hunger_value`/`thirst_value`/`heal_value`/`fatigue_value`
 (`panem_shared.content.schemas.Good`) rather than a flat amount -- the
 autocomplete below scopes the `good` choice to what the invoking
 character actually owns and can consume, mirroring `cogs/market.py`'s
@@ -17,9 +23,8 @@ minigames to play, so this is the lesser option for a player not in the
 Activity right now.
 
 Kept as its own small cog rather than folded into `housing.py`: these
-commands aren't part of the housing/property system at all, a
-sibling need-relief mechanic that happens to share `/sleep`'s
-"Simulation mode" shape.
+commands aren't part of the housing/property system at all, a sibling
+need-relief mechanic that merely shares Simulation mode's gate.
 """
 
 from __future__ import annotations
@@ -59,6 +64,7 @@ class NeedsCog(commands.Cog):
         *,
         drinkable: bool = False,
         healable: bool = False,
+        energizable: bool = False,
     ) -> list[app_commands.Choice[str]]:
         character_name = getattr(interaction.namespace, "character", None)
         if not character_name:
@@ -76,6 +82,8 @@ class NeedsCog(commands.Cog):
         def _is_match(good: object) -> bool:
             if healable:
                 return getattr(good, "heal_value", 0.0) > 0
+            if energizable:
+                return getattr(good, "fatigue_value", 0.0) > 0
             if drinkable:
                 return getattr(good, "thirst_value", 0.0) > 0
             return getattr(good, "hunger_value", 0.0) > 0
@@ -212,6 +220,50 @@ class NeedsCog(commands.Cog):
         return await self._consumable_choices(interaction, current, healable=True)
 
     @app_commands.command(
+        name="energize",
+        description="Have an owned good (e.g. coffee or tea) to restore fatigue (Simulation mode)",
+    )
+    @app_commands.describe(character="Character name", good="A fatigue-restoring good you own")
+    @app_commands.autocomplete(character=autocomplete.own_approved)
+    async def energize(self, interaction: discord.Interaction, character: str, good: str) -> None:
+        async with self.bot.db() as session:  # type: ignore[attr-defined]
+            char = await utils.get_character_case_insensitive(
+                session, interaction.user.id, character
+            )
+            if char is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            content = self.bot.content  # type: ignore[attr-defined]
+            good_row = content.goods.get(good)
+            if good_row is None:
+                await interaction.response.send_message(
+                    t("good_not_energizing", name=char.name, good=good), ephemeral=True
+                )
+                return
+            current_tick = await self._current_tick(session)
+            try:
+                fatigue = await sustenance_svc.restore_fatigue(
+                    session, char, good_row, current_tick
+                )
+            except ServiceError as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+            note = await self._cured_note(session, char)
+            name = char.name
+        await interaction.response.send_message(
+            t("energize_ok", name=name, good=good_row.name, fatigue=round(fatigue)) + note,
+            ephemeral=True,
+        )
+
+    @energize.autocomplete("good")
+    async def energize_good_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        return await self._consumable_choices(interaction, current, energizable=True)
+
+    @app_commands.command(
         name="use",
         description="Use an owned consumable good (e.g. medicine to heal) (Simulation mode)",
     )
@@ -238,6 +290,16 @@ class NeedsCog(commands.Cog):
                     health = await sustenance_svc.heal(session, char, good_row, current_tick)
                     msg_key = "heal_ok"
                     val: dict[str, object] = dict(health=round(health))
+                elif good_row.fatigue_value > 0:
+                    # Checked ahead of hunger/thirst: a good like coffee or
+                    # tea that's both drinkable and fatigue-restoring uses
+                    # `/use` for the fatigue effect -- `/drink` is still
+                    # there for the thirst relief specifically.
+                    fatigue = await sustenance_svc.restore_fatigue(
+                        session, char, good_row, current_tick
+                    )
+                    msg_key = "energize_ok"
+                    val = dict(fatigue=round(fatigue))
                 elif good_row.hunger_value > 0:
                     hunger = await sustenance_svc.eat(session, char, good_row, current_tick)
                     msg_key = "eat_ok"

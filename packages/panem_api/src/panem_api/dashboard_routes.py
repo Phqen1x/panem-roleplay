@@ -52,6 +52,7 @@ from panem_shared import characters as characters_svc
 from panem_shared import constants, hobby_levels, job_levels, simtime
 from panem_shared import crime_log as crime_log_svc
 from panem_shared import district_lore as district_lore_svc
+from panem_shared import exhaustion as exhaustion_svc
 from panem_shared import feature_flags as feature_flags_svc
 from panem_shared import global_events as global_events_svc
 from panem_shared import hobbies as hobbies_svc
@@ -76,7 +77,7 @@ from panem_shared import trades as trades_svc
 from panem_shared import travel as travel_svc
 from panem_shared import weather as weather_svc
 from panem_shared.content.loader import ContentBundle
-from panem_shared.content.schemas import Location
+from panem_shared.content.schemas import Good, Location
 from panem_shared.content.traits import speech_tone
 from panem_shared.db.models import (
     AfflictionType,
@@ -91,6 +92,7 @@ from panem_shared.db.models import (
     DistrictLorePerson,
     DistrictState,
     EngagementSettings,
+    ExhaustionSettings,
     GlobalEvent,
     Inventory,
     LayerCategory,
@@ -130,6 +132,7 @@ from panem_shared.enums import (
     TradeStatus,
     WeatherEventStatus,
 )
+from panem_shared.error_messages import error_message
 from panem_shared.errors import NotAllowed, NotFound, ServiceError
 from panem_shared.logging import get_logger
 from panem_shared.redis_keys import (
@@ -162,6 +165,8 @@ class DashboardCharacterSummary(BaseModel):
     money: int
     jailed_until_tick: int | None = None
     jailed: bool = False
+    passed_out_until_tick: int | None = None
+    passed_out: bool = False
     # Only ever non-null for a currently donor account (see `_theme_for_
     # user`'s old docstring, now `_resolve_theme`) -- lets the theme
     # picker's profile list show which characters a profile is assigned to
@@ -263,7 +268,7 @@ def _http_from_service_error(exc: ServiceError) -> HTTPException:
     Discord, so this reuses it as the HTTP detail rather than inventing a
     second set of messages."""
     status = 404 if isinstance(exc, NotFound) else 400
-    return HTTPException(status_code=status, detail=exc.reason_key)
+    return HTTPException(status_code=status, detail=error_message(exc.reason_key, **exc.fmt))
 
 
 def _theme_profile_summary(profile: ThemeProfile) -> ThemeProfileSummary:
@@ -335,7 +340,8 @@ async def _require_tab_access(
     tab_name: str,
     discord_token: str,
     discord_guild_id: int,
-    staff_role_id: int,
+    staff_role_ids: frozenset[int],
+    staff_user_ids: frozenset[int],
 ) -> None:
     """Server-side enforcement mirroring `/identify`'s `hidden_tabs`: a
     mutating action behind a `staff_only`/`disabled` tab (`/staff feature
@@ -351,11 +357,12 @@ async def _require_tab_access(
         discord_id,
         bot_token=discord_token,
         guild_id=discord_guild_id,
-        staff_role_id=staff_role_id,
+        staff_role_ids=staff_role_ids,
+        staff_user_ids=staff_user_ids,
     )
     state = await feature_flags_svc.get_state(session, feature_flags_svc.tab_key(tab_name))
     if not feature_flags_svc.is_allowed(state, is_staff=is_staff):
-        raise HTTPException(status_code=403, detail="tab_disabled")
+        raise HTTPException(status_code=403, detail=error_message("tab_disabled"))
 
 
 def build_identify_router(
@@ -364,7 +371,8 @@ def build_identify_router(
     content: ContentBundle | None = None,
     discord_token: str = "",
     discord_guild_id: int = 0,
-    staff_role_id: int = 0,
+    staff_role_ids: frozenset[int] = frozenset(),
+    staff_user_ids: frozenset[int] = frozenset(),
     donor_role_ids: frozenset[int] = frozenset(),
 ) -> APIRouter:
     router = APIRouter(prefix="/activity/dashboard", tags=["dashboard"])
@@ -392,7 +400,8 @@ def build_identify_router(
             body.discord_id,
             bot_token=discord_token,
             guild_id=discord_guild_id,
-            staff_role_id=staff_role_id,
+            staff_role_ids=staff_role_ids,
+            staff_user_ids=staff_user_ids,
         )
         is_donor = await discord_staff.fetch_has_any_role(
             body.discord_id,
@@ -449,6 +458,9 @@ def build_identify_router(
                         jailed_until_tick=c.jailed_until_tick,
                         jailed=c.jailed_until_tick is not None
                         and c.jailed_until_tick > current_tick,
+                        passed_out_until_tick=c.passed_out_until_tick,
+                        passed_out=c.passed_out_until_tick is not None
+                        and c.passed_out_until_tick > current_tick,
                         theme_profile_id=c.theme_profile_id if is_donor else None,
                     )
                     for c in characters
@@ -549,7 +561,7 @@ def build_theme_router(
 
     async def _require_donor(discord_id: int) -> None:
         if not await _is_donor(discord_id):
-            raise HTTPException(status_code=403, detail="donor_only")
+            raise HTTPException(status_code=403, detail=error_message("donor_only"))
 
     async def _resolve_owned_profile(
         session: AsyncSession, *, discord_id: int, profile_id: int
@@ -617,7 +629,9 @@ def build_theme_router(
                 .where(ThemeProfile.user_id == user.id)
             )
             if count_row.scalar_one() >= MAX_THEME_PROFILES_PER_USER:
-                raise HTTPException(status_code=400, detail="theme_profile_limit_reached")
+                raise HTTPException(
+                    status_code=400, detail=error_message("theme_profile_limit_reached")
+                )
             profile = ThemeProfile(
                 user_id=user.id,
                 name=name,
@@ -788,6 +802,8 @@ class CharacterDetail(BaseModel):
     money: int
     jailed_until_tick: int | None = None
     jailed: bool = False
+    passed_out_until_tick: int | None = None
+    passed_out: bool = False
     rp_mode: str = RpMode.SIMULATION.value
     death_cause: str | None = None
 
@@ -817,6 +833,11 @@ def _character_detail(
         jailed_until_tick=character.jailed_until_tick,
         jailed=(
             character.jailed_until_tick is not None and character.jailed_until_tick > current_tick
+        ),
+        passed_out_until_tick=character.passed_out_until_tick,
+        passed_out=(
+            character.passed_out_until_tick is not None
+            and character.passed_out_until_tick > current_tick
         ),
         rp_mode=character.rp_mode,
         death_cause=character.death_cause,
@@ -932,6 +953,17 @@ def build_characters_router(
             raise HTTPException(status_code=400, detail="Invalid shift phase")
         async with session_scope(factory) as session:
             user = await characters_svc.get_or_create_user(session, body.discord_id)
+            if (
+                body.district_id == constants.CAPITOL_DISTRICT_ID
+                and not characters_svc.is_capitol_authorized(user)
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        "Creating a Capitol character needs staff sign-off first -- ask a "
+                        "staff member to authorize you, then try again."
+                    ),
+                )
             # Same fallback `effective_max_characters` applies, inlined: that
             # helper takes a full `Settings` object just for this one field,
             # which isn't worth constructing here for the sake of reuse.
@@ -1463,7 +1495,7 @@ def build_crime_router(
             )
             victim = await _resolve_steal_victim(session, character, body.target)
             if victim is None:
-                raise HTTPException(status_code=404, detail="steal_target_not_found")
+                raise HTTPException(status_code=404, detail=error_message("steal_target_not_found"))
             current_tick = await _current_tick(session)
             try:
                 stealing_svc.check_can_steal(character, victim, current_tick)
@@ -1535,7 +1567,7 @@ def build_crime_router(
                     .first()
                 )
             if house is None:
-                raise HTTPException(status_code=404, detail="burgle_owner_not_found")
+                raise HTTPException(status_code=404, detail=error_message("burgle_owner_not_found"))
 
             current_tick = await _current_tick(session)
             try:
@@ -1631,7 +1663,7 @@ def build_crime_router(
             current_tick = await _current_tick(session)
             found = await shipments_svc.find_shipment_here(session, character, current_tick)
             if found is None:
-                raise HTTPException(status_code=404, detail="shipment_none_here")
+                raise HTTPException(status_code=404, detail=error_message("shipment_none_here"))
             try:
                 shipments_svc.check_can_steal_shipment(character, found, current_tick)
             except ServiceError as exc:
@@ -1741,10 +1773,11 @@ def build_work_router(*, session_factory: async_sessionmaker[AsyncSession] | Non
                 session, discord_id=body.discord_id, character_id=character_id
             )
             if not has_job(character):
-                raise HTTPException(status_code=400, detail="job_none_set")
+                raise HTTPException(status_code=400, detail=error_message("job_none_set"))
             current_tick = await _current_tick(session)
             try:
                 jail_svc.check_not_jailed(character, current_tick, "work_jailed")
+                exhaustion_svc.check_not_passed_out(character, current_tick, "work_passed_out")
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
 
@@ -1754,7 +1787,7 @@ def build_work_router(*, session_factory: async_sessionmaker[AsyncSession] | Non
                 session, character, current_tick, is_staff=is_gamemaker
             )
             if open_shift is None:
-                raise HTTPException(status_code=400, detail="job_no_open_shift")
+                raise HTTPException(status_code=400, detail=error_message("job_no_open_shift"))
             if not is_gamemaker and not can_work_from_current_location(character, current_tick):
                 raise HTTPException(
                     status_code=400,
@@ -1878,7 +1911,7 @@ def build_market_router(
     async def _trade(character_id: int, body: TradeRequest, *, side: str) -> TradeResponse:
         factory = _require_session_factory(session_factory)
         if body.qty <= 0:
-            raise HTTPException(status_code=400, detail="market_invalid_qty")
+            raise HTTPException(status_code=400, detail=error_message("market_invalid_qty"))
         async with session_scope(factory) as session:
             character = await _resolve_owned_character(
                 session, discord_id=body.discord_id, character_id=character_id
@@ -1945,7 +1978,8 @@ def build_blackmarket_router(
             trusted = False
             try:
                 fence = blackmarket_svc.resolve_fence(district.id, content.npcs)
-                await blackmarket_svc.check_can_trade(session, character, fence)
+                current_tick = await _current_tick(session)
+                await blackmarket_svc.check_can_trade(session, character, fence, current_tick)
                 trusted = True
             except ServiceError:
                 trusted = False
@@ -1963,7 +1997,7 @@ def build_blackmarket_router(
     async def _trade(character_id: int, body: TradeRequest, *, side: str) -> TradeResponse:
         factory = _require_session_factory(session_factory)
         if body.qty <= 0:
-            raise HTTPException(status_code=400, detail="market_invalid_qty")
+            raise HTTPException(status_code=400, detail=error_message("market_invalid_qty"))
         async with session_scope(factory) as session:
             character = await _resolve_owned_character(
                 session, discord_id=body.discord_id, character_id=character_id
@@ -2238,7 +2272,8 @@ def build_residents_router(
     session_factory: async_sessionmaker[AsyncSession] | None,
     discord_token: str = "",
     discord_guild_id: int = 0,
-    staff_role_id: int = 0,
+    staff_role_ids: frozenset[int] = frozenset(),
+    staff_user_ids: frozenset[int] = frozenset(),
 ) -> APIRouter:
     """The Residents tab's REST surface: mirrors `/resident list|where|
     profile`. Unlike the split Discord commands, `list` here already
@@ -2246,7 +2281,7 @@ def build_residents_router(
     spirit as the Crime tab's burgle-targets -- avoiding a second
     request per NPC the dashboard would otherwise need to make).
 
-    `discord_token`/`discord_guild_id`/`staff_role_id` back a real (not
+    `discord_token`/`discord_guild_id`/`staff_role_ids`/`staff_user_ids` back a real (not
     cosmetic) `discord_staff.fetch_is_staff` check in both routes below,
     to decide `is_black_market_contact` -- unlike `/identify`'s own
     `is_staff` (UI-only, re-checked at the actual point of write), this
@@ -2260,7 +2295,8 @@ def build_residents_router(
             discord_id,
             bot_token=discord_token,
             guild_id=discord_guild_id,
-            staff_role_id=staff_role_id,
+            staff_role_ids=staff_role_ids,
+            staff_user_ids=staff_user_ids,
         )
 
     async def _resolve_npc(session: AsyncSession, character: Character, name: str) -> Npc:
@@ -2272,7 +2308,7 @@ def build_residents_router(
             )
         ).scalar_one_or_none()
         if npc is None:
-            raise HTTPException(status_code=404, detail="resident_not_found")
+            raise HTTPException(status_code=404, detail=error_message("resident_not_found"))
         return npc
 
     async def _resolve_other_character(session: AsyncSession, name: str) -> Character:
@@ -2291,7 +2327,7 @@ def build_residents_router(
             )
         ).scalar_one_or_none()
         if other is None:
-            raise HTTPException(status_code=404, detail="resident_not_found")
+            raise HTTPException(status_code=404, detail=error_message("resident_not_found"))
         return other
 
     def _character_status(
@@ -2300,11 +2336,12 @@ def build_residents_router(
         """`"engaged"` wins over location -- a character mid-conversation in
         their own home still reads as talking, not sleeping. Otherwise,
         `"sleeping"` is inferred from standing in a `RESIDENTIAL` location
-        (home, an inn) rather than a real "currently asleep" flag: `/sleep`
-        is a one-shot fatigue-restoring action with no lasting state of its
-        own (see `panem_shared.housing`), so this is the closest real signal
-        to "probably resting" the data actually offers. Anyone else is
-        `"idle"` -- present in the district, not doing anything trackable."""
+        (home, an inn) rather than a real "currently asleep" flag: fatigue
+        restoration is automatic at the midnight rollover with no lasting
+        "asleep" state of its own (see `panem_shared.housing`), so this is
+        the closest real signal to "probably resting" the data actually
+        offers. Anyone else is `"idle"` -- present in the district, not
+        doing anything trackable."""
         if char.id in engaged_character_ids:
             return "engaged"
         location = locations_by_id.get(char.location_id) if char.location_id else None
@@ -2596,7 +2633,7 @@ def build_pay_router(*, session_factory: async_sessionmaker[AsyncSession] | None
                 await session.execute(select(Character).where(Character.name == body.target))
             ).scalar_one_or_none()
             if recipient is None:
-                raise HTTPException(status_code=404, detail="character_not_found")
+                raise HTTPException(status_code=404, detail=error_message("character_not_found"))
             try:
                 pay_svc.pay(sender, recipient, body.amount)
             except ServiceError as exc:
@@ -2714,7 +2751,7 @@ def build_trade_router(*, session_factory: async_sessionmaker[AsyncSession] | No
                 await session.execute(select(Character).where(Character.name == body.target))
             ).scalar_one_or_none()
             if recipient is None:
-                raise HTTPException(status_code=404, detail="character_not_found")
+                raise HTTPException(status_code=404, detail=error_message("character_not_found"))
             try:
                 trades_svc.check_can_trade(initiator, recipient)
                 trades_svc.validate_offer(
@@ -2756,7 +2793,7 @@ def build_trade_router(*, session_factory: async_sessionmaker[AsyncSession] | No
         )
         trade = await session.get(Trade, trade_id)
         if trade is None:
-            raise HTTPException(status_code=404, detail="trade_not_found")
+            raise HTTPException(status_code=404, detail=error_message("trade_not_found"))
         return trade, character
 
     @router.post("/{character_id}/{trade_id}/accept", response_model=TradeSummary)
@@ -2769,10 +2806,10 @@ def build_trade_router(*, session_factory: async_sessionmaker[AsyncSession] | No
                 session, discord_id=body.discord_id, character_id=character_id, trade_id=trade_id
             )
             if trade.recipient_character_id != character.id:
-                raise HTTPException(status_code=404, detail="trade_not_found")
+                raise HTTPException(status_code=404, detail=error_message("trade_not_found"))
             initiator = await session.get(Character, trade.initiator_character_id)
             if initiator is None:
-                raise HTTPException(status_code=404, detail="character_not_found")
+                raise HTTPException(status_code=404, detail=error_message("character_not_found"))
             try:
                 await trades_svc.accept_trade(
                     session,
@@ -2800,7 +2837,7 @@ def build_trade_router(*, session_factory: async_sessionmaker[AsyncSession] | No
                 session, discord_id=body.discord_id, character_id=character_id, trade_id=trade_id
             )
             if trade.recipient_character_id != character.id:
-                raise HTTPException(status_code=404, detail="trade_not_found")
+                raise HTTPException(status_code=404, detail=error_message("trade_not_found"))
             try:
                 trades_svc.decline_trade(trade, dt.datetime.now(dt.UTC))
             except ServiceError as exc:
@@ -2823,7 +2860,7 @@ def build_trade_router(*, session_factory: async_sessionmaker[AsyncSession] | No
                 session, discord_id=body.discord_id, character_id=character_id, trade_id=trade_id
             )
             if trade.initiator_character_id != character.id:
-                raise HTTPException(status_code=404, detail="trade_not_found")
+                raise HTTPException(status_code=404, detail=error_message("trade_not_found"))
             try:
                 trades_svc.cancel_trade(trade, dt.datetime.now(dt.UTC))
             except ServiceError as exc:
@@ -2987,30 +3024,23 @@ class HousingInnStayRequest(BaseModel):
 class HousingInnStayResponse(BaseModel):
     property_id: int
     price: int
-    fatigue: float
-
-
-class HousingSleepRequest(BaseModel):
-    discord_id: int
-    ticks: int | None = None
-
-
-class HousingSleepResponse(BaseModel):
-    ticks: int
-    restored: float
-    fatigue: float
 
 
 def build_housing_router(
     *, content: ContentBundle, session_factory: async_sessionmaker[AsyncSession] | None
 ) -> APIRouter:
-    """The Housing tab's REST surface: mirrors every `/housing` subcommand
-    plus `/sleep`. Unlike the split Discord commands (each its own
-    `character`/`property_id` pair typed by hand), every write here
-    targets `{property_id}` in the URL path the same way the Jail/Crime/
-    Market routers already do -- `property_id` is exactly the id
-    `/activity/dashboard/housing/{character_id}`'s own listing already
-    returns, so the dashboard never needs a separate autocomplete step."""
+    """The Housing tab's REST surface: mirrors every `/housing`
+    subcommand. There's no `/sleep` route anymore -- fatigue restores
+    automatically at the midnight sim-day rollover based on housing
+    status (`panem_shared.housing.apply_nightly_fatigue_restoration`);
+    `inn-stay` here just pays for the night and stamps `Character.
+    last_inn_stay_tick` so that night's restoration counts it. Unlike
+    the split Discord commands (each its own `character`/`property_id`
+    pair typed by hand), every write here targets `{property_id}` in the
+    URL path the same way the Jail/Crime/Market routers already do --
+    `property_id` is exactly the id `/activity/dashboard/housing/
+    {character_id}`'s own listing already returns, so the dashboard
+    never needs a separate autocomplete step."""
     router = APIRouter(prefix="/activity/dashboard/housing", tags=["dashboard"])
 
     def _listing(property_: Property, buyer: Character) -> HousingListing:
@@ -3037,7 +3067,7 @@ def build_housing_router(
         )
         property_ = await session.get(Property, property_id)
         if property_ is None:
-            raise HTTPException(status_code=404, detail="housing_not_found")
+            raise HTTPException(status_code=404, detail=error_message("housing_not_found"))
         return character, property_
 
     @router.get("/{character_id}", response_model=HousingStatusResponse)
@@ -3158,7 +3188,9 @@ def build_housing_router(
                 terms = housing_svc.financed_purchase_terms(price)
                 down_payment = round(terms.down_payment)
                 if character.money < down_payment:
-                    raise HTTPException(status_code=400, detail="housing_down_payment_too_much")
+                    raise HTTPException(
+                        status_code=400, detail=error_message("housing_down_payment_too_much")
+                    )
                 character.money -= down_payment
                 property_.mortgage_principal = terms.principal
                 property_.mortgage_payment = terms.payment
@@ -3169,7 +3201,9 @@ def build_housing_router(
                 payment = round(property_.mortgage_payment)
             else:
                 if character.money < price:
-                    raise HTTPException(status_code=400, detail="housing_insufficient_funds")
+                    raise HTTPException(
+                        status_code=400, detail=error_message("housing_insufficient_funds")
+                    )
                 character.money -= price
 
             property_.owner_kind = OwnerKind.CHARACTER.value
@@ -3217,7 +3251,9 @@ def build_housing_router(
 
             price = round(housing_svc.complex_purchase_price(list(units)))
             if character.money < price:
-                raise HTTPException(status_code=400, detail="housing_insufficient_funds")
+                raise HTTPException(
+                    status_code=400, detail=error_message("housing_insufficient_funds")
+                )
             character.money -= price
             for unit in units:
                 unit.owner_kind = OwnerKind.CHARACTER.value
@@ -3283,7 +3319,9 @@ def build_housing_router(
                 session, property_id, discord_id=body.discord_id, character_id=character_id
             )
             if property_.kind != PropertyKind.APARTMENT.value:
-                raise HTTPException(status_code=400, detail="housing_not_an_apartment")
+                raise HTTPException(
+                    status_code=400, detail=error_message("housing_not_an_apartment")
+                )
             try:
                 housing_svc.check_owns_property(character=character, property_=property_)
             except ServiceError as exc:
@@ -3294,7 +3332,9 @@ def build_housing_router(
                 )
             ).scalar_one_or_none()
             if existing_lease is not None:
-                raise HTTPException(status_code=400, detail="housing_unit_already_leased")
+                raise HTTPException(
+                    status_code=400, detail=error_message("housing_unit_already_leased")
+                )
 
             property_.asking_price = body.price
             return HousingRentOutResponse(property_id=property_.id, price=round(body.price))
@@ -3362,7 +3402,9 @@ def build_housing_router(
                 )
             ).scalar_one_or_none()
             if auction is None:
-                raise HTTPException(status_code=404, detail="housing_auction_not_found")
+                raise HTTPException(
+                    status_code=404, detail=error_message("housing_auction_not_found")
+                )
             try:
                 housing_svc.check_can_bid(character=character, auction=auction, amount=body.amount)
             except ServiceError as exc:
@@ -3420,14 +3462,14 @@ def build_housing_router(
                 session, discord_id=body.discord_id, character_id=character_id
             )
             if character.housing_property_id is None:
-                raise HTTPException(status_code=400, detail="housing_no_home")
+                raise HTTPException(status_code=400, detail=error_message("housing_no_home"))
             lease = (
                 await session.execute(
                     select(ApartmentLease).where(ApartmentLease.tenant_character_id == character.id)
                 )
             ).scalar_one_or_none()
             if lease is None:
-                raise HTTPException(status_code=400, detail="housing_not_a_tenant")
+                raise HTTPException(status_code=400, detail=error_message("housing_not_a_tenant"))
             await session.delete(lease)
             character.housing_property_id = None
             return HousingMoveOutResponse(character_name=character.name)
@@ -3442,7 +3484,7 @@ def build_housing_router(
                 session, property_id, discord_id=body.discord_id, character_id=character_id
             )
             if inn.kind != PropertyKind.INN.value:
-                raise HTTPException(status_code=400, detail="housing_not_an_inn")
+                raise HTTPException(status_code=400, detail=error_message("housing_not_an_inn"))
 
             owner = (
                 await session.get(Character, inn.owner_id)
@@ -3451,43 +3493,18 @@ def build_housing_router(
             )
             price = round(housing_svc.quoted_price(inn, character, seller=owner))
             if character.money < price:
-                raise HTTPException(status_code=400, detail="housing_insufficient_funds")
+                raise HTTPException(
+                    status_code=400, detail=error_message("housing_insufficient_funds")
+                )
 
             character.money -= price
             if owner is not None:
                 owner.money += price
-            housing_svc.apply_fatigue_restoration(character, simtime.TICKS_PER_PHASE, has_bed=True)
+            character.last_inn_stay_tick = await _current_tick(session)
             character.hunger = max(
                 constants.HUNGER_MIN, character.hunger - constants.HUNGER_DECREASE_MET
             )
-            return HousingInnStayResponse(
-                property_id=inn.id, price=price, fatigue=round(character.fatigue, 1)
-            )
-
-    @router.post("/{character_id}/sleep", response_model=HousingSleepResponse)
-    async def sleep(character_id: int, body: HousingSleepRequest) -> HousingSleepResponse:
-        factory = _require_session_factory(session_factory)
-        async with session_scope(factory) as session:
-            character = await _resolve_owned_character(
-                session, discord_id=body.discord_id, character_id=character_id
-            )
-            current_tick = await _current_tick(session)
-            _tick, phase, _day, _month = simtime.current(current_tick)
-            try:
-                housing_svc.check_can_sleep(character, phase)
-            except ServiceError as exc:
-                raise _http_from_service_error(exc) from exc
-
-            max_ticks = simtime.ticks_remaining_in_phase(current_tick)
-            sleep_ticks = (
-                max(1, min(body.ticks, max_ticks)) if body.ticks is not None else max_ticks
-            )
-            restored = housing_svc.apply_fatigue_restoration(
-                character, sleep_ticks, has_bed=housing_svc.has_a_bed(character)
-            )
-            return HousingSleepResponse(
-                ticks=sleep_ticks, restored=round(restored, 1), fatigue=round(character.fatigue, 1)
-            )
+            return HousingInnStayResponse(property_id=inn.id, price=price)
 
     return router
 
@@ -3509,6 +3526,7 @@ class VitalsConsumable(BaseModel):
     hunger_value: float = 0.0
     thirst_value: float = 0.0
     heal_value: float = 0.0
+    fatigue_value: float = 0.0
     cook_method: str | None = None
 
 
@@ -3524,12 +3542,10 @@ class VitalsStatusResponse(BaseModel):
     sanity: float
     fatigue: float
     health: float
-    has_bed: bool
-    max_sleep_ticks: int
-    fatigue_restore_per_tick: float
     edible: list[VitalsConsumable]
     drinkable: list[VitalsConsumable]
     healable: list[VitalsConsumable]
+    fatigueable: list[VitalsConsumable]
     entertainment: list[VitalsEntertainmentOption]
 
 
@@ -3567,6 +3583,17 @@ class VitalsHealResponse(BaseModel):
     health: float
 
 
+class VitalsEnergizeRequest(BaseModel):
+    discord_id: int
+    good_id: str
+
+
+class VitalsEnergizeResponse(BaseModel):
+    good_id: str
+    good_name: str
+    fatigue: float
+
+
 class VitalsEntertainRequest(BaseModel):
     discord_id: int
     game_id: str
@@ -3580,13 +3607,27 @@ class VitalsEntertainResponse(BaseModel):
 def build_vitals_router(
     *, content: ContentBundle, session_factory: async_sessionmaker[AsyncSession] | None
 ) -> APIRouter:
-    """The Vitals tab's REST surface: eat/drink/entertain, inventory-gated
-    per `panem_shared.sustenance`'s rewrite (see that module's docstring).
-    Sleep has no route of its own here -- the frontend calls the existing
-    `POST /activity/dashboard/housing/{id}/sleep` directly; this router's
-    status endpoint just hands back what that panel needs for its live
-    preview (`has_bed`/`max_sleep_ticks`/`fatigue_restore_per_tick`)."""
+    """The Vitals tab's REST surface: eat/drink/heal/energize/entertain,
+    inventory-gated per `panem_shared.sustenance`'s rewrite (see that
+    module's docstring). There's no sleep route anymore -- fatigue
+    restores automatically at the midnight sim-day rollover based on
+    housing status (`panem_shared.housing.
+    apply_nightly_fatigue_restoration`); `energize` (a stimulant good
+    like coffee or tea) is the only proactive way to push it higher than
+    that, on top of it."""
     router = APIRouter(prefix="/activity/dashboard/vitals", tags=["dashboard"])
+
+    def _consumable(row: Inventory, good: Good) -> VitalsConsumable:
+        return VitalsConsumable(
+            good_id=good.id,
+            name=good.name,
+            qty=row.qty,
+            hunger_value=good.hunger_value,
+            thirst_value=good.thirst_value,
+            heal_value=good.heal_value,
+            fatigue_value=good.fatigue_value,
+            cook_method=good.cook_method,
+        )
 
     @router.get("/{character_id}/status", response_model=VitalsStatusResponse)
     async def vitals_status(character_id: int, discord_id: int) -> VitalsStatusResponse:
@@ -3595,47 +3636,11 @@ def build_vitals_router(
             character = await _resolve_owned_character(
                 session, discord_id=discord_id, character_id=character_id
             )
-            current_tick = await _current_tick(session)
             pairs = await sustenance_svc.owned_consumables(session, character, content.goods)
-            edible = [
-                VitalsConsumable(
-                    good_id=good.id,
-                    name=good.name,
-                    qty=row.qty,
-                    hunger_value=good.hunger_value,
-                    thirst_value=good.thirst_value,
-                    heal_value=good.heal_value,
-                    cook_method=good.cook_method,
-                )
-                for row, good in pairs
-                if good.hunger_value > 0
-            ]
-            drinkable = [
-                VitalsConsumable(
-                    good_id=good.id,
-                    name=good.name,
-                    qty=row.qty,
-                    hunger_value=good.hunger_value,
-                    thirst_value=good.thirst_value,
-                    heal_value=good.heal_value,
-                    cook_method=good.cook_method,
-                )
-                for row, good in pairs
-                if good.thirst_value > 0
-            ]
-            healable = [
-                VitalsConsumable(
-                    good_id=good.id,
-                    name=good.name,
-                    qty=row.qty,
-                    hunger_value=good.hunger_value,
-                    thirst_value=good.thirst_value,
-                    heal_value=good.heal_value,
-                    cook_method=good.cook_method,
-                )
-                for row, good in pairs
-                if good.heal_value > 0
-            ]
+            edible = [_consumable(row, good) for row, good in pairs if good.hunger_value > 0]
+            drinkable = [_consumable(row, good) for row, good in pairs if good.thirst_value > 0]
+            healable = [_consumable(row, good) for row, good in pairs if good.heal_value > 0]
+            fatigueable = [_consumable(row, good) for row, good in pairs if good.fatigue_value > 0]
             entertainment = [
                 VitalsEntertainmentOption(
                     game_id=game_id,
@@ -3644,21 +3649,16 @@ def build_vitals_router(
                 )
                 for game_id, sanity_value in constants.ENTERTAINMENT_SANITY_VALUES.items()
             ]
-            has_bed = housing_svc.has_a_bed(character)
-            max_sleep_ticks = simtime.ticks_remaining_in_phase(current_tick)
-            fatigue_restore_per_tick = housing_svc.fatigue_restored(1, has_bed=has_bed)
         return VitalsStatusResponse(
             hunger=round(character.hunger, 1),
             thirst=round(character.thirst, 1),
             sanity=round(character.sanity, 1),
             fatigue=round(character.fatigue, 1),
             health=round(character.health, 1),
-            has_bed=has_bed,
-            max_sleep_ticks=max_sleep_ticks,
-            fatigue_restore_per_tick=round(fatigue_restore_per_tick, 2),
             edible=edible,
             drinkable=drinkable,
             healable=healable,
+            fatigueable=fatigueable,
             entertainment=entertainment,
         )
 
@@ -3671,7 +3671,7 @@ def build_vitals_router(
             )
             good = content.goods.get(body.good_id)
             if good is None:
-                raise HTTPException(status_code=404, detail="good_not_edible")
+                raise HTTPException(status_code=404, detail=error_message("good_not_edible"))
             current_tick = await _current_tick(session)
             try:
                 hunger = await sustenance_svc.eat(
@@ -3690,7 +3690,7 @@ def build_vitals_router(
             )
             good = content.goods.get(body.good_id)
             if good is None:
-                raise HTTPException(status_code=404, detail="good_not_drinkable")
+                raise HTTPException(status_code=404, detail=error_message("good_not_drinkable"))
             current_tick = await _current_tick(session)
             try:
                 thirst = await sustenance_svc.drink(session, character, good, current_tick)
@@ -3707,13 +3707,36 @@ def build_vitals_router(
             )
             good = content.goods.get(body.good_id)
             if good is None:
-                raise HTTPException(status_code=404, detail="good_not_healing")
+                raise HTTPException(status_code=404, detail=error_message("good_not_healing"))
             current_tick = await _current_tick(session)
             try:
                 health = await sustenance_svc.heal(session, character, good, current_tick)
             except ServiceError as exc:
                 raise _http_from_service_error(exc) from exc
         return VitalsHealResponse(good_id=good.id, good_name=good.name, health=round(health, 1))
+
+    @router.post("/{character_id}/energize", response_model=VitalsEnergizeResponse)
+    async def vitals_energize(
+        character_id: int, body: VitalsEnergizeRequest
+    ) -> VitalsEnergizeResponse:
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            good = content.goods.get(body.good_id)
+            if good is None:
+                raise HTTPException(status_code=404, detail=error_message("good_not_energizing"))
+            current_tick = await _current_tick(session)
+            try:
+                fatigue = await sustenance_svc.restore_fatigue(
+                    session, character, good, current_tick
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+        return VitalsEnergizeResponse(
+            good_id=good.id, good_name=good.name, fatigue=round(fatigue, 1)
+        )
 
     @router.post("/{character_id}/entertain", response_model=VitalsEntertainResponse)
     async def vitals_entertain(
@@ -3974,6 +3997,17 @@ class StaffCharacterLimitResponse(BaseModel):
     limit: int | None
 
 
+class StaffCapitolAuthorizeRequest(BaseModel):
+    discord_id: int
+    target_discord_id: int
+    authorized: bool
+
+
+class StaffCapitolAuthorizeResponse(BaseModel):
+    target_discord_id: int
+    authorized: bool
+
+
 class StaffBanRequest(BaseModel):
     discord_id: int
     target_discord_id: int
@@ -3997,6 +4031,15 @@ class StaffEngagementTimeoutRequest(BaseModel):
 
 class StaffEngagementTimeoutResponse(BaseModel):
     minutes: int
+
+
+class StaffExhaustionDurationRequest(BaseModel):
+    discord_id: int
+    ticks: int
+
+
+class StaffExhaustionDurationResponse(BaseModel):
+    ticks: int
 
 
 class StaffCrackdownRequest(BaseModel):
@@ -4240,7 +4283,7 @@ def build_rp_mode_router(
             if rp_modes_svc.mode_switch_needs_job_info(character, body.new_mode):
                 if not body.job_title or not body.shift_phase:
                     raise HTTPException(
-                        status_code=400, detail="job_title and shift_phase are required"
+                        status_code=400, detail=error_message("job_fields_required")
                     )
                 if body.shift_phase not in {phase.value for phase in DayPhase}:
                     raise HTTPException(status_code=400, detail="Invalid shift phase")
@@ -4302,7 +4345,8 @@ def build_staff_router(
     static_dir: Path,
     discord_token: str = "",
     discord_guild_id: int = 0,
-    staff_role_id: int = 0,
+    staff_role_ids: frozenset[int] = frozenset(),
+    staff_user_ids: frozenset[int] = frozenset(),
     log_channel_id: int = 0,
     roleplay_role_id: int = 0,
 ) -> APIRouter:
@@ -4323,16 +4367,17 @@ def build_staff_router(
             discord_id,
             bot_token=discord_token,
             guild_id=discord_guild_id,
-            staff_role_id=staff_role_id,
+            staff_role_ids=staff_role_ids,
+            staff_user_ids=staff_user_ids,
         )
         if not ok:
-            raise HTTPException(status_code=403, detail="staff_only")
+            raise HTTPException(status_code=403, detail=error_message("staff_only"))
 
     @router.post("/jail", response_model=StaffJailResponse)
     async def jail_character(body: StaffJailRequest) -> StaffJailResponse:
         await _require_staff(body.discord_id)
         if body.ticks < 1:
-            raise HTTPException(status_code=400, detail="invalid_ticks")
+            raise HTTPException(status_code=400, detail=error_message("invalid_ticks"))
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             character = (
@@ -4341,7 +4386,7 @@ def build_staff_router(
                 )
             ).scalar_one_or_none()
             if character is None:
-                raise HTTPException(status_code=404, detail="character_not_found")
+                raise HTTPException(status_code=404, detail=error_message("character_not_found"))
             current_tick = await _current_tick(session)
             prior_bonus = (character.jail_count or 0) * constants.JAIL_PRIOR_TICKS_PER_COUNT
             applied = jail_svc.commit_to_jail(character, body.ticks, current_tick)
@@ -4364,10 +4409,16 @@ def build_staff_router(
         await discord_staff.post_staff_log(
             channel_id=log_channel_id,
             bot_token=discord_token,
-            content=(
-                f"**Staff action:** <@{body.discord_id}> `jail` -> `{response.character_name}` "
-                f"(ticks={body.ticks}, applied={applied}, reason={body.reason!r})"
-            ),
+            action="jail",
+            staff_discord_id=body.discord_id,
+            target=str(character.id),
+            target_label=f"**{response.character_name}**",
+            payload={
+                "ticks": body.ticks,
+                "applied_ticks": applied,
+                "jailed_until_tick": response.jailed_until_tick,
+                "reason": body.reason,
+            },
         )
         return response
 
@@ -4382,9 +4433,9 @@ def build_staff_router(
         await _require_staff(body.discord_id)
         good = content.goods.get(body.good_id)
         if good is None:
-            raise HTTPException(status_code=404, detail="staff_good_not_found")
+            raise HTTPException(status_code=404, detail=error_message("staff_good_not_found"))
         if body.district_id not in content.districts:
-            raise HTTPException(status_code=404, detail="invalid_district")
+            raise HTTPException(status_code=404, detail=error_message("invalid_district"))
         district = content.district(body.district_id)
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
@@ -4417,10 +4468,11 @@ def build_staff_router(
         await discord_staff.post_staff_log(
             channel_id=log_channel_id,
             bot_token=discord_token,
-            content=(
-                f"**Staff action:** <@{body.discord_id}> `add_stock` -> district {district.id} "
-                f"`{good.name}` (+{body.qty}, now {response.new_supply})"
-            ),
+            action="add_stock",
+            staff_discord_id=body.discord_id,
+            target=f"{district.id}:{good.id}",
+            target_label=f"{district.name} -- {good.name}",
+            payload={"qty_added": body.qty, "new_supply": response.new_supply},
         )
         return response
 
@@ -4450,7 +4502,9 @@ def build_staff_router(
     async def list_channel_access(discord_id: int) -> StaffChannelAccessListResponse:
         await _require_staff(discord_id)
         if not roleplay_role_id:
-            raise HTTPException(status_code=409, detail="roleplay_role_not_configured")
+            raise HTTPException(
+                status_code=409, detail=error_message("roleplay_role_not_configured")
+            )
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             rows = (
@@ -4496,7 +4550,9 @@ def build_staff_router(
     ) -> StaffChannelAccessEntry:
         await _require_staff(body.discord_id)
         if not roleplay_role_id:
-            raise HTTPException(status_code=409, detail="roleplay_role_not_configured")
+            raise HTTPException(
+                status_code=409, detail=error_message("roleplay_role_not_configured")
+            )
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             row = (
@@ -4508,17 +4564,18 @@ def build_staff_router(
                 )
             ).scalar_one_or_none()
             if row is None:
-                raise HTTPException(status_code=404, detail="channel_not_found")
+                raise HTTPException(status_code=404, detail=error_message("channel_not_found"))
             district_id, kind = row.district_id, row.kind
         ok = await discord_staff.set_role_channel_locked(
             channel_id,
             roleplay_role_id,
             bot_token=discord_token,
             locked=body.locked,
-            is_forum=(kind == ChannelKind.FORUM.value),
         )
         if not ok:
-            raise HTTPException(status_code=502, detail="discord_permission_edit_failed")
+            raise HTTPException(
+                status_code=502, detail=error_message("discord_permission_edit_failed")
+            )
         async with session_scope(factory) as session:
             session.add(
                 StaffAction(
@@ -4531,11 +4588,11 @@ def build_staff_router(
         await discord_staff.post_staff_log(
             channel_id=log_channel_id,
             bot_token=discord_token,
-            content=(
-                f"**Staff action:** <@{body.discord_id}> "
-                f"`{'channel_lock' if body.locked else 'channel_unlock'}` -> <#{channel_id}> "
-                f"for <@&{roleplay_role_id}>"
-            ),
+            action="channel_lock" if body.locked else "channel_unlock",
+            staff_discord_id=body.discord_id,
+            target=str(channel_id),
+            target_label=f"<#{channel_id}> ({_channel_label(district_id, kind)})",
+            payload={"role": f"<@&{roleplay_role_id}>"},
         )
         return StaffChannelAccessEntry(
             channel_id=channel_id,
@@ -4657,10 +4714,10 @@ def build_staff_router(
     async def update_district_motto(body: UpdateDistrictMottoRequest) -> DistrictMottoResponse:
         await _require_staff(body.discord_id)
         if body.district_id < 0 or body.district_id > 12:
-            raise HTTPException(status_code=400, detail="invalid_district_id")
+            raise HTTPException(status_code=400, detail=error_message("invalid_district_id"))
         motto = body.motto.strip()
         if not motto or len(motto) > 120:
-            raise HTTPException(status_code=400, detail="invalid_motto_length")
+            raise HTTPException(status_code=400, detail=error_message("invalid_motto_length"))
 
         mottos_file = static_dir / "district_mottos.json"
         data: dict[str, str] = {}
@@ -4672,13 +4729,15 @@ def build_staff_router(
         data[str(body.district_id)] = motto
         mottos_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
+        district = content.districts.get(body.district_id)
         await discord_staff.post_staff_log(
             channel_id=log_channel_id,
             bot_token=discord_token,
-            content=(
-                f"**Staff action:** <@{body.discord_id}> updated District {body.district_id} motto "
-                f"to {motto!r}"
-            ),
+            action="district_motto",
+            staff_discord_id=body.discord_id,
+            target=str(body.district_id),
+            target_label=district.name if district is not None else f"District {body.district_id}",
+            payload={"motto": motto},
         )
         return DistrictMottoResponse(district_id=body.district_id, motto=motto)
 
@@ -4759,7 +4818,7 @@ def build_staff_router(
             await session.execute(select(Character).where(Character.name == name))
         ).scalar_one_or_none()
         if row is None:
-            raise HTTPException(status_code=404, detail="character_not_found")
+            raise HTTPException(status_code=404, detail=error_message("character_not_found"))
         return row
 
     @router.get("/goods", response_model=list[StaffGoodOption])
@@ -4792,7 +4851,7 @@ def build_staff_router(
         await _require_staff(body.discord_id)
         good = content.goods.get(body.good_id)
         if good is None:
-            raise HTTPException(status_code=404, detail="staff_good_not_found")
+            raise HTTPException(status_code=404, detail=error_message("staff_good_not_found"))
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             character = await _find_character_by_name(session, body.character_name)
@@ -4886,9 +4945,9 @@ def build_staff_router(
     async def give_mastery(body: StaffGiveMasteryRequest) -> StaffGiveMasteryResponse:
         await _require_staff(body.discord_id)
         if body.shifts_completed is None and body.level is None:
-            raise HTTPException(status_code=400, detail="mastery_needs_value")
+            raise HTTPException(status_code=400, detail=error_message("mastery_needs_value"))
         if body.shifts_completed is not None and body.shifts_completed < 0:
-            raise HTTPException(status_code=400, detail="invalid_shifts_completed")
+            raise HTTPException(status_code=400, detail=error_message("invalid_shifts_completed"))
         new_shifts = (
             body.shifts_completed
             if body.shifts_completed is not None
@@ -4955,7 +5014,7 @@ def build_staff_router(
         async with session_scope(factory) as session:
             character = await _find_character_by_name(session, body.character_name)
             if character.status != CharacterStatus.PENDING.value:
-                raise HTTPException(status_code=400, detail="not_pending")
+                raise HTTPException(status_code=400, detail=error_message("not_pending"))
             char_id = character.id
             await session.delete(character)
             session.add(
@@ -4972,7 +5031,7 @@ def build_staff_router(
     async def set_character_limit(body: StaffCharacterLimitRequest) -> StaffCharacterLimitResponse:
         await _require_staff(body.discord_id)
         if body.limit is not None and body.limit < 0:
-            raise HTTPException(status_code=400, detail="invalid_limit")
+            raise HTTPException(status_code=400, detail=error_message("invalid_limit"))
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             user = await characters_svc.get_or_create_user(session, body.target_discord_id)
@@ -4987,6 +5046,26 @@ def build_staff_router(
             )
         return StaffCharacterLimitResponse(
             target_discord_id=body.target_discord_id, limit=body.limit
+        )
+
+    @router.post("/capitol-authorization", response_model=StaffCapitolAuthorizeResponse)
+    async def set_capitol_authorization(
+        body: StaffCapitolAuthorizeRequest,
+    ) -> StaffCapitolAuthorizeResponse:
+        await _require_staff(body.discord_id)
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            user = await characters_svc.get_or_create_user(session, body.target_discord_id)
+            user.capitol_authorized_at = dt.datetime.now(dt.UTC) if body.authorized else None
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="capitol_authorize" if body.authorized else "capitol_revoke",
+                    target=str(body.target_discord_id),
+                )
+            )
+        return StaffCapitolAuthorizeResponse(
+            target_discord_id=body.target_discord_id, authorized=body.authorized
         )
 
     @router.post("/ban")
@@ -5018,7 +5097,7 @@ def build_staff_router(
         async with session_scope(factory) as session:
             property_ = await session.get(Property, body.property_id)
             if property_ is None:
-                raise HTTPException(status_code=404, detail="housing_not_found")
+                raise HTTPException(status_code=404, detail=error_message("housing_not_found"))
             property_.asking_price = body.price
             session.add(
                 StaffAction(
@@ -5036,7 +5115,7 @@ def build_staff_router(
     ) -> StaffEngagementTimeoutResponse:
         await _require_staff(body.discord_id)
         if body.minutes < 1:
-            raise HTTPException(status_code=400, detail="invalid_minutes")
+            raise HTTPException(status_code=400, detail=error_message("invalid_minutes"))
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             settings_row = await session.get(EngagementSettings, 1)
@@ -5055,16 +5134,43 @@ def build_staff_router(
             )
         return StaffEngagementTimeoutResponse(minutes=body.minutes)
 
+    @router.post("/exhaustion/duration", response_model=StaffExhaustionDurationResponse)
+    async def set_exhaustion_duration(
+        body: StaffExhaustionDurationRequest,
+    ) -> StaffExhaustionDurationResponse:
+        await _require_staff(body.discord_id)
+        if body.ticks < 1:
+            raise HTTPException(status_code=400, detail=error_message("invalid_ticks"))
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            settings_row = await session.get(ExhaustionSettings, 1)
+            if settings_row is None:
+                settings_row = ExhaustionSettings(id=1, passed_out_ticks=body.ticks)
+                session.add(settings_row)
+            else:
+                settings_row.passed_out_ticks = body.ticks
+            session.add(
+                StaffAction(
+                    staff_discord_id=body.discord_id,
+                    action="exhaustion_set_duration",
+                    target="exhaustion_settings",
+                    payload={"ticks": body.ticks},
+                )
+            )
+        return StaffExhaustionDurationResponse(ticks=body.ticks)
+
     @router.get("/district/{district_id}", response_model=StaffDistrictStateResponse)
     async def district_state(district_id: int, discord_id: int) -> StaffDistrictStateResponse:
         await _require_staff(discord_id)
         if district_id not in content.districts:
-            raise HTTPException(status_code=404, detail="invalid_district")
+            raise HTTPException(status_code=404, detail=error_message("invalid_district"))
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             row = await session.get(DistrictState, district_id)
             if row is None:
-                raise HTTPException(status_code=404, detail="district_state_not_seeded")
+                raise HTTPException(
+                    status_code=404, detail=error_message("district_state_not_seeded")
+                )
             return StaffDistrictStateResponse(
                 district_id=district_id,
                 district_name=content.district(district_id).name,
@@ -5084,14 +5190,16 @@ def build_staff_router(
     async def trigger_crackdown(body: StaffCrackdownRequest) -> StaffCrackdownResponse:
         await _require_staff(body.discord_id)
         if body.district_id not in content.districts:
-            raise HTTPException(status_code=404, detail="invalid_district")
+            raise HTTPException(status_code=404, detail=error_message("invalid_district"))
         duration = body.duration_ticks or constants.CRACKDOWN_DEFAULT_DURATION_TICKS
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             current_tick = await _current_tick(session)
             row = await session.get(DistrictState, body.district_id)
             if row is None:
-                raise HTTPException(status_code=404, detail="district_state_not_seeded")
+                raise HTTPException(
+                    status_code=404, detail=error_message("district_state_not_seeded")
+                )
             row.crackdown_until_tick = current_tick + duration
             row.peacekeeper_pressure = min(
                 1.0, row.peacekeeper_pressure + constants.CRACKDOWN_PRESSURE_DELTA
@@ -5129,7 +5237,7 @@ def build_staff_router(
     ) -> list[StaffLocationOption]:
         await _require_staff(discord_id)
         if district_id not in content.districts:
-            raise HTTPException(status_code=404, detail="invalid_district")
+            raise HTTPException(status_code=404, detail=error_message("invalid_district"))
         return [
             StaffLocationOption(id=loc.id, name=loc.name)
             for loc in content.district(district_id).locations
@@ -5147,7 +5255,7 @@ def build_staff_router(
     async def _find_npc_by_id(session: AsyncSession, npc_id: str) -> Npc:
         row = await session.get(Npc, npc_id)
         if row is None:
-            raise HTTPException(status_code=404, detail="staff_npc_not_found")
+            raise HTTPException(status_code=404, detail=error_message("staff_npc_not_found"))
         return row
 
     @router.post("/npcs/rename", response_model=StaffNpcSummary)
@@ -5207,7 +5315,7 @@ def build_staff_router(
         await _require_staff(body.discord_id)
         trait_list = [t_.strip() for t_ in body.traits.split(",") if t_.strip()]
         if not trait_list:
-            raise HTTPException(status_code=400, detail="npc_needs_trait")
+            raise HTTPException(status_code=400, detail=error_message("npc_needs_trait"))
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             npc = await _find_npc_by_id(session, body.npc_id)
@@ -5243,19 +5351,19 @@ def build_staff_router(
     async def add_npc(body: StaffNpcAddRequest) -> StaffNpcSummary:
         await _require_staff(body.discord_id)
         if body.district_id not in content.districts:
-            raise HTTPException(status_code=404, detail="invalid_district")
+            raise HTTPException(status_code=404, detail=error_message("invalid_district"))
         district_content = content.district(body.district_id)
         location = next(
             (loc for loc in district_content.locations if loc.id == body.home_location_id), None
         )
         if location is None:
-            raise HTTPException(status_code=404, detail="invalid_location")
+            raise HTTPException(status_code=404, detail=error_message("invalid_location"))
         trait_list = [t_.strip() for t_ in body.traits.split(",") if t_.strip()]
         if not trait_list:
-            raise HTTPException(status_code=400, detail="npc_needs_trait")
+            raise HTTPException(status_code=400, detail=error_message("npc_needs_trait"))
         job_row = content.jobs.get(body.job_id) if body.job_id else None
         if body.job_id and (job_row is None or job_row.district != body.district_id):
-            raise HTTPException(status_code=404, detail="invalid_job")
+            raise HTTPException(status_code=404, detail=error_message("invalid_job"))
         npc_gender = body.gender if body.gender else random.choice(list(Gender)).value
         npc_id = f"staff_{body.district_id}_{uuid.uuid4().hex[:8]}"
         factory = _require_session_factory(session_factory)
@@ -5409,11 +5517,11 @@ def build_staff_router(
         await _require_staff(body.discord_id)
         clean_key = body.key.strip()
         if not clean_key:
-            raise HTTPException(status_code=400, detail="invalid_key")
+            raise HTTPException(status_code=400, detail=error_message("invalid_key"))
         try:
             state = feature_flags_svc.FlagState(body.state)
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail="invalid_state") from exc
+            raise HTTPException(status_code=400, detail=error_message("invalid_state")) from exc
         factory = _require_session_factory(session_factory)
         async with session_scope(factory) as session:
             await feature_flags_svc.set_state(
@@ -5580,7 +5688,8 @@ def build_district_lore_router(
     session_factory: async_sessionmaker[AsyncSession] | None,
     discord_token: str = "",
     discord_guild_id: int = 0,
-    staff_role_id: int = 0,
+    staff_role_ids: frozenset[int] = frozenset(),
+    staff_user_ids: frozenset[int] = frozenset(),
 ) -> APIRouter:
     """The Activity's staff-only History tab: staff-authored district
     context (adjectives, accent notes, urban/rural feel, career academy
@@ -5601,10 +5710,11 @@ def build_district_lore_router(
             discord_id,
             bot_token=discord_token,
             guild_id=discord_guild_id,
-            staff_role_id=staff_role_id,
+            staff_role_ids=staff_role_ids,
+            staff_user_ids=staff_user_ids,
         )
         if not ok:
-            raise HTTPException(status_code=403, detail="staff_only")
+            raise HTTPException(status_code=403, detail=error_message("staff_only"))
 
     @router.get("/districts", response_model=DistrictLoreCatalogResponse)
     async def all_district_lore(discord_id: int) -> DistrictLoreCatalogResponse:
@@ -5947,7 +6057,8 @@ def build_hobbies_router(
     session_factory: async_sessionmaker[AsyncSession] | None,
     discord_token: str = "",
     discord_guild_id: int = 0,
-    staff_role_id: int = 0,
+    staff_role_ids: frozenset[int] = frozenset(),
+    staff_user_ids: frozenset[int] = frozenset(),
 ) -> APIRouter:
     """The Hobbies tab's REST surface -- mirrors `/hobby select|forget|
     play` (`panem_shared.hobbies`). `/play` requires `timing_hit` (the
@@ -5995,7 +6106,7 @@ def build_hobbies_router(
         factory = _require_session_factory(session_factory)
         hobby = content.hobbies.get(body.hobby_id)
         if hobby is None:
-            raise HTTPException(status_code=404, detail="hobby_not_found")
+            raise HTTPException(status_code=404, detail=error_message("hobby_not_found"))
         async with session_scope(factory) as session:
             character = await _resolve_owned_character(
                 session, discord_id=body.discord_id, character_id=character_id
@@ -6006,7 +6117,8 @@ def build_hobbies_router(
                 tab_name="hobbies",
                 discord_token=discord_token,
                 discord_guild_id=discord_guild_id,
-                staff_role_id=staff_role_id,
+                staff_role_ids=staff_role_ids,
+                staff_user_ids=staff_user_ids,
             )
             try:
                 await hobbies_svc.select_hobby(session, character, body.hobby_id, content)
@@ -6028,7 +6140,8 @@ def build_hobbies_router(
                 tab_name="hobbies",
                 discord_token=discord_token,
                 discord_guild_id=discord_guild_id,
-                staff_role_id=staff_role_id,
+                staff_role_ids=staff_role_ids,
+                staff_user_ids=staff_user_ids,
             )
             try:
                 await hobbies_svc.forget_hobby(session, character, body.hobby_id)
@@ -6041,7 +6154,7 @@ def build_hobbies_router(
         factory = _require_session_factory(session_factory)
         hobby = content.hobbies.get(body.hobby_id)
         if hobby is None:
-            raise HTTPException(status_code=404, detail="hobby_not_found")
+            raise HTTPException(status_code=404, detail=error_message("hobby_not_found"))
         async with session_scope(factory) as session:
             character = await _resolve_owned_character(
                 session, discord_id=body.discord_id, character_id=character_id
@@ -6055,14 +6168,15 @@ def build_hobbies_router(
                 )
             ).scalar_one_or_none()
             if character_hobby is None:
-                raise HTTPException(status_code=400, detail="hobby_not_selected")
+                raise HTTPException(status_code=400, detail=error_message("hobby_not_selected"))
             await _require_tab_access(
                 session,
                 discord_id=body.discord_id,
                 tab_name="hobbies",
                 discord_token=discord_token,
                 discord_guild_id=discord_guild_id,
-                staff_role_id=staff_role_id,
+                staff_role_ids=staff_role_ids,
+                staff_user_ids=staff_user_ids,
             )
             current_tick = await _current_tick(session)
             try:
@@ -6471,7 +6585,7 @@ def build_weather_router(*, session_factory: async_sessionmaker[AsyncSession] | 
                 else None
             )
             if home is None:
-                raise HTTPException(status_code=400, detail="weather_no_property")
+                raise HTTPException(status_code=400, detail=error_message("weather_no_property"))
             try:
                 level = await weather_svc.prepare_property(
                     session, character=character, property_row=home, kind=body.kind
@@ -6495,7 +6609,7 @@ def build_weather_router(*, session_factory: async_sessionmaker[AsyncSession] | 
                 else None
             )
             if home is None:
-                raise HTTPException(status_code=400, detail="weather_no_property")
+                raise HTTPException(status_code=400, detail=error_message("weather_no_property"))
             try:
                 cost = await weather_svc.repair_property(
                     session, character=character, property_row=home, points=body.points
@@ -6586,7 +6700,8 @@ def build_bulletin_router(
     session_factory: async_sessionmaker[AsyncSession] | None,
     discord_token: str = "",
     discord_guild_id: int = 0,
-    staff_role_id: int = 0,
+    staff_role_ids: frozenset[int] = frozenset(),
+    staff_user_ids: frozenset[int] = frozenset(),
 ) -> APIRouter:
     """The Bulletin tab's REST surface (`panem_shared.bulletin`) -- the
     board itself, posting/retracting, interest marking, reminders, and
@@ -6642,7 +6757,8 @@ def build_bulletin_router(
                 tab_name="bulletin",
                 discord_token=discord_token,
                 discord_guild_id=discord_guild_id,
-                staff_role_id=staff_role_id,
+                staff_role_ids=staff_role_ids,
+                staff_user_ids=staff_user_ids,
             )
             current_tick = await _current_tick(session)
             try:
@@ -6678,7 +6794,8 @@ def build_bulletin_router(
                 tab_name="bulletin",
                 discord_token=discord_token,
                 discord_guild_id=discord_guild_id,
-                staff_role_id=staff_role_id,
+                staff_role_ids=staff_role_ids,
+                staff_user_ids=staff_user_ids,
             )
             try:
                 await bulletin_svc.retract(session, user=user, entry_id=body.entry_id)
@@ -6702,7 +6819,8 @@ def build_bulletin_router(
                 tab_name="bulletin",
                 discord_token=discord_token,
                 discord_guild_id=discord_guild_id,
-                staff_role_id=staff_role_id,
+                staff_role_ids=staff_role_ids,
+                staff_user_ids=staff_user_ids,
             )
             try:
                 await bulletin_svc.set_interest(
@@ -6726,7 +6844,8 @@ def build_bulletin_router(
                 tab_name="bulletin",
                 discord_token=discord_token,
                 discord_guild_id=discord_guild_id,
-                staff_role_id=staff_role_id,
+                staff_role_ids=staff_role_ids,
+                staff_user_ids=staff_user_ids,
             )
             try:
                 await bulletin_svc.set_hidden(
@@ -6746,14 +6865,17 @@ def build_bulletin_router(
             user = await characters_svc.get_or_create_user(session, body.discord_id)
             entry = await session.get(BulletinEntry, body.entry_id)
             if entry is None:
-                raise HTTPException(status_code=404, detail="bulletin_entry_not_found")
+                raise HTTPException(
+                    status_code=404, detail=error_message("bulletin_entry_not_found")
+                )
             await _require_tab_access(
                 session,
                 discord_id=body.discord_id,
                 tab_name="bulletin",
                 discord_token=discord_token,
                 discord_guild_id=discord_guild_id,
-                staff_role_id=staff_role_id,
+                staff_role_ids=staff_role_ids,
+                staff_user_ids=staff_user_ids,
             )
             current_tick = await _current_tick(session)
             try:
@@ -6784,7 +6906,8 @@ def build_bulletin_router(
                 tab_name="bulletin",
                 discord_token=discord_token,
                 discord_guild_id=discord_guild_id,
-                staff_role_id=staff_role_id,
+                staff_role_ids=staff_role_ids,
+                staff_user_ids=staff_user_ids,
             )
             try:
                 await bulletin_svc.move_entry(
@@ -6814,7 +6937,8 @@ def build_bulletin_router(
                 tab_name="bulletin",
                 discord_token=discord_token,
                 discord_guild_id=discord_guild_id,
-                staff_role_id=staff_role_id,
+                staff_role_ids=staff_role_ids,
+                staff_user_ids=staff_user_ids,
             )
             await bulletin_svc.reset_organization(session, user_id=user.id)
         return {"ok": True}
@@ -6874,7 +6998,8 @@ def build_reactions_router(
     session_factory: async_sessionmaker[AsyncSession] | None,
     discord_token: str = "",
     discord_guild_id: int = 0,
-    staff_role_id: int = 0,
+    staff_role_ids: frozenset[int] = frozenset(),
+    staff_user_ids: frozenset[int] = frozenset(),
 ) -> APIRouter:
     """The Reactions tab's REST surface (`panem_shared.reactions`) -- the
     character's current archetype standing, plus triggering/answering a
@@ -6920,7 +7045,8 @@ def build_reactions_router(
                     discord_id,
                     bot_token=discord_token,
                     guild_id=discord_guild_id,
-                    staff_role_id=staff_role_id,
+                    staff_role_ids=staff_role_ids,
+                    staff_user_ids=staff_user_ids,
                 )
                 if feature_flags_svc.is_allowed(reactions_state, is_staff=is_staff):
                     current_tick = await _current_tick(session)
@@ -6951,7 +7077,7 @@ def build_reactions_router(
             now = dt.datetime.now(dt.UTC)
             log = await reactions_svc.latest_pending(session, character_id=character.id, now=now)
             if log is None:
-                raise HTTPException(status_code=404, detail="reaction_none_pending")
+                raise HTTPException(status_code=404, detail=error_message("reaction_none_pending"))
             try:
                 new_score = await reactions_svc.respond(
                     session, character=character, log=log, choice=ReactionChoice(body.choice)
@@ -7087,7 +7213,7 @@ def build_events_router(
             )
             chain = await _active_lost_item_chain(session, character.id)
             if chain is None:
-                raise HTTPException(status_code=404, detail="chain_none_active")
+                raise HTTPException(status_code=404, detail=error_message("chain_none_active"))
             current_tick = await _current_tick(session)
             try:
                 result = await personal_events_svc.investigate(
@@ -7108,7 +7234,7 @@ def build_events_router(
             )
             chain = await _active_lost_item_chain(session, character.id)
             if chain is None:
-                raise HTTPException(status_code=404, detail="chain_none_active")
+                raise HTTPException(status_code=404, detail=error_message("chain_none_active"))
             current_tick = await _current_tick(session)
             try:
                 result = await personal_events_svc.deliver(
@@ -7178,7 +7304,7 @@ def build_events_router(
             )
             event = await session.get(GlobalEvent, event_id)
             if event is None:
-                raise HTTPException(status_code=404, detail="global_event_not_found")
+                raise HTTPException(status_code=404, detail=error_message("global_event_not_found"))
             event_name = event.name
             entries = await global_events_svc.leaderboard(session, event_id, limit=10)
             summaries = []
@@ -7309,7 +7435,8 @@ def build_rumors_router(
     session_factory: async_sessionmaker[AsyncSession] | None,
     discord_token: str = "",
     discord_guild_id: int = 0,
-    staff_role_id: int = 0,
+    staff_role_ids: frozenset[int] = frozenset(),
+    staff_user_ids: frozenset[int] = frozenset(),
 ) -> APIRouter:
     """The Rumors tab's REST surface (`panem_shared.rumors`) -- every
     rumor currently floating around the character's own current
@@ -7368,7 +7495,8 @@ def build_rumors_router(
                 tab_name="rumors",
                 discord_token=discord_token,
                 discord_guild_id=discord_guild_id,
-                staff_role_id=staff_role_id,
+                staff_role_ids=staff_role_ids,
+                staff_user_ids=staff_user_ids,
             )
             try:
                 rumor = await rumors_svc.get_rumor(session, body.rumor_id)
@@ -7406,7 +7534,8 @@ def build_rumors_router(
                 tab_name="rumors",
                 discord_token=discord_token,
                 discord_guild_id=discord_guild_id,
-                staff_role_id=staff_role_id,
+                staff_role_ids=staff_role_ids,
+                staff_user_ids=staff_user_ids,
             )
             # 404s on an already-gone rumor via `get_rumor` rather than a
             # silent no-op -- consistent with every other dashboard

@@ -29,7 +29,7 @@ from panem_shared.db.models import (
     Property,
     PropertyAuction,
 )
-from panem_shared.enums import CharacterStatus, DayPhase, JobLevel, OwnerKind, PropertyKind, RpMode
+from panem_shared.enums import CharacterStatus, JobLevel, OwnerKind, PropertyKind, RpMode
 from panem_shared.errors import NotAllowed, NotFound
 
 
@@ -150,29 +150,41 @@ def check_can_buy_complex(*, character: Character, units: list[Property]) -> Non
         raise NotAllowed("housing_complex_partially_owned")
 
 
-def has_a_bed(character: Character) -> bool:
-    """A real bed for `/sleep` purposes: an owned house or a leased
-    apartment. An inn stay restores fatigue at the same full rate but is
-    a one-off transaction, not tracked through `housing_property_id`."""
-    return character.housing_property_id is not None
+def nightly_fatigue_restore_amount(
+    character: Character, home_property: Property | None, day_index: int
+) -> float:
+    """How much fatigue `character` recovers at the midnight sim-day
+    rollover (`panem_sim.systems.needs`) -- replaces the old manual
+    `/sleep` button entirely: nobody needs to click anything to sleep
+    anymore. Priority, each a flat nightly amount rather than a per-tick
+    rate: an owned home beats a leased apartment beats a paid inn stay
+    beats no bed at all, independent of the character's current physical
+    location (same simplification the old `has_a_bed` made).
+
+    `home_property` is the `Property` behind `character.
+    housing_property_id` (`None` for no fixed home) -- callers look it up
+    themselves (`panem_sim`'s `WorldState.properties`, or a DB fetch)
+    since this module takes no session."""
+    if home_property is not None:
+        if home_property.kind == PropertyKind.HOUSE.value:
+            return constants.FATIGUE_RESTORE_OWNED_HOME
+        if home_property.kind == PropertyKind.APARTMENT.value:
+            return constants.FATIGUE_RESTORE_APARTMENT
+    if (
+        character.last_inn_stay_tick is not None
+        and character.last_inn_stay_tick // constants.TICKS_PER_DAY == day_index
+    ):
+        return constants.FATIGUE_RESTORE_INN
+    return constants.FATIGUE_RESTORE_HOMELESS
 
 
-def fatigue_restored(ticks: int, *, has_bed: bool) -> float:
-    """`ticks * FATIGUE_RESTORE_PER_TICK`, halved with no real bed and no
-    inn stay -- "sleep on the ground... half fatigue restoration compared
-    to sleeping in a bed." Callers pass `has_bed=True` for an inn stay
-    too (a paid night's lodging is still a real bed for the night)."""
-    rate = constants.FATIGUE_RESTORE_PER_TICK
-    if not has_bed:
-        rate *= constants.FATIGUE_GROUND_SLEEP_MULT
-    return ticks * rate
-
-
-def apply_fatigue_restoration(character: Character, ticks: int, *, has_bed: bool) -> float:
+def apply_nightly_fatigue_restoration(
+    character: Character, home_property: Property | None, day_index: int
+) -> float:
     """Restores fatigue in place, capped at `FATIGUE_MAX`; returns the
-    amount actually restored (may be less than `fatigue_restored`'s raw
-    value if already near the cap)."""
-    restored = fatigue_restored(ticks, has_bed=has_bed)
+    amount actually restored (may be less than `nightly_fatigue_restore_
+    amount`'s raw value if already near the cap)."""
+    restored = nightly_fatigue_restore_amount(character, home_property, day_index)
     before = character.fatigue
     character.fatigue = min(constants.FATIGUE_MAX, before + restored)
     return character.fatigue - before
@@ -180,19 +192,6 @@ def apply_fatigue_restoration(character: Character, ticks: int, *, has_bed: bool
 
 def dock_fatigue(character: Character, amount: float) -> None:
     character.fatigue = max(constants.FATIGUE_MIN, character.fatigue - amount)
-
-
-def check_can_sleep(character: Character, phase: DayPhase) -> None:
-    """Sleep is only available during `DayPhase.NIGHT` -- "between the
-    end of the evening shift and the beginning of the morning one," which
-    per `panem_shared.simtime`'s phase order (night, morning, afternoon,
-    evening) is exactly the night phase. Simulation-only, same as the
-    rest of this module -- Life/Story have "no requirement to sleep at
-    night," which extends to no `/sleep` mechanic at all rather than an
-    optional one nothing enforces."""
-    _check_alive_and_approved(character)
-    if phase != DayPhase.NIGHT:
-        raise NotAllowed("sleep_wrong_phase", name=character.name)
 
 
 # ------------------------------------------------------- mortgages/refinance

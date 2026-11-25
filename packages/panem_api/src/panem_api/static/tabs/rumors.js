@@ -6,7 +6,7 @@
 // event) and `panem_bot.cogs.rumors`'s hourly background loop (for a
 // free-floating one) -- there's no "start a rumor" action here, same as
 // Discord has none.
-import { el, setStatusText, watchIframeResize } from "./_shared.js?v=9";
+import { el, setStatusText, watchIframeResize } from "./_shared.js?v=13";
 
 // How long rumor_investigate.html's own result text stays visible before
 // this tab clears the iframe -- same fix/reasoning as tabs/crime.js's

@@ -4,11 +4,13 @@ industry: livestock
 produces:
 - livestock
 imports:
+- coffee
 - fish
 - grain
 - medicine
 - power
 - produce
+- tea
 - textiles
 - transport
 illicit_produces:
