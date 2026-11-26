@@ -213,6 +213,17 @@ STRINGS: dict[str, str] = {
         "Staff declined **{name}**'s switch to **{mode}** mode: {note}\n"
         "Use `/character mode` to try again."
     ),
+    "profile_edit_already_pending": (
+        "This character already has a profile edit awaiting staff approval."
+    ),
+    "no_profile_changes": "That's identical to {name}'s current profile -- nothing to submit.",
+    "profile_edit_submitted": (
+        "**{name}**'s profile edit has been submitted for staff approval."
+    ),
+    "profile_edit_approved_dm": "Your **{name}**'s profile edit has been approved!",
+    "profile_edit_declined_dm": (
+        "Staff declined **{name}**'s profile edit: {note}\nUse `/profile edit` to try again."
+    ),
     "crime_toggle_wrong_mode": "Only Life-mode characters can toggle crime on/off for themselves.",
     "crime_toggle_already_set": "This character's crime setting is already {enabled}.",
     "crime_toggle_on_cooldown": (

@@ -93,6 +93,7 @@ def cog(bot: FakeBot) -> CharacterCog:
     cog.bot = bot
     cog.approval_view = MagicMock()
     cog.mode_switch_approval_view = MagicMock()
+    cog.profile_edit_approval_view = MagicMock()
     return cog
 
 
@@ -533,3 +534,117 @@ class TestGrantDistrictForumAccess:
             district_id=1,
             char_name="Katniss",
         )  # no raise
+
+
+async def _seed_character_for_profile_edit(db_session, **overrides: object) -> Character:
+    user = User(discord_id=42)
+    db_session.add(user)
+    await db_session.flush()
+    defaults: dict[str, object] = dict(
+        user_id=user.id,
+        district_id=1,
+        current_district_id=1,
+        name="Wren",
+        age=20,
+        gender="male",
+        appearance="Tall, dark-haired.",
+        backstory="A quiet baker.",
+        job_title="Baker",
+        avatar_url="https://example.com/wren.png",
+        status=CharacterStatus.APPROVED.value,
+        rp_mode="simulation",
+    )
+    defaults.update(overrides)
+    character = Character(**defaults)  # type: ignore[arg-type]
+    db_session.add(character)
+    await db_session.flush()
+    return character
+
+
+class TestPostProfileEditApprovalEmbed:
+    async def test_posts_the_diff_as_the_embeds_fields(
+        self, db_session, bot: FakeBot, cog: CharacterCog
+    ):
+        character = await _seed_character_for_profile_edit(
+            db_session,
+            pending_profile_name="Wren",
+            pending_profile_age=21,
+            pending_profile_gender="male",
+            pending_profile_appearance="Tall, dark-haired.",
+            pending_profile_backstory="A new backstory entirely.",
+            pending_profile_job_title="Baker",
+            pending_profile_avatar_url="https://example.com/wren.png",
+        )
+
+        await cog._post_profile_edit_approval_embed(character.id, applicant_discord_id=42)
+
+        bot.channel.send.assert_awaited_once()
+        embed = bot.channel.send.await_args.kwargs["embed"]
+        field_values = {field.name: field.value for field in embed.fields}
+        assert "20" in field_values["Age"] and "21" in field_values["Age"]
+        assert "A quiet baker." in field_values["Backstory"]
+        assert "A new backstory entirely." in field_values["Backstory"]
+        # Nothing about appearance changed -- it shouldn't show up at all.
+        assert "Appearance" not in field_values
+
+    async def test_no_op_when_nothing_is_staged(self, db_session, bot: FakeBot, cog: CharacterCog):
+        character = await _seed_character_for_profile_edit(db_session)
+
+        await cog._post_profile_edit_approval_embed(character.id, applicant_discord_id=42)
+
+        bot.channel.send.assert_not_awaited()
+
+
+class TestHandleProfileEditApprove:
+    async def test_applies_the_staged_edit(self, db_session, bot: FakeBot, cog: CharacterCog):
+        character = await _seed_character_for_profile_edit(
+            db_session,
+            pending_profile_name="Wren",
+            pending_profile_age=21,
+            pending_profile_gender="male",
+            pending_profile_appearance="Tall, dark-haired.",
+            pending_profile_backstory="A new backstory entirely.",
+            pending_profile_job_title="Baker",
+            pending_profile_avatar_url="https://example.com/wren.png",
+        )
+        interaction = _make_approve_interaction()
+
+        await cog._handle_profile_edit_approve(interaction, character.id)
+
+        refreshed = await db_session.get(Character, character.id, populate_existing=True)
+        assert refreshed.backstory == "A new backstory entirely."
+        assert refreshed.age == 21
+        assert refreshed.pending_profile_name is None
+
+    async def test_no_op_when_nothing_is_staged(self, db_session, bot: FakeBot, cog: CharacterCog):
+        character = await _seed_character_for_profile_edit(db_session)
+        interaction = _make_approve_interaction()
+        interaction.response.send_message = AsyncMock()
+
+        await cog._handle_profile_edit_approve(interaction, character.id)
+
+        refreshed = await db_session.get(Character, character.id, populate_existing=True)
+        assert refreshed.backstory == "A quiet baker."
+
+
+class TestHandleProfileEditDecline:
+    async def test_discards_the_staged_edit_without_touching_the_real_profile(
+        self, db_session, bot: FakeBot, cog: CharacterCog
+    ):
+        character = await _seed_character_for_profile_edit(
+            db_session,
+            pending_profile_name="Wren",
+            pending_profile_age=21,
+            pending_profile_gender="male",
+            pending_profile_appearance="Tall, dark-haired.",
+            pending_profile_backstory="A new backstory entirely.",
+            pending_profile_job_title="Baker",
+            pending_profile_avatar_url="https://example.com/wren.png",
+        )
+        interaction = _make_approve_interaction()
+
+        await cog._handle_profile_edit_decline(interaction, character.id, "Not a good fit.")
+
+        refreshed = await db_session.get(Character, character.id, populate_existing=True)
+        assert refreshed.backstory == "A quiet baker."
+        assert refreshed.pending_profile_name is None

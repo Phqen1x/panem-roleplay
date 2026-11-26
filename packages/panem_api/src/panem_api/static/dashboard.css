@@ -2791,6 +2791,42 @@ svg.ui-icon {
   color: var(--panel);
 }
 
+/* --------------------------------- Header: My Profile button */
+/* The rightmost header item -- the current character's own faceclaim,
+   circular, opening `profileOverlay` (`app.js`'s `buildProfileOverlay`)
+   on click. Shows the "user" placeholder glyph (`renderIcon`) until a
+   character with an avatar is selected; `#profile-button-avatar` itself
+   stays `hidden` until `updateProfileButtonAvatar` has a real URL to
+   give it, rather than ever pointing it at a broken/empty `src`. */
+.profile-button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  margin-left: 4px;
+  border-radius: 50%;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--panel) 80%, var(--accent));
+  color: var(--accent);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.profile-button:hover {
+  border-color: var(--text);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+#profile-button-avatar {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .sound-picker-popup {
   position: fixed;
   z-index: 200;

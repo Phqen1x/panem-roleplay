@@ -23,7 +23,7 @@
 // every other dashboard endpoint re-validating discord_id+character_id
 // together) -- there's still no cryptographic auth here, same documented
 // gap as the rest of this process.
-import { fetchJson, el, renderTabIcon } from "./tabs/_shared.js?v=13";
+import { fetchJson, el, renderTabIcon, renderIcon } from "./tabs/_shared.js?v=13";
 import { mountThemePicker } from "./theme_picker.js?v=4";
 import { initClickSFX } from "./click_sfx.js?v=53";
 import { mountSoundPicker } from "./sound_picker.js?v=53";
@@ -235,6 +235,8 @@ const themePickerEl = document.getElementById("theme-picker");
 const worldClockTimeEl = document.getElementById("world-clock-time");
 const worldClockDateEl = document.getElementById("world-clock-date");
 const worldClockShiftEl = document.getElementById("world-clock-shift");
+const profileButtonEl = document.getElementById("profile-button");
+const profileButtonAvatarEl = document.getElementById("profile-button-avatar");
 
 const state = {
   discordUser: null,
@@ -682,6 +684,28 @@ function updateTelemetry(character) {
   telemetryEl.innerHTML = `${districtName} <span class="accent">&#9671;</span> ${motto}`;
 }
 
+// The header's faceclaim button -- `state.characters` (the `/identify`
+// summary) already carries `avatar_url`, so this needs no fetch of its
+// own; it's just kept in sync with whichever character is selected.
+// `profileButtonPlaceholderEl` (the generic "user" glyph, appended once
+// in `main()`) shows instead whenever there's no character selected yet
+// or the selected one has no faceclaim.
+let profileButtonPlaceholderEl = null;
+
+function updateProfileButtonAvatar(character) {
+  if (!profileButtonAvatarEl) return;
+  const url = character && character.avatar_url ? toSameOriginUrl(character.avatar_url) : null;
+  if (url) {
+    profileButtonAvatarEl.src = url;
+    profileButtonAvatarEl.hidden = false;
+    if (profileButtonPlaceholderEl) profileButtonPlaceholderEl.hidden = true;
+  } else {
+    profileButtonAvatarEl.hidden = true;
+    profileButtonAvatarEl.removeAttribute("src");
+    if (profileButtonPlaceholderEl) profileButtonPlaceholderEl.hidden = false;
+  }
+}
+
 async function selectCharacter(id) {
   closeCharacterMenu();
   if (id === state.characterId) return;
@@ -689,12 +713,14 @@ async function selectCharacter(id) {
   // Any pop-up still showing belonged to the character being switched
   // away from -- answering it now would silently apply to the wrong one.
   if (reactionOverlay) reactionOverlay.close();
+  if (profileOverlay) profileOverlay.close();
   writeStorage("panem_character_id", String(id));
   const chosen = state.characters.find((c) => c.id === id);
   if (chosen) {
     characterToggleEl.textContent = characterLabel(chosen);
   }
   updateTelemetry(chosen);
+  updateProfileButtonAvatar(chosen);
   // A donor's theme can be assigned per-character -- switching characters
   // may mean switching the applied colors too.
   await refreshResolvedTheme();
@@ -709,6 +735,7 @@ function renderCharacterOptions() {
     characterToggleEl.textContent = "No characters";
     state.characterId = null;
     updateTelemetry(null);
+    updateProfileButtonAvatar(null);
     return;
   }
   characterToggleEl.disabled = false;
@@ -732,6 +759,7 @@ function renderCharacterOptions() {
   const selected = state.characters.find((c) => c.id === state.characterId);
   characterToggleEl.textContent = selected ? characterLabel(selected) : "No characters";
   updateTelemetry(selected);
+  updateProfileButtonAvatar(selected);
 }
 
 async function refreshIdentity() {
@@ -1133,6 +1161,7 @@ let reactionPollInFlight = false;
 // that returning players should see it again automatically.
 const GUIDE_SEEN_STORAGE_KEY = "panem_guide_seen_v5";
 let guideOverlay = null;
+let profileOverlay = null;
 
 // Plain static HTML (not user-supplied, so no escaping concerns) for each
 // page of the guide pop-up -- condensed from the same command list
@@ -1309,6 +1338,111 @@ function buildGuideOverlay() {
   return { element: overlay, show, close };
 }
 
+// The header's own faceclaim button opens this -- everything submitted
+// when the current character was created (age, gender, occupation,
+// appearance, backstory, faceclaim), fetched fresh from `GET .../
+// characters` each time it's shown rather than cached, since `state.
+// characters` (the `/identify` summary) doesn't carry most of these
+// fields at all. Mirrors `tabs/social.js`'s `dossierModal` (same
+// `.dossier-*` markup/CSS, same "user" row shape) -- that one is for
+// *other* players' characters, reached from the Social tab; this is
+// always the viewer's own, reached from anywhere via the header.
+function buildProfileOverlay() {
+  const overlay = el("div", { class: "modal-overlay profile-modal-overlay" });
+  const avatarEl = el("div", { class: "dossier-avatar", text: "?" });
+  const avatarImgEl = el("img", { class: "dossier-avatar-img", alt: "" });
+  avatarImgEl.hidden = true;
+  const nameEl = el("div", { class: "dossier-name", text: "Profile" });
+  const jobEl = el("div", { class: "dossier-job", text: "" });
+  const closeBtn = el("button", { class: "btn-close-modal", text: "×", onclick: close });
+  const statusEl = el("p", { class: "tab-status" });
+  const districtEl = el("span", {});
+  const ageGenderEl = el("span", {});
+  const rpModeEl = el("span", {});
+  const appearanceEl = el("span", {});
+  const backstoryEl = el("span", {});
+  const body = el(
+    "div",
+    { class: "dossier-body" },
+    statusEl,
+    el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "District" }), districtEl),
+    el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "Age & Gender" }), ageGenderEl),
+    el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "RP Mode" }), rpModeEl),
+    el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "Appearance" }), appearanceEl),
+    el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "Backstory" }), backstoryEl)
+  );
+  const card = el(
+    "div",
+    { class: "dossier-card", onclick: (event) => event.stopPropagation() },
+    el(
+      "div",
+      { class: "dossier-header" },
+      el("div", { class: "dossier-header-info" }, avatarEl, avatarImgEl, el("div", {}, nameEl, jobEl)),
+      closeBtn
+    ),
+    body
+  );
+  overlay.append(card);
+  overlay.addEventListener("click", close);
+
+  function close() {
+    overlay.classList.remove("open");
+  }
+
+  function reset() {
+    avatarEl.hidden = false;
+    avatarImgEl.hidden = true;
+    nameEl.textContent = "Profile";
+    jobEl.textContent = "";
+    districtEl.textContent = "—";
+    ageGenderEl.textContent = "—";
+    rpModeEl.textContent = "—";
+    appearanceEl.textContent = "—";
+    backstoryEl.textContent = "—";
+  }
+
+  async function show() {
+    reset();
+    overlay.classList.add("open");
+    const character = currentCharacter();
+    const discordId = getDiscordId();
+    if (!character || !discordId) {
+      statusEl.textContent = "Pick a character above first.";
+      return;
+    }
+    statusEl.textContent = "Loading…";
+    try {
+      const body = await fetchJson(
+        `/activity/dashboard/characters?discord_id=${encodeURIComponent(discordId)}`
+      );
+      const detail = (body.characters || []).find((c) => c.id === character.id);
+      if (!detail) throw new Error("Character not found.");
+      statusEl.textContent = "";
+      avatarEl.textContent = detail.name.charAt(0);
+      nameEl.textContent = detail.name;
+      const jobLabel =
+        detail.job_title || (detail.rp_mode === "story" ? "No occupation (Story mode)" : "Unemployed");
+      jobEl.textContent = jobLabel;
+      districtEl.textContent = detail.district_name || "—";
+      ageGenderEl.textContent = [detail.age, detail.gender].filter(Boolean).join(", ") || "—";
+      rpModeEl.textContent = detail.rp_mode
+        ? detail.rp_mode.charAt(0).toUpperCase() + detail.rp_mode.slice(1)
+        : "—";
+      appearanceEl.textContent = detail.appearance || "No appearance description given.";
+      backstoryEl.textContent = detail.backstory || "No backstory given.";
+      if (detail.avatar_url) {
+        avatarImgEl.src = toSameOriginUrl(detail.avatar_url);
+        avatarImgEl.hidden = false;
+        avatarEl.hidden = true;
+      }
+    } catch (err) {
+      statusEl.textContent = `Could not load profile: ${err.message}`;
+    }
+  }
+
+  return { element: overlay, show, close };
+}
+
 function buildReactionOverlay() {
   const overlay = el("div", { class: "modal-overlay reaction-modal-overlay" });
   const promptEl = el("p", { class: "tab-status" });
@@ -1460,6 +1594,16 @@ async function main() {
   if (!readStorage(GUIDE_SEEN_STORAGE_KEY)) {
     guideOverlay.show();
     writeStorage(GUIDE_SEEN_STORAGE_KEY, "1");
+  }
+
+  profileOverlay = buildProfileOverlay();
+  document.body.append(profileOverlay.element);
+  if (profileButtonEl) {
+    if (profileButtonAvatarEl) {
+      profileButtonPlaceholderEl = renderIcon("user", 16);
+      profileButtonEl.append(profileButtonPlaceholderEl);
+    }
+    profileButtonEl.addEventListener("click", () => profileOverlay.show());
   }
 
   state.discordUser = await authenticateWithDiscord();
