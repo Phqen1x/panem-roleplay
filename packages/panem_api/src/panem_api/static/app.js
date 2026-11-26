@@ -23,7 +23,7 @@
 // every other dashboard endpoint re-validating discord_id+character_id
 // together) -- there's still no cryptographic auth here, same documented
 // gap as the rest of this process.
-import { fetchJson, el, renderTabIcon, renderIcon } from "./tabs/_shared.js?v=13";
+import { fetchJson, el, renderTabIcon, renderIcon, dropdown } from "./tabs/_shared.js?v=13";
 import { mountThemePicker } from "./theme_picker.js?v=4";
 import { initClickSFX } from "./click_sfx.js?v=53";
 import { mountSoundPicker } from "./sound_picker.js?v=53";
@@ -1347,6 +1347,13 @@ function buildGuideOverlay() {
 // `.dossier-*` markup/CSS, same "user" row shape) -- that one is for
 // *other* players' characters, reached from the Social tab; this is
 // always the viewer's own, reached from anywhere via the header.
+const PROFILE_GENDER_OPTIONS = [
+  { value: "", label: "Unspecified" },
+  { value: "male", label: "Male" },
+  { value: "female", label: "Female" },
+  { value: "nonbinary", label: "Non-binary" },
+];
+
 function buildProfileOverlay() {
   const overlay = el("div", { class: "modal-overlay profile-modal-overlay" });
   const avatarEl = el("div", { class: "dossier-avatar", text: "?" });
@@ -1356,12 +1363,19 @@ function buildProfileOverlay() {
   const jobEl = el("div", { class: "dossier-job", text: "" });
   const closeBtn = el("button", { class: "btn-close-modal", text: "×", onclick: close });
   const statusEl = el("p", { class: "tab-status" });
+
+  // --- view mode: the read-only profile (unchanged from before editing
+  // existed) -- the "Edit" button lives in this body, not the header,
+  // so it's as easy to hide (a non-approved character, or a load
+  // failure) as every other row here.
+  const editBtn = el("button", { class: "btn secondary", type: "button", text: "Edit" });
+  editBtn.hidden = true;
   const districtEl = el("span", {});
   const ageGenderEl = el("span", {});
   const rpModeEl = el("span", {});
   const appearanceEl = el("span", {});
   const backstoryEl = el("span", {});
-  const body = el(
+  const viewBody = el(
     "div",
     { class: "dossier-body" },
     statusEl,
@@ -1369,8 +1383,116 @@ function buildProfileOverlay() {
     el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "Age & Gender" }), ageGenderEl),
     el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "RP Mode" }), rpModeEl),
     el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "Appearance" }), appearanceEl),
-    el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "Backstory" }), backstoryEl)
+    el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "Backstory" }), backstoryEl),
+    el("div", { class: "dossier-prop" }, editBtn)
   );
+
+  // --- edit mode: the same fields creation collects, prefilled with
+  // what's currently live. Submitting never applies anything here --
+  // `POST .../request-edit` stages it for staff approval, same as
+  // `/profile edit` in Discord (see that command's own docstring).
+  const nameInput = el("input", { type: "text", maxlength: "32" });
+  const ageInput = el("input", { type: "number", min: "12", max: "89" });
+  const genderSelect = dropdown(PROFILE_GENDER_OPTIONS);
+  const jobInput = el("input", { type: "text", maxlength: "80" });
+  const appearanceInput = el("textarea", { rows: "2", maxlength: "400" });
+  const backstoryInput = el("textarea", { rows: "3", maxlength: "1500" });
+
+  // Avatar upload UI mirrors `tabs/character.js`'s creation form exactly
+  // (same endpoint, same upload-then-fill-the-URL-field flow) -- kept
+  // local to this overlay rather than imported, since nothing here needs
+  // the layered appearance-editor machinery that form also carries.
+  const avatarUrlInput = el("input", {
+    type: "text",
+    placeholder: "https://... or choose a file below -- leave blank to keep your current one",
+  });
+  const avatarFileInput = el("input", {
+    type: "file",
+    class: "avatar-file-hidden",
+    accept: "image/png,image/jpeg,image/webp,image/gif",
+  });
+  const avatarFileLabel = el(
+    "label",
+    { class: "btn secondary avatar-file-label" },
+    el("span", { text: "Choose picture" }),
+    avatarFileInput
+  );
+  const avatarFileName = el("span", { class: "avatar-file-name", text: "No file chosen" });
+  const avatarUploadBtn = el("button", { class: "btn secondary", type: "button" }, "Upload picture");
+  avatarUploadBtn.disabled = true;
+  const avatarUploadResult = el("span", { class: "result-line" });
+
+  let chosenFile = null;
+  avatarFileInput.addEventListener("change", () => {
+    const file = avatarFileInput.files && avatarFileInput.files[0];
+    if (!file) return;
+    chosenFile = file;
+    avatarFileName.className = "avatar-file-name has-file";
+    avatarFileName.textContent = `Selected: ${file.name}`;
+    avatarUploadBtn.disabled = false;
+    avatarUploadResult.textContent = "";
+  });
+
+  async function uploadSelectedImage() {
+    const file = chosenFile || (avatarFileInput.files && avatarFileInput.files[0]);
+    if (!file) return null;
+    avatarUploadBtn.disabled = true;
+    avatarUploadResult.className = "result-line";
+    avatarUploadResult.textContent = "Uploading…";
+    const formData = new FormData();
+    formData.append("discord_id", String(getDiscordId()));
+    formData.append("file", file);
+    try {
+      const res = await fetchJson("/activity/dashboard/characters/avatar-upload", {
+        method: "POST",
+        body: formData,
+      });
+      avatarUrlInput.value = res.avatar_url || "";
+      avatarFileName.className = "avatar-file-name is-uploaded";
+      avatarFileName.textContent = `✓ Uploaded: ${file.name}`;
+      avatarUploadResult.className = "result-line win";
+      avatarUploadResult.textContent = "Uploaded and ready!";
+      return res.avatar_url;
+    } catch (err) {
+      avatarUploadBtn.disabled = false;
+      avatarUploadResult.className = "result-line lose";
+      avatarUploadResult.textContent = err.message;
+      throw err;
+    }
+  }
+  avatarUploadBtn.addEventListener("click", () => {
+    uploadSelectedImage().catch(() => {});
+  });
+
+  const editResultEl = el("p", { class: "result-line" });
+  const submitBtn = el("button", { class: "btn", type: "button", text: "Submit for approval" });
+  const cancelBtn = el("button", { class: "btn secondary", type: "button", text: "Cancel" });
+  const editBody = el(
+    "div",
+    { class: "dossier-body profile-edit-form" },
+    el("div", { class: "field-row" }, el("label", { text: "Name" }), nameInput),
+    el("div", { class: "field-row" }, el("label", { text: "Age" }), ageInput),
+    el("div", { class: "field-row" }, el("label", { text: "Gender" }), genderSelect),
+    el("div", { class: "field-row" }, el("label", { text: "Occupation" }), jobInput),
+    el("div", { class: "field-row" }, el("label", { text: "Appearance" }), appearanceInput),
+    el("div", { class: "field-row" }, el("label", { text: "Backstory" }), backstoryInput),
+    el(
+      "div",
+      { class: "field-row" },
+      el("label", { text: "Faceclaim" }),
+      el(
+        "div",
+        { class: "avatar-upload-box" },
+        el("div", { class: "avatar-upload-row" }, avatarFileLabel, avatarUploadBtn, avatarFileName),
+        avatarUploadResult
+      )
+    ),
+    el("div", { class: "field-row" }, el("label", { text: "Or image URL" }), avatarUrlInput),
+    editResultEl,
+    el("div", { class: "field-row" }, submitBtn, cancelBtn)
+  );
+  editBody.hidden = true;
+
   const card = el(
     "div",
     { class: "dossier-card", onclick: (event) => event.stopPropagation() },
@@ -1380,16 +1502,31 @@ function buildProfileOverlay() {
       el("div", { class: "dossier-header-info" }, avatarEl, avatarImgEl, el("div", {}, nameEl, jobEl)),
       closeBtn
     ),
-    body
+    viewBody,
+    editBody
   );
   overlay.append(card);
   overlay.addEventListener("click", close);
+
+  let lastDetail = null;
 
   function close() {
     overlay.classList.remove("open");
   }
 
+  function resetAvatarUpload() {
+    chosenFile = null;
+    avatarFileInput.value = "";
+    avatarFileName.className = "avatar-file-name";
+    avatarFileName.textContent = "No file chosen";
+    avatarUploadBtn.disabled = true;
+    avatarUploadResult.textContent = "";
+  }
+
   function reset() {
+    viewBody.hidden = false;
+    editBody.hidden = true;
+    editBtn.hidden = true;
     avatarEl.hidden = false;
     avatarImgEl.hidden = true;
     nameEl.textContent = "Profile";
@@ -1399,7 +1536,79 @@ function buildProfileOverlay() {
     rpModeEl.textContent = "—";
     appearanceEl.textContent = "—";
     backstoryEl.textContent = "—";
+    avatarUrlInput.value = "";
+    resetAvatarUpload();
+    editResultEl.textContent = "";
   }
+
+  function enterEditMode() {
+    if (!lastDetail) return;
+    nameInput.value = lastDetail.name;
+    ageInput.value = String(lastDetail.age);
+    genderSelect.value = lastDetail.gender || "";
+    jobInput.value = lastDetail.job_title || "";
+    appearanceInput.value = lastDetail.appearance || "";
+    backstoryInput.value = lastDetail.backstory || "";
+    avatarUrlInput.value = "";
+    resetAvatarUpload();
+    editResultEl.textContent = "";
+    viewBody.hidden = true;
+    editBody.hidden = false;
+  }
+
+  editBtn.addEventListener("click", enterEditMode);
+  cancelBtn.addEventListener("click", () => {
+    viewBody.hidden = false;
+    editBody.hidden = true;
+  });
+
+  submitBtn.addEventListener("click", async () => {
+    if (!lastDetail) return;
+    const discordId = getDiscordId();
+    editResultEl.className = "result-line";
+    editResultEl.textContent = "";
+    const name = nameInput.value.trim();
+    const age = Number(ageInput.value);
+    if (!name || !Number.isInteger(age)) {
+      editResultEl.className = "result-line lose";
+      editResultEl.textContent = "Name and a valid age are required.";
+      return;
+    }
+    submitBtn.disabled = true;
+    try {
+      let finalAvatarUrl = avatarUrlInput.value.trim() || lastDetail.avatar_url;
+      if (chosenFile && !avatarUrlInput.value.trim()) {
+        try {
+          finalAvatarUrl = (await uploadSelectedImage()) || lastDetail.avatar_url;
+        } catch {
+          submitBtn.disabled = false;
+          return;
+        }
+      }
+      await fetchJson(`/activity/dashboard/characters/${lastDetail.id}/request-edit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          discord_id: discordId,
+          name,
+          age,
+          gender: genderSelect.value || null,
+          appearance: appearanceInput.value,
+          backstory: backstoryInput.value,
+          job_title: jobInput.value.trim() || null,
+          avatar_url: finalAvatarUrl,
+        }),
+      });
+      editResultEl.className = "result-line win";
+      editResultEl.textContent =
+        "Submitted for staff approval -- your current profile stays active until then.";
+    } catch (err) {
+      editResultEl.className = "result-line lose";
+      editResultEl.textContent = err.message;
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
 
   async function show() {
     reset();
@@ -1417,6 +1626,7 @@ function buildProfileOverlay() {
       );
       const detail = (body.characters || []).find((c) => c.id === character.id);
       if (!detail) throw new Error("Character not found.");
+      lastDetail = detail;
       statusEl.textContent = "";
       avatarEl.textContent = detail.name.charAt(0);
       nameEl.textContent = detail.name;
@@ -1435,6 +1645,10 @@ function buildProfileOverlay() {
         avatarImgEl.hidden = false;
         avatarEl.hidden = true;
       }
+      // Editing only makes sense for an already-approved character --
+      // a pending/retired/dead one has nothing live to stage changes
+      // against the same way.
+      editBtn.hidden = detail.status !== "approved";
     } catch (err) {
       statusEl.textContent = `Could not load profile: ${err.message}`;
     }

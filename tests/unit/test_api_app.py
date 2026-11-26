@@ -60,6 +60,7 @@ from panem_shared.enums import (
 from panem_shared.error_messages import error_message
 from panem_shared.redis_keys import (
     CHARACTER_PENDING_CHANNEL,
+    CHARACTER_PROFILE_EDIT_PENDING_CHANNEL,
     crime_attempt_key,
     crime_interaction_key,
     work_interaction_key,
@@ -4525,6 +4526,148 @@ class TestSwitchNeedingJobInfo:
         body = response.json()
         assert body["mode"] == "story"
         assert body["pending_mode"] is None
+
+
+class TestDashboardProfileEdit:
+    """`POST /activity/dashboard/characters/{id}/request-edit` -- the
+    Activity's own profile-edit form. Mirrors `/profile edit`'s own
+    staging (`panem_shared.profile_edits`), so most of the field-level
+    validation is already covered by `test_profile_edits.py`; these just
+    check the endpoint's own plumbing (ownership, approval-gating, the
+    avatar reachability check, publishing for the bot to announce)."""
+
+    async def test_stages_without_applying_and_publishes_for_announcement(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={
+                "appearance": "Braided hair.",
+                "backstory": "Hunts in the woods.",
+                "avatar_url": "https://example.com/katniss.png",
+            },
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/characters/{char_id}/request-edit",
+                json={
+                    "discord_id": 5,
+                    "name": "Wren",
+                    "age": 20,
+                    "backstory": "A new backstory entirely.",
+                    "avatar_url": "https://example.com/katniss.png",
+                },
+            )
+        assert response.status_code == 200
+        body = response.json()
+        # Nothing applies live -- the response still reflects the old backstory.
+        assert body["backstory"] == "Hunts in the woods."
+        async with db_session_factory() as session:
+            character = await session.get(Character, char_id)
+            assert character.pending_profile_backstory == "A new backstory entirely."
+        assert work_app.state.fake_redis.published == [
+            (CHARACTER_PROFILE_EDIT_PENDING_CHANNEL, str(char_id))
+        ]
+
+    async def test_refuses_when_not_yet_approved(self, work_app, db_session_factory):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={
+                "status": CharacterStatus.PENDING.value,
+                "avatar_url": "https://example.com/katniss.png",
+            },
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/characters/{char_id}/request-edit",
+                json={
+                    "discord_id": 5,
+                    "name": "Wren",
+                    "age": 20,
+                    "backstory": "A new backstory.",
+                    "avatar_url": "https://example.com/katniss.png",
+                },
+            )
+        assert response.status_code == 400
+
+    async def test_refuses_a_second_edit_while_one_is_already_pending(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={
+                "avatar_url": "https://example.com/katniss.png",
+                "pending_profile_name": "Wren",
+            },
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/characters/{char_id}/request-edit",
+                json={
+                    "discord_id": 5,
+                    "name": "Wren",
+                    "age": 20,
+                    "backstory": "Yet another backstory.",
+                    "avatar_url": "https://example.com/katniss.png",
+                },
+            )
+        assert response.status_code == 400
+
+    async def test_unchanged_avatar_url_skips_the_reachability_check(
+        self, work_app, db_session_factory
+    ):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"avatar_url": "https://example.com/katniss.png"},
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            # No mock for `verify_avatar_url_reachable` -- a real network
+            # call to example.com would fail this test if the endpoint
+            # didn't correctly skip it for an unchanged avatar_url.
+            response = await client.post(
+                f"/activity/dashboard/characters/{char_id}/request-edit",
+                json={
+                    "discord_id": 5,
+                    "name": "Wren",
+                    "age": 20,
+                    "backstory": "A new backstory.",
+                    "avatar_url": "https://example.com/katniss.png",
+                },
+            )
+        assert response.status_code == 200
+
+    async def test_refuses_an_unreachable_new_avatar_url(
+        self, work_app, db_session_factory, monkeypatch
+    ):
+        char_id = await seed_character(
+            db_session_factory,
+            discord_id=5,
+            character_overrides={"avatar_url": "https://example.com/katniss.png"},
+        )
+        monkeypatch.setattr(
+            characters_svc, "verify_avatar_url_reachable", AsyncMock(return_value=False)
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/activity/dashboard/characters/{char_id}/request-edit",
+                json={
+                    "discord_id": 5,
+                    "name": "Wren",
+                    "age": 20,
+                    "backstory": "A new backstory.",
+                    "avatar_url": "https://example.com/dead-link.png",
+                },
+            )
+        assert response.status_code == 400
 
 
 class TestDashboardHousing:

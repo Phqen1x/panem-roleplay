@@ -47,7 +47,11 @@ from panem_shared.db.models import (
 )
 from panem_shared.enums import ChannelKind, CharacterStatus, DayPhase, RpMode, ShiftResult
 from panem_shared.logging import get_logger
-from panem_shared.redis_keys import CHARACTER_MODE_SWITCH_PENDING_CHANNEL, CHARACTER_PENDING_CHANNEL
+from panem_shared.redis_keys import (
+    CHARACTER_MODE_SWITCH_PENDING_CHANNEL,
+    CHARACTER_PENDING_CHANNEL,
+    CHARACTER_PROFILE_EDIT_PENDING_CHANNEL,
+)
 from panem_shared.simtime import clock_string, phase_time_range
 
 logger = get_logger(component="characters")
@@ -172,20 +176,28 @@ class CharacterCog(commands.Cog):
         self.bot.add_view(self.profile_edit_approval_view)
         self._announce_pending_characters.start()
         self._announce_pending_mode_switches.start()
+        self._announce_pending_profile_edits.start()
         self._pending_listener_task = asyncio.create_task(self._listen_for_pending_characters())
         self._mode_switch_listener_task = asyncio.create_task(
             self._listen_for_pending_mode_switches()
+        )
+        self._profile_edit_listener_task = asyncio.create_task(
+            self._listen_for_pending_profile_edits()
         )
 
     async def cog_unload(self) -> None:
         self._announce_pending_characters.cancel()
         self._announce_pending_mode_switches.cancel()
+        self._announce_pending_profile_edits.cancel()
         self._pending_listener_task.cancel()
         self._mode_switch_listener_task.cancel()
+        self._profile_edit_listener_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await self._pending_listener_task
         with contextlib.suppress(asyncio.CancelledError):
             await self._mode_switch_listener_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await self._profile_edit_listener_task
 
     async def _interaction_is_staff(self, interaction: discord.Interaction) -> bool:
         if not isinstance(interaction.user, discord.Member):
@@ -2022,18 +2034,24 @@ class CharacterCog(commands.Cog):
     async def _post_profile_edit_approval_embed(
         self, character_id: int, *, applicant_discord_id: int
     ) -> None:
-        """Posted synchronously, right from the submitting interaction --
-        unlike `_post_approval_embed`/`_post_mode_switch_approval_embed`,
-        there's no dashboard-originated path for this yet to need a
-        poll/pubsub fallback against (`/profile edit` is the only way to
-        stage one), so this is the one and only place a profile-edit
-        embed ever gets posted."""
+        """`/profile edit` (Discord) calls this synchronously right after
+        staging, same as every other instant caller; the Activity's own
+        edit form has no bot token to post with, so it stages one through
+        `panem_api.dashboard_routes` and relies on `_announce_pending_
+        profile_edits`'s poll or the instant listener on `CHARACTER_
+        PROFILE_EDIT_PENDING_CHANNEL` to call this instead -- same shape
+        as `_post_approval_embed`/`_post_mode_switch_approval_embed`,
+        right down to `pending_profile_edit_notified_at` being the
+        idempotency guard against both paths racing for the same edit."""
         channel = self.bot.get_channel(self.bot.settings.approval_channel_id)
         if channel is None:
             return
         async with self.bot.db() as session:
             character = await characters_svc.get_character(session, character_id)
-            if character.pending_profile_name is None:
+            if (
+                character.pending_profile_name is None
+                or character.pending_profile_edit_notified_at is not None
+            ):
                 return
             diff = profile_edits_svc.profile_edit_diff(character)
             embed = discord.Embed(
@@ -2045,8 +2063,78 @@ class CharacterCog(commands.Cog):
             if character.pending_profile_avatar_url != character.avatar_url:
                 embed.set_image(url=character.pending_profile_avatar_url)
             embed.set_footer(text=f"{CHAR_ID_FOOTER_PREFIX}{character.id}")
+            character.pending_profile_edit_notified_at = dt.datetime.now(dt.UTC)
 
         await channel.send(embed=embed, view=self.profile_edit_approval_view)
+
+    @tasks.loop(minutes=constants.CHARACTER_APPROVAL_POLL_INTERVAL_MINUTES)
+    async def _announce_pending_profile_edits(self) -> None:
+        """Profile-edit equivalent of `_announce_pending_mode_switches` --
+        picks up an edit staged by the Activity's dashboard (no bot token
+        of its own to post with) that the instant listener below missed."""
+        async with self.bot.db() as session:
+            rows = (
+                await session.execute(
+                    select(Character.id, User.discord_id)
+                    .join(User, User.id == Character.user_id)
+                    .where(
+                        Character.pending_profile_name.is_not(None),
+                        Character.pending_profile_edit_notified_at.is_(None),
+                    )
+                )
+            ).all()
+        for character_id, discord_id in rows:
+            await self._post_profile_edit_approval_embed(
+                character_id, applicant_discord_id=discord_id
+            )
+
+    @_announce_pending_profile_edits.before_loop
+    async def _before_announce_pending_profile_edits(self) -> None:
+        await self.bot.wait_until_ready()
+
+    async def _try_announce_profile_edit(self, character_id: int) -> None:
+        async with self.bot.db() as session:
+            row = (
+                await session.execute(
+                    select(Character.id, User.discord_id)
+                    .join(User, User.id == Character.user_id)
+                    .where(
+                        Character.id == character_id,
+                        Character.pending_profile_name.is_not(None),
+                        Character.pending_profile_edit_notified_at.is_(None),
+                    )
+                )
+            ).first()
+        if row is None:
+            return
+        _, discord_id = row
+        await self._post_profile_edit_approval_embed(character_id, applicant_discord_id=discord_id)
+
+    async def _listen_for_pending_profile_edits(self) -> None:
+        """Instant counterpart to `_announce_pending_profile_edits`'s poll,
+        mirroring `_listen_for_pending_mode_switches` exactly but on its
+        own channel (`CHARACTER_PROFILE_EDIT_PENDING_CHANNEL`)."""
+        await self.bot.wait_until_ready()
+        pubsub = self.bot.redis.pubsub()
+        await pubsub.subscribe(CHARACTER_PROFILE_EDIT_PENDING_CHANNEL)
+        try:
+            async for message in pubsub.listen():
+                if message["type"] != "message":
+                    continue
+                try:
+                    character_id = int(message["data"])
+                except (TypeError, ValueError):
+                    logger.warning("pending_profile_edit_bad_payload", data=message["data"])
+                    continue
+                try:
+                    await self._try_announce_profile_edit(character_id)
+                except Exception:
+                    logger.exception(
+                        "pending_profile_edit_announce_failed", character_id=character_id
+                    )
+        finally:
+            await pubsub.unsubscribe(CHARACTER_PROFILE_EDIT_PENDING_CHANNEL)
+            await pubsub.aclose()
 
     async def _handle_profile_edit_approve(
         self, interaction: discord.Interaction, character_id: int

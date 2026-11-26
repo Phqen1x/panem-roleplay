@@ -113,3 +113,14 @@ that needs fresh job info -- kept as its own channel rather than reusing
 `CHARACTER_PENDING_CHANNEL` since the two announce different things
 (`CharacterCog._announce_pending_mode_switches`'s poll is likewise separate
 from `_announce_pending_characters`'s)."""
+
+
+CHARACTER_PROFILE_EDIT_PENDING_CHANNEL = "character:profile_edit_pending"
+"""Same shape again (payload: the `Character.id` whose staged profile
+edit needs announcing), published by `panem_api.dashboard_routes`'s
+profile-edit endpoint once it stages one (`panem_shared.profile_edits.
+stage_profile_edit`) -- `/profile edit` in Discord posts its own
+synchronously instead (the submitting interaction is already a live
+connection to post from), so this channel/its poll fallback
+(`CharacterCog._announce_pending_profile_edits`) only ever matters for
+an edit the Activity's dashboard submitted."""

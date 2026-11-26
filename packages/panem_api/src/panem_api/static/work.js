@@ -57,7 +57,7 @@
 // own status without the player having to reload anything. A no-op when
 // there's no parent to hear it (the normal Discord-launched/plain-link
 // case).
-const ASSET_VERSION = "15";
+const ASSET_VERSION = "16";
 
 // Donor dashboard theme (`static/theme_picker.js`'s popup, saved via the
 // profile endpoints under `/activity/dashboard/theme/profiles`): `app.js`

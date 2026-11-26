@@ -447,6 +447,17 @@ class Character(TimestampMixin, Base):
     pending_profile_backstory: Mapped[str | None] = mapped_column(String(1500), nullable=True)
     pending_profile_job_title: Mapped[str | None] = mapped_column(String(80), nullable=True)
     pending_profile_avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    pending_profile_edit_notified_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    """Same idempotency purpose as `pending_mode_switch_notified_at` --
+    `/profile edit` in Discord posts its own staff embed synchronously
+    and stamps this immediately (it already has a live interaction to
+    post from), so this only matters for an edit the Activity's dashboard
+    staged (`panem_api.dashboard_routes`, no bot token of its own):
+    `CharacterCog._announce_pending_profile_edits`'s poll, or the instant
+    listener on `CHARACTER_PROFILE_EDIT_PENDING_CHANNEL`, picks it up from
+    here."""
     """Same idempotency purpose as `approval_notified_at` above, kept as its
     own column rather than shared: a mode-switch request and a fresh
     application are always mutually exclusive (switching modes requires
