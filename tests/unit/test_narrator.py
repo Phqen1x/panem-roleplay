@@ -9,7 +9,7 @@ import pytest
 from panem_bot import narrator
 from panem_shared.db.models import Character, DiscordChannel, Scene, User
 from panem_shared.enums import ChannelKind, CharacterStatus, SceneKind, SceneStatus
-from panem_shared.events import Bulletin, CharacterDied, NarrationLine
+from panem_shared.events import Bulletin, CharacterDied, NarrationLine, VitalsLow
 
 
 class FakeSettings:
@@ -253,6 +253,71 @@ class TestHandleCharacterDied:
         await narrator._handle_character_died(bot, event)  # no raise
 
 
+class TestSendVitalsLowDm:
+    """`send_vitals_low_dm` -- shared by `_handle_vitals_low` (events
+    `panem_sim.systems.needs` publishes) and `panem_bot.cogs.proxy`'s own
+    fatigue-crossing call -- same no-guild/no-character/forbidden-DM
+    posture as `_handle_character_died` above, since it's built from the
+    exact same lookup."""
+
+    async def _seed_character(self, db_session, *, name: str = "Traveler") -> None:
+        user = User(discord_id=42)
+        db_session.add(user)
+        await db_session.flush()
+        db_session.add(
+            Character(
+                id=1,
+                user_id=user.id,
+                district_id=1,
+                current_district_id=1,
+                name=name,
+                age=20,
+                status=CharacterStatus.APPROVED.value,
+            )
+        )
+        await db_session.flush()
+
+    async def test_no_op_when_guild_not_found(self, bot: FakeBot):
+        bot.get_guild = MagicMock(return_value=None)
+        await narrator.send_vitals_low_dm(
+            bot, character_id=1, vital="hunger", severity="warn", percent_remaining=20.0
+        )  # no raise
+
+    async def test_no_op_when_character_not_found(self, bot: FakeBot):
+        bot.get_guild = MagicMock(return_value=_make_guild([], None))
+        await narrator.send_vitals_low_dm(
+            bot, character_id=999, vital="hunger", severity="warn", percent_remaining=20.0
+        )  # no raise
+
+    async def test_dms_the_owner_with_the_vital_and_advice(self, db_session, bot: FakeBot):
+        await self._seed_character(db_session)
+        member = MagicMock()
+        member.send = AsyncMock()
+        bot.get_guild = MagicMock(return_value=_make_guild([], member))
+
+        await narrator.send_vitals_low_dm(
+            bot, character_id=1, vital="hunger", severity="danger", percent_remaining=7.0
+        )
+
+        member.send.assert_awaited_once()
+        message = member.send.await_args.args[0]
+        assert "Traveler" in message
+        assert "hunger" in message
+        assert "critically low" in message
+        assert "7" in message
+        assert "/eat" in message
+
+    async def test_forbidden_dm_is_swallowed(self, db_session, bot: FakeBot):
+        await self._seed_character(db_session)
+        member = MagicMock()
+        member.send = AsyncMock(side_effect=discord.Forbidden(MagicMock(), "nope"))
+        bot.get_guild = MagicMock(return_value=_make_guild([], member))
+
+        await narrator.send_vitals_low_dm(
+            bot, character_id=1, vital="sanity", severity="warn", percent_remaining=20.0
+        )  # no raise
+
+
 class TestHandleSimAlert:
     async def test_posts_to_the_log_channel(self, bot: FakeBot):
         log_channel = AsyncMock(spec=discord.TextChannel)
@@ -297,6 +362,17 @@ class TestDispatch:
         await narrator._dispatch(bot, event.model_dump_json())
 
         handle_died.assert_awaited_once()
+
+    async def test_routes_vitals_low_to_its_handler(self, bot: FakeBot, monkeypatch):
+        handle_vitals_low = AsyncMock()
+        monkeypatch.setattr(narrator, "_handle_vitals_low", handle_vitals_low)
+
+        event = VitalsLow(
+            tick=1, character_id=1, vital="hunger", severity="warn", percent_remaining=20.0
+        )
+        await narrator._dispatch(bot, event.model_dump_json())
+
+        handle_vitals_low.assert_awaited_once()
 
     async def test_routes_bulletin_to_its_handler(self, bot: FakeBot, monkeypatch):
         handle_narration = AsyncMock()

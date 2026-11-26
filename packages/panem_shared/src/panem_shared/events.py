@@ -93,11 +93,30 @@ class CharacterDied(_EventBase):
     character_id: int
 
 
+class VitalsLow(_EventBase):
+    """A Simulation-mode character's `health`/`hunger`/`thirst`/`fatigue`/
+    `sanity` crossed downward past a warning threshold
+    (`panem_shared.constants.VITALS_WARN_THRESHOLD_PERCENT`/`VITALS_
+    DANGER_THRESHOLD_PERCENT`) during a needs-tick update
+    (`panem_sim.systems.needs`). Fired once per crossing, never once per
+    tick while a meter merely stays below the threshold -- see `_vitals_
+    crossing_events`'s own docstring for how that's guaranteed. Consumed
+    by the bot to DM the owner which meter is low and what relieves it."""
+
+    kind: Literal["VitalsLow"] = "VitalsLow"
+    character_id: int
+    vital: Literal["health", "hunger", "thirst", "fatigue", "sanity"]
+    severity: Literal["warn", "danger"]
+    percent_remaining: float
+
+
 WorldEvent = Annotated[
-    NarrationLine | Bulletin | CharacterArrived | NpcChatter | CharacterDied,
+    NarrationLine | Bulletin | CharacterArrived | NpcChatter | CharacterDied | VitalsLow,
     Field(discriminator="kind"),
 ]
-AnyWorldEvent = NarrationLine | Bulletin | CharacterArrived | NpcChatter | CharacterDied
+AnyWorldEvent = (
+    NarrationLine | Bulletin | CharacterArrived | NpcChatter | CharacterDied | VitalsLow
+)
 
 _event_adapter: TypeAdapter[AnyWorldEvent] = TypeAdapter(WorldEvent)
 

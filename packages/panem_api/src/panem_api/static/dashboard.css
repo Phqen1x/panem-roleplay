@@ -2584,6 +2584,63 @@ svg.ui-icon {
   height: 100%;
 }
 
+/* Home's Meters panel (`tabs/home.js`'s `metersPanel`) flashes its own
+   border/glow when any one meter is at or below `VITALS_WARN_THRESHOLD_
+   PERCENT`/`_DANGER_...` ("percent remaining" -- hunger/thirst inverted
+   first, see `vitalSeverity` in home.js) -- `danger` wins over `warn` if
+   both apply to different meters at once, and takes the faster/brighter
+   animation since it's the more urgent of the two. The affected meter
+   row(s) also get a plain color tint (no animation -- five bars all
+   flashing at once would be visual noise), so it's clear *which* meter
+   is the reason the whole panel is flashing. */
+.panel.vitals-warn {
+  animation: vitals-flash-warn 1.6s ease-in-out infinite;
+}
+
+.panel.vitals-danger {
+  animation: vitals-flash-danger 1.1s ease-in-out infinite;
+}
+
+@keyframes vitals-flash-warn {
+  0%,
+  100% {
+    border-color: var(--border);
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+  }
+  50% {
+    border-color: var(--warn);
+    box-shadow: 0 0 16px color-mix(in srgb, var(--warn) 55%, transparent);
+  }
+}
+
+@keyframes vitals-flash-danger {
+  0%,
+  100% {
+    border-color: var(--border);
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+  }
+  50% {
+    border-color: var(--danger);
+    box-shadow: 0 0 18px color-mix(in srgb, var(--danger) 60%, transparent);
+  }
+}
+
+.meter-row.vitals-warn .meter-label {
+  color: var(--warn);
+}
+
+.meter-row.vitals-danger .meter-label {
+  color: var(--danger);
+}
+
+.meter-row.vitals-warn .meter-fill {
+  background: var(--warn);
+}
+
+.meter-row.vitals-danger .meter-fill {
+  background: var(--danger);
+}
+
 .affliction-list,
 .mode-switch-bullets {
   margin: 0;

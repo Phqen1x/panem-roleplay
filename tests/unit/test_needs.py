@@ -12,6 +12,7 @@ from panem_shared.db.models import (
     Property,
 )
 from panem_shared.enums import AfflictionSource, CharacterStatus, DayPhase, PropertyKind, RpMode
+from panem_shared.events import VitalsLow
 from panem_sim.rng import tick_rng
 from panem_sim.state import TickContext, WorldState
 from panem_sim.systems import needs
@@ -121,24 +122,24 @@ class TestRunGating:
 class TestCharacterPhaseNeeds:
     def test_hunger_and_thirst_climb_by_the_rngs_draw(self):
         character = make_character(hunger=20.0, thirst=30.0)
-        needs._apply_character_phase_needs(character, FixedRng(12.0))
+        needs._apply_character_phase_needs(character, FixedRng(12.0), tick=1)
         assert character.hunger == 32.0
         assert character.thirst == 42.0
 
     def test_hunger_is_clamped_at_the_maximum(self):
         character = make_character(hunger=constants.HUNGER_MAX - 1)
-        needs._apply_character_phase_needs(character, FixedRng(20.0))
+        needs._apply_character_phase_needs(character, FixedRng(20.0), tick=1)
         assert character.hunger == constants.HUNGER_MAX
 
     def test_high_hunger_erodes_health_instead_of_recovering(self):
         character = make_character(hunger=constants.HEALTH_DECAY_HUNGER_THRESHOLD - 1, health=50.0)
-        needs._apply_character_phase_needs(character, FixedRng(5.0))
+        needs._apply_character_phase_needs(character, FixedRng(5.0), tick=1)
         assert character.hunger >= constants.HEALTH_DECAY_HUNGER_THRESHOLD
         assert character.health == 50.0 - constants.HEALTH_DECAY_PER_NIGHT
 
     def test_low_hunger_recovers_health(self):
         character = make_character(hunger=0.0, health=50.0)
-        needs._apply_character_phase_needs(character, FixedRng(1.0))
+        needs._apply_character_phase_needs(character, FixedRng(1.0), tick=1)
         assert character.hunger < constants.HEALTH_DECAY_HUNGER_THRESHOLD
         assert character.health == 50.0 + constants.HEALTH_RECOVERY_PER_NIGHT
 
@@ -146,7 +147,7 @@ class TestCharacterPhaseNeeds:
         character = make_character(
             hunger=0.0, thirst=constants.HEALTH_DECAY_THIRST_THRESHOLD - 1, health=50.0
         )
-        needs._apply_character_phase_needs(character, FixedRng(5.0))
+        needs._apply_character_phase_needs(character, FixedRng(5.0), tick=1)
         assert character.thirst >= constants.HEALTH_DECAY_THIRST_THRESHOLD
         # Both hunger's recovery branch and thirst's decay branch apply.
         assert character.health == pytest.approx(
@@ -155,7 +156,7 @@ class TestCharacterPhaseNeeds:
 
     def test_non_simulation_characters_are_left_untouched(self):
         character = make_character(rp_mode=RpMode.LIFE.value, hunger=0.0, thirst=0.0)
-        needs._apply_character_phase_needs(character, FixedRng(50.0))
+        needs._apply_character_phase_needs(character, FixedRng(50.0), tick=1)
         assert character.hunger == 0.0
         assert character.thirst == 0.0
 
@@ -164,10 +165,63 @@ class TestCharacterPhaseNeeds:
         character_b = make_character()
         rng_a = tick_rng("world-seed", 42)
         rng_b = tick_rng("world-seed", 42)
-        needs._apply_character_phase_needs(character_a, rng_a)
-        needs._apply_character_phase_needs(character_b, rng_b)
+        needs._apply_character_phase_needs(character_a, rng_a, tick=1)
+        needs._apply_character_phase_needs(character_b, rng_b, tick=1)
         assert character_a.hunger == character_b.hunger
         assert character_a.thirst == character_b.thirst
+
+
+class TestVitalsCrossingEvents:
+    """The Vitals widget/low-vitals-DM feature: `_apply_character_phase_
+    needs`/`_apply_character_nightly_needs` report a `VitalsLow` for
+    every meter that crosses *downward* through `VITALS_WARN_THRESHOLD_
+    PERCENT`/`_DANGER_...` between their own before/after snapshot, and
+    only for an actual crossing -- never for a meter merely staying low,
+    recovering, or moving but not far enough to cross."""
+
+    def test_hunger_crossing_warn_threshold_reports_an_event(self):
+        character = make_character(hunger=70.0, health=100.0)
+        events = needs._apply_character_phase_needs(character, FixedRng(10.0), tick=1)
+        assert character.hunger == 80.0  # 20% remaining -- just crossed <= 25%
+        # `VitalsLow.id` is a fresh uuid every construction -- compare the
+        # fields that matter rather than the whole model (which would
+        # never match on `id` alone).
+        assert len(events) == 1
+        event = events[0]
+        assert isinstance(event, VitalsLow)
+        assert event.tick == 1
+        assert event.character_id == character.id
+        assert event.vital == "hunger"
+        assert event.severity == "warn"
+        assert event.percent_remaining == 20.0
+
+    def test_hunger_crossing_danger_threshold_reports_danger(self):
+        character = make_character(hunger=88.0, health=100.0)
+        events = needs._apply_character_phase_needs(character, FixedRng(5.0), tick=1)
+        assert character.hunger == 93.0  # 7% remaining -- crossed <= 10%
+        assert [e.severity for e in events if e.vital == "hunger"] == ["danger"]
+
+    def test_hunger_rising_without_crossing_reports_nothing(self):
+        character = make_character(hunger=10.0, health=100.0)
+        events = needs._apply_character_phase_needs(character, FixedRng(10.0), tick=1)
+        assert character.hunger == 20.0  # still 80% remaining
+        assert events == []
+
+    def test_hunger_already_below_threshold_does_not_repeat(self):
+        character = make_character(hunger=80.0, health=100.0)  # already 20% remaining
+        events = needs._apply_character_phase_needs(character, FixedRng(5.0), tick=1)
+        assert character.hunger == 85.0
+        assert events == []
+
+    def test_sanity_crossing_warn_threshold_reports_an_event(self):
+        character = make_character(sanity=35.0, health=100.0)
+        state = WorldState(
+            districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
+        )
+        died, events = needs._apply_character_nightly_needs(character, state, day_index=0, tick=1)
+        assert died is False
+        assert character.sanity == 20.0  # crossed <= 25%
+        assert [e.severity for e in events if e.vital == "sanity"] == ["warn"]
 
 
 class TestCharacterNightlyNeeds:
@@ -176,7 +230,7 @@ class TestCharacterNightlyNeeds:
         state = WorldState(
             districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
         )
-        needs._apply_character_nightly_needs(character, state, day_index=0)
+        needs._apply_character_nightly_needs(character, state, day_index=0, tick=1)
         assert character.money == constants.NIGHTLY_LIVING_COST
         assert character.health == 90.0
 
@@ -185,7 +239,7 @@ class TestCharacterNightlyNeeds:
         state = WorldState(
             districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
         )
-        needs._apply_character_nightly_needs(character, state, day_index=0)
+        needs._apply_character_nightly_needs(character, state, day_index=0, tick=1)
         assert character.money == 0
         assert character.health == 90.0
 
@@ -194,7 +248,7 @@ class TestCharacterNightlyNeeds:
         state = WorldState(
             districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
         )
-        needs._apply_character_nightly_needs(character, state, day_index=0)
+        needs._apply_character_nightly_needs(character, state, day_index=0, tick=1)
         assert character.sanity == 100.0
 
 
@@ -206,7 +260,7 @@ class TestFatigueExhaustion:
         state = WorldState(
             districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
         )
-        needs._apply_character_nightly_needs(character, state, day_index=0)
+        needs._apply_character_nightly_needs(character, state, day_index=0, tick=1)
         # day_index=0 -> the real tick is (0 + 1) * TICKS_PER_DAY.
         expected_tick = constants.TICKS_PER_DAY + constants.PASSED_OUT_DEFAULT_TICKS
         assert character.passed_out_until_tick == expected_tick
@@ -221,7 +275,7 @@ class TestFatigueExhaustion:
         state = WorldState(
             districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
         )
-        needs._apply_character_nightly_needs(character, state, day_index=0)
+        needs._apply_character_nightly_needs(character, state, day_index=0, tick=1)
         assert character.passed_out_until_tick is None
         assert character.health == 90.0
 
@@ -235,7 +289,7 @@ class TestFatigueExhaustion:
             open_shifts=[],
             exhaustion_settings=ExhaustionSettings(id=1, passed_out_ticks=5),
         )
-        needs._apply_character_nightly_needs(character, state, day_index=2)
+        needs._apply_character_nightly_needs(character, state, day_index=2, tick=1)
         # day_index=2 -> the real tick is (2 + 1) * TICKS_PER_DAY.
         expected_tick = 3 * constants.TICKS_PER_DAY + 5
         assert character.passed_out_until_tick == expected_tick
@@ -253,7 +307,7 @@ class TestNightlyFatigueRestoration:
             open_shifts=[],
             properties={home.id: home},
         )
-        needs._apply_character_nightly_needs(character, state, day_index=0)
+        needs._apply_character_nightly_needs(character, state, day_index=0, tick=1)
         assert character.fatigue == 5.0 + constants.FATIGUE_RESTORE_OWNED_HOME
 
     def test_leased_apartment_restores_less_than_owning(self):
@@ -267,7 +321,7 @@ class TestNightlyFatigueRestoration:
             open_shifts=[],
             properties={apartment.id: apartment},
         )
-        needs._apply_character_nightly_needs(character, state, day_index=0)
+        needs._apply_character_nightly_needs(character, state, day_index=0, tick=1)
         assert character.fatigue == 5.0 + constants.FATIGUE_RESTORE_APARTMENT
 
     def test_inn_stay_that_same_day_restores_less_than_a_real_home(self):
@@ -275,7 +329,7 @@ class TestNightlyFatigueRestoration:
         state = WorldState(
             districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
         )
-        needs._apply_character_nightly_needs(character, state, day_index=0)
+        needs._apply_character_nightly_needs(character, state, day_index=0, tick=1)
         assert character.fatigue == 5.0 + constants.FATIGUE_RESTORE_INN
 
     def test_no_home_and_no_inn_stay_restores_the_least(self):
@@ -283,7 +337,7 @@ class TestNightlyFatigueRestoration:
         state = WorldState(
             districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
         )
-        needs._apply_character_nightly_needs(character, state, day_index=0)
+        needs._apply_character_nightly_needs(character, state, day_index=0, tick=1)
         assert character.fatigue == 5.0 + constants.FATIGUE_RESTORE_HOMELESS
 
     def test_passed_out_check_uses_fatigue_before_the_nightly_restoration(self):
@@ -298,7 +352,7 @@ class TestNightlyFatigueRestoration:
         state = WorldState(
             districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
         )
-        needs._apply_character_nightly_needs(character, state, day_index=0)
+        needs._apply_character_nightly_needs(character, state, day_index=0, tick=1)
         expected_tick = constants.TICKS_PER_DAY + constants.PASSED_OUT_DEFAULT_TICKS
         assert character.passed_out_until_tick == expected_tick
         assert character.health == 90.0
@@ -313,7 +367,7 @@ class TestNightlyFatigueRestoration:
         state = WorldState(
             districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
         )
-        needs._apply_character_nightly_needs(character, state, day_index=0)
+        needs._apply_character_nightly_needs(character, state, day_index=0, tick=1)
         assert character.fatigue == 5.0
 
 
@@ -337,7 +391,7 @@ class TestSanity:
         state = WorldState(
             districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
         )
-        needs._apply_character_nightly_needs(character, state, day_index=0)
+        needs._apply_character_nightly_needs(character, state, day_index=0, tick=1)
         assert character.sanity == 100.0 - constants.SANITY_DECREASE_PER_DAY
 
     def test_sanity_holds_steady_if_entertained_earlier_that_same_day(self):
@@ -345,7 +399,7 @@ class TestSanity:
         state = WorldState(
             districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
         )
-        needs._apply_character_nightly_needs(character, state, day_index=0)
+        needs._apply_character_nightly_needs(character, state, day_index=0, tick=1)
         assert character.sanity == 90.0
 
     def test_low_sanity_erodes_health(self):
@@ -357,7 +411,7 @@ class TestSanity:
         state = WorldState(
             districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
         )
-        needs._apply_character_nightly_needs(character, state, day_index=0)
+        needs._apply_character_nightly_needs(character, state, day_index=0, tick=1)
         assert character.health == pytest.approx(50.0 - constants.HEALTH_DECAY_PER_NIGHT_SANITY)
 
 
@@ -380,7 +434,7 @@ class TestAutoAfflictionsAndDeath:
             affliction_types=[affliction_type],
         )
 
-        needs._apply_character_nightly_needs(character, state, day_index=0)
+        needs._apply_character_nightly_needs(character, state, day_index=0, tick=1)
 
         assert len(state.new_character_afflictions) == 1
         assert state.new_character_afflictions[0].character_id == 1
@@ -407,7 +461,7 @@ class TestAutoAfflictionsAndDeath:
             active_afflictions={1: [active_row]},
         )
 
-        needs._apply_character_nightly_needs(character, state, day_index=0)
+        needs._apply_character_nightly_needs(character, state, day_index=0, tick=1)
 
         assert active_row.cured_at is not None
 
@@ -417,7 +471,7 @@ class TestAutoAfflictionsAndDeath:
             districts={}, npcs={}, npc_schedules={}, characters={1: character}, open_shifts=[]
         )
 
-        needs._apply_character_nightly_needs(character, state, day_index=0)
+        needs._apply_character_nightly_needs(character, state, day_index=0, tick=1)
 
         assert character.status == CharacterStatus.DEAD.value
         assert character.death_cause is not None

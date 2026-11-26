@@ -53,6 +53,28 @@ const METER_FIELDS = [
   { key: "sanity", label: "Sanity" },
 ];
 
+// Mirrors `panem_shared.vitals.percent_remaining`/`crossing_severity` --
+// `hunger`/`thirst` store 100=worst (inverted relative to the other
+// three), so this is the one place that gets normalized before either
+// threshold check runs. Unlike the backend's `crossing_severity`, there's
+// no "before" value to compare against here -- this just classifies
+// *current* severity for display, on every render, not a one-time
+// crossing (that's what the low-vitals DM is for).
+const VITALS_WARN_THRESHOLD_PERCENT = 25;
+const VITALS_DANGER_THRESHOLD_PERCENT = 10;
+const INVERTED_VITALS = new Set(["hunger", "thirst"]);
+
+function percentRemaining(key, value) {
+  return INVERTED_VITALS.has(key) ? 100 - value : value;
+}
+
+function vitalSeverity(key, value) {
+  const remaining = percentRemaining(key, value);
+  if (remaining <= VITALS_DANGER_THRESHOLD_PERCENT) return "danger";
+  if (remaining <= VITALS_WARN_THRESHOLD_PERCENT) return "warn";
+  return null;
+}
+
 function formatRemaining(isoTimestamp) {
   const remainingMs = new Date(isoTimestamp).getTime() - Date.now();
   if (remainingMs <= 0) return null;
@@ -62,11 +84,12 @@ function formatRemaining(isoTimestamp) {
   return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
 }
 
-function meterBar(label, value) {
+function meterBar(label, value, severity) {
   const pct = Math.max(0, Math.min(100, value));
+  const rowClass = severity ? `meter-row vitals-${severity}` : "meter-row";
   return el(
     "div",
-    { class: "meter-row" },
+    { class: rowClass },
     el("span", { class: "meter-label", text: `${label}  ${Math.round(value)}` }),
     el("div", { class: "meter-track" }, el("div", { class: "meter-fill", style: `width: ${pct}%` }))
   );
@@ -103,11 +126,14 @@ function metersPanel(status) {
       )
     );
   }
+  const severities = METER_FIELDS.map((field) => vitalSeverity(field.key, status[field.key]));
+  const worst = severities.includes("danger") ? "danger" : severities.includes("warn") ? "warn" : null;
+  const panelClass = worst ? `panel vitals-${worst}` : "panel";
   return el(
     "div",
-    { class: "panel" },
+    { class: panelClass },
     el("h2", { text: "Meters" }),
-    ...METER_FIELDS.map((field) => meterBar(field.label, status[field.key]))
+    ...METER_FIELDS.map((field, i) => meterBar(field.label, status[field.key], severities[i]))
   );
 }
 

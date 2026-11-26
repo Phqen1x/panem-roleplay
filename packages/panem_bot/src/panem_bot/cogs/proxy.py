@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from panem_bot import redis_keys
 from panem_bot.errors import NotAllowed
+from panem_bot.narrator import send_vitals_low_dm
 from panem_bot.outbound import OutboundMessage, SendPriority
 from panem_bot.services import dialogue as dialogue_svc
 from panem_bot.services import engagements as engagements_svc
@@ -42,6 +43,7 @@ from panem_shared.db.models import (
 )
 from panem_shared.enums import ChannelKind, CharacterStatus, OwnerKind, RpMode
 from panem_shared.relationships import relationship_key
+from panem_shared.vitals import Severity
 
 
 class ProxyCog(commands.Cog):
@@ -163,7 +165,7 @@ class ProxyCog(commands.Cog):
 
     async def _apply_rp_credit(
         self, session: AsyncSession, character: Character, scene: Scene, content: str
-    ) -> None:
+    ) -> tuple[Severity, float] | None:
         """FR-PRX-7: a long-enough proxied message completes an open shift
         with no separate command needed, counted as a win. Jobs are
         free-typed now (no catalog `workplace` to tag a scene against), so
@@ -180,7 +182,12 @@ class ProxyCog(commands.Cog):
         other players and NPCs," and RP is the interaction signal this
         codebase already has a length gate for (`meets_rp_credit`), so it
         doubles as the fatigue-interaction gate too rather than inventing
-        a second threshold.
+        a second threshold. Returns the `(severity, percent_remaining)`
+        `dock_fatigue` reports if this dock crossed a new low-vitals
+        threshold, so `on_message` can DM the owner once the DB session
+        it's running inside has closed -- `None` otherwise, including
+        every early-return path below (there's nothing left to report by
+        then, `dock_fatigue` already ran).
 
         Same qualifying message also trickles `sanity` back up by
         `SANITY_GAIN_PER_INTERACTION` (Simulation mode only -- Life/Story
@@ -191,8 +198,11 @@ class ProxyCog(commands.Cog):
         character.last_active_tick = current_tick
 
         qualifies = shifts_svc.meets_rp_credit(content)
+        fatigue_crossing: tuple[Severity, float] | None = None
         if qualifies:
-            housing_svc.dock_fatigue(character, constants.FATIGUE_COST_PER_INTERACTION)
+            fatigue_crossing = housing_svc.dock_fatigue(
+                character, constants.FATIGUE_COST_PER_INTERACTION
+            )
             if character.rp_mode == RpMode.SIMULATION.value:
                 character.sanity = min(
                     constants.SANITY_MAX,
@@ -200,13 +210,13 @@ class ProxyCog(commands.Cog):
                 )
 
         if not qualifies:
-            return
+            return fatigue_crossing
 
         open_shift = await shifts_svc.get_or_open_shift_for_character(
             session, character, current_tick
         )
         if open_shift is None:
-            return
+            return fatigue_crossing
         if not shifts_svc.can_earn_rp_credit_anywhere(
             character
         ) and not shifts_svc.can_work_from_current_location(character, current_tick):
@@ -217,7 +227,7 @@ class ProxyCog(commands.Cog):
             # enforces. A character RPing away from home still gets the
             # fatigue/sanity credit above; their open shift just isn't
             # silently completed by it.
-            return
+            return fatigue_crossing
 
         bot_content = self.bot.content  # type: ignore[attr-defined]
         district = bot_content.district(character.district_id)
@@ -228,6 +238,7 @@ class ProxyCog(commands.Cog):
             character, district, won=True, market_multiplier=market_multiplier
         )
         shifts_svc.apply_shift_outcome(open_shift, character, outcome, won=True, tick=current_tick)
+        return fatigue_crossing
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
@@ -326,12 +337,24 @@ class ProxyCog(commands.Cog):
             webhook_row = forum_registered
             attachments = [await a.to_file() for a in message.attachments]
 
+            fatigue_crossing: tuple[Severity, float] | None = None
             if scene is not None:
                 scene.last_message_at = dt.datetime.now(dt.UTC)
                 pinned_location = proxy_svc.scene_location_id(scene)
                 if pinned_location is not None:
                     character.location_id = pinned_location
-                await self._apply_rp_credit(session, character, scene, content)
+                fatigue_crossing = await self._apply_rp_credit(session, character, scene, content)
+            character_id = character.id
+
+        if fatigue_crossing is not None:
+            severity, percent_remaining = fatigue_crossing
+            await send_vitals_low_dm(
+                self.bot,  # type: ignore[arg-type]
+                character_id=character_id,
+                vital="fatigue",
+                severity=severity,
+                percent_remaining=percent_remaining,
+            )
 
         with contextlib.suppress(discord.HTTPException):
             await message.delete()

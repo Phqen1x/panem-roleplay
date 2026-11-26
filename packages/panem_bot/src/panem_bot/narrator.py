@@ -56,10 +56,12 @@ from panem_shared.events import (
     CharacterDied,
     NarrationLine,
     NpcChatter,
+    VitalsLow,
     parse_message,
 )
 from panem_shared.logging import get_logger
 from panem_shared.redis_keys import SIM_ALERTS_CHANNEL
+from panem_shared.vitals import Severity
 
 if TYPE_CHECKING:
     from panem_bot.bot import PanemBot
@@ -329,6 +331,90 @@ async def _handle_character_died(bot: PanemBot, event: CharacterDied) -> None:
         )
 
 
+VITAL_LABELS: dict[str, str] = {
+    "health": "health",
+    "hunger": "hunger",
+    "thirst": "thirst",
+    "fatigue": "fatigue",
+    "sanity": "sanity",
+}
+"""`VitalsLow.vital`/`dock_fatigue`'s crossing-severity values are plain
+lowercase keys (`panem_shared.vitals`'s own vocabulary) -- these are the
+words that actually read naturally mid-sentence in `vitals_low_dm`
+("their **hunger** is...", not "their **Hunger** is...")."""
+
+VITAL_ADVICE: dict[str, str] = {
+    "health": "Use a medical good (`/heal`) -- health this low risks death.",
+    "hunger": "Eat something (`/eat`) before it starts costing you health.",
+    "thirst": "Drink something (`/drink`) before it starts costing you health.",
+    "fatigue": (
+        "Rest restores it automatically overnight (more with a roof over your head, "
+        "`/housing`), or energize with a coffee/tea good (`/energize`)."
+    ),
+    "sanity": "Entertain yourself (`/entertain`) or spend some time roleplaying to bring it back up.",
+}
+"""What `vitals_low_dm` tells the player to actually do about it --
+keyed the same as `VITAL_LABELS`."""
+
+SEVERITY_WORDS: dict[Severity, str] = {"warn": "getting low", "danger": "critically low"}
+
+
+async def send_vitals_low_dm(
+    bot: PanemBot, *, character_id: int, vital: str, severity: Severity, percent_remaining: float
+) -> None:
+    """DMs a character's owner that one of their meters just crossed a
+    warning threshold -- shared by `_handle_vitals_low` (events `panem_
+    sim.systems.needs` publishes for hunger/thirst/health/sanity) and
+    `panem_bot.cogs.proxy._apply_rp_credit` (fatigue's own crossing,
+    detected directly from `panem_shared.housing.dock_fatigue`'s return
+    value rather than a published event -- fatigue never changes inside
+    `panem_sim` at all, only here, so there's nothing for the sim to
+    publish). Same "DM best-effort, never raises" posture as `_handle_
+    character_died` above."""
+    guild = bot.get_guild(bot.settings.discord_guild_id)
+    if guild is None:
+        logger.warning("vitals_low_no_guild", character_id=character_id)
+        return
+
+    async with bot.db() as session:
+        character = await session.get(Character, character_id)
+        user = await session.get(User, character.user_id) if character is not None else None
+
+    if character is None or user is None:
+        logger.warning("vitals_low_no_character", character_id=character_id)
+        return
+
+    member = guild.get_member(user.discord_id)
+    if member is None:
+        try:
+            member = await guild.fetch_member(user.discord_id)
+        except discord.HTTPException:
+            logger.warning("vitals_low_no_member", character_id=character_id)
+            return
+
+    with contextlib.suppress(discord.Forbidden):
+        await member.send(
+            t(
+                "vitals_low_dm",
+                name=character.name,
+                vital=VITAL_LABELS.get(vital, vital),
+                severity=SEVERITY_WORDS[severity],
+                percent=round(percent_remaining),
+                advice=VITAL_ADVICE.get(vital, ""),
+            )
+        )
+
+
+async def _handle_vitals_low(bot: PanemBot, event: VitalsLow) -> None:
+    await send_vitals_low_dm(
+        bot,
+        character_id=event.character_id,
+        vital=event.vital,
+        severity=event.severity,
+        percent_remaining=event.percent_remaining,
+    )
+
+
 async def _dispatch(bot: PanemBot, raw: Any) -> None:
     event = parse_message(raw)
     if isinstance(event, NarrationLine):
@@ -339,6 +425,8 @@ async def _dispatch(bot: PanemBot, raw: Any) -> None:
         await _handle_npc_chatter(bot, event)
     elif isinstance(event, CharacterDied):
         await _handle_character_died(bot, event)
+    elif isinstance(event, VitalsLow):
+        await _handle_vitals_low(bot, event)
 
 
 async def _handle_sim_alert(bot: PanemBot, raw: str) -> None:

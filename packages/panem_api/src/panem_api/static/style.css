@@ -48,6 +48,11 @@
      copy of the same two colors. */
   --success: #7cd992;
   --danger: #e0736b;
+  /* The Home tab's Meters widget flashes this at a vital's warning tier
+     (25% remaining) -- the same amber already used for a "working"
+     status pill (`--status-work-text`), reused here rather than a third
+     yellow. */
+  --warn: #facc15;
 
   /* Real device safe areas (notch/home-indicator/gesture-bar cutouts) --
      resolve to 0px on anything without a cutout, so applying these

@@ -385,6 +385,17 @@ HEALTH_DECAY_PER_NIGHT = 2.0
 HEALTH_RECOVERY_PER_NIGHT = 3.0
 """Health regained on a night hunger stays below the decay threshold."""
 
+VITALS_WARN_THRESHOLD_PERCENT = 25.0
+VITALS_DANGER_THRESHOLD_PERCENT = 10.0
+"""Vitals-widget/low-vitals-DM feature (`panem_sim.systems.needs`'s
+`_vitals_crossing_events`, Home's own Meters panel). Both are read as
+"percent remaining" -- `health`/`fatigue`/`sanity` already are that
+(100=best), while `hunger`/`thirst` are inverted first (100=worst) so
+one pair of thresholds covers all five meters uniformly. A meter
+crossing *downward* through one of these between two needs-tick
+snapshots fires a `VitalsLow` event exactly once for that crossing, never
+repeatedly while it stays below -- see that function's own docstring."""
+
 # Phase 2 Milestone C (jobs/shifts, FR-JOB-10) addition, same caveat as
 # above: not sourced from Spec §10, a placeholder pending the real spec.
 NPC_JOB_COMPLETION_PROB = 0.85

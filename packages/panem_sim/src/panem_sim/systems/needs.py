@@ -50,6 +50,7 @@ import datetime as dt
 import random
 
 from panem_shared import constants, simtime
+from panem_shared import vitals as vitals_svc
 from panem_shared.afflictions import (
     apply_auto_afflictions_sync,
     apply_auto_death,
@@ -57,15 +58,44 @@ from panem_shared.afflictions import (
 )
 from panem_shared.db.models import Character, Npc
 from panem_shared.enums import RpMode
-from panem_shared.events import AnyWorldEvent, CharacterDied
+from panem_shared.events import AnyWorldEvent, CharacterDied, VitalsLow
 from panem_shared.exhaustion import apply_passed_out, passed_out_duration_ticks
 from panem_shared.housing import apply_nightly_fatigue_restoration
 from panem_sim.state import TickContext, WorldState
 
 
-def _apply_character_phase_needs(character: Character, rng: random.Random) -> None:
+def _vitals_crossing_events(
+    character: Character, tick: int, before: dict[str, float]
+) -> list[VitalsLow]:
+    """Compares `before` (a `{vital: raw_value}` snapshot taken right
+    before whichever needs-tick step just ran) against `character`'s
+    current values, and emits one `VitalsLow` for every meter `panem_
+    shared.vitals.crossing_severity` reports an actual crossing on --
+    never for one that was already below a threshold and merely dropped
+    further, and never for one recovering. See that function's own
+    docstring for exactly what counts as "a crossing"."""
+    events: list[VitalsLow] = []
+    for vital, old_value in before.items():
+        new_value = getattr(character, vital)
+        severity = vitals_svc.crossing_severity(vital, old_value, new_value)
+        if severity is None:
+            continue
+        events.append(
+            VitalsLow(
+                tick=tick,
+                character_id=character.id,
+                vital=vital,  # type: ignore[arg-type]
+                severity=severity,
+                percent_remaining=vitals_svc.percent_remaining(vital, new_value),
+            )
+        )
+    return events
+
+
+def _apply_character_phase_needs(character: Character, rng: random.Random, tick: int) -> list[VitalsLow]:
     if character.rp_mode != RpMode.SIMULATION.value:
-        return
+        return []
+    before = {"health": character.health, "hunger": character.hunger, "thirst": character.thirst}
 
     character.hunger = min(
         constants.HUNGER_MAX,
@@ -91,10 +121,15 @@ def _apply_character_phase_needs(character: Character, rng: random.Random) -> No
             constants.HEALTH_MIN, character.health - constants.HEALTH_DECAY_PER_NIGHT_THIRST
         )
 
+    return _vitals_crossing_events(character, tick, before)
 
-def _apply_character_nightly_needs(character: Character, state: WorldState, day_index: int) -> bool:
+
+def _apply_character_nightly_needs(
+    character: Character, state: WorldState, day_index: int, tick: int
+) -> tuple[bool, list[VitalsLow]]:
     if character.rp_mode != RpMode.SIMULATION.value:
-        return False
+        return False, []
+    before = {"fatigue": character.fatigue, "sanity": character.sanity, "health": character.health}
 
     if character.money >= constants.NIGHTLY_LIVING_COST:
         character.money -= constants.NIGHTLY_LIVING_COST
@@ -136,7 +171,17 @@ def _apply_character_nightly_needs(character: Character, state: WorldState, day_
     state.new_character_afflictions.extend(
         apply_auto_afflictions_sync(character, state.affliction_types, active)
     )
-    return apply_auto_death(character)
+    died = apply_auto_death(character)
+    # A dying character doesn't also need a "your health is critically
+    # low" DM in the same tick as the "your character has died" one --
+    # drop a health crossing here specifically (fatigue/sanity crossings,
+    # if any, still report normally).
+    events = [
+        event
+        for event in _vitals_crossing_events(character, tick, before)
+        if not (died and event.vital == "health")
+    ]
+    return died, events
 
 
 def _apply_npc_needs(npc: Npc) -> None:
@@ -157,12 +202,16 @@ def run(state: WorldState, ctx: TickContext) -> list[AnyWorldEvent]:
 
     if ctx.tick % simtime.TICKS_PER_PHASE == 0:
         for character in state.characters.values():
-            _apply_character_phase_needs(character, ctx.rng)
+            events.extend(_apply_character_phase_needs(character, ctx.rng, ctx.tick))
 
     if ctx.tick % constants.TICKS_PER_DAY == 0:
         day_index = (ctx.tick - 1) // constants.TICKS_PER_DAY
         for character in state.characters.values():
-            if _apply_character_nightly_needs(character, state, day_index):
+            died, vitals_events = _apply_character_nightly_needs(
+                character, state, day_index, ctx.tick
+            )
+            events.extend(vitals_events)
+            if died:
                 events.append(CharacterDied(tick=ctx.tick, character_id=character.id))
         for npc in state.npcs.values():
             _apply_npc_needs(npc)

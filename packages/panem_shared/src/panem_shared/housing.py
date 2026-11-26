@@ -22,6 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from panem_shared import constants, job_levels
+from panem_shared import vitals as vitals_svc
 from panem_shared.db.models import (
     ApartmentLease,
     Character,
@@ -190,8 +191,20 @@ def apply_nightly_fatigue_restoration(
     return character.fatigue - before
 
 
-def dock_fatigue(character: Character, amount: float) -> None:
+def dock_fatigue(character: Character, amount: float) -> tuple[vitals_svc.Severity, float] | None:
+    """Fatigue's *only* decrease path (`panem_bot.cogs.proxy._apply_rp_
+    credit`'s RP-interaction cost) -- nothing in `panem_sim.systems.
+    needs` ever lowers it, only restores it, so a fatigue crossing can
+    only ever be detected here. Returns `(severity, percent_remaining)`
+    the caller should DM the owner about, or `None` if this dock didn't
+    cross a new threshold -- `panem_shared` has no Discord access of its
+    own to send that DM itself."""
+    before = character.fatigue
     character.fatigue = max(constants.FATIGUE_MIN, character.fatigue - amount)
+    severity = vitals_svc.crossing_severity("fatigue", before, character.fatigue)
+    if severity is None:
+        return None
+    return severity, vitals_svc.percent_remaining("fatigue", character.fatigue)
 
 
 # ------------------------------------------------------- mortgages/refinance
