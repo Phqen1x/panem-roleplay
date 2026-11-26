@@ -1236,6 +1236,75 @@ table.data-table .stock-empty {
   color: #fff;
 }
 
+/* Getting-Started guide pop-up (`app.js`'s `buildGuideOverlay`) -- shown
+   once automatically on a viewer's first launch (tracked in
+   localStorage, same convention as `TAB_USAGE_STORAGE_KEY`) and
+   reopenable any time via the header's `#guide-button`. Unlike the
+   reaction modal above, this one *is* closeable by clicking outside it
+   or the "x" (`.btn-close-modal`, already used by the dossier modal) --
+   there's no time-limited choice to force here. */
+.guide-button {
+  font-size: 15px;
+  font-weight: 700;
+  font-family: var(--font-serif);
+}
+
+.guide-modal-card {
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  box-shadow: 0 0 30px rgba(0, 0, 0, 0.8), 0 0 20px color-mix(in srgb, var(--accent) 25%, transparent);
+  border-radius: 12px;
+  width: 90%;
+  max-width: 560px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  transform: translateY(20px);
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.modal-overlay.open .guide-modal-card {
+  transform: translateY(0);
+}
+
+.guide-modal-card .dossier-header {
+  flex: 0 0 auto;
+}
+
+.guide-modal-body {
+  padding: 20px 24px 24px;
+  overflow-y: auto;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.guide-modal-body h3 {
+  font-family: var(--font-serif);
+  font-size: 14px;
+  margin: 18px 0 6px;
+  color: var(--accent);
+}
+
+.guide-modal-body h3:first-child {
+  margin-top: 0;
+}
+
+.guide-modal-body ul {
+  margin: 0 0 4px;
+  padding-left: 20px;
+}
+
+.guide-modal-body li {
+  margin-bottom: 3px;
+}
+
+.guide-modal-body code {
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel));
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 12.5px;
+}
+
 .dossier-header {
   padding: 18px 24px;
   background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 14%, var(--panel)) 0%, var(--panel) 100%);

@@ -1126,6 +1126,83 @@ const REACTIONS_POLL_INTERVAL_MS = 5000;
 let reactionOverlay = null;
 let reactionPollInFlight = false;
 
+// Tracks whether this browser has ever had the Getting Started guide
+// auto-shown, same localStorage convention as `TAB_USAGE_STORAGE_KEY`
+// above -- per-viewer only, never read back by anything but this same
+// browser. Bump the `_v1` suffix if the guide's content changes enough
+// that returning players should see it again automatically.
+const GUIDE_SEEN_STORAGE_KEY = "panem_guide_seen_v1";
+let guideOverlay = null;
+
+// Plain static HTML (not user-supplied, so no escaping concerns) for the
+// guide pop-up's body -- condensed from the same command list `/help`
+// builds live from the bot's command tree, so this needs updating by
+// hand if a whole new category of command ships, but isn't expected to
+// drift command-by-command the way `/help` would.
+const GUIDE_HTML = `
+  <h3>Getting Started</h3>
+  <ul>
+    <li>No character yet? Run <code>/character create district:&lt;your district&gt;</code> in Discord.</li>
+    <li>The tabs on this screen mirror every Discord command -- use whichever is easier.</li>
+  </ul>
+  <h3>The Basics</h3>
+  <ul>
+    <li><strong>Home / Travel</strong> -- see where you are, move around, board trains</li>
+    <li><strong>Work</strong> -- work your currently open shift</li>
+    <li><strong>Market / Inventory</strong> -- buy, sell, and check what you're carrying</li>
+    <li><strong>Housing</strong> -- rent or buy a place to live</li>
+  </ul>
+  <h3>Roleplay</h3>
+  <ul>
+    <li><strong>Scenes</strong>, talking to residents, <strong>Hobbies</strong>, <strong>Social</strong>,
+      <strong>Museum</strong>, <strong>Bulletin</strong>, <strong>Weather</strong>, <strong>Rumors</strong>,
+      and <strong>Events</strong></li>
+  </ul>
+  <h3>Needs</h3>
+  <ul>
+    <li><strong>Vitals</strong> -- eat, drink, heal, rest, and keep your character's needs in check</li>
+  </ul>
+  <h3>Crime &amp; Risk</h3>
+  <ul>
+    <li><strong>Crime</strong> -- steal, burgle, poach, rob shipments, or trade on the black market</li>
+    <li>Caught? The <strong>Jail</strong> tab lets you pay bail or try to pick the lock.</li>
+  </ul>
+  <h3>Need this again?</h3>
+  <ul>
+    <li>Click the <strong>?</strong> button up top any time, or run <code>/help</code> in Discord for the full command list.</li>
+  </ul>
+`;
+
+function buildGuideOverlay() {
+  const overlay = el("div", { class: "modal-overlay guide-modal-overlay" });
+  const closeBtn = el("button", { class: "btn-close-modal", text: "×", onclick: close });
+  const bodyEl = el("div", { class: "guide-modal-body" });
+  bodyEl.innerHTML = GUIDE_HTML;
+  const card = el(
+    "div",
+    { class: "guide-modal-card", onclick: (event) => event.stopPropagation() },
+    el(
+      "div",
+      { class: "dossier-header" },
+      el("div", {}, el("div", { class: "dossier-name", text: "Welcome to Panem" })),
+      closeBtn
+    ),
+    bodyEl
+  );
+  overlay.append(card);
+  overlay.addEventListener("click", close);
+
+  function close() {
+    overlay.classList.remove("open");
+  }
+
+  function show() {
+    overlay.classList.add("open");
+  }
+
+  return { element: overlay, show, close };
+}
+
 function buildReactionOverlay() {
   const overlay = el("div", { class: "modal-overlay reaction-modal-overlay" });
   const promptEl = el("p", { class: "tab-status" });
@@ -1267,6 +1344,17 @@ async function main() {
   document.body.append(reactionOverlay.element);
   refreshReactions();
   setInterval(refreshReactions, REACTIONS_POLL_INTERVAL_MS);
+
+  guideOverlay = buildGuideOverlay();
+  document.body.append(guideOverlay.element);
+  const guideButtonEl = document.getElementById("guide-button");
+  if (guideButtonEl) {
+    guideButtonEl.addEventListener("click", () => guideOverlay.show());
+  }
+  if (!readStorage(GUIDE_SEEN_STORAGE_KEY)) {
+    guideOverlay.show();
+    writeStorage(GUIDE_SEEN_STORAGE_KEY, "1");
+  }
 
   state.discordUser = await authenticateWithDiscord();
   if (!state.discordUser) {
