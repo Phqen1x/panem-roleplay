@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 from contextlib import asynccontextmanager
+from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock
 
 import discord
@@ -20,8 +21,26 @@ from panem_shared.db.models import Character, User
 from panem_shared.enums import CharacterStatus
 
 
+class FakeLocationKind:
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+
+class FakeLocation:
+    """Just enough of `panem_shared.content.schemas.Location` for
+    `characters_svc.approve_character` -- it only ever reads `.kind.value`
+    (to find the district's one `public` location) and `.id` (to drop the
+    newly-approved character there)."""
+
+    def __init__(self, id: str, kind: str) -> None:
+        self.id = id
+        self.kind = FakeLocationKind(kind)
+
+
 class FakeDistrict:
+    id = 1
     name = "District 1"
+    locations: ClassVar = [FakeLocation("square", "public")]
 
 
 class FakeContent:
@@ -31,6 +50,7 @@ class FakeContent:
 
 class FakeSettings:
     approval_channel_id = 777
+    character_announce_channel_id = 0
 
 
 class FakeBot:
@@ -38,9 +58,15 @@ class FakeBot:
         self._session_factory = session_factory
         self.settings = FakeSettings()
         self.content = FakeContent()
-        channel = MagicMock()
-        channel.send = AsyncMock()
-        self.get_channel = MagicMock(return_value=channel)
+        approval_channel = MagicMock()
+        approval_channel.send = AsyncMock()
+        announce_channel = MagicMock()
+        announce_channel.send = AsyncMock()
+        self._channels = {777: approval_channel, 888: announce_channel}
+        # Real `Client.get_channel` semantics: an id with nothing
+        # registered (including the "unset" sentinel, 0) reads back as
+        # not found, same as it would on a real guild.
+        self.get_channel = MagicMock(side_effect=lambda cid: self._channels.get(cid))
 
     @asynccontextmanager
     async def db(self):
@@ -49,7 +75,11 @@ class FakeBot:
 
     @property
     def channel(self):
-        return self.get_channel.return_value
+        return self._channels[777]
+
+    @property
+    def announce_channel(self):
+        return self._channels[888]
 
 
 @pytest.fixture
@@ -143,6 +173,70 @@ class TestPostApprovalEmbedIdempotency:
 
         embed = bot.channel.send.await_args.kwargs["embed"]
         assert embed.image.url is None
+
+
+def _make_approve_interaction() -> MagicMock:
+    """Just enough of a staff member's button-click `discord.Interaction`
+    for `_handle_approve` to run to completion: a guild whose `get_member`
+    comes back empty (so the DM/forum-grant branch it gates is skipped
+    without needing its own mocking -- that's `TestGrantDistrictForum
+    Access`'s job, not this one), and the two interaction responses
+    `_handle_approve` always makes regardless (disabling the approval
+    message, and its own ephemeral "Approved" reply)."""
+    interaction = MagicMock()
+    interaction.message.embeds = []
+    interaction.message.edit = AsyncMock()
+    interaction.response.send_message = AsyncMock()
+    interaction.guild.get_member = MagicMock(return_value=None)
+    return interaction
+
+
+class TestHandleApprove:
+    """The public "new citizen" announcement `_handle_approve` posts to
+    `Settings.character_announce_channel_id` once a character is
+    approved -- same embed the staff-only approval channel got (`_build_
+    character_embed`, covered by `TestPostApprovalEmbedIdempotency`
+    above), just without the Approve/Reject buttons view."""
+
+    async def test_posts_to_the_announce_channel_when_configured(
+        self, db_session, bot: FakeBot, cog: CharacterCog
+    ):
+        bot.settings.character_announce_channel_id = 888
+        character = await _seed_character(
+            db_session, approval_notified_at=None, avatar_url="https://example.com/avatar.png"
+        )
+
+        await cog._handle_approve(_make_approve_interaction(), character.id)
+
+        bot.announce_channel.send.assert_awaited_once()
+        embed = bot.announce_channel.send.await_args.kwargs["embed"]
+        assert embed.image.url == "https://example.com/avatar.png"
+        # The staff-only approval-channel embed takes `view=self.
+        # approval_view` (the Approve/Reject buttons); this one never
+        # does -- there's nothing left to approve.
+        assert "view" not in bot.announce_channel.send.await_args.kwargs
+
+    async def test_skips_the_announcement_when_not_configured(
+        self, db_session, bot: FakeBot, cog: CharacterCog
+    ):
+        assert bot.settings.character_announce_channel_id == 0
+        character = await _seed_character(db_session, approval_notified_at=None)
+
+        await cog._handle_approve(_make_approve_interaction(), character.id)
+
+        bot.announce_channel.send.assert_not_awaited()
+
+    async def test_already_handled_character_is_a_no_op(self, db_session, bot: FakeBot, cog: CharacterCog):
+        bot.settings.character_announce_channel_id = 888
+        character = await _seed_character(
+            db_session, approval_notified_at=dt.datetime.now(dt.UTC)
+        )
+        character.status = CharacterStatus.APPROVED.value
+        await db_session.flush()
+
+        await cog._handle_approve(_make_approve_interaction(), character.id)
+
+        bot.announce_channel.send.assert_not_awaited()
 
 
 class TestHandleEditSubmit:

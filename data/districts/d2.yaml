@@ -27,7 +27,7 @@ culture:
   - loyal
   idioms:
   - the Nut
-  - the academy
+  - the Institute
   taboos:
   - cowardice
   peacekeeper_pressure: 0.15
@@ -70,7 +70,7 @@ locations:
   - d2_quarrier
   - d2_armorer
 - id: academy
-  name: The Academy
+  name: The Veritas Institute
   kind: workplace
   capacity: 60
   job_ids:

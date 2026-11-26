@@ -66,6 +66,40 @@ def _field_value(text: str) -> str:
     return text[: EMBED_FIELD_VALUE_LIMIT - 1] + "…"
 
 
+def _build_character_embed(
+    character: Character, *, district_name: str, applicant_discord_id: int
+) -> discord.Embed:
+    """The full character-application embed -- shared by `_post_approval_
+    embed` (the staff-only approval-channel post, paired with `self.
+    approval_view`'s buttons) and `_handle_approve` (the same embed,
+    unchanged, posted to `Settings.character_announce_channel_id` once
+    approved, with no buttons -- there's nothing left to approve)."""
+    embed = discord.Embed(
+        title=f"Character Application: {character.name}", color=discord.Color.blurple()
+    )
+    embed.add_field(name="Applicant", value=f"<@{applicant_discord_id}>", inline=True)
+    embed.add_field(name="District", value=district_name, inline=True)
+    embed.add_field(name="Age", value=str(character.age), inline=True)
+    embed.add_field(name="RP Mode", value=character.rp_mode.title(), inline=True)
+    if character.job_title is not None:
+        shift_label = SHIFT_PHASE_LABELS.get(character.shift_phase or "", character.shift_phase)
+        illicit_suffix = " [illicit]" if character.job_is_illicit else ""
+        job_value = f"{character.job_title} ({shift_label} shift){illicit_suffix}"
+    else:
+        job_value = "-- (Story mode)"
+    embed.add_field(name="Desired Job", value=job_value, inline=True)
+    embed.add_field(name="Appearance", value=character.appearance or "-", inline=False)
+    embed.add_field(name="Backstory", value=_field_value(character.backstory or "-"), inline=False)
+    if character.avatar_url:
+        # `set_image` (full-width, below the fields) rather than
+        # `set_thumbnail` (a small corner icon) -- both audiences (staff
+        # approving it, and everyone seeing the public announcement) need
+        # to actually see the faceclaim, not just notice one is attached.
+        embed.set_image(url=character.avatar_url)
+    embed.set_footer(text=f"{CHAR_ID_FOOTER_PREFIX}{character.id}")
+    return embed
+
+
 def _render_character_list(bot: commands.Bot, rows: list[Character], *, hide_dead: bool) -> str:
     visible = [c for c in rows if not (hide_dead and c.status in _TERMINAL_STATUSES)]
     if not visible:
@@ -524,33 +558,9 @@ class CharacterCog(commands.Cog):
                 # the method idempotent regardless of caller.
                 return
             district = self.bot.content.district(character.district_id)
-            embed = discord.Embed(
-                title=f"Character Application: {character.name}", color=discord.Color.blurple()
+            embed = _build_character_embed(
+                character, district_name=district.name, applicant_discord_id=applicant_discord_id
             )
-            embed.add_field(name="Applicant", value=f"<@{applicant_discord_id}>", inline=True)
-            embed.add_field(name="District", value=district.name, inline=True)
-            embed.add_field(name="Age", value=str(character.age), inline=True)
-            embed.add_field(name="RP Mode", value=character.rp_mode.title(), inline=True)
-            if character.job_title is not None:
-                shift_label = SHIFT_PHASE_LABELS.get(
-                    character.shift_phase or "", character.shift_phase
-                )
-                illicit_suffix = " [illicit]" if character.job_is_illicit else ""
-                job_value = f"{character.job_title} ({shift_label} shift){illicit_suffix}"
-            else:
-                job_value = "-- (Story mode)"
-            embed.add_field(name="Desired Job", value=job_value, inline=True)
-            embed.add_field(name="Appearance", value=character.appearance or "-", inline=False)
-            embed.add_field(
-                name="Backstory", value=_field_value(character.backstory or "-"), inline=False
-            )
-            if character.avatar_url:
-                # `set_image` (full-width, below the fields) rather than
-                # `set_thumbnail` (a small corner icon) -- staff approving
-                # a faceclaim need to actually see it clearly, not just
-                # notice it's there.
-                embed.set_image(url=character.avatar_url)
-            embed.set_footer(text=f"{CHAR_ID_FOOTER_PREFIX}{character.id}")
             character.approval_notified_at = dt.datetime.now(dt.UTC)
 
         await channel.send(embed=embed, view=self.approval_view)
@@ -818,9 +828,32 @@ class CharacterCog(commands.Cog):
                 )
             ).scalar_one_or_none()
             forum_channel_id = forum_row.channel_id if forum_row is not None else None
+            announce_embed = _build_character_embed(
+                character, district_name=district.name, applicant_discord_id=discord_id
+            )
 
         await self._disable_approval_message(interaction, f"Approved by {interaction.user.mention}")
         await interaction.response.send_message(f"Approved **{char_name}**.", ephemeral=True)
+
+        # Public "new citizen" announcement -- same embed the staff-only
+        # approval channel got (district/age/RP mode/job/appearance/
+        # backstory/faceclaim), minus the Approve/Reject buttons, for
+        # whichever channel `CHARACTER_ANNOUNCE_CHANNEL_ID` names (meant
+        # to be one the roleplay role can see). Unset or unreachable just
+        # skips this -- it's an announcement, never something approval
+        # itself should fail over.
+        announce_channel_id = self.bot.settings.character_announce_channel_id  # type: ignore[attr-defined]
+        if announce_channel_id:
+            announce_channel = self.bot.get_channel(announce_channel_id)
+            if announce_channel is not None:
+                with contextlib.suppress(discord.HTTPException):
+                    await announce_channel.send(embed=announce_embed)
+            else:
+                logger.warning(
+                    "character_announce_channel_missing",
+                    character_id=character_id,
+                    channel_id=announce_channel_id,
+                )
 
         guild = interaction.guild
         assert guild is not None

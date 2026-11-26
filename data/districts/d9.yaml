@@ -68,7 +68,7 @@ locations:
   - d9_thresher
   - d9_miller
 - id: academy
-  name: The Academy
+  name: The Durum Stronghold
   kind: workplace
   capacity: 60
   job_ids:
