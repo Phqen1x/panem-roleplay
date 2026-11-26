@@ -1131,85 +1131,129 @@ let reactionPollInFlight = false;
 // above -- per-viewer only, never read back by anything but this same
 // browser. Bump the `_v1` suffix if the guide's content changes enough
 // that returning players should see it again automatically.
-const GUIDE_SEEN_STORAGE_KEY = "panem_guide_seen_v4";
+const GUIDE_SEEN_STORAGE_KEY = "panem_guide_seen_v5";
 let guideOverlay = null;
 
-// Plain static HTML (not user-supplied, so no escaping concerns) for the
-// guide pop-up's body -- condensed from the same command list `/help`
-// builds live from the bot's command tree, so this needs updating by
-// hand if a whole new category of command ships, but isn't expected to
-// drift command-by-command the way `/help` would.
-const GUIDE_HTML = `
-  <h3>Getting started</h3>
-  <ol>
-    <li>Create a character: <code>/character create district:&lt;your district&gt;</code></li>
-    <li>You'll be asked to pick a district, roleplay mode, gender, and other character details
-      (name, age, etc.) -- all changeable later.</li>
-    <li>Once approved by staff, you're in! Use <code>/help</code> any time for a full,
-      always-up-to-date list of commands.</li>
-  </ol>
-  <h3>📍 The basics</h3>
-  <ul>
-    <li><code>/where</code> -- see where your character currently is</li>
-    <li><code>/time</code> -- check the in-world day and time</li>
-    <li><code>/travel</code> -- move around your district, or board a train to another one</li>
-    <li><code>/resident list</code> -- see the NPCs living in your district</li>
-  </ul>
-  <h3>💰 Working &amp; money</h3>
-  <ul>
-    <li><code>/work</code> -- work your currently open shift</li>
-    <li><code>/market prices</code> -- check what's selling in your district</li>
-    <li><code>/inventory</code> -- see what your character is carrying</li>
-    <li><code>/pay</code> -- send money to another player's character</li>
-    <li><code>/trade</code> -- offer, accept, or cancel a trade with another player</li>
-    <li><code>/housing</code> -- buy, rent, or manage a place to live</li>
-  </ul>
-  <h3>🎭 Roleplay</h3>
-  <ul>
-    <li><code>/scene start</code> -- kick off a roleplay scene at a location</li>
-    <li><code>/engage</code> -- start or join a group RP with players</li>
-    <li><code>/rp</code> -- enable roleplay mode for your character in a channel</li>
-  </ul>
-  <h3>🍞 Needs (Simulation mode)</h3>
-  <p>Keep your character alive and well:</p>
-  <ul>
-    <li><code>/eat</code>, <code>/drink</code>, <code>/heal</code>, <code>/energize</code>,
-      <code>/entertain</code>, <code>/use</code></li>
-  </ul>
-  <h3>⚠️ Crime &amp; risk (use with caution!)</h3>
-  <ul>
-    <li><code>/steal</code> -- pickpocket a player or NPC</li>
-    <li><code>/burgle</code> -- break into someone's house</li>
-    <li><code>/poach</code> -- poach food at the district outskirts</li>
-    <li><code>/shipment</code> -- rob a contraband shipment</li>
-    <li><code>/blackmarket</code> -- trade illicit goods, if the black market NPC trusts you</li>
-    <li><code>/crimelog</code> -- see your recent crime attempts</li>
-    <li>Caught? <code>/bail</code> pays your way out, or try <code>/lockpick</code> to escape jail yourself.</li>
-  </ul>
-  <h3>🕹️ The Activity</h3>
-  <p>This server has a full embedded Discord <strong>Activity</strong> -- a dashboard mirroring
-    every command above, playable right inside Discord. To launch it: click the apps icon next
-    to the emoji button, find <strong>Panem RPG</strong>, and click "Launch".</p>
-  <h3>🧭 Finding your way around in the activity</h3>
-  <ul>
-    <li>The <strong>sidebar</strong> (or the bottom dock, on mobile) jumps straight to any tab --
-      Character, Vitals, Work, Market, Travel, Social, Jail, Crime, Housing.</li>
-    <li><strong>Home</strong> is your dashboard -- its app grid holds every tab that isn't pinned
-      to the dock, plus your recently-opened ones.</li>
-    <li>The <strong>character switcher</strong> in the top bar swaps which of your characters
-      you're playing.</li>
-    <li>The <strong>world clock</strong> in the top bar always shows the current in-world day,
-      time, and shift.</li>
-    <li>Click the <strong>?</strong> button up top any time to see this guide again.</li>
-  </ul>
-  <p><strong>Need the full command list any time? Just run <code>/help</code>.</strong></p>
-`;
+// Plain static HTML (not user-supplied, so no escaping concerns) for each
+// page of the guide pop-up -- condensed from the same command list
+// `/help` builds live from the bot's command tree, so this needs
+// updating by hand if a whole new category of command ships, but isn't
+// expected to drift command-by-command the way `/help` would. One array
+// entry per page, each rendered as its own `h3` + body by
+// `buildGuideOverlay`'s `renderPage()` below.
+const GUIDE_PAGES = [
+  {
+    heading: "Getting started",
+    bodyHtml: `
+      <ol>
+        <li>Create a character: <code>/character create district:&lt;your district&gt;</code></li>
+        <li>You'll be asked to pick a district, roleplay mode, gender, and other character
+          details (name, age, etc.) -- all changeable later.</li>
+        <li>Once approved by staff, you're in! Use <code>/help</code> any time for a full,
+          always-up-to-date list of commands.</li>
+      </ol>
+    `,
+  },
+  {
+    heading: "📍 The basics",
+    bodyHtml: `
+      <ul>
+        <li><code>/where</code> -- see where your character currently is</li>
+        <li><code>/time</code> -- check the in-world day and time</li>
+        <li><code>/travel</code> -- move around your district, or board a train to another one</li>
+        <li><code>/resident list</code> -- see the NPCs living in your district</li>
+      </ul>
+    `,
+  },
+  {
+    heading: "💰 Working &amp; money",
+    bodyHtml: `
+      <ul>
+        <li><code>/work</code> -- work your currently open shift</li>
+        <li><code>/market prices</code> -- check what's selling in your district</li>
+        <li><code>/inventory</code> -- see what your character is carrying</li>
+        <li><code>/pay</code> -- send money to another player's character</li>
+        <li><code>/trade</code> -- offer, accept, or cancel a trade with another player</li>
+        <li><code>/housing</code> -- buy, rent, or manage a place to live</li>
+      </ul>
+    `,
+  },
+  {
+    heading: "🎭 Roleplay",
+    bodyHtml: `
+      <ul>
+        <li><code>/scene start</code> -- kick off a roleplay scene at a location</li>
+        <li><code>/engage</code> -- start or join a group RP with players</li>
+        <li><code>/rp</code> -- enable roleplay mode for your character in a channel</li>
+      </ul>
+    `,
+  },
+  {
+    heading: "🍞 Needs (Simulation mode)",
+    bodyHtml: `
+      <p>Keep your character alive and well:</p>
+      <ul>
+        <li><code>/eat</code>, <code>/drink</code>, <code>/heal</code>, <code>/energize</code>,
+          <code>/entertain</code>, <code>/use</code></li>
+      </ul>
+    `,
+  },
+  {
+    heading: "⚠️ Crime &amp; risk (use with caution!)",
+    bodyHtml: `
+      <ul>
+        <li><code>/steal</code> -- pickpocket a player or NPC</li>
+        <li><code>/burgle</code> -- break into someone's house</li>
+        <li><code>/poach</code> -- poach food at the district outskirts</li>
+        <li><code>/shipment</code> -- rob a contraband shipment</li>
+        <li><code>/blackmarket</code> -- trade illicit goods, if the black market NPC trusts you</li>
+        <li><code>/crimelog</code> -- see your recent crime attempts</li>
+        <li>Caught? <code>/bail</code> pays your way out, or try <code>/lockpick</code> to escape
+          jail yourself.</li>
+      </ul>
+    `,
+  },
+  {
+    heading: "🕹️ The Activity",
+    bodyHtml: `
+      <p>This server has a full embedded Discord <strong>Activity</strong> -- a dashboard
+        mirroring every command above, playable right inside Discord. To launch it: click the
+        apps icon next to the emoji button, find <strong>Panem RPG</strong>, and click
+        "Launch".</p>
+    `,
+  },
+  {
+    heading: "🧭 Finding your way around in the activity",
+    bodyHtml: `
+      <ul>
+        <li>The <strong>sidebar</strong> (or the bottom dock, on mobile) jumps straight to any
+          tab -- Character, Vitals, Work, Market, Travel, Social, Jail, Crime, Housing.</li>
+        <li><strong>Home</strong> is your dashboard -- its app grid holds every tab that isn't
+          pinned to the dock, plus your recently-opened ones.</li>
+        <li>The <strong>character switcher</strong> in the top bar swaps which of your
+          characters you're playing.</li>
+        <li>The <strong>world clock</strong> in the top bar always shows the current in-world
+          day, time, and shift.</li>
+        <li>Click the <strong>?</strong> button up top any time to see this guide again.</li>
+      </ul>
+      <p><strong>Need the full command list any time? Just run <code>/help</code>.</strong></p>
+    `,
+  },
+];
 
 function buildGuideOverlay() {
   const overlay = el("div", { class: "modal-overlay guide-modal-overlay" });
   const closeBtn = el("button", { class: "btn-close-modal", text: "×", onclick: close });
   const bodyEl = el("div", { class: "guide-modal-body" });
-  bodyEl.innerHTML = GUIDE_HTML;
+  const pageIndicatorEl = el("span", { class: "guide-page-indicator" });
+  const prevBtn = el("button", { class: "btn secondary", type: "button", text: "Prev" });
+  const nextBtn = el("button", { class: "btn primary", type: "button" });
+  const footerEl = el(
+    "div",
+    { class: "guide-modal-footer" },
+    pageIndicatorEl,
+    el("div", { class: "guide-modal-footer-buttons" }, prevBtn, nextBtn)
+  );
   const card = el(
     "div",
     { class: "guide-modal-card", onclick: (event) => event.stopPropagation() },
@@ -1219,16 +1263,46 @@ function buildGuideOverlay() {
       el("div", {}, el("div", { class: "dossier-name", text: "Panem Roleplay" })),
       closeBtn
     ),
-    bodyEl
+    bodyEl,
+    footerEl
   );
   overlay.append(card);
   overlay.addEventListener("click", close);
+
+  let pageIndex = 0;
+
+  function renderPage() {
+    const page = GUIDE_PAGES[pageIndex];
+    bodyEl.innerHTML = `<h3>${page.heading}</h3>${page.bodyHtml}`;
+    bodyEl.scrollTop = 0;
+    pageIndicatorEl.textContent = `${pageIndex + 1} / ${GUIDE_PAGES.length}`;
+    prevBtn.disabled = pageIndex === 0;
+    const isLastPage = pageIndex === GUIDE_PAGES.length - 1;
+    nextBtn.textContent = isLastPage ? "Finish" : "Next";
+  }
+
+  prevBtn.addEventListener("click", () => {
+    if (pageIndex > 0) {
+      pageIndex -= 1;
+      renderPage();
+    }
+  });
+  nextBtn.addEventListener("click", () => {
+    if (pageIndex < GUIDE_PAGES.length - 1) {
+      pageIndex += 1;
+      renderPage();
+    } else {
+      close();
+    }
+  });
 
   function close() {
     overlay.classList.remove("open");
   }
 
   function show() {
+    pageIndex = 0;
+    renderPage();
     overlay.classList.add("open");
   }
 

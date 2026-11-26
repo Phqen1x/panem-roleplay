@@ -1272,10 +1272,41 @@ table.data-table .stock-empty {
 }
 
 .guide-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
   padding: 20px 24px 24px;
   overflow-y: auto;
   font-size: 13.5px;
   line-height: 1.55;
+}
+
+/* Prev/Next/Finish nav bar -- paginates `GUIDE_PAGES` (`app.js`'s
+   `buildGuideOverlay`) one section per page instead of one long scroll,
+   same "manageable bite, not a wall of text" shape as a tutorial
+   carousel. `flex: 0 0 auto` so it never gets squeezed by `.guide-modal-
+   body`'s scroll area above it. */
+.guide-modal-footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 24px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 6%, var(--panel));
+}
+
+.guide-page-indicator {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.guide-modal-footer-buttons {
+  display: flex;
+  gap: 8px;
 }
 
 .guide-modal-body h3 {
