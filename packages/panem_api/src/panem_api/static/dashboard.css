@@ -1289,13 +1289,18 @@ table.data-table .stock-empty {
   margin-top: 0;
 }
 
-.guide-modal-body ul {
+.guide-modal-body ul,
+.guide-modal-body ol {
   margin: 0 0 4px;
   padding-left: 20px;
 }
 
 .guide-modal-body li {
   margin-bottom: 3px;
+}
+
+.guide-modal-body p {
+  margin: 0 0 4px;
 }
 
 .guide-modal-body code {

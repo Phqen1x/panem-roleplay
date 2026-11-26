@@ -1131,7 +1131,7 @@ let reactionPollInFlight = false;
 // above -- per-viewer only, never read back by anything but this same
 // browser. Bump the `_v1` suffix if the guide's content changes enough
 // that returning players should see it again automatically.
-const GUIDE_SEEN_STORAGE_KEY = "panem_guide_seen_v1";
+const GUIDE_SEEN_STORAGE_KEY = "panem_guide_seen_v2";
 let guideOverlay = null;
 
 // Plain static HTML (not user-supplied, so no escaping concerns) for the
@@ -1140,37 +1140,57 @@ let guideOverlay = null;
 // hand if a whole new category of command ships, but isn't expected to
 // drift command-by-command the way `/help` would.
 const GUIDE_HTML = `
-  <h3>Getting Started</h3>
+  <h3>Getting started</h3>
+  <ol>
+    <li>Create a character: <code>/character create district:&lt;your district&gt;</code></li>
+    <li>You'll be asked to pick a district, roleplay mode, gender, and other character details
+      (name, age, etc.) -- all changeable later.</li>
+    <li>Once approved by staff, you're in! Use <code>/help</code> any time for a full,
+      always-up-to-date list of commands.</li>
+  </ol>
+  <h3>📍 The basics</h3>
   <ul>
-    <li>No character yet? Run <code>/character create district:&lt;your district&gt;</code> in Discord.</li>
-    <li>The tabs on this screen mirror every Discord command -- use whichever is easier.</li>
+    <li><code>/where</code> -- see where your character currently is</li>
+    <li><code>/time</code> -- check the in-world day and time</li>
+    <li><code>/travel</code> -- move around your district, or board a train to another one</li>
+    <li><code>/resident list</code> -- see the NPCs living in your district</li>
   </ul>
-  <h3>The Basics</h3>
+  <h3>💰 Working &amp; money</h3>
   <ul>
-    <li><strong>Home / Travel</strong> -- see where you are, move around, board trains</li>
-    <li><strong>Work</strong> -- work your currently open shift</li>
-    <li><strong>Market / Inventory</strong> -- buy, sell, and check what you're carrying</li>
-    <li><strong>Housing</strong> -- rent or buy a place to live</li>
+    <li><code>/work</code> -- work your currently open shift</li>
+    <li><code>/market prices</code> -- check what's selling in your district</li>
+    <li><code>/inventory</code> -- see what your character is carrying</li>
+    <li><code>/pay</code> -- send money to another player's character</li>
+    <li><code>/trade</code> -- offer, accept, or cancel a trade with another player</li>
+    <li><code>/housing</code> -- buy, rent, or manage a place to live</li>
   </ul>
-  <h3>Roleplay</h3>
+  <h3>🎭 Roleplay</h3>
   <ul>
-    <li><strong>Scenes</strong>, talking to residents, <strong>Hobbies</strong>, <strong>Social</strong>,
-      <strong>Museum</strong>, <strong>Bulletin</strong>, <strong>Weather</strong>, <strong>Rumors</strong>,
-      and <strong>Events</strong></li>
+    <li><code>/scene start</code> -- kick off a roleplay scene at a location</li>
+    <li><code>/engage</code> -- start or join a group RP with players</li>
+    <li><code>/rp</code> -- enable roleplay mode for your character in a channel</li>
   </ul>
-  <h3>Needs</h3>
+  <h3>🍞 Needs (Simulation mode)</h3>
+  <p>Keep your character alive and well:</p>
   <ul>
-    <li><strong>Vitals</strong> -- eat, drink, heal, rest, and keep your character's needs in check</li>
+    <li><code>/eat</code>, <code>/drink</code>, <code>/heal</code>, <code>/energize</code>,
+      <code>/entertain</code>, <code>/use</code></li>
   </ul>
-  <h3>Crime &amp; Risk</h3>
+  <h3>⚠️ Crime &amp; risk (use with caution!)</h3>
   <ul>
-    <li><strong>Crime</strong> -- steal, burgle, poach, rob shipments, or trade on the black market</li>
-    <li>Caught? The <strong>Jail</strong> tab lets you pay bail or try to pick the lock.</li>
+    <li><code>/steal</code> -- pickpocket a player or NPC</li>
+    <li><code>/burgle</code> -- break into someone's house</li>
+    <li><code>/poach</code> -- poach food at the district outskirts</li>
+    <li><code>/shipment</code> -- rob a contraband shipment</li>
+    <li><code>/blackmarket</code> -- trade illicit goods, if the black market NPC trusts you</li>
+    <li><code>/crimelog</code> -- see your recent crime attempts</li>
+    <li>Caught? <code>/bail</code> pays your way out, or try <code>/lockpick</code> to escape jail yourself.</li>
   </ul>
-  <h3>Need this again?</h3>
-  <ul>
-    <li>Click the <strong>?</strong> button up top any time, or run <code>/help</code> in Discord for the full command list.</li>
-  </ul>
+  <h3>🕹️ The Activity</h3>
+  <p>This server has a full embedded Discord <strong>Activity</strong> -- a 3D map and dashboard
+    mirroring every command above, playable right inside Discord. To launch it: click the apps
+    icon next to the emoji button, find <strong>Panem RPG</strong>, and click "Launch".</p>
+  <p><strong>Need the full command list any time? Just run <code>/help</code>.</strong></p>
 `;
 
 function buildGuideOverlay() {
@@ -1184,7 +1204,7 @@ function buildGuideOverlay() {
     el(
       "div",
       { class: "dossier-header" },
-      el("div", {}, el("div", { class: "dossier-name", text: "Welcome to Panem" })),
+      el("div", {}, el("div", { class: "dossier-name", text: "Panem Roleplay" })),
       closeBtn
     ),
     bodyEl
