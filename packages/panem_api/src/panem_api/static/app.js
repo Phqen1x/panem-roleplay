@@ -1131,7 +1131,7 @@ let reactionPollInFlight = false;
 // above -- per-viewer only, never read back by anything but this same
 // browser. Bump the `_v1` suffix if the guide's content changes enough
 // that returning players should see it again automatically.
-const GUIDE_SEEN_STORAGE_KEY = "panem_guide_seen_v3";
+const GUIDE_SEEN_STORAGE_KEY = "panem_guide_seen_v4";
 let guideOverlay = null;
 
 // Plain static HTML (not user-supplied, so no escaping concerns) for the
@@ -1187,14 +1187,13 @@ const GUIDE_HTML = `
     <li>Caught? <code>/bail</code> pays your way out, or try <code>/lockpick</code> to escape jail yourself.</li>
   </ul>
   <h3>🕹️ The Activity</h3>
-  <p>This server has a full embedded Discord <strong>Activity</strong> -- a 3D map and dashboard
-    mirroring every command above, playable right inside Discord. To launch it: click the apps
-    icon next to the emoji button, find <strong>Panem RPG</strong>, and click "Launch".</p>
-  <h3>🧭 Finding your way around in here</h3>
+  <p>This server has a full embedded Discord <strong>Activity</strong> -- a dashboard mirroring
+    every command above, playable right inside Discord. To launch it: click the apps icon next
+    to the emoji button, find <strong>Panem RPG</strong>, and click "Launch".</p>
+  <h3>🧭 Finding your way around in the activity</h3>
   <ul>
     <li>The <strong>sidebar</strong> (or the bottom dock, on mobile) jumps straight to any tab --
-      Map, Character, Vitals, Work, Market, Travel, Social, Jail, Crime, Housing, Pets, Hobbies,
-      Museum, Weather, Bulletin, Rumors, and Events.</li>
+      Character, Vitals, Work, Market, Travel, Social, Jail, Crime, Housing.</li>
     <li><strong>Home</strong> is your dashboard -- its app grid holds every tab that isn't pinned
       to the dock, plus your recently-opened ones.</li>
     <li>The <strong>character switcher</strong> in the top bar swaps which of your characters
