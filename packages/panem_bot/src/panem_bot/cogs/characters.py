@@ -125,27 +125,48 @@ class CharacterCog(commands.Cog):
     group = app_commands.Group(name="character", description="Manage your characters")
 
     @group.command(name="create", description="Create a new character")
-    @app_commands.describe(district="Which district to create this character in")
+    @app_commands.describe(
+        district="Which district to create this character in",
+        avatar="Upload a faceclaim image -- required unless you give avatar_url instead",
+        avatar_url=(
+            "A working image URL (https, .png/.jpg/.jpeg/.webp/.gif) -- required unless you "
+            "upload avatar instead"
+        ),
+    )
     @app_commands.autocomplete(district=autocomplete.districts)
-    async def create(self, interaction: discord.Interaction, district: int) -> None:
+    async def create(
+        self,
+        interaction: discord.Interaction,
+        district: int,
+        avatar: discord.Attachment | None = None,
+        avatar_url: str | None = None,
+    ) -> None:
         assert interaction.guild is not None
         assert isinstance(interaction.user, discord.Member)
 
+        # `avatar_url`'s reachability check below is a real network round
+        # trip -- well past the 3-second window Discord gives an
+        # un-deferred interaction to produce its first response -- so this
+        # always defers immediately and uses `interaction.followup` for
+        # every reply from here down, including the early-return checks
+        # that used to respond directly before this requirement existed.
+        await interaction.response.defer(ephemeral=True)
+
         if district not in self.bot.content.districts:
-            await interaction.response.send_message(t("invalid_district"), ephemeral=True)
+            await interaction.followup.send(t("invalid_district"), ephemeral=True)
             return
         district_id = district
 
         async with self.bot.db() as session:
             user = await characters_svc.get_or_create_user(session, interaction.user.id)
             if user.banned_at is not None:
-                await interaction.response.send_message(t("banned"), ephemeral=True)
+                await interaction.followup.send(t("banned"), ephemeral=True)
                 return
             if (
                 district_id == constants.CAPITOL_DISTRICT_ID
                 and not characters_svc.is_capitol_authorized(user)
             ):
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     t("capitol_requires_authorization"), ephemeral=True
                 )
                 return
@@ -161,21 +182,62 @@ class CharacterCog(commands.Cog):
                 )
             )
             if int(count.scalar_one()) >= max_characters:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     t("too_many_characters", limit=max_characters), ephemeral=True
                 )
                 return
 
-        await self._prompt_mode(interaction, district_id)
+        # FR-CHR-2: no character without a faceclaim -- exactly one of an
+        # uploaded image or a working URL, checked here (before the wizard
+        # even starts) rather than left to `/character avatar` afterward,
+        # so it's never possible to end up with a pending character that
+        # has none.
+        if avatar is not None and avatar_url is not None:
+            await interaction.followup.send(
+                "Provide either a faceclaim image upload or an image URL, not both.",
+                ephemeral=True,
+            )
+            return
+        if avatar is None and avatar_url is None:
+            await interaction.followup.send(t("avatar_required"), ephemeral=True)
+            return
+        if avatar is not None and (
+            avatar.content_type is None or not avatar.content_type.startswith("image/")
+        ):
+            await interaction.followup.send(t("invalid_avatar_url"), ephemeral=True)
+            return
+        if avatar_url is not None:
+            try:
+                characters_svc.validate_avatar_url(avatar_url)
+            except ValidationFailed as exc:
+                await interaction.followup.send(t(exc.reason_key, **exc.fmt), ephemeral=True)
+                return
+            if not await characters_svc.verify_avatar_url_reachable(avatar_url):
+                await interaction.followup.send(t("avatar_url_unreachable"), ephemeral=True)
+                return
 
-    async def _prompt_mode(self, interaction: discord.Interaction, district_id: int) -> None:
+        await self._prompt_mode(interaction, district_id, avatar, avatar_url)
+
+    async def _prompt_mode(
+        self,
+        interaction: discord.Interaction,
+        district_id: int,
+        avatar: discord.Attachment | None,
+        avatar_url: str | None,
+    ) -> None:
         async def on_mode_chosen(mode_interaction: discord.Interaction, rp_mode: str) -> None:
-            await self._prompt_gender(mode_interaction, district_id, rp_mode)
+            await self._prompt_gender(mode_interaction, district_id, rp_mode, avatar, avatar_url)
 
         mode_lines = "\n".join(
             f"**{mode.title()}** -- {desc}" for mode, desc in RP_MODE_DESCRIPTIONS.items()
         )
-        await interaction.response.send_message(
+        # `create()` already deferred its (only) interaction above -- this
+        # is the first reply to it, so it has to go through `followup`,
+        # not `response.send_message` (which would raise, already
+        # acknowledged). Every step after this one gets a fresh
+        # interaction of its own (the select/modal/button the player just
+        # used), so none of them need this.
+        await interaction.followup.send(
             "**Choose your character's roleplay mode** (changeable later, with a "
             f"{constants.MODE_SWITCH_COOLDOWN_DAYS}-real-day cooldown):\n{mode_lines}",
             view=RpModeSelectView(on_mode_chosen),
@@ -183,12 +245,19 @@ class CharacterCog(commands.Cog):
         )
 
     async def _prompt_gender(
-        self, interaction: discord.Interaction, district_id: int, rp_mode: str
+        self,
+        interaction: discord.Interaction,
+        district_id: int,
+        rp_mode: str,
+        avatar: discord.Attachment | None,
+        avatar_url: str | None,
     ) -> None:
         async def on_gender_chosen(
             gender_interaction: discord.Interaction, gender: str | None
         ) -> None:
-            await self._prompt_details(gender_interaction, district_id, rp_mode, gender)
+            await self._prompt_details(
+                gender_interaction, district_id, rp_mode, gender, avatar, avatar_url
+            )
 
         await interaction.response.send_message(
             "**Choose your character's gender** (changeable later with `/character gender`) -- "
@@ -198,7 +267,13 @@ class CharacterCog(commands.Cog):
         )
 
     async def _prompt_details(
-        self, interaction: discord.Interaction, district_id: int, rp_mode: str, gender: str | None
+        self,
+        interaction: discord.Interaction,
+        district_id: int,
+        rp_mode: str,
+        gender: str | None,
+        avatar: discord.Attachment | None,
+        avatar_url: str | None,
     ) -> None:
         from panem_bot.modals import CharacterDetailsModal
 
@@ -220,6 +295,8 @@ class CharacterCog(commands.Cog):
                 appearance,
                 backstory,
                 job_title,
+                avatar,
+                avatar_url,
             )
 
         max_age = characters_svc.max_age_for_district(district_id)
@@ -242,6 +319,8 @@ class CharacterCog(commands.Cog):
         appearance: str,
         backstory: str,
         job_title: str,
+        avatar: discord.Attachment | None,
+        avatar_url: str | None,
     ) -> None:
         try:
             age = int(age_str)
@@ -290,6 +369,8 @@ class CharacterCog(commands.Cog):
                 None,
                 None,
                 False,
+                avatar,
+                avatar_url,
             )
             return
 
@@ -305,6 +386,8 @@ class CharacterCog(commands.Cog):
                 backstory,
                 job_title,
                 shift_phase,
+                avatar,
+                avatar_url,
             )
 
         await interaction.response.send_message(
@@ -325,6 +408,8 @@ class CharacterCog(commands.Cog):
         backstory: str,
         job_title: str,
         shift_phase: str,
+        avatar: discord.Attachment | None,
+        avatar_url: str | None,
     ) -> None:
         async def on_illicit_chosen(
             illicit_interaction: discord.Interaction, job_is_illicit: bool
@@ -341,6 +426,8 @@ class CharacterCog(commands.Cog):
                 job_title,
                 shift_phase,
                 job_is_illicit,
+                avatar,
+                avatar_url,
             )
 
         await interaction.response.send_message(
@@ -363,7 +450,18 @@ class CharacterCog(commands.Cog):
         job_title: str | None,
         shift_phase: str | None,
         job_is_illicit: bool,
+        avatar: discord.Attachment | None,
+        avatar_url: str | None,
     ) -> None:
+        # An uploaded attachment's own Discord CDN URL already "works" --
+        # Discord is serving it right now -- so it's a fine `avatar_url`
+        # to create the character with immediately; the block below then
+        # tries to upgrade it to a permanent URL exactly the way
+        # `/character avatar`'s own attachment option does (`_persist_
+        # avatar_upload`), without blocking creation on that upgrade
+        # succeeding -- `create()` already confirmed this is one or the
+        # other, never neither.
+        initial_avatar_url = avatar.url if avatar is not None else avatar_url
         async with self.bot.db() as session:
             user = await characters_svc.get_or_create_user(session, interaction.user.id)
             try:
@@ -381,6 +479,7 @@ class CharacterCog(commands.Cog):
                     job_is_illicit=job_is_illicit,
                     max_characters=characters_svc.effective_max_characters(user, self.bot.settings),
                     rp_mode=rp_mode,
+                    avatar_url=initial_avatar_url,
                 )
             except ServiceError as exc:
                 await interaction.response.send_message(
@@ -388,6 +487,21 @@ class CharacterCog(commands.Cog):
                 )
                 return
             character_id = character.id
+
+        if avatar is not None:
+            data = await avatar.read()
+            persisted_url = await self._persist_avatar_upload(
+                character_id=character_id,
+                discord_id=interaction.user.id,
+                data=data,
+                content_type=avatar.content_type or "",
+                filename=avatar.filename,
+            )
+            if persisted_url is not None:
+                async with self.bot.db() as session:
+                    row = await session.get(Character, character_id)
+                    assert row is not None
+                    row.avatar_url = persisted_url
 
         await interaction.response.send_message(t("character_created", name=name), ephemeral=True)
         await self._post_approval_embed(character_id, applicant_discord_id=interaction.user.id)

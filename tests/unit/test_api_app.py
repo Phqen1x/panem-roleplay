@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from panem_api import discord_staff
 from panem_api.app import create_app
+from panem_shared import characters as characters_svc
 from panem_shared import constants, simtime
 from panem_shared.constants import TRANSIT_TICKS
 from panem_shared.content.loader import ContentBundle
@@ -2307,6 +2308,21 @@ class TestDashboardThemeAssignment:
 
 
 class TestDashboardCharacters:
+    # FR-CHR-2: `create_character` now refuses a character with no
+    # `avatar_url` at all, and `create_my_character` verifies an external
+    # one is actually reachable before ever calling it -- every test
+    # below that creates a character needs a non-empty `avatar_url` in
+    # its payload, and this autouse mock keeps that reachability check
+    # from making a real network call (there's no "self_hosted" exemption
+    # here since `work_app` doesn't set `activity_public_url`). Tests that
+    # specifically exercise the avatar requirement itself override this
+    # per-test (`test_create_rejects_missing_avatar_url`, `..._an_unreachable_avatar_url`).
+    @pytest.fixture(autouse=True)
+    def _avatar_url_always_reachable(self, monkeypatch):
+        monkeypatch.setattr(
+            characters_svc, "verify_avatar_url_reachable", AsyncMock(return_value=True)
+        )
+
     async def test_create_503s_when_not_configured(self):
         app = create_app(content=make_content_with_job(), redis_client=FakeRedis())
         transport = httpx.ASGITransport(app=app)
@@ -2320,9 +2336,46 @@ class TestDashboardCharacters:
                     "age": 15,
                     "job_title": "Miner",
                     "shift_phase": "morning",
+                    "avatar_url": "https://example.com/pic.png",
                 },
             )
         assert response.status_code == 503
+
+    async def test_create_rejects_missing_avatar_url(self, work_app):
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/activity/dashboard/characters",
+                json={
+                    "discord_id": 1,
+                    "district_id": 1,
+                    "name": "Wren",
+                    "age": 15,
+                    "job_title": "Miner",
+                    "shift_phase": "morning",
+                },
+            )
+        assert response.status_code == 400
+
+    async def test_create_rejects_an_unreachable_avatar_url(self, work_app, monkeypatch):
+        monkeypatch.setattr(
+            characters_svc, "verify_avatar_url_reachable", AsyncMock(return_value=False)
+        )
+        transport = httpx.ASGITransport(app=work_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/activity/dashboard/characters",
+                json={
+                    "discord_id": 1,
+                    "district_id": 1,
+                    "name": "Wren",
+                    "age": 15,
+                    "job_title": "Miner",
+                    "shift_phase": "morning",
+                    "avatar_url": "https://example.com/dead-link.png",
+                },
+            )
+        assert response.status_code == 400
 
     async def test_create_rejects_an_unknown_district(self, work_app):
         transport = httpx.ASGITransport(app=work_app)
@@ -2336,6 +2389,7 @@ class TestDashboardCharacters:
                     "age": 15,
                     "job_title": "Miner",
                     "shift_phase": "morning",
+                    "avatar_url": "https://example.com/pic.png",
                 },
             )
         assert response.status_code == 400
@@ -2351,6 +2405,7 @@ class TestDashboardCharacters:
                     "name": "Plutarch",
                     "age": 45,
                     "rp_mode": "story",
+                    "avatar_url": "https://example.com/pic.png",
                 },
             )
         assert response.status_code == 403
@@ -2369,6 +2424,7 @@ class TestDashboardCharacters:
                     "name": "Plutarch",
                     "age": 45,
                     "rp_mode": "story",
+                    "avatar_url": "https://example.com/pic.png",
                 },
             )
         assert response.status_code == 200
@@ -2386,6 +2442,7 @@ class TestDashboardCharacters:
                     "age": 15,
                     "job_title": "Miner",
                     "shift_phase": "midnight",
+                    "avatar_url": "https://example.com/pic.png",
                 },
             )
         assert response.status_code == 400
@@ -2403,6 +2460,7 @@ class TestDashboardCharacters:
                     "job_title": "Miner",
                     "shift_phase": "morning",
                     "rp_mode": "not-a-real-mode",
+                    "avatar_url": "https://example.com/pic.png",
                 },
             )
         assert response.status_code == 400
@@ -2418,6 +2476,7 @@ class TestDashboardCharacters:
                     "name": "Wren",
                     "age": 15,
                     "rp_mode": "story",
+                    "avatar_url": "https://example.com/pic.png",
                 },
             )
         assert response.status_code == 200
@@ -2440,6 +2499,7 @@ class TestDashboardCharacters:
                     "age": 15,
                     "job_title": "Miner",
                     "shift_phase": "morning",
+                    "avatar_url": "https://example.com/pic.png",
                 },
             )
         assert response.status_code == 200
@@ -2463,6 +2523,7 @@ class TestDashboardCharacters:
                     "age": 15,
                     "job_title": "Miner",
                     "shift_phase": "morning",
+                    "avatar_url": "https://example.com/pic.png",
                 },
             )
         assert response.status_code == 400
@@ -2676,6 +2737,7 @@ class TestDashboardCharacters:
                     "age": 15,
                     "job_title": "Miner",
                     "shift_phase": "morning",
+                    "avatar_url": "https://example.com/pic.png",
                     "appearance_layers": {str(category_id): option_id},
                 },
             )
@@ -2696,6 +2758,7 @@ class TestDashboardCharacters:
                     "age": 15,
                     "job_title": "Baker",
                     "shift_phase": "morning",
+                    "avatar_url": "https://example.com/pic.png",
                 },
             )
         assert response.status_code == 200
@@ -2713,6 +2776,7 @@ class TestDashboardCharacters:
                     "age": 15,
                     "job_title": "Baker",
                     "shift_phase": "morning",
+                    "avatar_url": "https://example.com/pic.png",
                     "appearance_layers": {"999": 999},
                 },
             )

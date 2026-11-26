@@ -951,6 +951,26 @@ def build_characters_router(
         is_story = body.rp_mode == RpMode.STORY.value
         if not is_story and body.shift_phase not in {phase.value for phase in DayPhase}:
             raise HTTPException(status_code=400, detail="Invalid shift phase")
+        # FR-CHR-2: a faceclaim is mandatory. A missing/blank avatar_url is
+        # left for `create_character` itself to refuse (`avatar_required`,
+        # checked below) -- but *this* is the only place that can check an
+        # external URL actually loads, since the service layer has no
+        # network access. Skipped for a URL our own `/avatar-upload`
+        # endpoint just produced (`self_hosted`) -- we already validated
+        # its content type when writing that file, and fetching our own
+        # just-saved URL back over the network would be pure overhead (and
+        # fragile if this container can't reach its own public hostname).
+        self_hosted = (
+            bool(activity_public_url)
+            and body.avatar_url is not None
+            and body.avatar_url.startswith(activity_public_url)
+        )
+        if (
+            body.avatar_url
+            and not self_hosted
+            and not await characters_svc.verify_avatar_url_reachable(body.avatar_url)
+        ):
+            raise HTTPException(status_code=400, detail=error_message("avatar_url_unreachable"))
         async with session_scope(factory) as session:
             user = await characters_svc.get_or_create_user(session, body.discord_id)
             if (

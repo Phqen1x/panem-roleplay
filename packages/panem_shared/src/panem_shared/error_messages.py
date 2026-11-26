@@ -55,6 +55,11 @@ ERROR_MESSAGES: dict[str, str] = {
         "Avatar must be an https image URL ending in .png, .jpg, .jpeg, .webp, or .gif "
         "(512 characters max)."
     ),
+    "avatar_required": "Upload a faceclaim image, or provide an image URL that works, to create a character.",
+    "avatar_url_unreachable": (
+        "That image URL doesn't load right now -- double check the link, or upload the image "
+        "instead."
+    ),
     "invalid_proxy_tag": "Tag must be 1-12 characters and can't start with / or ((.",
     "proxy_tag_taken": "You're already using that tag for another character.",
     "invalid_rp_mode": "Not a valid RP mode.",

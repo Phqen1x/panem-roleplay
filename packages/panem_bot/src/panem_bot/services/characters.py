@@ -55,3 +55,6 @@ from panem_shared.characters import (
 from panem_shared.characters import (
     validate_proxy_tag as validate_proxy_tag,
 )
+from panem_shared.characters import (
+    verify_avatar_url_reachable as verify_avatar_url_reachable,
+)
