@@ -66,7 +66,9 @@ def cog(bot: FakeBot) -> CharacterCog:
     return cog
 
 
-async def _seed_character(db_session, *, approval_notified_at: dt.datetime | None) -> Character:
+async def _seed_character(
+    db_session, *, approval_notified_at: dt.datetime | None, avatar_url: str | None = None
+) -> Character:
     user = User(discord_id=42)
     db_session.add(user)
     await db_session.flush()
@@ -78,6 +80,7 @@ async def _seed_character(db_session, *, approval_notified_at: dt.datetime | Non
         age=20,
         status=CharacterStatus.PENDING.value,
         approval_notified_at=approval_notified_at,
+        avatar_url=avatar_url,
     )
     db_session.add(character)
     await db_session.flush()
@@ -114,6 +117,32 @@ class TestPostApprovalEmbedIdempotency:
         character = await _seed_character(db_session, approval_notified_at=None)
 
         await cog._post_approval_embed(character.id, applicant_discord_id=42)  # no raise
+
+    async def test_posts_the_faceclaim_as_the_embeds_image(
+        self, db_session, bot: FakeBot, cog: CharacterCog
+    ):
+        # `set_image` (full-width, below the fields), not `set_thumbnail`
+        # (a small corner icon) -- staff reviewing a faceclaim need to
+        # actually see it, not just notice one is attached.
+        character = await _seed_character(
+            db_session, approval_notified_at=None, avatar_url="https://example.com/avatar.png"
+        )
+
+        await cog._post_approval_embed(character.id, applicant_discord_id=42)
+
+        embed = bot.channel.send.await_args.kwargs["embed"]
+        assert embed.image.url == "https://example.com/avatar.png"
+        assert embed.thumbnail.url is None
+
+    async def test_no_image_when_character_has_no_avatar_url(
+        self, db_session, bot: FakeBot, cog: CharacterCog
+    ):
+        character = await _seed_character(db_session, approval_notified_at=None, avatar_url=None)
+
+        await cog._post_approval_embed(character.id, applicant_discord_id=42)
+
+        embed = bot.channel.send.await_args.kwargs["embed"]
+        assert embed.image.url is None
 
 
 class TestHandleEditSubmit:

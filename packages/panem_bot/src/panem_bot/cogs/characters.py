@@ -545,7 +545,11 @@ class CharacterCog(commands.Cog):
                 name="Backstory", value=_field_value(character.backstory or "-"), inline=False
             )
             if character.avatar_url:
-                embed.set_thumbnail(url=character.avatar_url)
+                # `set_image` (full-width, below the fields) rather than
+                # `set_thumbnail` (a small corner icon) -- staff approving
+                # a faceclaim need to actually see it clearly, not just
+                # notice it's there.
+                embed.set_image(url=character.avatar_url)
             embed.set_footer(text=f"{CHAR_ID_FOOTER_PREFIX}{character.id}")
             character.approval_notified_at = dt.datetime.now(dt.UTC)
 
