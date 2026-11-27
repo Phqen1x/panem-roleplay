@@ -1196,6 +1196,9 @@ table.data-table .stock-empty {
   border-radius: 12px;
   width: 90%;
   max-width: 520px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   transform: translateY(20px);
   transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
@@ -1203,6 +1206,20 @@ table.data-table .stock-empty {
 
 .modal-overlay.open .dossier-card {
   transform: translateY(0);
+}
+
+/* `.dossier-header` stays put; the view/edit bodies below it (long
+   backstories, or the profile-edit form's full field set) scroll
+   within the card instead of pushing it past the viewport -- same
+   fixed-header/scrolling-body split as `.guide-modal-card`. */
+.dossier-card .dossier-header {
+  flex: 0 0 auto;
+}
+
+.dossier-card .dossier-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 /* Reaction-event pop-up (`panem_shared.reactions`, `app.js`'s own global

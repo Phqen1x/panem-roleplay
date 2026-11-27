@@ -7,7 +7,15 @@ framing or `/character status`'s live gameplay stats).
 
 from __future__ import annotations
 
-from panem_bot.cogs.characters import _build_profile_embed, _job_value
+import discord
+
+from panem_bot.cogs.characters import (
+    _add_long_field,
+    _build_character_embed,
+    _build_profile_embed,
+    _diff_field_value,
+    _job_value,
+)
 from panem_shared.db.models import Character
 
 
@@ -89,3 +97,51 @@ class TestBuildProfileEmbed:
         embed = _build_profile_embed(character, district_name="District 12")
         field_values = {field.name: field.value for field in embed.fields}
         assert field_values["Occupation"] == "None (Story mode)"
+
+    def test_long_backstory_splits_across_fields_instead_of_truncating(self):
+        backstory = "Won the 74th Hunger Games. " * 60  # well past 1024 chars
+        character = make_character(backstory=backstory)
+        embed = _build_profile_embed(character, district_name="District 12")
+        chunks = [field.value for field in embed.fields if field.name.startswith("Backstory")]
+        assert len(chunks) > 1
+        assert all(len(chunk) <= 1024 for chunk in chunks)
+        assert " ".join(chunks).strip() == backstory.strip()
+
+
+class TestBuildCharacterEmbed:
+    def test_long_backstory_splits_across_fields_instead_of_truncating(self):
+        backstory = "Volunteered as tribute for her sister. " * 50
+        character = make_character(backstory=backstory)
+        embed = _build_character_embed(character, district_name="District 12", applicant_discord_id=1)
+        chunks = [field.value for field in embed.fields if field.name.startswith("Backstory")]
+        assert len(chunks) > 1
+        assert all(len(chunk) <= 1024 for chunk in chunks)
+        assert " ".join(chunks).strip() == backstory.strip()
+
+
+class TestAddLongField:
+    def test_short_value_is_a_single_field(self):
+        embed = discord.Embed()
+        _add_long_field(embed, "Backstory", "Short and sweet.")
+        assert [f.name for f in embed.fields] == ["Backstory"]
+        assert embed.fields[0].value == "Short and sweet."
+
+    def test_long_value_is_labelled_continued_on_later_fields(self):
+        embed = discord.Embed()
+        _add_long_field(embed, "Backstory", "word " * 400)
+        names = [f.name for f in embed.fields]
+        assert names[0] == "Backstory"
+        assert all(name == "Backstory (cont.)" for name in names[1:])
+        assert all(len(f.value) <= 1024 for f in embed.fields)
+
+
+class TestDiffFieldValue:
+    def test_short_values_pass_through_unchanged(self):
+        value = _diff_field_value("Baker", "Blacksmith")
+        assert value == "**Before:** Baker\n**After:** Blacksmith"
+
+    def test_long_values_are_truncated_so_the_field_stays_under_the_limit(self):
+        before = "Grew up in the Seam. " * 80
+        after = "Moved to the Victor's Village. " * 80
+        value = _diff_field_value(before, after)
+        assert len(value) <= 1024

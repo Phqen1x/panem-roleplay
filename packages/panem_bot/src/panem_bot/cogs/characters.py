@@ -64,12 +64,56 @@ sink to the bottom of the list (`_render_character_list`) and can be
 filtered out entirely with `CharacterListView`'s toggle."""
 
 
-def _field_value(text: str) -> str:
-    """Backstory allows more characters than a Discord embed field value
-    does (1024) -- truncate rather than let `channel.send` raise."""
-    if len(text) <= EMBED_FIELD_VALUE_LIMIT:
+def _field_value(text: str, limit: int = EMBED_FIELD_VALUE_LIMIT) -> str:
+    """Truncates `text` to `limit` characters rather than let
+    `channel.send` raise over Discord's 1024-char field-value cap. Used
+    where a field is inherently short (a rejection reason) or where
+    losing the tail is acceptable; `_add_long_field` below is preferred
+    for backstory, which allows more characters (1500) than a single
+    field can hold and shouldn't be cut off."""
+    if len(text) <= limit:
         return text
-    return text[: EMBED_FIELD_VALUE_LIMIT - 1] + "…"
+    return text[: limit - 1] + "…"
+
+
+def _chunk_text(text: str, limit: int) -> list[str]:
+    """Splits `text` into pieces of at most `limit` characters, breaking
+    on a space where possible so words aren't cut mid-way."""
+    if len(text) <= limit:
+        return [text]
+    chunks: list[str] = []
+    remaining = text
+    while len(remaining) > limit:
+        split_at = remaining.rfind(" ", 0, limit)
+        if split_at <= 0:
+            split_at = limit
+        chunks.append(remaining[:split_at].rstrip())
+        remaining = remaining[split_at:].lstrip()
+    if remaining:
+        chunks.append(remaining)
+    return chunks
+
+
+def _add_long_field(embed: discord.Embed, name: str, value: str) -> None:
+    """Adds `value` as one or more `inline=False` fields instead of one
+    -- a backstory (up to 1500 chars) can run past Discord's 1024-char
+    field-value cap, and truncating it would silently drop content the
+    applicant and staff both need to see. Further chunks are labelled
+    "{name} (cont.)"."""
+    for index, chunk in enumerate(_chunk_text(value, EMBED_FIELD_VALUE_LIMIT)):
+        label = name if index == 0 else f"{name} (cont.)"
+        embed.add_field(name=label, value=chunk, inline=False)
+
+
+def _diff_field_value(before: str, after: str) -> str:
+    """Formats a profile-edit diff field's value, truncating each side
+    so the combined "**Before:** ...\\n**After:** ..." string can't push
+    past Discord's 1024-char field-value cap -- backstory allows up to
+    1500 chars on each side, which would otherwise make the whole embed
+    fail to send."""
+    overhead = len("**Before:** ") + len("\n**After:** ")
+    budget = max((EMBED_FIELD_VALUE_LIMIT - overhead) // 2, 1)
+    return f"**Before:** {_field_value(before, budget)}\n**After:** {_field_value(after, budget)}"
 
 
 def _job_value(character: Character, *, desired: bool) -> str:
@@ -102,7 +146,7 @@ def _build_character_embed(
     embed.add_field(name="RP Mode", value=character.rp_mode.title(), inline=True)
     embed.add_field(name="Desired Job", value=_job_value(character, desired=True), inline=True)
     embed.add_field(name="Appearance", value=character.appearance or "-", inline=False)
-    embed.add_field(name="Backstory", value=_field_value(character.backstory or "-"), inline=False)
+    _add_long_field(embed, "Backstory", character.backstory or "-")
     if character.avatar_url:
         # `set_image` (full-width, below the fields) rather than
         # `set_thumbnail` (a small corner icon) -- both audiences (staff
@@ -129,7 +173,7 @@ def _build_profile_embed(character: Character, *, district_name: str) -> discord
     embed.add_field(name="RP Mode", value=character.rp_mode.title(), inline=True)
     embed.add_field(name="Occupation", value=_job_value(character, desired=False), inline=True)
     embed.add_field(name="Appearance", value=character.appearance or "-", inline=False)
-    embed.add_field(name="Backstory", value=_field_value(character.backstory or "-"), inline=False)
+    _add_long_field(embed, "Backstory", character.backstory or "-")
     if character.avatar_url:
         embed.set_image(url=character.avatar_url)
     embed.set_footer(text=f"{CHAR_ID_FOOTER_PREFIX}{character.id}")
@@ -1015,9 +1059,7 @@ class CharacterCog(commands.Cog):
             log_embed.add_field(
                 name="Appearance", value=_field_value(character.appearance or "-"), inline=False
             )
-            log_embed.add_field(
-                name="Backstory", value=_field_value(character.backstory or "-"), inline=False
-            )
+            _add_long_field(log_embed, "Backstory", character.backstory or "-")
             log_embed.add_field(name="Rejected by", value=interaction.user.mention, inline=True)
             log_embed.add_field(name="Reason", value=_field_value(reason or "-"), inline=True)
 
@@ -2059,7 +2101,7 @@ class CharacterCog(commands.Cog):
             )
             embed.add_field(name="Applicant", value=f"<@{applicant_discord_id}>", inline=False)
             for label, before, after in diff:
-                embed.add_field(name=label, value=f"**Before:** {before}\n**After:** {after}", inline=False)
+                embed.add_field(name=label, value=_diff_field_value(before, after), inline=False)
             if character.pending_profile_avatar_url != character.avatar_url:
                 embed.set_image(url=character.pending_profile_avatar_url)
             embed.set_footer(text=f"{CHAR_ID_FOOTER_PREFIX}{character.id}")
