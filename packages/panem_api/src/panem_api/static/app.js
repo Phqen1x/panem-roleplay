@@ -698,11 +698,15 @@ function updateProfileButtonAvatar(character) {
   if (url) {
     profileButtonAvatarEl.src = url;
     profileButtonAvatarEl.hidden = false;
-    if (profileButtonPlaceholderEl) profileButtonPlaceholderEl.hidden = true;
+    // `renderIcon()` sets this SVG's `display` as an inline style, which
+    // beats the `[hidden]` UA rule -- plain `.hidden = true` has no visual
+    // effect on it, so the glyph stays showing behind/over the avatar
+    // photo. Toggle the same inline style it was created with instead.
+    if (profileButtonPlaceholderEl) profileButtonPlaceholderEl.style.display = "none";
   } else {
     profileButtonAvatarEl.hidden = true;
     profileButtonAvatarEl.removeAttribute("src");
-    if (profileButtonPlaceholderEl) profileButtonPlaceholderEl.hidden = false;
+    if (profileButtonPlaceholderEl) profileButtonPlaceholderEl.style.display = "inline-block";
   }
 }
 
