@@ -1436,11 +1436,17 @@ function buildProfileOverlay() {
   async function uploadSelectedImage() {
     const file = chosenFile || (avatarFileInput.files && avatarFileInput.files[0]);
     if (!file) return null;
+    const discordId = getDiscordId();
+    if (!discordId) {
+      avatarUploadResult.className = "result-line lose";
+      avatarUploadResult.textContent = "Enter a Discord ID above before uploading a picture.";
+      return null;
+    }
     avatarUploadBtn.disabled = true;
     avatarUploadResult.className = "result-line";
     avatarUploadResult.textContent = "Uploading…";
     const formData = new FormData();
-    formData.append("discord_id", String(getDiscordId()));
+    formData.append("discord_id", String(discordId));
     formData.append("file", file);
     try {
       const res = await fetchJson("/activity/dashboard/characters/avatar-upload", {

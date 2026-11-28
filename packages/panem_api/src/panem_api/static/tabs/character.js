@@ -291,11 +291,17 @@ function characterCard(ctx, character, catalog, { onChanged }) {
       avatarUploadResult.textContent = "Choose a file first.";
       return;
     }
+    const discordId = ctx.discordId();
+    if (!discordId) {
+      avatarUploadResult.className = "result-line lose";
+      avatarUploadResult.textContent = "Enter a Discord ID above before uploading a picture.";
+      return;
+    }
     avatarUploadBtn.disabled = true;
     avatarUploadResult.className = "result-line";
     avatarUploadResult.textContent = "Uploading…";
     const formData = new FormData();
-    formData.append("discord_id", String(ctx.discordId()));
+    formData.append("discord_id", String(discordId));
     formData.append("file", file);
     try {
       const updated = await ctx.apiFetch(
@@ -479,11 +485,17 @@ function createForm(ctx, catalog, { onCreated }) {
   async function uploadSelectedImage() {
     const file = chosenFile || (avatarFileInput.files && avatarFileInput.files[0]);
     if (!file) return null;
+    const discordId = ctx.discordId();
+    if (!discordId) {
+      avatarUploadResult.className = "result-line lose";
+      avatarUploadResult.textContent = "Enter a Discord ID above before uploading a picture.";
+      return null;
+    }
     avatarUploadBtn.disabled = true;
     avatarUploadResult.className = "result-line";
     avatarUploadResult.textContent = "Uploading…";
     const formData = new FormData();
-    formData.append("discord_id", String(ctx.discordId()));
+    formData.append("discord_id", String(discordId));
     formData.append("file", file);
     try {
       const res = await ctx.apiFetch("/activity/dashboard/characters/avatar-upload", {
