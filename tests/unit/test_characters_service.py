@@ -182,6 +182,7 @@ class TestCreateCharacter:
             job_title="Miner",
             shift_phase="morning",
             max_characters=3,
+            avatar_url="https://example.com/avatar.png",
         )
         assert character.status == CharacterStatus.PENDING.value
         assert character.job_title == "Miner"
@@ -202,6 +203,7 @@ class TestCreateCharacter:
             job_title="Miner",
             shift_phase="morning",
             max_characters=3,
+            avatar_url="https://example.com/avatar.png",
             gender="female",
         )
         assert character.gender == "female"
@@ -220,6 +222,7 @@ class TestCreateCharacter:
                 job_title="Miner",
                 shift_phase="morning",
                 max_characters=3,
+                avatar_url="https://example.com/avatar.png",
                 gender="not-a-real-gender",
             )
 
@@ -236,6 +239,7 @@ class TestCreateCharacter:
             job_title="Hob Trader",
             shift_phase="night",
             max_characters=3,
+            avatar_url="https://example.com/avatar.png",
             job_is_illicit=True,
         )
         assert character.job_is_illicit is True
@@ -255,6 +259,7 @@ class TestCreateCharacter:
                 job_title="Baker",
                 shift_phase="morning",
                 max_characters=3,
+                avatar_url="https://example.com/avatar.png",
             )
 
     async def test_limit_reached(self, db_session):
@@ -271,6 +276,7 @@ class TestCreateCharacter:
                 job_title="Baker",
                 shift_phase="morning",
                 max_characters=3,
+                avatar_url="https://example.com/avatar.png",
             )
         with pytest.raises(LimitReached):
             await characters_svc.create_character(
@@ -284,6 +290,7 @@ class TestCreateCharacter:
                 job_title="Baker",
                 shift_phase="morning",
                 max_characters=3,
+                avatar_url="https://example.com/avatar.png",
             )
 
     async def test_invalid_fields_raise_before_insert(self, db_session):
@@ -300,6 +307,7 @@ class TestCreateCharacter:
                 job_title="Baker",
                 shift_phase="morning",
                 max_characters=3,
+                avatar_url="https://example.com/avatar.png",
             )
 
     async def test_avatar_url_is_stored_when_provided(self, db_session):
@@ -319,21 +327,38 @@ class TestCreateCharacter:
         )
         assert character.avatar_url == "https://example.com/avatar.png"
 
-    async def test_no_avatar_url_leaves_it_unset(self, db_session):
+    async def test_missing_avatar_url_is_refused(self, db_session):
         user = await make_user(db_session)
-        character = await characters_svc.create_character(
-            db_session,
-            user=user,
-            district_id=12,
-            name="Katniss",
-            age=16,
-            appearance="",
-            backstory="",
-            job_title="Baker",
-            shift_phase="morning",
-            max_characters=3,
-        )
-        assert character.avatar_url is None
+        with pytest.raises(ValidationFailed):
+            await characters_svc.create_character(
+                db_session,
+                user=user,
+                district_id=12,
+                name="Katniss",
+                age=16,
+                appearance="",
+                backstory="",
+                job_title="Baker",
+                shift_phase="morning",
+                max_characters=3,
+            )
+
+    async def test_blank_avatar_url_is_refused(self, db_session):
+        user = await make_user(db_session)
+        with pytest.raises(ValidationFailed):
+            await characters_svc.create_character(
+                db_session,
+                user=user,
+                district_id=12,
+                name="Katniss",
+                age=16,
+                appearance="",
+                backstory="",
+                job_title="Baker",
+                shift_phase="morning",
+                max_characters=3,
+                avatar_url="",
+            )
 
     async def test_invalid_avatar_url_raises_before_insert(self, db_session):
         user = await make_user(db_session)
@@ -365,6 +390,7 @@ class TestCreateCharacter:
             job_title="Baker",
             shift_phase="morning",
             max_characters=3,
+            avatar_url="https://example.com/avatar.png",
         )
         assert character.rp_mode == RpMode.SIMULATION.value
 
@@ -382,6 +408,7 @@ class TestCreateCharacter:
             shift_phase="morning",
             job_is_illicit=True,
             max_characters=3,
+            avatar_url="https://example.com/avatar.png",
             rp_mode=RpMode.STORY.value,
         )
         assert character.rp_mode == RpMode.STORY.value
@@ -402,6 +429,7 @@ class TestCreateCharacter:
             job_title=None,
             shift_phase=None,
             max_characters=3,
+            avatar_url="https://example.com/avatar.png",
             rp_mode=RpMode.STORY.value,
         )
         assert character.job_title is None
@@ -421,6 +449,7 @@ class TestCreateCharacter:
                 job_title=None,
                 shift_phase=None,
                 max_characters=3,
+                avatar_url="https://example.com/avatar.png",
                 rp_mode=RpMode.LIFE.value,
             )
         assert exc_info.value.reason_key == "job_required"
@@ -439,6 +468,7 @@ class TestCreateCharacter:
                 job_title="Baker",
                 shift_phase="morning",
                 max_characters=3,
+                avatar_url="https://example.com/avatar.png",
                 rp_mode="not-a-real-mode",
             )
         assert exc_info.value.reason_key == "invalid_rp_mode"
@@ -458,6 +488,7 @@ class TestNameUniqueness:
             job_title="Baker",
             shift_phase="morning",
             max_characters=3,
+            avatar_url="https://example.com/avatar.png",
         )
         with pytest.raises(ValidationFailed):
             await characters_svc.create_character(
@@ -471,6 +502,7 @@ class TestNameUniqueness:
                 job_title="Baker",
                 shift_phase="morning",
                 max_characters=3,
+                avatar_url="https://example.com/avatar.png",
             )
 
     async def test_duplicate_name_different_user_refused(self, db_session):
@@ -487,6 +519,7 @@ class TestNameUniqueness:
             job_title="Baker",
             shift_phase="morning",
             max_characters=3,
+            avatar_url="https://example.com/avatar.png",
         )
         with pytest.raises(ValidationFailed):
             await characters_svc.create_character(
@@ -500,6 +533,7 @@ class TestNameUniqueness:
                 job_title="Baker",
                 shift_phase="morning",
                 max_characters=3,
+                avatar_url="https://example.com/avatar.png",
             )
 
     async def test_duplicate_name_case_insensitive(self, db_session):
@@ -515,6 +549,7 @@ class TestNameUniqueness:
             job_title="Baker",
             shift_phase="morning",
             max_characters=3,
+            avatar_url="https://example.com/avatar.png",
         )
         with pytest.raises(ValidationFailed):
             await characters_svc.create_character(
@@ -528,6 +563,7 @@ class TestNameUniqueness:
                 job_title="Baker",
                 shift_phase="morning",
                 max_characters=3,
+                avatar_url="https://example.com/avatar.png",
             )
 
     async def test_rejected_characters_name_is_reusable(self, db_session):
@@ -544,6 +580,7 @@ class TestNameUniqueness:
             job_title="Baker",
             shift_phase="morning",
             max_characters=3,
+            avatar_url="https://example.com/avatar.png",
         )
         characters_svc.reject_character(rejected)
         # The real /character reject flow logs the application to Discord and
@@ -563,6 +600,7 @@ class TestNameUniqueness:
             job_title="Baker",
             shift_phase="morning",
             max_characters=3,
+            avatar_url="https://example.com/avatar.png",
         )
         assert character.name == "Katniss"
 
@@ -579,6 +617,7 @@ class TestNameUniqueness:
             job_title="Baker",
             shift_phase="morning",
             max_characters=3,
+            avatar_url="https://example.com/avatar.png",
         )
         # Renaming a character to its own current name must not self-conflict.
         await characters_svc.ensure_name_available(
@@ -601,6 +640,7 @@ class TestApproveCharacter:
             job_title="Miner",
             shift_phase="morning",
             max_characters=3,
+            avatar_url="https://example.com/avatar.png",
         )
         await characters_svc.approve_character(db_session, character, district=district)
         assert character.status == CharacterStatus.APPROVED.value
@@ -623,6 +663,7 @@ class TestApproveCharacter:
             job_title="Baker",
             shift_phase="morning",
             max_characters=3,
+            avatar_url="https://example.com/avatar.png",
         )
         await characters_svc.approve_character(db_session, character, district=district)
         with pytest.raises(NotAllowed):
@@ -651,6 +692,7 @@ class TestApproveCharacter:
             job_title="Barkeep",
             shift_phase="evening",
             max_characters=3,
+            avatar_url="https://example.com/avatar.png",
         )
         await characters_svc.approve_character(db_session, character, district=district)
         assert character.status == CharacterStatus.APPROVED.value
@@ -683,6 +725,7 @@ class TestRetireCharacter:
             job_title="Miner",
             shift_phase="morning",
             max_characters=3,
+            avatar_url="https://example.com/avatar.png",
         )
         await characters_svc.approve_character(db_session, character, district=district)
         await characters_svc.retire_character(db_session, character)
@@ -703,6 +746,7 @@ class TestRetireCharacter:
             job_title="Baker",
             shift_phase="morning",
             max_characters=3,
+            avatar_url="https://example.com/avatar.png",
         )
         with pytest.raises(NotAllowed):
             await characters_svc.retire_character(db_session, character)
@@ -723,6 +767,7 @@ class TestRejectAndRequestChanges:
             job_title="Baker",
             shift_phase="morning",
             max_characters=3,
+            avatar_url="https://example.com/avatar.png",
         )
         await characters_svc.approve_character(db_session, character, district=district)
         with pytest.raises(NotAllowed):

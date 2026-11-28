@@ -423,6 +423,41 @@ class Character(TimestampMixin, Base):
     pending_mode_switch_notified_at: Mapped[dt.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    pending_profile_name: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    """Set by `panem_shared.profile_edits.stage_profile_edit` when `/profile
+    edit` submits a change to any of name/age/gender/appearance/backstory/
+    job_title/avatar_url for staff sign-off -- same "staged, never touching
+    the real columns until approved" shape as `pending_rp_mode` above, just
+    for the submission-content fields instead of RP mode. `None` means no
+    edit is awaiting approval; checked (not any of the other `pending_
+    profile_*` columns) as the one sentinel for "is an edit pending",
+    exactly how `pending_rp_mode` is the sentinel for its own group --
+    `name` is always required/non-empty for a real edit, submitted or not.
+    `profile_edits.apply_staged_profile_edit` copies every staged field
+    below over the real ones (and clears all of them, including this one)
+    on approval; `discard_staged_profile_edit` just clears them on decline.
+    Posted synchronously at submission time (the approval channel is
+    always reachable from the same interaction that staged this, unlike a
+    dashboard-created application with no bot token of its own) -- there's
+    no announce-reliability poll/notified-at column pairing this the way
+    `approval_notified_at`/`pending_mode_switch_notified_at` have one."""
+    pending_profile_age: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    pending_profile_gender: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    pending_profile_appearance: Mapped[str | None] = mapped_column(String(400), nullable=True)
+    pending_profile_backstory: Mapped[str | None] = mapped_column(String(1500), nullable=True)
+    pending_profile_job_title: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    pending_profile_avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    pending_profile_edit_notified_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    """Same idempotency purpose as `pending_mode_switch_notified_at` --
+    `/profile edit` in Discord posts its own staff embed synchronously
+    and stamps this immediately (it already has a live interaction to
+    post from), so this only matters for an edit the Activity's dashboard
+    staged (`panem_api.dashboard_routes`, no bot token of its own):
+    `CharacterCog._announce_pending_profile_edits`'s poll, or the instant
+    listener on `CHARACTER_PROFILE_EDIT_PENDING_CHANNEL`, picks it up from
+    here."""
     """Same idempotency purpose as `approval_notified_at` above, kept as its
     own column rather than shared: a mode-switch request and a fresh
     application are always mutually exclusive (switching modes requires

@@ -23,7 +23,7 @@
 // every other dashboard endpoint re-validating discord_id+character_id
 // together) -- there's still no cryptographic auth here, same documented
 // gap as the rest of this process.
-import { fetchJson, el, renderTabIcon } from "./tabs/_shared.js?v=13";
+import { fetchJson, el, renderTabIcon, renderIcon, dropdown } from "./tabs/_shared.js?v=13";
 import { mountThemePicker } from "./theme_picker.js?v=4";
 import { initClickSFX } from "./click_sfx.js?v=53";
 import { mountSoundPicker } from "./sound_picker.js?v=53";
@@ -91,7 +91,7 @@ async function openExternalLink(url) {
 
 // Bumped whenever any file under tabs/ changes -- matches work.js's/
 // crime.js's own single-constant-for-a-whole-module-group convention.
-const ASSET_VERSION = "67";
+const ASSET_VERSION = "70";
 
 // District names mapping for Capitol and Districts 1-12
 const DISTRICT_NAMES = {
@@ -235,6 +235,8 @@ const themePickerEl = document.getElementById("theme-picker");
 const worldClockTimeEl = document.getElementById("world-clock-time");
 const worldClockDateEl = document.getElementById("world-clock-date");
 const worldClockShiftEl = document.getElementById("world-clock-shift");
+const profileButtonEl = document.getElementById("profile-button");
+const profileButtonAvatarEl = document.getElementById("profile-button-avatar");
 
 const state = {
   discordUser: null,
@@ -682,6 +684,28 @@ function updateTelemetry(character) {
   telemetryEl.innerHTML = `${districtName} <span class="accent">&#9671;</span> ${motto}`;
 }
 
+// The header's faceclaim button -- `state.characters` (the `/identify`
+// summary) already carries `avatar_url`, so this needs no fetch of its
+// own; it's just kept in sync with whichever character is selected.
+// `profileButtonPlaceholderEl` (the generic "user" glyph, appended once
+// in `main()`) shows instead whenever there's no character selected yet
+// or the selected one has no faceclaim.
+let profileButtonPlaceholderEl = null;
+
+function updateProfileButtonAvatar(character) {
+  if (!profileButtonAvatarEl) return;
+  const url = character && character.avatar_url ? toSameOriginUrl(character.avatar_url) : null;
+  if (url) {
+    profileButtonAvatarEl.src = url;
+    profileButtonAvatarEl.hidden = false;
+    if (profileButtonPlaceholderEl) profileButtonPlaceholderEl.hidden = true;
+  } else {
+    profileButtonAvatarEl.hidden = true;
+    profileButtonAvatarEl.removeAttribute("src");
+    if (profileButtonPlaceholderEl) profileButtonPlaceholderEl.hidden = false;
+  }
+}
+
 async function selectCharacter(id) {
   closeCharacterMenu();
   if (id === state.characterId) return;
@@ -689,12 +713,14 @@ async function selectCharacter(id) {
   // Any pop-up still showing belonged to the character being switched
   // away from -- answering it now would silently apply to the wrong one.
   if (reactionOverlay) reactionOverlay.close();
+  if (profileOverlay) profileOverlay.close();
   writeStorage("panem_character_id", String(id));
   const chosen = state.characters.find((c) => c.id === id);
   if (chosen) {
     characterToggleEl.textContent = characterLabel(chosen);
   }
   updateTelemetry(chosen);
+  updateProfileButtonAvatar(chosen);
   // A donor's theme can be assigned per-character -- switching characters
   // may mean switching the applied colors too.
   await refreshResolvedTheme();
@@ -709,6 +735,7 @@ function renderCharacterOptions() {
     characterToggleEl.textContent = "No characters";
     state.characterId = null;
     updateTelemetry(null);
+    updateProfileButtonAvatar(null);
     return;
   }
   characterToggleEl.disabled = false;
@@ -732,6 +759,7 @@ function renderCharacterOptions() {
   const selected = state.characters.find((c) => c.id === state.characterId);
   characterToggleEl.textContent = selected ? characterLabel(selected) : "No characters";
   updateTelemetry(selected);
+  updateProfileButtonAvatar(selected);
 }
 
 async function refreshIdentity() {
@@ -1126,6 +1154,509 @@ const REACTIONS_POLL_INTERVAL_MS = 5000;
 let reactionOverlay = null;
 let reactionPollInFlight = false;
 
+// Tracks whether this browser has ever had the Getting Started guide
+// auto-shown, same localStorage convention as `TAB_USAGE_STORAGE_KEY`
+// above -- per-viewer only, never read back by anything but this same
+// browser. Bump the `_v1` suffix if the guide's content changes enough
+// that returning players should see it again automatically.
+const GUIDE_SEEN_STORAGE_KEY = "panem_guide_seen_v5";
+let guideOverlay = null;
+let profileOverlay = null;
+
+// Plain static HTML (not user-supplied, so no escaping concerns) for each
+// page of the guide pop-up -- condensed from the same command list
+// `/help` builds live from the bot's command tree, so this needs
+// updating by hand if a whole new category of command ships, but isn't
+// expected to drift command-by-command the way `/help` would. One array
+// entry per page, each rendered as its own `h3` + body by
+// `buildGuideOverlay`'s `renderPage()` below.
+const GUIDE_PAGES = [
+  {
+    heading: "Getting started",
+    bodyHtml: `
+      <ol>
+        <li>Create a character: <code>/character create district:&lt;your district&gt;</code></li>
+        <li>You'll be asked to pick a district, roleplay mode, gender, and other character
+          details (name, age, etc.) -- all changeable later.</li>
+        <li>Once approved by staff, you're in! Use <code>/help</code> any time for a full,
+          always-up-to-date list of commands.</li>
+      </ol>
+    `,
+  },
+  {
+    heading: "📍 The basics",
+    bodyHtml: `
+      <ul>
+        <li><code>/where</code> -- see where your character currently is</li>
+        <li><code>/time</code> -- check the in-world day and time</li>
+        <li><code>/travel</code> -- move around your district, or board a train to another one</li>
+        <li><code>/resident list</code> -- see the NPCs living in your district</li>
+      </ul>
+    `,
+  },
+  {
+    heading: "💰 Working &amp; money",
+    bodyHtml: `
+      <ul>
+        <li><code>/work</code> -- work your currently open shift</li>
+        <li><code>/market prices</code> -- check what's selling in your district</li>
+        <li><code>/inventory</code> -- see what your character is carrying</li>
+        <li><code>/pay</code> -- send money to another player's character</li>
+        <li><code>/trade</code> -- offer, accept, or cancel a trade with another player</li>
+        <li><code>/housing</code> -- buy, rent, or manage a place to live</li>
+      </ul>
+    `,
+  },
+  {
+    heading: "🎭 Roleplay",
+    bodyHtml: `
+      <ul>
+        <li><code>/scene start</code> -- kick off a roleplay scene at a location</li>
+        <li><code>/engage</code> -- start or join a group RP with players</li>
+        <li><code>/rp</code> -- enable roleplay mode for your character in a channel</li>
+      </ul>
+    `,
+  },
+  {
+    heading: "🍞 Needs (Simulation mode)",
+    bodyHtml: `
+      <p>Keep your character alive and well:</p>
+      <ul>
+        <li><code>/eat</code>, <code>/drink</code>, <code>/heal</code>, <code>/energize</code>,
+          <code>/entertain</code>, <code>/use</code></li>
+      </ul>
+    `,
+  },
+  {
+    heading: "⚠️ Crime &amp; risk (use with caution!)",
+    bodyHtml: `
+      <ul>
+        <li><code>/steal</code> -- pickpocket a player or NPC</li>
+        <li><code>/burgle</code> -- break into someone's house</li>
+        <li><code>/poach</code> -- poach food at the district outskirts</li>
+        <li><code>/shipment</code> -- rob a contraband shipment</li>
+        <li><code>/blackmarket</code> -- trade illicit goods, if the black market NPC trusts you</li>
+        <li><code>/crimelog</code> -- see your recent crime attempts</li>
+        <li>Caught? <code>/bail</code> pays your way out, or try <code>/lockpick</code> to escape
+          jail yourself.</li>
+      </ul>
+    `,
+  },
+  {
+    heading: "🕹️ The Activity",
+    bodyHtml: `
+      <p>This server has a full embedded Discord <strong>Activity</strong> -- a dashboard
+        mirroring every command above, playable right inside Discord. To launch it: click the
+        apps icon next to the emoji button, find <strong>Panem RPG</strong>, and click
+        "Launch".</p>
+    `,
+  },
+  {
+    heading: "🧭 Finding your way around in the activity",
+    bodyHtml: `
+      <ul>
+        <li>The <strong>sidebar</strong> (or the bottom dock, on mobile) jumps straight to any
+          tab -- Character, Vitals, Work, Market, Travel, Social, Jail, Crime, Housing.</li>
+        <li><strong>Home</strong> is your dashboard -- its app grid holds every tab that isn't
+          pinned to the dock, plus your recently-opened ones.</li>
+        <li>The <strong>character switcher</strong> in the top bar swaps which of your
+          characters you're playing.</li>
+        <li>The <strong>world clock</strong> in the top bar always shows the current in-world
+          day, time, and shift.</li>
+        <li>Click the <strong>?</strong> button up top any time to see this guide again.</li>
+      </ul>
+      <p><strong>Need the full command list any time? Just run <code>/help</code>.</strong></p>
+    `,
+  },
+];
+
+function buildGuideOverlay() {
+  const overlay = el("div", { class: "modal-overlay guide-modal-overlay" });
+  const closeBtn = el("button", { class: "btn-close-modal", text: "×", onclick: close });
+  const bodyEl = el("div", { class: "guide-modal-body" });
+  const pageIndicatorEl = el("span", { class: "guide-page-indicator" });
+  const prevBtn = el("button", { class: "btn secondary", type: "button", text: "Prev" });
+  const nextBtn = el("button", { class: "btn primary", type: "button" });
+  const footerEl = el(
+    "div",
+    { class: "guide-modal-footer" },
+    pageIndicatorEl,
+    el("div", { class: "guide-modal-footer-buttons" }, prevBtn, nextBtn)
+  );
+  const card = el(
+    "div",
+    { class: "guide-modal-card", onclick: (event) => event.stopPropagation() },
+    el(
+      "div",
+      { class: "dossier-header" },
+      el("div", {}, el("div", { class: "dossier-name", text: "Panem Roleplay" })),
+      closeBtn
+    ),
+    bodyEl,
+    footerEl
+  );
+  overlay.append(card);
+  overlay.addEventListener("click", close);
+
+  let pageIndex = 0;
+
+  function renderPage() {
+    const page = GUIDE_PAGES[pageIndex];
+    bodyEl.innerHTML = `<h3>${page.heading}</h3>${page.bodyHtml}`;
+    bodyEl.scrollTop = 0;
+    pageIndicatorEl.textContent = `${pageIndex + 1} / ${GUIDE_PAGES.length}`;
+    prevBtn.disabled = pageIndex === 0;
+    const isLastPage = pageIndex === GUIDE_PAGES.length - 1;
+    nextBtn.textContent = isLastPage ? "Finish" : "Next";
+  }
+
+  prevBtn.addEventListener("click", () => {
+    if (pageIndex > 0) {
+      pageIndex -= 1;
+      renderPage();
+    }
+  });
+  nextBtn.addEventListener("click", () => {
+    if (pageIndex < GUIDE_PAGES.length - 1) {
+      pageIndex += 1;
+      renderPage();
+    } else {
+      close();
+    }
+  });
+
+  function close() {
+    overlay.classList.remove("open");
+  }
+
+  function show() {
+    pageIndex = 0;
+    renderPage();
+    overlay.classList.add("open");
+  }
+
+  return { element: overlay, show, close };
+}
+
+// The header's own faceclaim button opens this -- everything submitted
+// when the current character was created (age, gender, occupation,
+// appearance, backstory, faceclaim), fetched fresh from `GET .../
+// characters` each time it's shown rather than cached, since `state.
+// characters` (the `/identify` summary) doesn't carry most of these
+// fields at all. Mirrors `tabs/social.js`'s `dossierModal` (same
+// `.dossier-*` markup/CSS, same "user" row shape) -- that one is for
+// *other* players' characters, reached from the Social tab; this is
+// always the viewer's own, reached from anywhere via the header.
+const PROFILE_GENDER_OPTIONS = [
+  { value: "", label: "Unspecified" },
+  { value: "male", label: "Male" },
+  { value: "female", label: "Female" },
+  { value: "nonbinary", label: "Non-binary" },
+];
+
+function buildProfileOverlay() {
+  const overlay = el("div", { class: "modal-overlay profile-modal-overlay" });
+  const avatarEl = el("div", { class: "dossier-avatar", text: "?" });
+  const avatarImgEl = el("img", { class: "dossier-avatar-img", alt: "" });
+  avatarImgEl.hidden = true;
+  const nameEl = el("div", { class: "dossier-name", text: "Profile" });
+  const jobEl = el("div", { class: "dossier-job", text: "" });
+  const closeBtn = el("button", { class: "btn-close-modal", text: "×", onclick: close });
+  const statusEl = el("p", { class: "tab-status" });
+
+  // --- view mode: the read-only profile (unchanged from before editing
+  // existed) -- the "Edit" button lives in this body, not the header,
+  // so it's as easy to hide (a non-approved character, or a load
+  // failure) as every other row here.
+  const editBtn = el("button", { class: "btn secondary", type: "button", text: "Edit" });
+  editBtn.hidden = true;
+  const districtEl = el("span", {});
+  const ageGenderEl = el("span", {});
+  const rpModeEl = el("span", {});
+  const appearanceEl = el("span", {});
+  const backstoryEl = el("span", {});
+  const viewBody = el(
+    "div",
+    { class: "dossier-body" },
+    statusEl,
+    el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "District" }), districtEl),
+    el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "Age & Gender" }), ageGenderEl),
+    el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "RP Mode" }), rpModeEl),
+    el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "Appearance" }), appearanceEl),
+    el("div", { class: "dossier-prop" }, el("span", { class: "dossier-prop-label", text: "Backstory" }), backstoryEl),
+    el("div", { class: "dossier-prop" }, editBtn)
+  );
+
+  // --- edit mode: the same fields creation collects, prefilled with
+  // what's currently live. Submitting never applies anything here --
+  // `POST .../request-edit` stages it for staff approval, same as
+  // `/profile edit` in Discord (see that command's own docstring).
+  const nameInput = el("input", { type: "text", maxlength: "32" });
+  const ageInput = el("input", { type: "number", min: "12", max: "89" });
+  const genderSelect = dropdown(PROFILE_GENDER_OPTIONS);
+  const jobInput = el("input", { type: "text", maxlength: "80" });
+  const appearanceInput = el("textarea", { rows: "2", maxlength: "400" });
+  const backstoryInput = el("textarea", { rows: "3", maxlength: "1500" });
+
+  // Avatar upload UI mirrors `tabs/character.js`'s creation form exactly
+  // (same endpoint, same upload-then-fill-the-URL-field flow) -- kept
+  // local to this overlay rather than imported, since nothing here needs
+  // the layered appearance-editor machinery that form also carries.
+  const avatarUrlInput = el("input", {
+    type: "text",
+    placeholder: "https://... or choose a file below -- leave blank to keep your current one",
+  });
+  const avatarFileInput = el("input", {
+    type: "file",
+    class: "avatar-file-hidden",
+    accept: "image/png,image/jpeg,image/webp,image/gif",
+  });
+  const avatarFileLabel = el(
+    "label",
+    { class: "btn secondary avatar-file-label" },
+    el("span", { text: "Choose picture" }),
+    avatarFileInput
+  );
+  const avatarFileName = el("span", { class: "avatar-file-name", text: "No file chosen" });
+  const avatarUploadBtn = el("button", { class: "btn secondary", type: "button" }, "Upload picture");
+  avatarUploadBtn.disabled = true;
+  const avatarUploadResult = el("span", { class: "result-line" });
+
+  let chosenFile = null;
+  avatarFileInput.addEventListener("change", () => {
+    const file = avatarFileInput.files && avatarFileInput.files[0];
+    if (!file) return;
+    chosenFile = file;
+    avatarFileName.className = "avatar-file-name has-file";
+    avatarFileName.textContent = `Selected: ${file.name}`;
+    avatarUploadBtn.disabled = false;
+    avatarUploadResult.textContent = "";
+  });
+
+  async function uploadSelectedImage() {
+    const file = chosenFile || (avatarFileInput.files && avatarFileInput.files[0]);
+    if (!file) return null;
+    avatarUploadBtn.disabled = true;
+    avatarUploadResult.className = "result-line";
+    avatarUploadResult.textContent = "Uploading…";
+    const formData = new FormData();
+    formData.append("discord_id", String(getDiscordId()));
+    formData.append("file", file);
+    try {
+      const res = await fetchJson("/activity/dashboard/characters/avatar-upload", {
+        method: "POST",
+        body: formData,
+      });
+      avatarUrlInput.value = res.avatar_url || "";
+      avatarFileName.className = "avatar-file-name is-uploaded";
+      avatarFileName.textContent = `✓ Uploaded: ${file.name}`;
+      avatarUploadResult.className = "result-line win";
+      avatarUploadResult.textContent = "Uploaded and ready!";
+      return res.avatar_url;
+    } catch (err) {
+      avatarUploadBtn.disabled = false;
+      avatarUploadResult.className = "result-line lose";
+      avatarUploadResult.textContent = err.message;
+      throw err;
+    }
+  }
+  avatarUploadBtn.addEventListener("click", () => {
+    uploadSelectedImage().catch(() => {});
+  });
+
+  const editResultEl = el("p", { class: "result-line" });
+  const submitBtn = el("button", { class: "btn", type: "button", text: "Submit for approval" });
+  const cancelBtn = el("button", { class: "btn secondary", type: "button", text: "Cancel" });
+  const editBody = el(
+    "div",
+    { class: "dossier-body profile-edit-form" },
+    el("div", { class: "field-row" }, el("label", { text: "Name" }), nameInput),
+    el("div", { class: "field-row" }, el("label", { text: "Age" }), ageInput),
+    el("div", { class: "field-row" }, el("label", { text: "Gender" }), genderSelect),
+    el("div", { class: "field-row" }, el("label", { text: "Occupation" }), jobInput),
+    el("div", { class: "field-row" }, el("label", { text: "Appearance" }), appearanceInput),
+    el("div", { class: "field-row" }, el("label", { text: "Backstory" }), backstoryInput),
+    el(
+      "div",
+      { class: "field-row" },
+      el("label", { text: "Faceclaim" }),
+      el(
+        "div",
+        { class: "avatar-upload-box" },
+        el("div", { class: "avatar-upload-row" }, avatarFileLabel, avatarUploadBtn, avatarFileName),
+        avatarUploadResult
+      )
+    ),
+    el("div", { class: "field-row" }, el("label", { text: "Or image URL" }), avatarUrlInput),
+    editResultEl,
+    el("div", { class: "field-row" }, submitBtn, cancelBtn)
+  );
+  editBody.hidden = true;
+
+  const card = el(
+    "div",
+    { class: "dossier-card", onclick: (event) => event.stopPropagation() },
+    el(
+      "div",
+      { class: "dossier-header" },
+      el("div", { class: "dossier-header-info" }, avatarEl, avatarImgEl, el("div", {}, nameEl, jobEl)),
+      closeBtn
+    ),
+    viewBody,
+    editBody
+  );
+  overlay.append(card);
+  overlay.addEventListener("click", close);
+
+  let lastDetail = null;
+
+  function close() {
+    overlay.classList.remove("open");
+  }
+
+  function resetAvatarUpload() {
+    chosenFile = null;
+    avatarFileInput.value = "";
+    avatarFileName.className = "avatar-file-name";
+    avatarFileName.textContent = "No file chosen";
+    avatarUploadBtn.disabled = true;
+    avatarUploadResult.textContent = "";
+  }
+
+  function reset() {
+    viewBody.hidden = false;
+    editBody.hidden = true;
+    editBtn.hidden = true;
+    avatarEl.hidden = false;
+    avatarImgEl.hidden = true;
+    nameEl.textContent = "Profile";
+    jobEl.textContent = "";
+    districtEl.textContent = "—";
+    ageGenderEl.textContent = "—";
+    rpModeEl.textContent = "—";
+    appearanceEl.textContent = "—";
+    backstoryEl.textContent = "—";
+    avatarUrlInput.value = "";
+    resetAvatarUpload();
+    editResultEl.textContent = "";
+  }
+
+  function enterEditMode() {
+    if (!lastDetail) return;
+    nameInput.value = lastDetail.name;
+    ageInput.value = String(lastDetail.age);
+    genderSelect.value = lastDetail.gender || "";
+    jobInput.value = lastDetail.job_title || "";
+    appearanceInput.value = lastDetail.appearance || "";
+    backstoryInput.value = lastDetail.backstory || "";
+    avatarUrlInput.value = "";
+    resetAvatarUpload();
+    editResultEl.textContent = "";
+    viewBody.hidden = true;
+    editBody.hidden = false;
+  }
+
+  editBtn.addEventListener("click", enterEditMode);
+  cancelBtn.addEventListener("click", () => {
+    viewBody.hidden = false;
+    editBody.hidden = true;
+  });
+
+  submitBtn.addEventListener("click", async () => {
+    if (!lastDetail) return;
+    const discordId = getDiscordId();
+    editResultEl.className = "result-line";
+    editResultEl.textContent = "";
+    const name = nameInput.value.trim();
+    const age = Number(ageInput.value);
+    if (!name || !Number.isInteger(age)) {
+      editResultEl.className = "result-line lose";
+      editResultEl.textContent = "Name and a valid age are required.";
+      return;
+    }
+    submitBtn.disabled = true;
+    try {
+      let finalAvatarUrl = avatarUrlInput.value.trim() || lastDetail.avatar_url;
+      if (chosenFile && !avatarUrlInput.value.trim()) {
+        try {
+          finalAvatarUrl = (await uploadSelectedImage()) || lastDetail.avatar_url;
+        } catch {
+          submitBtn.disabled = false;
+          return;
+        }
+      }
+      await fetchJson(`/activity/dashboard/characters/${lastDetail.id}/request-edit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          discord_id: discordId,
+          name,
+          age,
+          gender: genderSelect.value || null,
+          appearance: appearanceInput.value,
+          backstory: backstoryInput.value,
+          job_title: jobInput.value.trim() || null,
+          avatar_url: finalAvatarUrl,
+        }),
+      });
+      editResultEl.className = "result-line win";
+      editResultEl.textContent =
+        "Submitted for staff approval -- your current profile stays active until then.";
+    } catch (err) {
+      editResultEl.className = "result-line lose";
+      editResultEl.textContent = err.message;
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+
+  async function show() {
+    reset();
+    overlay.classList.add("open");
+    const character = currentCharacter();
+    const discordId = getDiscordId();
+    if (!character || !discordId) {
+      statusEl.textContent = "Pick a character above first.";
+      return;
+    }
+    statusEl.textContent = "Loading…";
+    try {
+      const body = await fetchJson(
+        `/activity/dashboard/characters?discord_id=${encodeURIComponent(discordId)}`
+      );
+      const detail = (body.characters || []).find((c) => c.id === character.id);
+      if (!detail) throw new Error("Character not found.");
+      lastDetail = detail;
+      statusEl.textContent = "";
+      avatarEl.textContent = detail.name.charAt(0);
+      nameEl.textContent = detail.name;
+      const jobLabel =
+        detail.job_title || (detail.rp_mode === "story" ? "No occupation (Story mode)" : "Unemployed");
+      jobEl.textContent = jobLabel;
+      districtEl.textContent = detail.district_name || "—";
+      ageGenderEl.textContent = [detail.age, detail.gender].filter(Boolean).join(", ") || "—";
+      rpModeEl.textContent = detail.rp_mode
+        ? detail.rp_mode.charAt(0).toUpperCase() + detail.rp_mode.slice(1)
+        : "—";
+      appearanceEl.textContent = detail.appearance || "No appearance description given.";
+      backstoryEl.textContent = detail.backstory || "No backstory given.";
+      if (detail.avatar_url) {
+        avatarImgEl.src = toSameOriginUrl(detail.avatar_url);
+        avatarImgEl.hidden = false;
+        avatarEl.hidden = true;
+      }
+      // Editing only makes sense for an already-approved character --
+      // a pending/retired/dead one has nothing live to stage changes
+      // against the same way.
+      editBtn.hidden = detail.status !== "approved";
+    } catch (err) {
+      statusEl.textContent = `Could not load profile: ${err.message}`;
+    }
+  }
+
+  return { element: overlay, show, close };
+}
+
 function buildReactionOverlay() {
   const overlay = el("div", { class: "modal-overlay reaction-modal-overlay" });
   const promptEl = el("p", { class: "tab-status" });
@@ -1267,6 +1798,27 @@ async function main() {
   document.body.append(reactionOverlay.element);
   refreshReactions();
   setInterval(refreshReactions, REACTIONS_POLL_INTERVAL_MS);
+
+  guideOverlay = buildGuideOverlay();
+  document.body.append(guideOverlay.element);
+  const guideButtonEl = document.getElementById("guide-button");
+  if (guideButtonEl) {
+    guideButtonEl.addEventListener("click", () => guideOverlay.show());
+  }
+  if (!readStorage(GUIDE_SEEN_STORAGE_KEY)) {
+    guideOverlay.show();
+    writeStorage(GUIDE_SEEN_STORAGE_KEY, "1");
+  }
+
+  profileOverlay = buildProfileOverlay();
+  document.body.append(profileOverlay.element);
+  if (profileButtonEl) {
+    if (profileButtonAvatarEl) {
+      profileButtonPlaceholderEl = renderIcon("user", 16);
+      profileButtonEl.append(profileButtonPlaceholderEl);
+    }
+    profileButtonEl.addEventListener("click", () => profileOverlay.show());
+  }
 
   state.discordUser = await authenticateWithDiscord();
   if (!state.discordUser) {

@@ -66,6 +66,7 @@ from panem_shared import museum as museum_svc
 from panem_shared import pay as pay_svc
 from panem_shared import personal_events as personal_events_svc
 from panem_shared import poaching as poaching_svc
+from panem_shared import profile_edits as profile_edits_svc
 from panem_shared import reactions as reactions_svc
 from panem_shared import rp_modes as rp_modes_svc
 from panem_shared import rumors as rumors_svc
@@ -138,6 +139,7 @@ from panem_shared.logging import get_logger
 from panem_shared.redis_keys import (
     CHARACTER_MODE_SWITCH_PENDING_CHANNEL,
     CHARACTER_PENDING_CHANNEL,
+    CHARACTER_PROFILE_EDIT_PENDING_CHANNEL,
     CRIME_ATTEMPT_TTL_S,
     crime_attempt_key,
 )
@@ -876,6 +878,24 @@ class UpdateCharacterRequest(BaseModel):
     gender: str | None = None
 
 
+class ProfileEditRequest(BaseModel):
+    """The Activity's own profile-edit form -- the full submission content
+    (as opposed to `UpdateCharacterRequest`'s instant, unreviewed single
+    fields), mirroring `/profile edit`'s own wizard. `avatar_url` is
+    always a concrete URL, never `None` -- the form sends the character's
+    current one back unchanged if the player didn't pick a new faceclaim,
+    same as `/profile edit` resolves it before ever staging anything."""
+
+    discord_id: int
+    name: str
+    age: int
+    gender: str | None = None
+    appearance: str = ""
+    backstory: str = ""
+    job_title: str | None = None
+    avatar_url: str
+
+
 def build_characters_router(
     *,
     content: ContentBundle,
@@ -951,6 +971,26 @@ def build_characters_router(
         is_story = body.rp_mode == RpMode.STORY.value
         if not is_story and body.shift_phase not in {phase.value for phase in DayPhase}:
             raise HTTPException(status_code=400, detail="Invalid shift phase")
+        # FR-CHR-2: a faceclaim is mandatory. A missing/blank avatar_url is
+        # left for `create_character` itself to refuse (`avatar_required`,
+        # checked below) -- but *this* is the only place that can check an
+        # external URL actually loads, since the service layer has no
+        # network access. Skipped for a URL our own `/avatar-upload`
+        # endpoint just produced (`self_hosted`) -- we already validated
+        # its content type when writing that file, and fetching our own
+        # just-saved URL back over the network would be pure overhead (and
+        # fragile if this container can't reach its own public hostname).
+        self_hosted = (
+            bool(activity_public_url)
+            and body.avatar_url is not None
+            and body.avatar_url.startswith(activity_public_url)
+        )
+        if (
+            body.avatar_url
+            and not self_hosted
+            and not await characters_svc.verify_avatar_url_reachable(body.avatar_url)
+        ):
+            raise HTTPException(status_code=400, detail=error_message("avatar_url_unreachable"))
         async with session_scope(factory) as session:
             user = await characters_svc.get_or_create_user(session, body.discord_id)
             if (
@@ -1025,6 +1065,61 @@ def build_characters_router(
                 raise _http_from_service_error(exc) from exc
             current_tick = await _current_tick(session)
             return _character_detail(character, content=content, current_tick=current_tick)
+
+    @router.post("/{character_id}/request-edit", response_model=CharacterDetail)
+    async def request_profile_edit(
+        character_id: int, body: ProfileEditRequest
+    ) -> CharacterDetail:
+        """The Activity's profile-edit form -- stages the full submission
+        for staff approval exactly like `/profile edit` does in Discord
+        (`panem_shared.profile_edits.stage_profile_edit`), never applying
+        anything live. `panem_api` has no bot token to post the approval
+        embed itself, so it publishes on `CHARACTER_PROFILE_EDIT_PENDING_
+        CHANNEL` the same way character creation does on `CHARACTER_
+        PENDING_CHANNEL` -- `CharacterCog`'s own poll is the fallback if
+        that publish is ever lost."""
+        factory = _require_session_factory(session_factory)
+        async with session_scope(factory) as session:
+            character = await _resolve_owned_character(
+                session, discord_id=body.discord_id, character_id=character_id
+            )
+            if character.status != CharacterStatus.APPROVED.value:
+                raise HTTPException(
+                    status_code=400, detail=error_message("character_not_approved")
+                )
+            # Skipped entirely for an unchanged faceclaim (already known-
+            # good) or one our own `/avatar-upload` just saved -- see
+            # `create_my_character`'s identical `self_hosted` reasoning.
+            self_hosted = bool(activity_public_url) and body.avatar_url.startswith(
+                activity_public_url
+            )
+            if (
+                body.avatar_url != character.avatar_url
+                and not self_hosted
+                and not await characters_svc.verify_avatar_url_reachable(body.avatar_url)
+            ):
+                raise HTTPException(
+                    status_code=400, detail=error_message("avatar_url_unreachable")
+                )
+            try:
+                profile_edits_svc.check_can_stage_profile_edit(character)
+                await profile_edits_svc.stage_profile_edit(
+                    session,
+                    character,
+                    name=body.name,
+                    age=body.age,
+                    gender=body.gender,
+                    appearance=body.appearance,
+                    backstory=body.backstory,
+                    job_title=body.job_title,
+                    avatar_url=body.avatar_url,
+                )
+            except ServiceError as exc:
+                raise _http_from_service_error(exc) from exc
+            current_tick = await _current_tick(session)
+            detail = _character_detail(character, content=content, current_tick=current_tick)
+        await redis_client.publish(CHARACTER_PROFILE_EDIT_PENDING_CHANNEL, str(character_id))
+        return detail
 
     @router.post("/avatar-upload")
     async def upload_character_avatar(

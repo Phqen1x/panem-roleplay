@@ -545,6 +545,16 @@ function createForm(ctx, catalog, { onCreated }) {
   submitBtn.addEventListener("click", async () => {
     resultLine.textContent = "";
     const isStory = modeSelect.value === "story";
+    // FR-CHR-2: a faceclaim is mandatory -- `panem_shared.characters.
+    // create_character` refuses a character with no `avatar_url` anyway,
+    // but catching it here first (no round trip) matches the immediate
+    // feedback every other required field on this form already gets.
+    if (!chosenFile && !avatarUrlInput.value.trim()) {
+      resultLine.className = "result-line lose";
+      resultLine.textContent =
+        "Upload a faceclaim picture or provide an image URL before creating your character.";
+      return;
+    }
     submitBtn.disabled = true;
     try {
       let finalAvatarUrl = avatarUrlInput.value || null;
@@ -599,8 +609,8 @@ function createForm(ctx, catalog, { onCreated }) {
 
   const lookChildren = [
     portrait.el,
-    el("div", { class: "field-row" }, el("label", { text: "Avatar picture" }), uploadBox),
-    el("div", { class: "field-row" }, el("label", { text: "Or image URL" }), avatarUrlInput),
+    el("div", { class: "field-row" }, el("label", { text: "Avatar picture (required)" }), uploadBox),
+    el("div", { class: "field-row" }, el("label", { text: "Or image URL (required)" }), avatarUrlInput),
   ];
   if (editor) {
     lookChildren.push(editor.el);

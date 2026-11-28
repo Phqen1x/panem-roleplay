@@ -80,9 +80,20 @@ function chooseRobotColumn(board) {
   return weighted[Math.floor(Math.random() * weighted.length)];
 }
 
+// The robot's reply is delayed (see `robotMove`'s own call site below) so
+// the player actually sees it land -- without a hard stop in between, a
+// player clicking quickly enough could drop a second (or third) piece of
+// their own before that `setTimeout` ever fires, since nothing short of
+// `gameOver` disabled the board in that window. `waitingForRobot` closes
+// that gap: the whole board goes unclickable the instant the player's
+// own piece lands, not just the cell it landed in, and stays that way
+// until the robot has actually played.
+const ROBOT_MOVE_DELAY_MS = 2000;
+
 export function mount(boardEl, { onFinish, setStatus }) {
   const board = emptyBoard();
   let gameOver = false;
+  let waitingForRobot = false;
 
   function render() {
     boardEl.innerHTML = "";
@@ -94,7 +105,7 @@ export function mount(boardEl, { onFinish, setStatus }) {
         const piece = board[row][col];
         if (piece === PLAYER) cell.classList.add("c4-player");
         if (piece === ROBOT) cell.classList.add("c4-robot");
-        cell.disabled = gameOver || piece !== EMPTY;
+        cell.disabled = gameOver || waitingForRobot || piece !== EMPTY;
         cell.dataset.col = String(col);
         cell.addEventListener("click", () => onColumnClick(col));
         boardEl.appendChild(cell);
@@ -103,7 +114,7 @@ export function mount(boardEl, { onFinish, setStatus }) {
   }
 
   function onColumnClick(col) {
-    if (gameOver) return;
+    if (gameOver || waitingForRobot) return;
     const row = lowestOpenRow(board, col);
     if (row === -1) return;
     board[row][col] = PLAYER;
@@ -120,11 +131,13 @@ export function mount(boardEl, { onFinish, setStatus }) {
       onFinish(false);
       return;
     }
+    waitingForRobot = true;
     render();
-    setTimeout(robotMove, 400);
+    setTimeout(robotMove, ROBOT_MOVE_DELAY_MS);
   }
 
   function robotMove() {
+    waitingForRobot = false;
     if (gameOver) return;
     const col = chooseRobotColumn(board);
     const row = lowestOpenRow(board, col);

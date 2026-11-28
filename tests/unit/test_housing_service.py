@@ -291,6 +291,30 @@ class TestApplyNightlyFatigueRestoration:
         housing_svc.dock_fatigue(character, 10.0)
         assert character.fatigue == constants.FATIGUE_MIN
 
+    def test_dock_fatigue_floors_at_min_reports_no_new_crossing(self):
+        # Already in the danger zone (2% remaining, <= VITALS_DANGER_
+        # THRESHOLD_PERCENT) before this dock even runs -- bottoming out
+        # further isn't a *new* crossing, so this is `None`, not another
+        # "danger" report (see `panem_shared.vitals.crossing_severity`).
+        character = make_character(fatigue=2.0)
+        assert housing_svc.dock_fatigue(character, 10.0) is None
+
+    def test_dock_fatigue_crossing_warn_threshold_reports_it(self):
+        character = make_character(fatigue=30.0)  # 30% remaining
+        crossing = housing_svc.dock_fatigue(character, 10.0)
+        assert character.fatigue == 20.0  # crossed <= 25%
+        assert crossing == ("warn", 20.0)
+
+    def test_dock_fatigue_crossing_danger_threshold_reports_it(self):
+        character = make_character(fatigue=15.0)  # 15% remaining
+        crossing = housing_svc.dock_fatigue(character, 10.0)
+        assert character.fatigue == 5.0  # crossed <= 10%
+        assert crossing == ("danger", 5.0)
+
+    def test_dock_fatigue_without_crossing_reports_nothing(self):
+        character = make_character(fatigue=90.0)
+        assert housing_svc.dock_fatigue(character, 5.0) is None
+
 
 class TestFinancedPurchaseTerms:
     def test_down_payment_is_the_configured_percentage(self):

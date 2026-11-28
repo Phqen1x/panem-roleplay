@@ -30,6 +30,9 @@ STRINGS: dict[str, str] = {
     "not_pending": "That character isn't awaiting approval.",
     "invalid_avatar_url": "Avatar must be an https image URL ending in .png, .jpg, .jpeg, .webp, or .gif "
     "(512 chars max).",
+    "avatar_required": "Upload a faceclaim image, or provide an image URL that works, to create a character.",
+    "avatar_url_unreachable": "That image URL doesn't load right now -- double check the link, or upload "
+    "the image instead.",
     "invalid_proxy_tag": "Tag must be 1-12 characters and can't start with `/` or `((`.",
     "proxy_tag_taken": "You're already using that tag for another character.",
     "character_created": "Character **{name}** submitted for approval.",
@@ -38,6 +41,7 @@ STRINGS: dict[str, str] = {
     "character_changes_dm": "Staff requested changes to **{name}**: {note}\nUse `/character edit` to resubmit.",
     "character_retired": "**{name}** has been retired.",
     "character_death_dm": "Your character **{name}** has died.\n\nCause of death: {cause}",
+    "vitals_low_dm": "**{name}**'s {vital} is {severity} ({percent}% left). {advice}",
     # Sessions / proxying (FR-PRX)
     "rp_needs_thread": "Use this inside a scene.",
     "rp_session_set": "You're now playing **{name}** in this scene.",
@@ -208,6 +212,17 @@ STRINGS: dict[str, str] = {
     "mode_switch_declined_dm": (
         "Staff declined **{name}**'s switch to **{mode}** mode: {note}\n"
         "Use `/character mode` to try again."
+    ),
+    "profile_edit_already_pending": (
+        "This character already has a profile edit awaiting staff approval."
+    ),
+    "no_profile_changes": "That's identical to {name}'s current profile -- nothing to submit.",
+    "profile_edit_submitted": (
+        "**{name}**'s profile edit has been submitted for staff approval."
+    ),
+    "profile_edit_approved_dm": "Your **{name}**'s profile edit has been approved!",
+    "profile_edit_declined_dm": (
+        "Staff declined **{name}**'s profile edit: {note}\nUse `/profile edit` to try again."
     ),
     "crime_toggle_wrong_mode": "Only Life-mode characters can toggle crime on/off for themselves.",
     "crime_toggle_already_set": "This character's crime setting is already {enabled}.",

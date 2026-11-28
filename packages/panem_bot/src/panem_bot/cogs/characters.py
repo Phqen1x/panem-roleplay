@@ -16,6 +16,7 @@ from panem_bot import autocomplete
 from panem_bot.errors import ServiceError, ValidationFailed
 from panem_bot.services import afflictions as afflictions_svc
 from panem_bot.services import characters as characters_svc
+from panem_bot.services import profile_edits as profile_edits_svc
 from panem_bot.services import rp_modes as rp_modes_svc
 from panem_bot.services import shifts as shifts_svc
 from panem_bot.strings import t
@@ -30,6 +31,7 @@ from panem_bot.views import (
     GenderSelectView,
     IllicitDeclareView,
     ModeSwitchApprovalView,
+    ProfileEditApprovalView,
     RpModeSelectView,
     ShiftPhaseSelectView,
 )
@@ -45,7 +47,11 @@ from panem_shared.db.models import (
 )
 from panem_shared.enums import ChannelKind, CharacterStatus, DayPhase, RpMode, ShiftResult
 from panem_shared.logging import get_logger
-from panem_shared.redis_keys import CHARACTER_MODE_SWITCH_PENDING_CHANNEL, CHARACTER_PENDING_CHANNEL
+from panem_shared.redis_keys import (
+    CHARACTER_MODE_SWITCH_PENDING_CHANNEL,
+    CHARACTER_PENDING_CHANNEL,
+    CHARACTER_PROFILE_EDIT_PENDING_CHANNEL,
+)
 from panem_shared.simtime import clock_string, phase_time_range
 
 logger = get_logger(component="characters")
@@ -58,12 +64,120 @@ sink to the bottom of the list (`_render_character_list`) and can be
 filtered out entirely with `CharacterListView`'s toggle."""
 
 
-def _field_value(text: str) -> str:
-    """Backstory allows more characters than a Discord embed field value
-    does (1024) -- truncate rather than let `channel.send` raise."""
-    if len(text) <= EMBED_FIELD_VALUE_LIMIT:
+def _field_value(text: str, limit: int = EMBED_FIELD_VALUE_LIMIT) -> str:
+    """Truncates `text` to `limit` characters rather than let
+    `channel.send` raise over Discord's 1024-char field-value cap. Used
+    where a field is inherently short (a rejection reason) or where
+    losing the tail is acceptable; `_add_long_field` below is preferred
+    for backstory, which allows more characters (1500) than a single
+    field can hold and shouldn't be cut off."""
+    if len(text) <= limit:
         return text
-    return text[: EMBED_FIELD_VALUE_LIMIT - 1] + "…"
+    return text[: limit - 1] + "…"
+
+
+def _chunk_text(text: str, limit: int) -> list[str]:
+    """Splits `text` into pieces of at most `limit` characters, breaking
+    on a space where possible so words aren't cut mid-way."""
+    if len(text) <= limit:
+        return [text]
+    chunks: list[str] = []
+    remaining = text
+    while len(remaining) > limit:
+        split_at = remaining.rfind(" ", 0, limit)
+        if split_at <= 0:
+            split_at = limit
+        chunks.append(remaining[:split_at].rstrip())
+        remaining = remaining[split_at:].lstrip()
+    if remaining:
+        chunks.append(remaining)
+    return chunks
+
+
+def _add_long_field(embed: discord.Embed, name: str, value: str) -> None:
+    """Adds `value` as one or more `inline=False` fields instead of one
+    -- a backstory (up to 1500 chars) can run past Discord's 1024-char
+    field-value cap, and truncating it would silently drop content the
+    applicant and staff both need to see. Further chunks are labelled
+    "{name} (cont.)"."""
+    for index, chunk in enumerate(_chunk_text(value, EMBED_FIELD_VALUE_LIMIT)):
+        label = name if index == 0 else f"{name} (cont.)"
+        embed.add_field(name=label, value=chunk, inline=False)
+
+
+def _diff_field_value(before: str, after: str) -> str:
+    """Formats a profile-edit diff field's value, truncating each side
+    so the combined "**Before:** ...\\n**After:** ..." string can't push
+    past Discord's 1024-char field-value cap -- backstory allows up to
+    1500 chars on each side, which would otherwise make the whole embed
+    fail to send."""
+    overhead = len("**Before:** ") + len("\n**After:** ")
+    budget = max((EMBED_FIELD_VALUE_LIMIT - overhead) // 2, 1)
+    return f"**Before:** {_field_value(before, budget)}\n**After:** {_field_value(after, budget)}"
+
+
+def _job_value(character: Character, *, desired: bool) -> str:
+    """Shared by `_build_character_embed` ("Desired Job" -- it's still
+    only an application at that point) and `_build_profile_embed`
+    ("Occupation", post-approval) -- same shift/illicit formatting
+    either way, just a different field label and the Story-mode
+    fallback's wording."""
+    if character.job_title is None:
+        return "-- (Story mode)" if desired else "None (Story mode)"
+    shift_label = SHIFT_PHASE_LABELS.get(character.shift_phase or "", character.shift_phase)
+    illicit_suffix = " [illicit]" if character.job_is_illicit else ""
+    return f"{character.job_title} ({shift_label} shift){illicit_suffix}"
+
+
+def _build_character_embed(
+    character: Character, *, district_name: str, applicant_discord_id: int
+) -> discord.Embed:
+    """The full character-application embed -- shared by `_post_approval_
+    embed` (the staff-only approval-channel post, paired with `self.
+    approval_view`'s buttons) and `_handle_approve` (the same embed,
+    unchanged, posted to `Settings.character_announce_channel_id` once
+    approved, with no buttons -- there's nothing left to approve)."""
+    embed = discord.Embed(
+        title=f"Character Application: {character.name}", color=discord.Color.blurple()
+    )
+    embed.add_field(name="Applicant", value=f"<@{applicant_discord_id}>", inline=True)
+    embed.add_field(name="District", value=district_name, inline=True)
+    embed.add_field(name="Age", value=str(character.age), inline=True)
+    embed.add_field(name="RP Mode", value=character.rp_mode.title(), inline=True)
+    embed.add_field(name="Desired Job", value=_job_value(character, desired=True), inline=True)
+    embed.add_field(name="Appearance", value=character.appearance or "-", inline=False)
+    _add_long_field(embed, "Backstory", character.backstory or "-")
+    if character.avatar_url:
+        # `set_image` (full-width, below the fields) rather than
+        # `set_thumbnail` (a small corner icon) -- both audiences (staff
+        # approving it, and everyone seeing the public announcement) need
+        # to actually see the faceclaim, not just notice one is attached.
+        embed.set_image(url=character.avatar_url)
+    embed.set_footer(text=f"{CHAR_ID_FOOTER_PREFIX}{character.id}")
+    return embed
+
+
+def _build_profile_embed(character: Character, *, district_name: str) -> discord.Embed:
+    """`/profile`'s embed -- everything submitted at creation (age,
+    gender, occupation, appearance, backstory, faceclaim), as opposed to
+    `_build_character_embed`'s staff/announcement framing (an
+    "Applicant" field, "Desired Job" before it's even approved) or
+    `/character status`'s live gameplay stats. The Activity's own
+    profile popup mirrors this same field set from `CharacterDetail`
+    (`panem_api.dashboard_routes`) -- keep the two in sync if either
+    changes."""
+    embed = discord.Embed(title=f"{character.name}'s Profile", color=discord.Color.blurple())
+    embed.add_field(name="District", value=district_name, inline=True)
+    embed.add_field(name="Age", value=str(character.age), inline=True)
+    embed.add_field(name="Gender", value=GENDER_LABELS.get(character.gender or "", "-"), inline=True)
+    embed.add_field(name="RP Mode", value=character.rp_mode.title(), inline=True)
+    embed.add_field(name="Occupation", value=_job_value(character, desired=False), inline=True)
+    embed.add_field(name="Appearance", value=character.appearance or "-", inline=False)
+    _add_long_field(embed, "Backstory", character.backstory or "-")
+    if character.avatar_url:
+        embed.set_image(url=character.avatar_url)
+    embed.set_footer(text=f"{CHAR_ID_FOOTER_PREFIX}{character.id}")
+    return embed
 
 
 def _render_character_list(bot: commands.Bot, rows: list[Character], *, hide_dead: bool) -> str:
@@ -98,22 +212,36 @@ class CharacterCog(commands.Cog):
             on_decline=self._handle_mode_switch_decline,
         )
         self.bot.add_view(self.mode_switch_approval_view)
+        self.profile_edit_approval_view = ProfileEditApprovalView(
+            is_staff=self._interaction_is_staff,
+            on_approve=self._handle_profile_edit_approve,
+            on_decline=self._handle_profile_edit_decline,
+        )
+        self.bot.add_view(self.profile_edit_approval_view)
         self._announce_pending_characters.start()
         self._announce_pending_mode_switches.start()
+        self._announce_pending_profile_edits.start()
         self._pending_listener_task = asyncio.create_task(self._listen_for_pending_characters())
         self._mode_switch_listener_task = asyncio.create_task(
             self._listen_for_pending_mode_switches()
+        )
+        self._profile_edit_listener_task = asyncio.create_task(
+            self._listen_for_pending_profile_edits()
         )
 
     async def cog_unload(self) -> None:
         self._announce_pending_characters.cancel()
         self._announce_pending_mode_switches.cancel()
+        self._announce_pending_profile_edits.cancel()
         self._pending_listener_task.cancel()
         self._mode_switch_listener_task.cancel()
+        self._profile_edit_listener_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await self._pending_listener_task
         with contextlib.suppress(asyncio.CancelledError):
             await self._mode_switch_listener_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await self._profile_edit_listener_task
 
     async def _interaction_is_staff(self, interaction: discord.Interaction) -> bool:
         if not isinstance(interaction.user, discord.Member):
@@ -125,27 +253,48 @@ class CharacterCog(commands.Cog):
     group = app_commands.Group(name="character", description="Manage your characters")
 
     @group.command(name="create", description="Create a new character")
-    @app_commands.describe(district="Which district to create this character in")
+    @app_commands.describe(
+        district="Which district to create this character in",
+        avatar="Upload a faceclaim image -- required unless you give avatar_url instead",
+        avatar_url=(
+            "A working image URL (https, .png/.jpg/.jpeg/.webp/.gif) -- required unless you "
+            "upload avatar instead"
+        ),
+    )
     @app_commands.autocomplete(district=autocomplete.districts)
-    async def create(self, interaction: discord.Interaction, district: int) -> None:
+    async def create(
+        self,
+        interaction: discord.Interaction,
+        district: int,
+        avatar: discord.Attachment | None = None,
+        avatar_url: str | None = None,
+    ) -> None:
         assert interaction.guild is not None
         assert isinstance(interaction.user, discord.Member)
 
+        # `avatar_url`'s reachability check below is a real network round
+        # trip -- well past the 3-second window Discord gives an
+        # un-deferred interaction to produce its first response -- so this
+        # always defers immediately and uses `interaction.followup` for
+        # every reply from here down, including the early-return checks
+        # that used to respond directly before this requirement existed.
+        await interaction.response.defer(ephemeral=True)
+
         if district not in self.bot.content.districts:
-            await interaction.response.send_message(t("invalid_district"), ephemeral=True)
+            await interaction.followup.send(t("invalid_district"), ephemeral=True)
             return
         district_id = district
 
         async with self.bot.db() as session:
             user = await characters_svc.get_or_create_user(session, interaction.user.id)
             if user.banned_at is not None:
-                await interaction.response.send_message(t("banned"), ephemeral=True)
+                await interaction.followup.send(t("banned"), ephemeral=True)
                 return
             if (
                 district_id == constants.CAPITOL_DISTRICT_ID
                 and not characters_svc.is_capitol_authorized(user)
             ):
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     t("capitol_requires_authorization"), ephemeral=True
                 )
                 return
@@ -161,21 +310,62 @@ class CharacterCog(commands.Cog):
                 )
             )
             if int(count.scalar_one()) >= max_characters:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     t("too_many_characters", limit=max_characters), ephemeral=True
                 )
                 return
 
-        await self._prompt_mode(interaction, district_id)
+        # FR-CHR-2: no character without a faceclaim -- exactly one of an
+        # uploaded image or a working URL, checked here (before the wizard
+        # even starts) rather than left to `/character avatar` afterward,
+        # so it's never possible to end up with a pending character that
+        # has none.
+        if avatar is not None and avatar_url is not None:
+            await interaction.followup.send(
+                "Provide either a faceclaim image upload or an image URL, not both.",
+                ephemeral=True,
+            )
+            return
+        if avatar is None and avatar_url is None:
+            await interaction.followup.send(t("avatar_required"), ephemeral=True)
+            return
+        if avatar is not None and (
+            avatar.content_type is None or not avatar.content_type.startswith("image/")
+        ):
+            await interaction.followup.send(t("invalid_avatar_url"), ephemeral=True)
+            return
+        if avatar_url is not None:
+            try:
+                characters_svc.validate_avatar_url(avatar_url)
+            except ValidationFailed as exc:
+                await interaction.followup.send(t(exc.reason_key, **exc.fmt), ephemeral=True)
+                return
+            if not await characters_svc.verify_avatar_url_reachable(avatar_url):
+                await interaction.followup.send(t("avatar_url_unreachable"), ephemeral=True)
+                return
 
-    async def _prompt_mode(self, interaction: discord.Interaction, district_id: int) -> None:
+        await self._prompt_mode(interaction, district_id, avatar, avatar_url)
+
+    async def _prompt_mode(
+        self,
+        interaction: discord.Interaction,
+        district_id: int,
+        avatar: discord.Attachment | None,
+        avatar_url: str | None,
+    ) -> None:
         async def on_mode_chosen(mode_interaction: discord.Interaction, rp_mode: str) -> None:
-            await self._prompt_gender(mode_interaction, district_id, rp_mode)
+            await self._prompt_gender(mode_interaction, district_id, rp_mode, avatar, avatar_url)
 
         mode_lines = "\n".join(
             f"**{mode.title()}** -- {desc}" for mode, desc in RP_MODE_DESCRIPTIONS.items()
         )
-        await interaction.response.send_message(
+        # `create()` already deferred its (only) interaction above -- this
+        # is the first reply to it, so it has to go through `followup`,
+        # not `response.send_message` (which would raise, already
+        # acknowledged). Every step after this one gets a fresh
+        # interaction of its own (the select/modal/button the player just
+        # used), so none of them need this.
+        await interaction.followup.send(
             "**Choose your character's roleplay mode** (changeable later, with a "
             f"{constants.MODE_SWITCH_COOLDOWN_DAYS}-real-day cooldown):\n{mode_lines}",
             view=RpModeSelectView(on_mode_chosen),
@@ -183,12 +373,19 @@ class CharacterCog(commands.Cog):
         )
 
     async def _prompt_gender(
-        self, interaction: discord.Interaction, district_id: int, rp_mode: str
+        self,
+        interaction: discord.Interaction,
+        district_id: int,
+        rp_mode: str,
+        avatar: discord.Attachment | None,
+        avatar_url: str | None,
     ) -> None:
         async def on_gender_chosen(
             gender_interaction: discord.Interaction, gender: str | None
         ) -> None:
-            await self._prompt_details(gender_interaction, district_id, rp_mode, gender)
+            await self._prompt_details(
+                gender_interaction, district_id, rp_mode, gender, avatar, avatar_url
+            )
 
         await interaction.response.send_message(
             "**Choose your character's gender** (changeable later with `/character gender`) -- "
@@ -198,7 +395,13 @@ class CharacterCog(commands.Cog):
         )
 
     async def _prompt_details(
-        self, interaction: discord.Interaction, district_id: int, rp_mode: str, gender: str | None
+        self,
+        interaction: discord.Interaction,
+        district_id: int,
+        rp_mode: str,
+        gender: str | None,
+        avatar: discord.Attachment | None,
+        avatar_url: str | None,
     ) -> None:
         from panem_bot.modals import CharacterDetailsModal
 
@@ -220,6 +423,8 @@ class CharacterCog(commands.Cog):
                 appearance,
                 backstory,
                 job_title,
+                avatar,
+                avatar_url,
             )
 
         max_age = characters_svc.max_age_for_district(district_id)
@@ -242,6 +447,8 @@ class CharacterCog(commands.Cog):
         appearance: str,
         backstory: str,
         job_title: str,
+        avatar: discord.Attachment | None,
+        avatar_url: str | None,
     ) -> None:
         try:
             age = int(age_str)
@@ -290,6 +497,8 @@ class CharacterCog(commands.Cog):
                 None,
                 None,
                 False,
+                avatar,
+                avatar_url,
             )
             return
 
@@ -305,6 +514,8 @@ class CharacterCog(commands.Cog):
                 backstory,
                 job_title,
                 shift_phase,
+                avatar,
+                avatar_url,
             )
 
         await interaction.response.send_message(
@@ -325,6 +536,8 @@ class CharacterCog(commands.Cog):
         backstory: str,
         job_title: str,
         shift_phase: str,
+        avatar: discord.Attachment | None,
+        avatar_url: str | None,
     ) -> None:
         async def on_illicit_chosen(
             illicit_interaction: discord.Interaction, job_is_illicit: bool
@@ -341,6 +554,8 @@ class CharacterCog(commands.Cog):
                 job_title,
                 shift_phase,
                 job_is_illicit,
+                avatar,
+                avatar_url,
             )
 
         await interaction.response.send_message(
@@ -363,7 +578,18 @@ class CharacterCog(commands.Cog):
         job_title: str | None,
         shift_phase: str | None,
         job_is_illicit: bool,
+        avatar: discord.Attachment | None,
+        avatar_url: str | None,
     ) -> None:
+        # An uploaded attachment's own Discord CDN URL already "works" --
+        # Discord is serving it right now -- so it's a fine `avatar_url`
+        # to create the character with immediately; the block below then
+        # tries to upgrade it to a permanent URL exactly the way
+        # `/character avatar`'s own attachment option does (`_persist_
+        # avatar_upload`), without blocking creation on that upgrade
+        # succeeding -- `create()` already confirmed this is one or the
+        # other, never neither.
+        initial_avatar_url = avatar.url if avatar is not None else avatar_url
         async with self.bot.db() as session:
             user = await characters_svc.get_or_create_user(session, interaction.user.id)
             try:
@@ -381,6 +607,7 @@ class CharacterCog(commands.Cog):
                     job_is_illicit=job_is_illicit,
                     max_characters=characters_svc.effective_max_characters(user, self.bot.settings),
                     rp_mode=rp_mode,
+                    avatar_url=initial_avatar_url,
                 )
             except ServiceError as exc:
                 await interaction.response.send_message(
@@ -388,6 +615,21 @@ class CharacterCog(commands.Cog):
                 )
                 return
             character_id = character.id
+
+        if avatar is not None:
+            data = await avatar.read()
+            persisted_url = await self._persist_avatar_upload(
+                character_id=character_id,
+                discord_id=interaction.user.id,
+                data=data,
+                content_type=avatar.content_type or "",
+                filename=avatar.filename,
+            )
+            if persisted_url is not None:
+                async with self.bot.db() as session:
+                    row = await session.get(Character, character_id)
+                    assert row is not None
+                    row.avatar_url = persisted_url
 
         await interaction.response.send_message(t("character_created", name=name), ephemeral=True)
         await self._post_approval_embed(character_id, applicant_discord_id=interaction.user.id)
@@ -410,29 +652,9 @@ class CharacterCog(commands.Cog):
                 # the method idempotent regardless of caller.
                 return
             district = self.bot.content.district(character.district_id)
-            embed = discord.Embed(
-                title=f"Character Application: {character.name}", color=discord.Color.blurple()
+            embed = _build_character_embed(
+                character, district_name=district.name, applicant_discord_id=applicant_discord_id
             )
-            embed.add_field(name="Applicant", value=f"<@{applicant_discord_id}>", inline=True)
-            embed.add_field(name="District", value=district.name, inline=True)
-            embed.add_field(name="Age", value=str(character.age), inline=True)
-            embed.add_field(name="RP Mode", value=character.rp_mode.title(), inline=True)
-            if character.job_title is not None:
-                shift_label = SHIFT_PHASE_LABELS.get(
-                    character.shift_phase or "", character.shift_phase
-                )
-                illicit_suffix = " [illicit]" if character.job_is_illicit else ""
-                job_value = f"{character.job_title} ({shift_label} shift){illicit_suffix}"
-            else:
-                job_value = "-- (Story mode)"
-            embed.add_field(name="Desired Job", value=job_value, inline=True)
-            embed.add_field(name="Appearance", value=character.appearance or "-", inline=False)
-            embed.add_field(
-                name="Backstory", value=_field_value(character.backstory or "-"), inline=False
-            )
-            if character.avatar_url:
-                embed.set_thumbnail(url=character.avatar_url)
-            embed.set_footer(text=f"{CHAR_ID_FOOTER_PREFIX}{character.id}")
             character.approval_notified_at = dt.datetime.now(dt.UTC)
 
         await channel.send(embed=embed, view=self.approval_view)
@@ -700,9 +922,32 @@ class CharacterCog(commands.Cog):
                 )
             ).scalar_one_or_none()
             forum_channel_id = forum_row.channel_id if forum_row is not None else None
+            announce_embed = _build_character_embed(
+                character, district_name=district.name, applicant_discord_id=discord_id
+            )
 
         await self._disable_approval_message(interaction, f"Approved by {interaction.user.mention}")
         await interaction.response.send_message(f"Approved **{char_name}**.", ephemeral=True)
+
+        # Public "new citizen" announcement -- same embed the staff-only
+        # approval channel got (district/age/RP mode/job/appearance/
+        # backstory/faceclaim), minus the Approve/Reject buttons, for
+        # whichever channel `CHARACTER_ANNOUNCE_CHANNEL_ID` names (meant
+        # to be one the roleplay role can see). Unset or unreachable just
+        # skips this -- it's an announcement, never something approval
+        # itself should fail over.
+        announce_channel_id = self.bot.settings.character_announce_channel_id  # type: ignore[attr-defined]
+        if announce_channel_id:
+            announce_channel = self.bot.get_channel(announce_channel_id)
+            if announce_channel is not None:
+                with contextlib.suppress(discord.HTTPException):
+                    await announce_channel.send(embed=announce_embed)
+            else:
+                logger.warning(
+                    "character_announce_channel_missing",
+                    character_id=character_id,
+                    channel_id=announce_channel_id,
+                )
 
         guild = interaction.guild
         assert guild is not None
@@ -814,9 +1059,7 @@ class CharacterCog(commands.Cog):
             log_embed.add_field(
                 name="Appearance", value=_field_value(character.appearance or "-"), inline=False
             )
-            log_embed.add_field(
-                name="Backstory", value=_field_value(character.backstory or "-"), inline=False
-            )
+            _add_long_field(log_embed, "Backstory", character.backstory or "-")
             log_embed.add_field(name="Rejected by", value=interaction.user.mention, inline=True)
             log_embed.add_field(name="Reason", value=_field_value(reason or "-"), inline=True)
 
@@ -1586,6 +1829,427 @@ class CharacterCog(commands.Cog):
                 inline=False,
             )
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    profile_group = app_commands.Group(name="profile", description="View or edit your character's profile")
+
+    @profile_group.command(name="view", description="View a character's submitted profile")
+    @app_commands.describe(character="Character name")
+    @app_commands.autocomplete(character=autocomplete.own_approved)
+    async def profile_view(self, interaction: discord.Interaction, character: str) -> None:
+        """The submission content itself (age/gender/occupation/appearance/
+        backstory/faceclaim) -- everything a player wrote or chose when
+        creating this character, as opposed to `/character status`'s
+        live gameplay stats (money, hunger, job level, location, ...).
+        The Activity's own profile popup (the faceclaim button in the
+        dashboard header) shows exactly this same information, from
+        `GET /activity/dashboard/characters` -- both read straight off
+        the `Character` row, so neither can drift from the other."""
+        async with self.bot.db() as session:
+            user = await characters_svc.get_or_create_user(session, interaction.user.id)
+            row = (
+                await session.execute(
+                    select(Character).where(
+                        Character.user_id == user.id, Character.name == character
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            district = self.bot.content.district(row.district_id)  # type: ignore[attr-defined]
+            embed = _build_profile_embed(row, district_name=district.name)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @profile_group.command(
+        name="edit", description="Edit your character's profile -- staff review the changes first"
+    )
+    @app_commands.describe(
+        character="Character name",
+        avatar="Upload a new faceclaim image -- leave blank to keep your current one",
+        avatar_url="A working image URL for your new faceclaim -- leave blank to keep your current one",
+    )
+    @app_commands.autocomplete(character=autocomplete.own_approved)
+    async def profile_edit(
+        self,
+        interaction: discord.Interaction,
+        character: str,
+        avatar: discord.Attachment | None = None,
+        avatar_url: str | None = None,
+    ) -> None:
+        """Nothing here ever touches the character's real, currently-live
+        fields -- every edit is staged (`Character.pending_profile_*`,
+        `panem_shared.profile_edits.stage_profile_edit`) and only applied
+        once staff approve it, so the character keeps playing with its
+        current submission the whole time an edit is awaiting review.
+        Reuses `/character create`'s own wizard steps (`GenderSelectView`,
+        `CharacterDetailsModal`) rather than inventing new ones -- same
+        fields, prefilled with what's live right now instead of blank."""
+        await interaction.response.defer(ephemeral=True)
+        if avatar is not None and avatar_url is not None:
+            await interaction.followup.send(
+                "Provide either a new faceclaim upload or an image URL, not both.", ephemeral=True
+            )
+            return
+        if avatar is not None and (
+            avatar.content_type is None or not avatar.content_type.startswith("image/")
+        ):
+            await interaction.followup.send(t("invalid_avatar_url"), ephemeral=True)
+            return
+        if avatar_url is not None:
+            try:
+                characters_svc.validate_avatar_url(avatar_url)
+            except ValidationFailed as exc:
+                await interaction.followup.send(t(exc.reason_key, **exc.fmt), ephemeral=True)
+                return
+            if not await characters_svc.verify_avatar_url_reachable(avatar_url):
+                await interaction.followup.send(t("avatar_url_unreachable"), ephemeral=True)
+                return
+
+        async with self.bot.db() as session:
+            user = await characters_svc.get_or_create_user(session, interaction.user.id)
+            row = (
+                await session.execute(
+                    select(Character).where(
+                        Character.user_id == user.id, Character.name == character
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                await interaction.followup.send(t("character_not_found"), ephemeral=True)
+                return
+            try:
+                profile_edits_svc.check_can_stage_profile_edit(row)
+            except ServiceError as exc:
+                await interaction.followup.send(t(exc.reason_key, **exc.fmt), ephemeral=True)
+                return
+            character_id = row.id
+            prefill = {
+                "name": row.name,
+                "age": str(row.age),
+                "appearance": row.appearance,
+                "backstory": row.backstory,
+                "job_title": row.job_title or "",
+            }
+            is_story = row.rp_mode == RpMode.STORY.value
+            current_avatar_url = row.avatar_url
+
+        # An uploaded attachment's own Discord CDN URL expires in ~24h, far
+        # sooner than staff approval is guaranteed to happen -- persisted
+        # to permanent storage immediately (the same character-less
+        # upload endpoint `/character create`'s own attachment path uses
+        # before a character exists, since this edit isn't live on the
+        # character yet either) rather than only once approved.
+        final_avatar_url = current_avatar_url
+        if avatar is not None:
+            data = await avatar.read()
+            persisted_url = await self._persist_avatar_upload_standalone(
+                discord_id=interaction.user.id,
+                data=data,
+                content_type=avatar.content_type or "",
+                filename=avatar.filename,
+            )
+            final_avatar_url = persisted_url or avatar.url
+        elif avatar_url is not None:
+            final_avatar_url = avatar_url
+
+        await self._prompt_profile_edit_gender(
+            interaction, character_id, prefill, is_story, final_avatar_url
+        )
+
+    async def _prompt_profile_edit_gender(
+        self,
+        interaction: discord.Interaction,
+        character_id: int,
+        prefill: dict[str, str],
+        is_story: bool,
+        avatar_url: str,
+    ) -> None:
+        async def on_gender_chosen(
+            gender_interaction: discord.Interaction, gender: str | None
+        ) -> None:
+            await self._prompt_profile_edit_details(
+                gender_interaction, character_id, prefill, is_story, avatar_url, gender
+            )
+
+        await interaction.followup.send(
+            "**Choose your character's gender** (skip to leave it unchanged):",
+            view=GenderSelectView(on_gender_chosen),
+            ephemeral=True,
+        )
+
+    async def _prompt_profile_edit_details(
+        self,
+        interaction: discord.Interaction,
+        character_id: int,
+        prefill: dict[str, str],
+        is_story: bool,
+        avatar_url: str,
+        gender: str | None,
+    ) -> None:
+        from panem_bot.modals import CharacterDetailsModal
+
+        async def on_submit(
+            modal_interaction: discord.Interaction,
+            name: str,
+            age_str: str,
+            appearance: str,
+            backstory: str,
+            job_title: str,
+        ) -> None:
+            await self._finish_profile_edit(
+                modal_interaction,
+                character_id,
+                name,
+                age_str,
+                gender,
+                appearance,
+                backstory,
+                job_title,
+                is_story,
+                avatar_url,
+            )
+
+        await interaction.response.send_modal(
+            CharacterDetailsModal(on_submit=on_submit, prefill=prefill, is_story=is_story)
+        )
+
+    async def _finish_profile_edit(
+        self,
+        interaction: discord.Interaction,
+        character_id: int,
+        name: str,
+        age_str: str,
+        gender: str | None,
+        appearance: str,
+        backstory: str,
+        job_title: str,
+        is_story: bool,
+        avatar_url: str,
+    ) -> None:
+        try:
+            age = int(age_str)
+        except ValueError:
+            await interaction.response.send_message(
+                t("invalid_age", min=constants.CHARACTER_AGE_MIN, max=constants.CHARACTER_AGE_MAX),
+                ephemeral=True,
+            )
+            return
+        final_job_title = None if is_story else (job_title or None)
+
+        async with self.bot.db() as session:
+            character = await session.get(Character, character_id)
+            if character is None:
+                await interaction.response.send_message(t("character_not_found"), ephemeral=True)
+                return
+            # Gender's own "skip" means "leave unchanged" here (unlike
+            # creation, where it means "no preference at all") -- `None`
+            # from `GenderSelectView` only overwrites the real field at
+            # `/character gender`'s hands, never implicitly through this
+            # wizard.
+            final_gender = character.gender if gender is None else gender
+            try:
+                await profile_edits_svc.stage_profile_edit(
+                    session,
+                    character,
+                    name=name,
+                    age=age,
+                    gender=final_gender,
+                    appearance=appearance,
+                    backstory=backstory,
+                    job_title=final_job_title,
+                    avatar_url=avatar_url,
+                )
+            except ServiceError as exc:
+                await interaction.response.send_message(
+                    t(exc.reason_key, **exc.fmt), ephemeral=True
+                )
+                return
+            char_name = character.name
+
+        await interaction.response.send_message(
+            t("profile_edit_submitted", name=char_name), ephemeral=True
+        )
+        await self._post_profile_edit_approval_embed(
+            character_id, applicant_discord_id=interaction.user.id
+        )
+
+    async def _post_profile_edit_approval_embed(
+        self, character_id: int, *, applicant_discord_id: int
+    ) -> None:
+        """`/profile edit` (Discord) calls this synchronously right after
+        staging, same as every other instant caller; the Activity's own
+        edit form has no bot token to post with, so it stages one through
+        `panem_api.dashboard_routes` and relies on `_announce_pending_
+        profile_edits`'s poll or the instant listener on `CHARACTER_
+        PROFILE_EDIT_PENDING_CHANNEL` to call this instead -- same shape
+        as `_post_approval_embed`/`_post_mode_switch_approval_embed`,
+        right down to `pending_profile_edit_notified_at` being the
+        idempotency guard against both paths racing for the same edit."""
+        channel = self.bot.get_channel(self.bot.settings.approval_channel_id)
+        if channel is None:
+            return
+        async with self.bot.db() as session:
+            character = await characters_svc.get_character(session, character_id)
+            if (
+                character.pending_profile_name is None
+                or character.pending_profile_edit_notified_at is not None
+            ):
+                return
+            diff = profile_edits_svc.profile_edit_diff(character)
+            embed = discord.Embed(
+                title=f"Profile Edit Request: {character.name}", color=discord.Color.gold()
+            )
+            embed.add_field(name="Applicant", value=f"<@{applicant_discord_id}>", inline=False)
+            for label, before, after in diff:
+                embed.add_field(name=label, value=_diff_field_value(before, after), inline=False)
+            if character.pending_profile_avatar_url != character.avatar_url:
+                embed.set_image(url=character.pending_profile_avatar_url)
+            embed.set_footer(text=f"{CHAR_ID_FOOTER_PREFIX}{character.id}")
+            character.pending_profile_edit_notified_at = dt.datetime.now(dt.UTC)
+
+        await channel.send(embed=embed, view=self.profile_edit_approval_view)
+
+    @tasks.loop(minutes=constants.CHARACTER_APPROVAL_POLL_INTERVAL_MINUTES)
+    async def _announce_pending_profile_edits(self) -> None:
+        """Profile-edit equivalent of `_announce_pending_mode_switches` --
+        picks up an edit staged by the Activity's dashboard (no bot token
+        of its own to post with) that the instant listener below missed."""
+        async with self.bot.db() as session:
+            rows = (
+                await session.execute(
+                    select(Character.id, User.discord_id)
+                    .join(User, User.id == Character.user_id)
+                    .where(
+                        Character.pending_profile_name.is_not(None),
+                        Character.pending_profile_edit_notified_at.is_(None),
+                    )
+                )
+            ).all()
+        for character_id, discord_id in rows:
+            await self._post_profile_edit_approval_embed(
+                character_id, applicant_discord_id=discord_id
+            )
+
+    @_announce_pending_profile_edits.before_loop
+    async def _before_announce_pending_profile_edits(self) -> None:
+        await self.bot.wait_until_ready()
+
+    async def _try_announce_profile_edit(self, character_id: int) -> None:
+        async with self.bot.db() as session:
+            row = (
+                await session.execute(
+                    select(Character.id, User.discord_id)
+                    .join(User, User.id == Character.user_id)
+                    .where(
+                        Character.id == character_id,
+                        Character.pending_profile_name.is_not(None),
+                        Character.pending_profile_edit_notified_at.is_(None),
+                    )
+                )
+            ).first()
+        if row is None:
+            return
+        _, discord_id = row
+        await self._post_profile_edit_approval_embed(character_id, applicant_discord_id=discord_id)
+
+    async def _listen_for_pending_profile_edits(self) -> None:
+        """Instant counterpart to `_announce_pending_profile_edits`'s poll,
+        mirroring `_listen_for_pending_mode_switches` exactly but on its
+        own channel (`CHARACTER_PROFILE_EDIT_PENDING_CHANNEL`)."""
+        await self.bot.wait_until_ready()
+        pubsub = self.bot.redis.pubsub()
+        await pubsub.subscribe(CHARACTER_PROFILE_EDIT_PENDING_CHANNEL)
+        try:
+            async for message in pubsub.listen():
+                if message["type"] != "message":
+                    continue
+                try:
+                    character_id = int(message["data"])
+                except (TypeError, ValueError):
+                    logger.warning("pending_profile_edit_bad_payload", data=message["data"])
+                    continue
+                try:
+                    await self._try_announce_profile_edit(character_id)
+                except Exception:
+                    logger.exception(
+                        "pending_profile_edit_announce_failed", character_id=character_id
+                    )
+        finally:
+            await pubsub.unsubscribe(CHARACTER_PROFILE_EDIT_PENDING_CHANNEL)
+            await pubsub.aclose()
+
+    async def _handle_profile_edit_approve(
+        self, interaction: discord.Interaction, character_id: int
+    ) -> None:
+        async with self.bot.db() as session:
+            character = await characters_svc.get_character(session, character_id)
+            if character.pending_profile_name is None:
+                await interaction.response.send_message("Already handled.", ephemeral=True)
+                return
+            char_name = character.pending_profile_name
+            profile_edits_svc.apply_staged_profile_edit(character)
+            user = await session.get(User, character.user_id)
+            discord_id = user.discord_id
+
+        await self._disable_approval_message(interaction, f"Approved by {interaction.user.mention}")
+        await interaction.response.send_message(f"Approved **{char_name}**'s profile edit.", ephemeral=True)
+
+        guild = interaction.guild
+        member = guild.get_member(discord_id) if guild else None
+        if member:
+            with contextlib.suppress(discord.Forbidden):
+                await member.send(t("profile_edit_approved_dm", name=char_name))
+
+    async def _handle_profile_edit_decline(
+        self, interaction: discord.Interaction, character_id: int, reason: str
+    ) -> None:
+        async with self.bot.db() as session:
+            character = await characters_svc.get_character(session, character_id)
+            if character.pending_profile_name is None:
+                await interaction.response.send_message("Already handled.", ephemeral=True)
+                return
+            char_name = character.name
+            profile_edits_svc.discard_staged_profile_edit(character)
+            user = await session.get(User, character.user_id)
+            discord_id = user.discord_id
+
+        await self._disable_approval_message(interaction, f"Declined by {interaction.user.mention}")
+        await interaction.response.send_message("Declined.", ephemeral=True)
+
+        guild = interaction.guild
+        member = guild.get_member(discord_id) if guild else None
+        if member:
+            with contextlib.suppress(discord.Forbidden):
+                await member.send(t("profile_edit_declined_dm", name=char_name, note=reason))
+
+    async def _persist_avatar_upload_standalone(
+        self, *, discord_id: int, data: bytes, content_type: str, filename: str
+    ) -> str | None:
+        """Character-less counterpart to `_persist_avatar_upload` -- used
+        wherever an attachment needs persisting before/without touching
+        any character's *live* `avatar_url` (`/profile edit`'s staged
+        faceclaim; `/character create`'s own attachment path uses the
+        per-character one instead, since by the time it uploads, the
+        character row already exists and persisting there doubles as
+        setting it). Hits `panem_api`'s character-less `/avatar-upload`
+        endpoint (the same one the dashboard's creation form uses before
+        a character exists) rather than the per-character one, which
+        would overwrite the character's real `avatar_url` immediately --
+        exactly what staging is supposed to not do yet."""
+        base_url = self.bot.settings.resolved_api_internal_url()  # type: ignore[attr-defined]
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(
+                    f"{base_url.rstrip('/')}/activity/dashboard/characters/avatar-upload",
+                    data={"discord_id": str(discord_id)},
+                    files={"file": (filename, data, content_type)},
+                )
+                response.raise_for_status()
+                avatar_url = response.json().get("avatar_url")
+                return avatar_url if isinstance(avatar_url, str) else None
+        except httpx.HTTPError:
+            logger.warning("avatar_upload_persist_failed")
+            return None
 
     def _district_status_value(self, character: Character) -> str:
         """FR-LOC-9: distinguishes "on a train," "visiting away from

@@ -1196,6 +1196,9 @@ table.data-table .stock-empty {
   border-radius: 12px;
   width: 90%;
   max-width: 520px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   transform: translateY(20px);
   transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
@@ -1203,6 +1206,20 @@ table.data-table .stock-empty {
 
 .modal-overlay.open .dossier-card {
   transform: translateY(0);
+}
+
+/* `.dossier-header` stays put; the view/edit bodies below it (long
+   backstories, or the profile-edit form's full field set) scroll
+   within the card instead of pushing it past the viewport -- same
+   fixed-header/scrolling-body split as `.guide-modal-card`. */
+.dossier-card .dossier-header {
+  flex: 0 0 auto;
+}
+
+.dossier-card .dossier-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 /* Reaction-event pop-up (`panem_shared.reactions`, `app.js`'s own global
@@ -1234,6 +1251,111 @@ table.data-table .stock-empty {
   font-size: 17px;
   font-weight: 700;
   color: #fff;
+}
+
+/* Getting-Started guide pop-up (`app.js`'s `buildGuideOverlay`) -- shown
+   once automatically on a viewer's first launch (tracked in
+   localStorage, same convention as `TAB_USAGE_STORAGE_KEY`) and
+   reopenable any time via the header's `#guide-button`. Unlike the
+   reaction modal above, this one *is* closeable by clicking outside it
+   or the "x" (`.btn-close-modal`, already used by the dossier modal) --
+   there's no time-limited choice to force here. */
+.guide-button {
+  font-size: 15px;
+  font-weight: 700;
+  font-family: var(--font-serif);
+}
+
+.guide-modal-card {
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  box-shadow: 0 0 30px rgba(0, 0, 0, 0.8), 0 0 20px color-mix(in srgb, var(--accent) 25%, transparent);
+  border-radius: 12px;
+  width: 90%;
+  max-width: 560px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  transform: translateY(20px);
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.modal-overlay.open .guide-modal-card {
+  transform: translateY(0);
+}
+
+.guide-modal-card .dossier-header {
+  flex: 0 0 auto;
+}
+
+.guide-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 20px 24px 24px;
+  overflow-y: auto;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+/* Prev/Next/Finish nav bar -- paginates `GUIDE_PAGES` (`app.js`'s
+   `buildGuideOverlay`) one section per page instead of one long scroll,
+   same "manageable bite, not a wall of text" shape as a tutorial
+   carousel. `flex: 0 0 auto` so it never gets squeezed by `.guide-modal-
+   body`'s scroll area above it. */
+.guide-modal-footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 24px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 6%, var(--panel));
+}
+
+.guide-page-indicator {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.guide-modal-footer-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.guide-modal-body h3 {
+  font-family: var(--font-serif);
+  font-size: 14px;
+  margin: 18px 0 6px;
+  color: var(--accent);
+}
+
+.guide-modal-body h3:first-child {
+  margin-top: 0;
+}
+
+.guide-modal-body ul,
+.guide-modal-body ol {
+  margin: 0 0 4px;
+  padding-left: 20px;
+}
+
+.guide-modal-body li {
+  margin-bottom: 3px;
+}
+
+.guide-modal-body p {
+  margin: 0 0 4px;
+}
+
+.guide-modal-body code {
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel));
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 12.5px;
 }
 
 .dossier-header {
@@ -2479,6 +2601,63 @@ svg.ui-icon {
   height: 100%;
 }
 
+/* Home's Meters panel (`tabs/home.js`'s `metersPanel`) flashes its own
+   border/glow when any one meter is at or below `VITALS_WARN_THRESHOLD_
+   PERCENT`/`_DANGER_...` ("percent remaining" -- hunger/thirst inverted
+   first, see `vitalSeverity` in home.js) -- `danger` wins over `warn` if
+   both apply to different meters at once, and takes the faster/brighter
+   animation since it's the more urgent of the two. The affected meter
+   row(s) also get a plain color tint (no animation -- five bars all
+   flashing at once would be visual noise), so it's clear *which* meter
+   is the reason the whole panel is flashing. */
+.panel.vitals-warn {
+  animation: vitals-flash-warn 1.6s ease-in-out infinite;
+}
+
+.panel.vitals-danger {
+  animation: vitals-flash-danger 1.1s ease-in-out infinite;
+}
+
+@keyframes vitals-flash-warn {
+  0%,
+  100% {
+    border-color: var(--border);
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+  }
+  50% {
+    border-color: var(--warn);
+    box-shadow: 0 0 16px color-mix(in srgb, var(--warn) 55%, transparent);
+  }
+}
+
+@keyframes vitals-flash-danger {
+  0%,
+  100% {
+    border-color: var(--border);
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+  }
+  50% {
+    border-color: var(--danger);
+    box-shadow: 0 0 18px color-mix(in srgb, var(--danger) 60%, transparent);
+  }
+}
+
+.meter-row.vitals-warn .meter-label {
+  color: var(--warn);
+}
+
+.meter-row.vitals-danger .meter-label {
+  color: var(--danger);
+}
+
+.meter-row.vitals-warn .meter-fill {
+  background: var(--warn);
+}
+
+.meter-row.vitals-danger .meter-fill {
+  background: var(--danger);
+}
+
 .affliction-list,
 .mode-switch-bullets {
   margin: 0;
@@ -2627,6 +2806,42 @@ svg.ui-icon {
 .sound-picker-toggle:hover {
   background: var(--accent);
   color: var(--panel);
+}
+
+/* --------------------------------- Header: My Profile button */
+/* The rightmost header item -- the current character's own faceclaim,
+   circular, opening `profileOverlay` (`app.js`'s `buildProfileOverlay`)
+   on click. Shows the "user" placeholder glyph (`renderIcon`) until a
+   character with an avatar is selected; `#profile-button-avatar` itself
+   stays `hidden` until `updateProfileButtonAvatar` has a real URL to
+   give it, rather than ever pointing it at a broken/empty `src`. */
+.profile-button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  margin-left: 4px;
+  border-radius: 50%;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--panel) 80%, var(--accent));
+  color: var(--accent);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.profile-button:hover {
+  border-color: var(--text);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+#profile-button-avatar {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .sound-picker-popup {

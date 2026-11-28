@@ -68,7 +68,7 @@ locations:
   - d1_jeweler
   - d1_polisher
 - id: academy
-  name: The Academy
+  name: The Crown Academy
   kind: workplace
   capacity: 60
   job_ids:

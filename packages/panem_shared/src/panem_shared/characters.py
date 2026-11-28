@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 
+import httpx
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -56,6 +57,38 @@ def validate_avatar_url(url: str) -> None:
         raise ValidationFailed("invalid_avatar_url")
     if not url.lower().split("?")[0].endswith(constants.AVATAR_URL_EXTENSIONS):
         raise ValidationFailed("invalid_avatar_url")
+
+
+_AVATAR_URL_FETCH_TIMEOUT_SECONDS = 6.0
+
+
+async def verify_avatar_url_reachable(url: str) -> bool:
+    """Confirms `url` doesn't just *look* like an image link (`validate_
+    avatar_url`'s job) but actually loads one right now -- a faceclaim
+    URL that 404s, points at a deleted Imgur post, or needs a login isn't
+    "a URL that works" just because it ends in `.png`. Tries a `HEAD`
+    first (cheapest); a method/host that rejects it (some image hosts
+    405 or 403 a bare `HEAD`) falls back to a streamed `GET`, read only
+    far enough to see its headers and closed immediately after -- this
+    never needs the image's actual bytes. Any network failure (DNS,
+    TLS, timeout, non-2xx, a non-`image/*` content-type) reads as "not
+    reachable" -- fails closed, same posture as `discord_staff.
+    fetch_is_staff`, since this gates whether a character can be
+    created at all."""
+    async with httpx.AsyncClient(timeout=_AVATAR_URL_FETCH_TIMEOUT_SECONDS, follow_redirects=True) as client:
+        try:
+            response = await client.head(url)
+            if response.status_code >= 400:
+                async with client.stream("GET", url) as response:
+                    return _is_reachable_image_response(response)
+            return _is_reachable_image_response(response)
+        except httpx.HTTPError:
+            return False
+
+
+def _is_reachable_image_response(response: httpx.Response) -> bool:
+    content_type = response.headers.get("content-type", "")
+    return response.status_code < 400 and content_type.lower().startswith("image/")
 
 
 def validate_job_title(title: str) -> None:
@@ -185,8 +218,15 @@ async def create_character(
         if not job_title or not shift_phase:
             raise ValidationFailed("job_required")
         validate_job_title(job_title)
-    if avatar_url:
-        validate_avatar_url(avatar_url)
+    # FR-CHR-2: a faceclaim is mandatory, not optional decoration -- every
+    # caller (the bot's creation wizard, the dashboard's create form) must
+    # resolve either an uploaded image or an external URL to a concrete
+    # `avatar_url` (verifying an external one is actually reachable is the
+    # caller's job, via `verify_avatar_url_reachable`; this only re-checks
+    # the syntactic shape) before ever reaching this call.
+    if not avatar_url:
+        raise ValidationFailed("avatar_required")
+    validate_avatar_url(avatar_url)
     layers = (
         await layers_svc.validate_layer_selection(session, appearance_layers)
         if appearance_layers

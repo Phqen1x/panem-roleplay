@@ -67,7 +67,7 @@ locations:
   - d4_netcaster
   - d4_smoker
 - id: academy
-  name: The Academy
+  name: The Odyssey Center
   kind: workplace
   capacity: 60
   job_ids:

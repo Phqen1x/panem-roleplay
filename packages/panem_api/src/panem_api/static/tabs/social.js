@@ -61,7 +61,19 @@ function determineStatus(r) {
   if (r.status) return r.status;
   const loc = (r.location_name || "").toLowerCase();
   const job = (r.job_title || "").toLowerCase();
-  if (loc.includes("workshop") || loc.includes("exchange") || loc.includes("academy") || loc.includes("station")) {
+  if (
+    loc.includes("workshop") ||
+    loc.includes("exchange") ||
+    loc.includes("academy") ||
+    loc.includes("station") ||
+    // The academy location itself is staff-renameable per district (it
+    // no longer has to be called "Academy" at all -- see each district's
+    // own `data/districts/d*.yaml`), but its job title doesn't change
+    // with it ("Academy Trainer" everywhere this job exists), so this
+    // catches a trainer working there even when `loc` itself doesn't
+    // literally say "academy" anymore.
+    job.includes("academy")
+  ) {
     return "working";
   }
   if (loc.includes("justice") || loc.includes("court") || loc.includes("jail") || loc.includes("office")) {

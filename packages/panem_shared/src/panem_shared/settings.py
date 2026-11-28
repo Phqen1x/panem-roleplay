@@ -68,6 +68,17 @@ class Settings(BaseSettings):
 
     approval_channel_id: DiscordId = 0
     log_channel_id: DiscordId = 0
+    # Where the full character-application embed (same content/image the
+    # approval-channel post has, minus the Approve/Reject/Request-Changes
+    # buttons -- those stop making sense once a character is already
+    # approved) gets posted once staff approve a character
+    # (`panem_bot.cogs.characters._handle_approve`). Meant to be a channel
+    # the roleplay role (`roleplay_role_id` above) can see -- that
+    # visibility is set in Discord itself, this setting only controls
+    # where the bot posts. Unset (0) means this announcement is skipped
+    # entirely; the staff-only approval-channel post still happens either
+    # way.
+    character_announce_channel_id: DiscordId = 0
 
     # Comma-separated Discord role snowflake ids (e.g. "111,222") -- who
     # counts as "Panem staff" (`PanemBot.is_staff`, `discord_staff.

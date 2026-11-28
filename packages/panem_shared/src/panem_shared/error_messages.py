@@ -55,6 +55,11 @@ ERROR_MESSAGES: dict[str, str] = {
         "Avatar must be an https image URL ending in .png, .jpg, .jpeg, .webp, or .gif "
         "(512 characters max)."
     ),
+    "avatar_required": "Upload a faceclaim image, or provide an image URL that works, to create a character.",
+    "avatar_url_unreachable": (
+        "That image URL doesn't load right now -- double check the link, or upload the image "
+        "instead."
+    ),
     "invalid_proxy_tag": "Tag must be 1-12 characters and can't start with / or ((.",
     "proxy_tag_taken": "You're already using that tag for another character.",
     "invalid_rp_mode": "Not a valid RP mode.",
@@ -237,6 +242,9 @@ ERROR_MESSAGES: dict[str, str] = {
     "trade_not_yours_to_cancel": "That isn't your trade offer to cancel.",
     # RP mode switching / crime toggle
     "mode_switch_already_pending": "You already have a mode switch awaiting staff approval.",
+    # Profile edits (/profile edit)
+    "profile_edit_already_pending": "You already have a profile edit awaiting staff approval.",
+    "no_profile_changes": "That's identical to your current profile -- nothing to submit.",
     "mode_already_active": "This character is already in that mode.",
     "mode_switch_on_cooldown": "You switched modes too recently -- try again later.",
     "crime_toggle_wrong_mode": "Only Life-mode characters can toggle crime on or off for themselves.",
